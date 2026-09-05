@@ -1,4 +1,4 @@
 # https://developers.home-assistant.io/docs/add-ons/repository#repository-configuration
 name: Shyft Home Assistant add-on repository
 url: 'https://github.com/shyft-power-com/shyft-addon'
-maintainer: shyft-power <anselmhuewe@gmx.de>
+maintainer: Shyft Power <info@shyft-power.com>

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.8
+
+* `repository.yaml` maintainer auf `Shyft Power <info@shyft-power.com>` (statt privater Adresse).
+
 ## 0.0.45.7
 
 * Repo unter der Organisation `shyft-power-com` (statt `anselmhuewe`), Repo-Name jetzt `shyft-addon`. Alle GitHub-URLs im Repo nachgezogen: „Add repository"-Badge in der `README.md` (zeigte noch auf das ganz alte `ehmkah/ha-shyft-addon`), die `source_url`/`blueprint_url` der beiden Blueprints, `repository.yaml` (`url` + `maintainer`) und der Paketname in `shyft-addon/package.json`. Keine funktionale Änderung am Add-on.
