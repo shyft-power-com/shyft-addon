@@ -15,7 +15,7 @@ blueprint:
     Skripte findest du das erzeugte Skript. Trage seine Entity-ID
     (script.xxx) im shyft-power-Addon bei "Auto laden" ein.
   domain: script
-  source_url: https://github.com/anselmhuewe/ha-shyft-addon/blob/main/blueprints/wallbox_ladevorgang_starten.yaml
+  source_url: https://github.com/shyft-power-com/shyft-addon/blob/main/blueprints/wallbox_ladevorgang_starten.yaml
   input:
     start_charging_action:
       name: Aktion zum Ladestart

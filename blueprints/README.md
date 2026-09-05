@@ -19,9 +19,9 @@ Import-Link öffnen -> in Home Assistant öffnet sich automatisch der
 Blueprint-Import-Dialog:
 
 - Heizung Soll-Temperatur:
-  https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fanselmhuewe%2Fha-shyft-addon%2Fmain%2Fblueprints%2Fheizung_soll_temperatur.yaml
+  https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fshyft-power-com%2Fshyft-addon%2Fmain%2Fblueprints%2Fheizung_soll_temperatur.yaml
 - Wallbox Ladevorgang starten:
-  https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fanselmhuewe%2Fha-shyft-addon%2Fmain%2Fblueprints%2Fwallbox_ladevorgang_starten.yaml
+  https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fshyft-power-com%2Fshyft-addon%2Fmain%2Fblueprints%2Fwallbox_ladevorgang_starten.yaml
 
 Alternativ manuell: Einstellungen -> Automatisierungen & Szenen -> Blueprints
 -> Blueprint importieren -> Raw-URL der Datei einfügen.

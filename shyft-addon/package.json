@@ -1,5 +1,5 @@
 {
-  "name": "ha-shyft-addon",
+  "name": "shyft-addon",
   "version": "0.0.1",
   "description": "Simple mapping for shyft",
   "type": "module",
