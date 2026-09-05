@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.10
+
+* **Neue Sprungmarken-Leiste auf der Konfigurationsseite.** Direkt unter der Statuskarte listet eine sticky Chip-Reihe alle Geräte (Wechselrichter, Batterie, Wärmepumpe, Auto, Wallbox, Raumtemperatur, Sonstiger Verbraucher) - ein Klick scrollt zur jeweiligen Kachel. Jedes Gerät zeigt sein eigenes grünes Häkchen (vollständig konfiguriert, keine aktive Fehlermeldung) oder rotes "!" (fehlendes Pflichtfeld oder fehlgeschlagene Aktion); noch nicht ausgewählte Geräte bleiben ohne Icon. Auf schmalen/mobilen Bildschirmen scrollt die Leiste horizontal statt eine eigene Sidebar zu brauchen.
+
 ## 0.0.45.9
 
 * **EV-Verbrauchsprognose: `E_day` wird jetzt je Wochentag einzeln gelernt** (Mo…So statt der bisherigen zwei Gruppen {Werktag, Wochenende}). Ein Fahrprofil mit einem dominanten Fahrtag – z.B. immer donnerstags Langstrecke, sonst nur Kurzstrecke – wurde vorher verwaschen: jeder Werktag bekam denselben Mischwert. Jetzt trägt der Donnerstag seine echte Tagesfahrleistung, die ruhigen Tage ihre. Rückfallkette pro Wochentag: eigene Historie (≥ 1 Tag, recency-gewichtet) → sonst die Gruppe {Werktag bzw. Wochenende} → sonst alle Tage → sonst das Standard-Fahrprofil.

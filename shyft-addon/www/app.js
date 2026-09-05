@@ -719,6 +719,7 @@ async function renderSystemHealth() {
         text.textContent = 'Alle Systeme laufen';
         container.appendChild(text);
         applyConfigFieldErrorHighlights([]);
+        renderDeviceNav([], []);
         return;
     }
     container.className = 'systemHealthCard has-problems';
@@ -742,6 +743,47 @@ async function renderSystemHealth() {
     }
     container.appendChild(list);
     applyConfigFieldErrorHighlights(errorFieldIds);
+    renderDeviceNav(problems, warnings);
+}
+
+// Sprungmarken-Leiste ueber den Geraetekacheln (siehe INTEGRATION_SECTIONS) - haelt beim Scrollen
+// durch die lange Konfigurationsseite sticky unter der Kopfzeile (siehe .deviceNav in index.html).
+// Ein Klick scrollt/klappt wie der bestehende "zu den Einstellungen"-Link zur jeweiligen Kachel
+// (siehe scrollToIntegrationSection). Status-Icon je Geraet: kein Icon, solange kein Geraet gewaehlt
+// ist (nichts zu pruefen); rotes "!", wenn entweder ein Pflichtfeld fehlt ODER eine fehlgeschlagene
+// Aktion dieser Kachel gerade aktiv gemeldet ist; sonst gruener Haken. Nutzt dieselben problems/
+// warnings, die renderSystemHealth ohnehin schon geladen hat - kein zusaetzlicher Request.
+function renderDeviceNav(problems, warnings) {
+    const container = document.getElementById('deviceNav');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const failedSectionKeys = new Set(problems.map(p => actionFailedProblemSectionKey(p.id)).filter(Boolean));
+    const warningSectionKeys = new Set(warnings.map(w => w.sectionKey).filter(Boolean));
+
+    for (const section of INTEGRATION_SECTIONS) {
+        const currentIds = currentIntegrationSelections[section.key] || [];
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'deviceNavChip';
+
+        const icon = document.createElement('span');
+        icon.className = 'deviceNavChipIcon';
+        if (currentIds.length === 0) {
+            icon.textContent = '';
+            chip.classList.add('deviceNavChip--unconfigured');
+        } else if (failedSectionKeys.has(section.key) || warningSectionKeys.has(section.key)) {
+            icon.textContent = '!';
+            icon.classList.add('status-error');
+        } else {
+            icon.textContent = '✓';
+            icon.classList.add('status-ok');
+        }
+        chip.appendChild(icon);
+        chip.appendChild(document.createTextNode(section.label));
+        chip.addEventListener('click', () => scrollToIntegrationSection(section.key));
+        container.appendChild(chip);
+    }
 }
 
 // Ordnet ein "action_failed:<slug>"-Problem (siehe _action_problem_id/_note_action_outcome in

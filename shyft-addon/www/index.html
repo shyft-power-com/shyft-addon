@@ -882,6 +882,57 @@
             white-space: nowrap;
         }
 
+        /* Sprungmarken-Leiste ueber den Geraetekacheln (siehe renderDeviceNav/INTEGRATION_SECTIONS
+           in app.js) - eine Zeile, damit sie auf schmalen (mobilen) Bildschirmen als horizontal
+           scrollbare Chip-Reihe passt statt eine klassische Sidebar zu brauchen, die dort keinen
+           Platz haette. position:sticky haengt sie direkt unter die (ebenfalls sticky) .topBar,
+           damit sie beim Scrollen durch die lange Konfigurationsseite sichtbar bleibt. */
+        #deviceNav:empty {
+            display: none;
+        }
+        .deviceNav {
+            position: sticky;
+            top: var(--topbar-height, 60px);
+            z-index: 14;
+            display: flex;
+            gap: 0.5em;
+            overflow-x: auto;
+            padding: 0.6em 0.2em;
+            margin-bottom: 1em;
+            background: var(--color-bg);
+        }
+        .deviceNavChip {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            gap: 0.4em;
+            font-family: var(--font-body);
+            font-size: 0.9em;
+            color: var(--color-text);
+            background: var(--color-bg-card);
+            border: 1px solid var(--color-border);
+            border-radius: 999px;
+            padding: 0.4em 0.9em;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .deviceNavChip:hover {
+            border-color: var(--color-accent);
+        }
+        .deviceNavChipIcon {
+            font-weight: 700;
+            line-height: 1;
+        }
+        .deviceNavChipIcon.status-ok {
+            color: var(--color-accent);
+        }
+        .deviceNavChipIcon.status-error {
+            color: var(--color-error);
+        }
+        .deviceNavChip--unconfigured {
+            color: var(--color-text-secondary);
+        }
+
         /* Kurzer, klickbarer Hinweis ganz oben auf dem Dashboard, sobald es auf der Konfigurations-
            seite etwas zu beheben gibt (System-Health-Probleme UND/ODER Konfigurations-Warnungen,
            siehe renderDashboardProblemBanner) - haengt sich mit position:sticky direkt unter das
@@ -1393,6 +1444,7 @@
 
 <div id="tab-konfiguration" class="tabPanel">
     <div id="systemHealthCard"></div>
+    <div id="deviceNav" class="deviceNav"></div>
     <div id="config"></div>
     <datalist id="allEntityOptions">
     </datalist>
