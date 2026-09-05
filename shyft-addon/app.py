@@ -1190,8 +1190,8 @@ CAR_PRESENCE_RECENCY_HALF_LIFE_DAYS = 30
 # EV_DEFAULT_DAILY_KM), km->kWh ueber carConsumptionKwhPer100km (Config, sonst
 # EV_DEFAULT_KWH_PER_100KM). Verteilung: an Werktagen je zur Haelfte auf 7-8 und 17-18 Uhr, am
 # Wochenende gleichmaessig auf 15-18 Uhr. Sobald echte Fahrtage vorliegen, wird dieses Profil nicht
-# mehr genutzt - dann zaehlt der recency-gewichtete historische Tagesdurchschnitt je Gruppe
-# {Werktag, Wochenende}.
+# mehr genutzt - dann zaehlt der recency-gewichtete historische Tagesdurchschnitt je Wochentag
+# (siehe e_day_for_weekday).
 CAR_DRIVING_FRACTION_DEFAULT = 0.15
 EV_DEFAULT_DAILY_KM = 50
 EV_DEFAULT_KWH_PER_100KM = 18
@@ -1228,8 +1228,9 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
        keiner Beobachtung.
     2. EV-Verbrauch: NICHT als P(fahren)*Ø-Verbrauch pro Stunde verschmiert. Stattdessen wird je
        Kalendertag eine Tagesfahrleistung E_day bestimmt - recency-gewichteter historischer
-       Tagesdurchschnitt (kWh) je Gruppe {Werktag, Wochenende}, inkl. fahrtloser Tage als 0 - und
-       VOLLSTAENDIG auf die Stunden verteilt, deren prognostizierter Zustand "unterwegs" ist
+       Tagesdurchschnitt (kWh) JE WOCHENTAG (Mo..So einzeln, siehe e_day_for_weekday), inkl.
+       fahrtloser Tage als 0 - und VOLLSTAENDIG auf die Stunden verteilt, deren prognostizierter
+       Zustand "unterwegs" ist
        (groesster der drei exklusiven Zustaende eingesteckt/steht/unterwegs), gewichtet nach
        P(unterwegs). eingesteckt/steht-Stunden bekommen immer 0. Damit gilt per Konstruktion:
        Summe(consumption_kwh_forecast ueber den Tag) == E_day, und ein Wert > 0 steht genau in den
@@ -1285,12 +1286,14 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
 
     overall_rate = (sum(overall) / len(overall)) if overall else 0.5
 
-    # E_day je Gruppe {Werktag, Wochenende}: recency-gewichteter Tagesdurchschnitt inkl. der 0-Tage.
-    daily_totals_by_group = {"weekday": [], "weekend": []}
+    # E_day: recency-gewichteter Tagesdurchschnitt (kWh, inkl. der 0-Tage) - JE WOCHENTAG einzeln
+    # (Mo..So), damit ein dominanter Fahrtag (z.B. immer Donnerstag Langstrecke) nicht mit den
+    # ruhigen Tagen verwaschen wird. Rueckfallkette pro Wochentag: eigene Beobachtungen (>=1 Tag) ->
+    # sonst die Gruppe {Werktag bzw. Wochenende} -> sonst alle Tage -> sonst das Default-Profil.
+    daily_totals_by_weekday = {wd: [] for wd in range(7)}
     for local_date, total in daily_total_kwh.items():
-        group = "weekend" if local_date.weekday() >= 5 else "weekday"
         day_dt = datetime(local_date.year, local_date.month, local_date.day, 12, tzinfo=timezone.utc)
-        daily_totals_by_group[group].append((day_dt, total))
+        daily_totals_by_weekday[local_date.weekday()].append((day_dt, total))
     n_driving_days = sum(1 for v in daily_total_kwh.values() if v > 0)
     coldstart = n_driving_days == 0
 
@@ -1306,10 +1309,19 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
     else:
         consumption_basis = "ok"
 
-    def e_day_for_group(group):
+    def e_day_for_weekday(wd):
         if coldstart:
             return default_e_day
-        m = _recency_weighted_mean(daily_totals_by_group.get(group, []), now)
+        own = daily_totals_by_weekday.get(wd, [])
+        m = _recency_weighted_mean(own, now)
+        if m is not None:
+            return m
+        group_wds = range(5, 7) if wd >= 5 else range(5)
+        group_samples = [s for g in group_wds for s in daily_totals_by_weekday.get(g, [])]
+        m = _recency_weighted_mean(group_samples, now)
+        if m is not None:
+            return m
+        m = _recency_weighted_mean([s for lst in daily_totals_by_weekday.values() for s in lst], now)
         return m if m is not None else default_e_day
 
     def marginal_rate(weekday, hour):
@@ -1399,12 +1411,11 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
         day_indices.setdefault((start + timedelta(hours=i)).astimezone().date(), []).append(i)
 
     for local_date, idxs in day_indices.items():
-        group = "weekend" if local_date.weekday() >= 5 else "weekday"
-        e_day = e_day_for_group(group)
+        e_day = e_day_for_weekday(local_date.weekday())
         if e_day <= 0:
             continue
         if coldstart:
-            block_hours = EV_DEFAULT_WEEKEND_BLOCK_HOURS if group == "weekend" else EV_DEFAULT_WEEKDAY_BLOCK_HOURS
+            block_hours = EV_DEFAULT_WEEKEND_BLOCK_HOURS if local_date.weekday() >= 5 else EV_DEFAULT_WEEKDAY_BLOCK_HOURS
             target_idxs = [i for i in idxs if (start + timedelta(hours=i)).astimezone().hour in block_hours]
             weights = [1.0] * len(target_idxs)
         else:
