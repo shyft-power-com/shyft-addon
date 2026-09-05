@@ -241,7 +241,8 @@ const INTEGRATION_SECTIONS = [
         key: 'sonstiger_verbraucher',
         label: 'Sonstiger Verbraucher',
         sensors: ['sonstiger_verbraucher_switch_entity'],
-        actions: ['consumer_on', 'consumer_off']
+        actions: ['consumer_on', 'consumer_off'],
+        description: 'Du kannst ein beliebiges Gerät, das du an- bzw. ausschalten möchtest, in die Shyft-Optimierungen integrieren. Du kannst einstellen, unterhalb welcher Preisschwelle das Gerät angeschaltet werden soll: Shyft berücksichtigt hierbei nicht nur den Preis deines Netzstroms, sondern bei selbst erzeugtem Strom auch deine PV-Einspeisevergütung und Ladeverluste deiner Batterie. Für die Shyft-Optimierungen musst du deshalb die ungefähre Dauerleistung des Geräts angeben.'
     },
 ]
 
@@ -587,6 +588,8 @@ async function saveConfigurationNow() {
         "batteryModeNetzladenValue": batteryModeNetzladenValue,
         "batteryModeSelfConsumptionValue": batteryModeSelfConsumptionValue,
         "coPriceGas": configData["coPriceGas"] ?? 0.1,
+        "odPriceThresholdCent": configData["odPriceThresholdCent"] ?? null,
+        "odPowerKw": configData["odPowerKw"] ?? null,
         "optimizationPeriodsSite": configData["optimizationPeriodsSite"] ?? 48,
         "electricityBaseLoad": configData["electricityBaseLoad"] ?? 'niedrig__2628',
         "electricityPriceBuy": configData["electricityPriceBuy"] ?? 'mittel (30 Cent)',
@@ -1703,6 +1706,10 @@ function renderSectionBody(bodyDiv, section, entryIds) {
             bodyDiv.appendChild(buildEvSocNormalField());
             bodyDiv.appendChild(buildEvSocMaxPvSurplusField());
         }
+        if (section.key === 'sonstiger_verbraucher') {
+            bodyDiv.appendChild(buildOdPriceThresholdField());
+            bodyDiv.appendChild(buildOdPowerField());
+        }
         if (section.key === 'waermepumpe') {
             bodyDiv.appendChild(buildHpTypeField());
             bodyDiv.appendChild(buildHpBuildingSizeField());
@@ -2131,6 +2138,34 @@ function buildEvSocMaxPvSurplusField() {
         max: '95',
         step: '1',
         unit: '%',
+    });
+}
+
+// "Sonstiger Verbraucher": beide Werte gehen als staticConfig an die Site (OD - Price Threshold /
+// OD - Power) und landen im Optimierer als OD_running_hours (Cent/kWh, Julia teilt selbst durch
+// 100) bzw. otherDevice_P (kW). Kein Default - das Geraet nimmt nur an der Optimierung teil, wenn
+// beide Felder gesetzt sind (sonst schickt collect_static_config sie nicht mit).
+function buildOdPriceThresholdField() {
+    return buildConfigNumberField({
+        label: 'Strompreis-Grenze (Ein-/Ausschalten)',
+        tooltip: 'Schalte das Gerät unterhalb dieses Strompreises ein.',
+        id: 'od_price_threshold',
+        configKey: 'odPriceThresholdCent',
+        placeholder: 'z.B. 15',
+        step: '0.5',
+        unit: 'Cent/kWh',
+    });
+}
+
+function buildOdPowerField() {
+    return buildConfigNumberField({
+        label: 'Leistung des Geräts',
+        tooltip: 'Ungefähre Dauerleistung des Geräts, während es eingeschaltet ist.',
+        id: 'od_power_kw',
+        configKey: 'odPowerKw',
+        placeholder: 'z.B. 2',
+        step: '0.1',
+        unit: 'kW',
     });
 }
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.11
+
+* **"Sonstiger Verbraucher": zwei neue Konfigurationsfelder.** Im Abschnitt „Sonstiger Verbraucher" gibt es jetzt „Strompreis-Grenze (Ein-/Ausschalten)" (Cent/kWh) und „Leistung des Geräts" (kW), dazu einen Erklärtext am Abschnitt. Beide gehen als staticConfig (`OD - Price Threshold` / `OD - Power`) an die Site → Optimierer-Spalten `OD_running_hours` (der Julia-Optimierer teilt selbst durch 100) bzw. `otherDevice_P`. Ohne beide Werte nimmt das Gerät nicht an der Optimierung teil (leere Felder werden nicht mitgeschickt). Braucht das zugehörige Server-Deployment (shyft 0.46.14.0), das die zwei Felder aus der Site liest.
+
 ## 0.0.45.10
 
 * **Neue Sprungmarken-Leiste auf der Konfigurationsseite.** Direkt unter der Statuskarte listet eine sticky Chip-Reihe alle Geräte (Wechselrichter, Batterie, Wärmepumpe, Auto, Wallbox, Raumtemperatur, Sonstiger Verbraucher) - ein Klick scrollt zur jeweiligen Kachel. Jedes Gerät zeigt sein eigenes grünes Häkchen (vollständig konfiguriert, keine aktive Fehlermeldung) oder rotes "!" (fehlendes Pflichtfeld oder fehlgeschlagene Aktion); noch nicht ausgewählte Geräte bleiben ohne Icon. Auf schmalen/mobilen Bildschirmen scrollt die Leiste horizontal statt eine eigene Sidebar zu brauchen.

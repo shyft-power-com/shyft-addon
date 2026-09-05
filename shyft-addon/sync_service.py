@@ -259,6 +259,11 @@ class SyncService:
         add("EV - SOC Normal", "evSocNormal")
         add("EV - SOC Max PV Surplus", "evSocMaxPvSurplus")
         add("CO - Price Gas", "coPriceGas")
+        # "Sonstiger Verbraucher": Preisschwelle (Cent/kWh) -> Optimierer-Spalte OD_running_hours
+        # (Julia teilt selbst durch 100), Dauerleistung (kW) -> otherDevice_P. add() laesst leere
+        # Felder weg, d.h. ohne beide Werte nimmt das Geraet nicht an der Optimierung teil.
+        add("OD - Price Threshold", "odPriceThresholdCent")
+        add("OD - Power", "odPowerKw")
         if optimizer_periods_override is not None:
             static_config["Optimization Periods Site"] = optimizer_periods_override
         else:
