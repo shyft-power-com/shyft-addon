@@ -5465,7 +5465,7 @@ function buildEnergyFlowSvgDesktop(data) {
         const carLines = [];
         if (data.car.soc !== null) carLines.push(withStaleness(`Ladestand: ${Math.round(data.car.soc)} %` + (data.car.rangeKm !== null ? ` (${data.car.rangeKm} km)` : ''), data.car.updatedAt, OTHER_STALE_MINUTES));
         if (data.car.state === 'away') carLines.push('abwesend');
-        else if (data.car.state === 'charging') carLines.push('lädt');
+        else if (data.car.state === 'charging') carLines.push(data.car.chargingKw != null ? `Lädt (${formatKwValue(data.car.chargingKw)})` : 'lädt');
         else if (data.car.state === 'connected') carLines.push('eingesteckt');
         svg.appendChild(buildEnergyFlowLabel(columnX + carTargetW / 2 + 10, rowY, carLines));
     }
@@ -5671,7 +5671,7 @@ function buildEnergyFlowSvgMobile(data) {
                 if (data.car.soc !== null) carLines.push(withStaleness(`Auto: Ladestand ${Math.round(data.car.soc)} %` + (data.car.rangeKm !== null ? ` (${data.car.rangeKm} km)` : ''), data.car.updatedAt, OTHER_STALE_MINUTES));
                 else carLines.push('Auto');
                 if (data.car.state === 'away') carLines.push('abwesend');
-                else if (data.car.state === 'charging') carLines.push('lädt');
+                else if (data.car.state === 'charging') carLines.push(data.car.chargingKw != null ? `Lädt (${formatKwValue(data.car.chargingKw)})` : 'lädt');
                 else if (data.car.state === 'connected') carLines.push('eingesteckt');
                 deviceDetailBlocks.push({colX, lines: carLines});
             } else if (type === 'sonstiger') {

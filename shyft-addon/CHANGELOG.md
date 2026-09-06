@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.18
+
+* Dashboard-Energiefluss: Der Auto-Status zeigt beim Laden jetzt „Lädt (11,0 kW)" (aktuelle Ladeleistung aus `WB - Current Charging Power`) statt nur „lädt". Ist die Leistung gerade nicht lesbar, bleibt es bei „lädt".
+
 ## 0.0.45.17
 
 * **`WB - p_min`: PV-Überschuss-Erkennung jetzt über `PV_GR + PV_EV`** statt `GR_sum + PV_EV` (0.0.45.16). `PV_GR` (PV → Netz) und `PV_EV` (PV → Auto) sind beide ≥ 0 und beschreiben sauber die über den Sofortbedarf hinaus verfügbare PV-Energie — kein Vorzeichen-Durcheinander wie beim Netto-Netzbezug `GR_sum`. Übersteigt die Summe über den ganzen Optimierungszeitraum der letzten `output.csv` 5 kWh, wird `p_min` aus `min(p_sell) + 0,02 €` gerechnet, sonst aus `min(p_buy) + 0,02 €`. Die `+ 0,02 €`-Marge bleibt in beiden Zweigen: im `p_sell`-Zweig hält sie `p_min` knapp über der Einspeisevergütung (PV lädt das Auto weiter), aber unter dem Netz-Einkaufspreis (Netz lädt nur bei ungewöhnlich billigen/negativen Stunden).
