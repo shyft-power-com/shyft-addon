@@ -421,6 +421,63 @@ def compute_price_buy_array(config, base_time_utc, hours):
     return None
 
 
+@app.route("/electricity/price-preview", methods=["GET"])
+def electricity_price_preview():
+    """Pruefzeile im dynamischen Stromtarif: aktuelle Gesamt-Einkaufspreise (Boersen-Brutto +
+    fixer Anteil) als Stunden- und (daraus abgeleitete) 15-Minuten-Werte. Der fixe Anteil kommt
+    per ?surcharge_ct= (waehrend der Nutzer noch tippt, also vor dem Speichern), sonst aus der
+    gespeicherten Config. Antwort immer HTTP 200; {"ok": false, "reason": ...} wenn nichts
+    berechenbar ist."""
+    surcharge_ct = request.args.get("surcharge_ct", type=float)
+    if surcharge_ct is None:
+        try:
+            v = _read_current_config().get("electricityDynamicSurchargeCent")
+            surcharge_ct = float(v) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            surcharge_ct = None
+    if surcharge_ct is None:
+        return jsonify({"ok": False, "reason": "no_surcharge"})
+
+    spot = _fetch_awattar_prices()  # {hour_start_epoch_ms: EUR/kWh brutto}
+    if not spot:
+        return jsonify({"ok": False, "reason": "no_spot"})
+
+    now_ms = time.time() * 1000.0
+    hourly = []
+    for ts_ms in sorted(spot):
+        if ts_ms + 3600000 <= now_ms:
+            continue  # bereits vergangene Stunde
+        spot_ct = round(spot[ts_ms] * 100.0, 2)
+        start_local = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).astimezone()
+        hourly.append({
+            "start": start_local.isoformat(),
+            "spot_ct": spot_ct,
+            "total_ct": round(spot_ct + surcharge_ct, 2),
+        })
+
+    # Awattar veroeffentlicht nur Stundenpreise - je Stunde vier gleiche Viertelstunden
+    # (im Frontend klar als abgeleitet gekennzeichnet, siehe quarter_hourly_derived).
+    quarter_hourly = []
+    for h in hourly:
+        start = datetime.fromisoformat(h["start"])
+        for q in range(4):
+            quarter_hourly.append({
+                "start": (start + timedelta(minutes=15 * q)).isoformat(),
+                "spot_ct": h["spot_ct"],
+                "total_ct": h["total_ct"],
+            })
+
+    return jsonify({
+        "ok": True,
+        "surcharge_ct": round(surcharge_ct, 2),
+        "generated_at": datetime.now(timezone.utc).astimezone().isoformat(),
+        "source": "Awattar / EPEX Day-Ahead, brutto inkl. 19 % USt",
+        "hourly": hourly,
+        "quarter_hourly": quarter_hourly,
+        "quarter_hourly_derived": True,
+    })
+
+
 def _optimizer_result_pending(cached_creation_date_ms):
     "True, solange nach dem letzten Send noch auf ein frisches Optimierungsergebnis gewartet wird (innerhalb des Nachfrage-Fensters und der Cache noch aelter als der Absendezeitpunkt)."
     submitted = _last_site_data_submit["at"]
@@ -3665,11 +3722,16 @@ BATTERY_SHIFT_ACTOR_KEYS = {"battery_charge_shift_pv_surplus", "battery_discharg
 
 BATTERY_RETRY_DELAY_SECONDS = 10
 BATTERY_RETRY_TIMEOUT_SECONDS = 120
-# Watchdog-Wert (Sekunden) fuer die "Command Timeout"-Entitaet - wird bei "Batterie netzladen" und
-# "Batterie-Entladen verschieben" mit aufgefrischt (siehe deren Referenz-Automationen), bei den
-# anderen beiden Aktionstypen nicht (offenbar nur fuer die aktiv vom Standardverhalten abweichenden
-# Aktionen noetig).
-BATTERY_COMMAND_TIMEOUT_VALUE = 3600
+# Watchdog-Wert (Sekunden) fuer die "Command Timeout"-Entitaet, je Aktionstyp verschieden:
+# beim Netzladen reicht 1 h, beim Entlade-Stopp soll der Befehl bis zu 10 h stehen bleiben.
+# Wird nur bei "Batterie netzladen" und "Batterie-Entladen verschieben" aufgefrischt (siehe deren
+# Referenz-Automationen), und auch dort nur, wenn ueberhaupt eine Timeout-Entitaet zugeordnet ist -
+# kein Pflichtfeld, manche Wechselrichter-Integrationen haben keine (das Konfig-Feld dafuer ist
+# ausgeblendet, ein bestehendes Mapping bleibt aber erhalten und wird weiter genutzt).
+BATTERY_COMMAND_TIMEOUT_SECONDS = {
+    "battery_grid_charge": 3600,       # 60 min
+    "battery_discharge_shift": 36000,  # 10 h
+}
 
 
 def _battery_value_matches(current_state, target_value):
@@ -3754,12 +3816,12 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
 
     if action_key == "battery_grid_charge":
         if timeout_entity:
-            write_number(timeout_entity, BATTERY_COMMAND_TIMEOUT_VALUE, "Timeout")
+            write_number(timeout_entity, BATTERY_COMMAND_TIMEOUT_SECONDS["battery_grid_charge"], "Timeout")
         write_number(charge_limit_entity, round((target_kw or 0) * 1000), "Ladeleistung")
         write_mode(netzladen_mode_value, "Modus")
     elif action_key == "battery_discharge_shift":
         if timeout_entity:
-            write_number(timeout_entity, BATTERY_COMMAND_TIMEOUT_VALUE, "Timeout")
+            write_number(timeout_entity, BATTERY_COMMAND_TIMEOUT_SECONDS["battery_discharge_shift"], "Timeout")
         write_number(discharge_limit_entity, 0, "Entladeleistung")
     elif action_key == "battery_charge_shift_pv_surplus":
         write_mode(self_consumption_mode_value, "Modus")

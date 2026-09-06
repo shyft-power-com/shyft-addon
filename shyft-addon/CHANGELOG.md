@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.45.26
+
+* **Dynamischer Stromtarif: Prüfzeile.** Sobald der feste Anteil eingetragen ist, zeigt die „Strom"-Kachel die aktuellen Gesamtstrompreise (Börse + fixer Anteil) als Chip-Leiste – umschaltbar **stündlich / 15 Min**. Neuer Endpunkt `GET /electricity/price-preview` (Awattar-Börsenpreise brutto + Aufschlag). Awattar liefert Stundenpreise; die 15-Minuten-Werte sind daraus abgeleitet (je Stunde vier gleiche Werte, im Fuß der Leiste vermerkt).
+* **Die „Strom"-Kachel klappt jetzt ein**, sobald Tarif und Einspeisevergütung ausgefüllt sind – aufklappbar über den Pfeil bzw. „Details einblenden", wie die Geräte-Kacheln. **„Strom"** ist zusätzlich als erste Sprungmarke in der Geräte-Navigation.
+* **Add-on-Beschreibung:** den doppelten Satz „Weitere Informationen …" entfernt – die von Home Assistant aus dem `url`-Feld erzeugte, verlinkte Zeile auf shyft-power.com bleibt die einzige.
+* **Batterie-Steuerung: das Feld „Timeout-Entität (Watchdog)" ist ausgeblendet.** Ein bereits gesetztes Mapping bleibt erhalten und wird weiter aufgefrischt; ohne Mapping wird der Schritt übersprungen (kein Pflichtfeld – nicht jede Wechselrichter-Integration hat einen Command-Timeout). Der aufgefrischte Wert ist jetzt je Aktionstyp verschieden: **Batterie netzladen → 3600 s (60 min)**, **Batterie-Entladen verschieben → 36000 s (10 h)**.
+
 ## 0.0.45.25
 
 * **Neue „Strom"-Kachel oben auf der Konfigurationsseite** (vor den Geräte-Kacheln): Abschnitt „Stromverbrauch, Grundlast" (Dropdown jetzt mit Ø-Dauerleistung in W: 150 / 300 / 500 / 750 / 1.000 / 1.500 W) und Abschnitt „Stromtarif (Strombezug)" mit Umschalter **Fixer Tarif · Hoch-/Niedertarif · Dynamischer Tarif**.

@@ -795,6 +795,10 @@ function renderDeviceNav(problems, warnings) {
     const failedSectionKeys = new Set(problems.map(p => actionFailedProblemSectionKey(p.id)).filter(Boolean));
     const warningSectionKeys = new Set(warnings.map(w => w.sectionKey).filter(Boolean));
 
+    // "Strom" ist die site-weite Kachel oberhalb der Geraetekacheln (siehe renderGeneralConfigSection) -
+    // gruener Haken, sobald Tarif + Einspeiseverguetung ausgefuellt sind, sonst nur als Sprungmarke.
+    container.appendChild(buildDeviceNavChip('Strom', 'strom', isElectricityConfigComplete() ? 'ok' : 'unconfigured'));
+
     for (const section of INTEGRATION_SECTIONS) {
         const currentIds = currentIntegrationSelections[section.key] || [];
         const iconState = currentIds.length === 0 ? 'unconfigured'
@@ -1257,6 +1261,19 @@ function watchForErrorsToExpand(bodyDiv, onError) {
 // "Blockheizkraftwerk"-Geraet - beide Felder bleiben in collect_static_config vorbereitet, nur ohne UI.
 const WEEKDAY_NAMES = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
 
+// Gilt die Strom-Kachel als vollstaendig ausgefuellt? Dann startet sie eingeklappt (wie die
+// Geraetekacheln, siehe isSectionComplete). Grundlast hat einen Default und zaehlt immer als
+// gesetzt; geprueft werden Tarif (je nach Modus) und Einspeiseverguetung.
+function isElectricityConfigComplete() {
+    const has = (k) => configData[k] !== undefined && configData[k] !== null && configData[k] !== '';
+    const mode = configData['electricityTariffMode'] || 'fixed';
+    let tariffOk = false;
+    if (mode === 'fixed') tariffOk = has('electricityFixedCent');
+    else if (mode === 'ht_nt') tariffOk = has('electricityHtCent') && has('electricityNtCent');
+    else if (mode === 'dynamic') tariffOk = has('electricityDynamicSurchargeCent');
+    return tariffOk && has('electricitySellCent');
+}
+
 function renderGeneralConfigSection() {
     const container = document.getElementById('config');
     if (!container) {
@@ -1265,22 +1282,63 @@ function renderGeneralConfigSection() {
     container.innerHTML = '';
     // Eigene Kachel im .integrationSection-Look, oberhalb der Geraete-Kacheln (siehe #config in index.html).
     container.className = 'integrationSection electricitySection';
+    // Fuer scrollToIntegrationSection / renderDeviceNav - wie bei den Geraetekacheln.
+    container.dataset.sectionKey = 'strom';
+
+    let expanded = !isElectricityConfigComplete();
 
     const heading = document.createElement('div');
     heading.className = 'integrationHeading';
+    const headingRow = document.createElement('div');
+    headingRow.className = 'integrationHeadingRow';
+
+    const toggleButton = document.createElement('button');
+    toggleButton.type = 'button';
+    toggleButton.className = 'sectionToggleButton';
+    toggleButton.setAttribute('aria-label', 'Ein-/ausklappen');
+    toggleButton.textContent = '▾';
+    headingRow.appendChild(toggleButton);
+
     const h2 = document.createElement('h2');
     h2.textContent = 'Strom';
-    heading.appendChild(h2);
+    headingRow.appendChild(h2);
+    heading.appendChild(headingRow);
     container.appendChild(heading);
 
-    container.appendChild(buildElectricitySubheading('Stromverbrauch, Grundlast'));
-    container.appendChild(buildElectricityBaseLoadField());
+    // Deutlich sichtbarer Einblenden-Button (wie bei den Geraetekacheln) - nur sichtbar, wenn eingeklappt.
+    const showDetailsButton = document.createElement('button');
+    showDetailsButton.type = 'button';
+    showDetailsButton.className = 'sectionShowDetailsButton';
+    showDetailsButton.textContent = 'Details einblenden';
+    showDetailsButton.addEventListener('click', () => {
+        expanded = true;
+        updateBodyVisibility();
+    });
+    container.appendChild(showDetailsButton);
 
-    container.appendChild(buildElectricitySubheading('Stromtarif (Strombezug)'));
-    container.appendChild(buildElectricityTariffControl());
+    const bodyDiv = document.createElement('div');
+    bodyDiv.id = 'section_body_strom';
 
-    container.appendChild(buildElectricitySubheading('Einspeisung'));
-    container.appendChild(buildElectricityPriceSellField());
+    bodyDiv.appendChild(buildElectricitySubheading('Stromverbrauch, Grundlast'));
+    bodyDiv.appendChild(buildElectricityBaseLoadField());
+
+    bodyDiv.appendChild(buildElectricitySubheading('Stromtarif (Strombezug)'));
+    bodyDiv.appendChild(buildElectricityTariffControl());
+
+    bodyDiv.appendChild(buildElectricitySubheading('Einspeisung'));
+    bodyDiv.appendChild(buildElectricityPriceSellField());
+    container.appendChild(bodyDiv);
+
+    function updateBodyVisibility() {
+        bodyDiv.style.display = expanded ? '' : 'none';
+        toggleButton.classList.toggle('collapsed', !expanded);
+        showDetailsButton.style.display = expanded ? 'none' : '';
+    }
+    toggleButton.addEventListener('click', () => {
+        expanded = !expanded;
+        updateBodyVisibility();
+    });
+    updateBodyVisibility();
 }
 
 function buildElectricitySubheading(text) {
@@ -1355,9 +1413,24 @@ function buildElectricityTariffControl() {
             note.className = 'electricityHint';
             note.textContent = 'Die Börsenpreise (Brutto, EPEX Day-Ahead) werden automatisch von der Strombörse abgerufen. Trag hier nur deinen festen Aufschlag ein (Netzentgelt, Abgaben, Steuer, Lieferantenmarge) - er wird auf jeden Börsen-Stundenpreis addiert.';
             panels.appendChild(note);
-            panels.appendChild(centField('Fixer Anteil (brutto)',
+            const surchargeField = centField('Fixer Anteil (brutto)',
                 'Wird auf jeden Börsen-Stundenpreis aufgeschlagen.',
-                'electricity_dyn_surcharge_cent', 'electricityDynamicSurchargeCent', 'z.B. 15'));
+                'electricity_dyn_surcharge_cent', 'electricityDynamicSurchargeCent', 'z.B. 15');
+            panels.appendChild(surchargeField);
+
+            // Pruefzeile: sobald der fixe Anteil eingetragen ist, die aktuellen Gesamtpreise
+            // (Börse + Anteil) zeigen - stündlich und als daraus abgeleitete 15-Min-Werte.
+            const surchargeInput = surchargeField.querySelector('input');
+            const preview = buildElectricityPricePreview(() => {
+                const v = parseFloat(surchargeInput ? surchargeInput.value : configData['electricityDynamicSurchargeCent']);
+                return isNaN(v) ? null : v;
+            });
+            panels.appendChild(preview.element);
+            if (surchargeInput) {
+                surchargeInput.addEventListener('input', () => preview.scheduleRefresh());
+                surchargeInput.addEventListener('change', () => preview.refresh());
+            }
+            preview.refresh();
         }
     }
     renderPanels(mode);
@@ -1453,6 +1526,112 @@ function buildHtWindowEditor() {
 
     render();
     return wrap;
+}
+
+// Pruefzeile fuer den dynamischen Stromtarif. getSurcharge() liefert den aktuell im Feld
+// stehenden fixen Anteil in Cent (live, auch waehrend des Tippens) oder null. Ruft
+// /electricity/price-preview ab (Awattar-Boersenpreise + fixer Anteil) und zeigt die aktuellen
+// Gesamtpreise als Chips - umschaltbar stündlich / 15 Min.
+function buildElectricityPricePreview(getSurcharge) {
+    const box = document.createElement('div');
+    box.className = 'electricityPricePreview';
+    let debounceTimer = null;
+    let resolution = 'hourly';   // 'hourly' | 'quarter'
+    let state = null;            // null | 'loading' | Antwortobjekt
+
+    const fmt = (n, d = 1) => Number(n).toLocaleString('de-DE', {minimumFractionDigits: d, maximumFractionDigits: d});
+
+    function render() {
+        box.innerHTML = '';
+        if (getSurcharge() === null) {
+            const h = document.createElement('p');
+            h.className = 'electricityHint';
+            h.textContent = 'Sobald du den fixen Anteil einträgst, erscheint hier eine Prüfzeile mit den aktuellen Gesamtstrompreisen.';
+            box.appendChild(h);
+            return;
+        }
+
+        const title = document.createElement('div');
+        title.className = 'electricityPricePreviewTitle';
+        title.textContent = 'Aktuelle Gesamtstrompreise (Börse + fixer Anteil)';
+        box.appendChild(title);
+
+        if (state === 'loading') {
+            const p = document.createElement('p');
+            p.className = 'electricityHint';
+            p.textContent = 'Börsenpreise werden abgerufen …';
+            box.appendChild(p);
+            return;
+        }
+        if (!state || !state.ok) {
+            const p = document.createElement('p');
+            p.className = 'electricityHint';
+            p.textContent = (state && state.reason === 'no_spot')
+                ? 'Börsenpreise sind derzeit nicht abrufbar (Awattar). Bitte später erneut prüfen.'
+                : 'Die Gesamtpreise konnten nicht berechnet werden.';
+            box.appendChild(p);
+            return;
+        }
+
+        box.appendChild(buildSegmentedControl(
+            [['hourly', 'Stündlich'], ['quarter', '15 Min']],
+            resolution,
+            (v) => { resolution = v; render(); },
+        ));
+
+        const rows = resolution === 'quarter' ? state.quarter_hourly : state.hourly;
+        const strip = document.createElement('div');
+        strip.className = 'electricityPriceStrip';
+        for (const r of (rows || [])) {
+            const chip = document.createElement('div');
+            chip.className = 'electricityPriceChip';
+            const t = new Date(r.start);
+            const hh = String(t.getHours()).padStart(2, '0');
+            const time = document.createElement('span');
+            time.className = 'electricityPriceChipTime';
+            time.textContent = resolution === 'quarter'
+                ? hh + ':' + String(t.getMinutes()).padStart(2, '0')
+                : hh + ' Uhr';
+            const val = document.createElement('span');
+            val.className = 'electricityPriceChipValue';
+            val.textContent = fmt(r.total_ct, 1) + ' ct';
+            chip.title = 'Börse ' + fmt(r.spot_ct, 2) + ' ct + fixer Anteil ' + fmt(state.surcharge_ct, 2) + ' ct';
+            chip.append(time, val);
+            strip.appendChild(chip);
+        }
+        box.appendChild(strip);
+
+        const foot = document.createElement('p');
+        foot.className = 'electricityPricePreviewFoot';
+        let footText = 'Quelle: ' + state.source + '. Stand ' + new Date(state.generated_at).toLocaleString('de-DE') + '.';
+        if (resolution === 'quarter' && state.quarter_hourly_derived) {
+            footText += ' Awattar liefert Stundenpreise – die Viertelstunden sind daraus abgeleitet (je Stunde vier gleiche Werte).';
+        }
+        foot.textContent = footText;
+        box.appendChild(foot);
+    }
+
+    async function refresh() {
+        const s = getSurcharge();
+        if (s === null) { state = null; render(); return; }
+        state = 'loading';
+        render();
+        try {
+            state = await getJson(insideHomeAssistant + '/electricity/price-preview?surcharge_ct=' + encodeURIComponent(s));
+        } catch (e) {
+            console.log(e);
+            state = {ok: false};
+        }
+        render();
+    }
+
+    function scheduleRefresh() {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(refresh, 600);
+    }
+
+    render();
+    return {element: box, refresh, scheduleRefresh};
 }
 
 function renderIntegrationSections() {
@@ -3952,8 +4131,6 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
             const wrap = document.createElement('div');
             wrap.appendChild(buildLabeledRow('Aktuelle max. Entladeleistung', 'Entität, über die das Addon die Entladeleistung der Batterie begrenzt (Zahlenwert in kW).',
                 buildBatteryCoupledEntityField('battery_discharge_limit_current', datalistId, refresh)));
-            wrap.appendChild(buildLabeledRow('Timeout-Entität (Watchdog)', 'Manche Wechselrichter (z.B. SolarEdge) brauchen eine periodisch aufgefrischte "Command Timeout"-Entität, damit ein Fernbefehl in Kraft bleibt. Nur ausfüllen, falls dein Gerät das braucht.',
-                buildBatteryCoupledEntityField('battery_command_timeout', datalistId, refresh)));
             return wrap;
         }));
 
@@ -3965,8 +4142,6 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
             wrap.appendChild(buildLabeledRow('Modus "Netzladen"', 'Welcher Rohwert der Batterie-Modus-Entität bedeutet "aus dem Netz laden" (z.B. "Charge from Solar Power and Grid").', modeSelect));
             wrap.appendChild(buildLabeledRow('Aktuelle max. Ladeleistung', 'Dieselbe Entität wie bei "Batterie-Laden verschieben" - dort bereits ausgefüllt, falls du das schon gemacht hast.',
                 buildBatteryCoupledEntityField('battery_charge_limit_current', datalistId, refresh)));
-            wrap.appendChild(buildLabeledRow('Timeout-Entität (Watchdog)', 'Dieselbe Entität wie bei "Batterie-Entladen verschieben".',
-                buildBatteryCoupledEntityField('battery_command_timeout', datalistId, refresh)));
             return wrap;
         }));
 
