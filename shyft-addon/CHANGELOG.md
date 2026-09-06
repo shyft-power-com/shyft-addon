@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.20
+
+* Dashboard: Die „Anwesenheitsprognose"-Überschrift (mit Erklär-`?`) sitzt jetzt unter dem „Ladestand Auto"-Chart als Überschrift der „Verbrauchsprognose (48h)"-Details, statt oben als Unterzeile des Charts. Die farbige Anwesenheits-Legende und die Overlay-Leiste im Chart bleiben.
+* Dashboard: Ein aufgeklapptes „Log anzeigen" einer Aktion bleibt beim 30-Sekunden-Datenrefresh offen (der Aufklapp-Zustand wird pro Aktion gemerkt und beim Neu-Aufbau der Liste wiederhergestellt).
+
 ## 0.0.45.19
 
 * **Fix: Eine laufende Optimierer-PV-Überschuss-„Auto laden"-Aktion hatte keine Stopp-Bedingung.** `_recheck_active_pv_surplus_optimizer_action` korrigierte nur den Ziel-kW-Wert anhand der PV-Leistung und lud bis zum Stundenende weiter — auch wenn längst kein Überschuss mehr da war und der Heimspeicher in die Wallbox entladen wurde (nur die separate Fallback-Session kannte den `PV_SURPLUS_BATTERY_STOP_SOC`-Stopp). Jetzt bricht dieser Pfad ab, sobald der Heimspeicher-SoC ≤ 97 % fällt **oder** der **live** gemessene Auto-Ladestand die Grenze „Limit PV-Überschussladen" (`evSocMaxPvSurplus`) erreicht — die wurde bisher nur gegen den evtl. veralteten `SOC_EV` aus der letzten `output.csv` geprüft. Dieselben zwei Wächter greifen jetzt auch in `compute_ev_charge_actions`, damit der nächste Optimierungslauf die Aktion nicht sofort neu anlegt.

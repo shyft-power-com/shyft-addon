@@ -3940,6 +3940,12 @@ function formatShyftEuro(value) {
     return arrow + ' ' + value.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €';
 }
 
+// Welche "Log anzeigen"-Details der Nutzer aufgeklappt hat - ueberlebt das komplette Neu-Aufbauen
+// der Aktionsliste beim 30-Sekunden-Refresh (renderShyftActions leert den Container), damit sich
+// ein geoeffnetes Log nicht bei jedem Refresh wieder zuklappt.
+const openActionLogKeys = new Set();
+const actionLogKey = a => `${a['Action Name'] || ''}|${a['Date Start'] || ''}`;
+
 function buildShyftActionCard(action) {
     const status = action['Status'] || '';
     const normalizedStatus = status.toLowerCase();
@@ -3986,6 +3992,12 @@ function buildShyftActionCard(action) {
     if (action['Log']) {
         const logDetails = document.createElement('details');
         logDetails.className = 'shyftActionLog';
+        const logKey = actionLogKey(action);
+        if (openActionLogKeys.has(logKey)) logDetails.open = true;
+        logDetails.addEventListener('toggle', () => {
+            if (logDetails.open) openActionLogKeys.add(logKey);
+            else openActionLogKeys.delete(logKey);
+        });
         const logSummary = document.createElement('summary');
         logSummary.textContent = 'Log anzeigen';
         logDetails.appendChild(logSummary);
@@ -4031,6 +4043,9 @@ function hasActiveOrUpcomingAction(actions) {
 }
 
 function renderShyftActions(container, actions) {
+    // Aufgeklappt-Zustand der Logs behalten, aber nicht mehr vorhandene Aktionen aus dem Set werfen.
+    const validLogKeys = new Set(actions.map(actionLogKey));
+    for (const k of [...openActionLogKeys]) if (!validLogKeys.has(k)) openActionLogKeys.delete(k);
     container.innerHTML = '';
 
     if (actions.length === 0) {
@@ -4340,12 +4355,9 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     wrapper.appendChild(titleEl);
 
     if (presenceForecast) {
-        const subheading = document.createElement('div');
-        subheading.className = 'dashboardChartSubheading';
-        subheading.textContent = 'Anwesenheitsprognose';
-        subheading.appendChild(buildTooltip('Statistische Vorhersage aus der bisher geloggten Anwesenheits-/Fahrhistorie: für jede Kombination aus Wochentag und Uhrzeit werden mindestens drei historische Beobachtungen benötigt, sonst greift ein grober Rückfall auf ein Standardprofil (weniger verlässlich).'));
-        wrapper.appendChild(subheading);
-
+        // Die "Anwesenheitsprognose"-Ueberschrift + Erklaerung sitzt jetzt unter dem Chart als
+        // Ueberschrift der "Verbrauchsprognose (48h)"-Details (siehe buildPresenceForecastHeading
+        // am Aufrufort) - hier oben bleibt nur die Legende zur farbigen Anwesenheits-Leiste im Chart.
         const legend = document.createElement('div');
         legend.className = 'dashboardChartLegend';
         for (const [color, label] of [
@@ -4813,6 +4825,16 @@ function mostLikelyPresenceState(entry) {
 // Hinweis, keine ~-Markierung. 'learning' -> erst wenige Fahrtage Historie. 'default' -> noch gar
 // kein Fahrtag, Standard-Fahrprofil aktiv. Die kWh-Werte sind exakt die, die auch als d_ev_kwh in
 // die optimizer-input.csv gehen (build_ev_optimizer_fields).
+// "Anwesenheitsprognose"-Ueberschrift (+ Erklaer-Tooltip) fuer den Bereich unter dem
+// "Ladestand Auto"-Chart - Ueberschrift der "Verbrauchsprognose (48h)"-Details.
+function buildPresenceForecastHeading() {
+    const subheading = document.createElement('div');
+    subheading.className = 'dashboardChartSubheading';
+    subheading.textContent = 'Anwesenheitsprognose';
+    subheading.appendChild(buildTooltip('Statistische Vorhersage aus der bisher geloggten Anwesenheits-/Fahrhistorie: für jede Kombination aus Wochentag und Uhrzeit werden mindestens drei historische Beobachtungen benötigt, sonst greift ein grober Rückfall auf ein Standardprofil (weniger verlässlich).'));
+    return subheading;
+}
+
 function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionBasis, presenceForecast) {
     const details = document.createElement('details');
     details.className = 'dashboardConsumptionForecast';
@@ -5954,6 +5976,9 @@ async function loadDashboard() {
             slopeBands: {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 0.1},
             presenceForecast,
         });
+        if (presenceForecast) {
+            ladestandAutoChart.appendChild(buildPresenceForecastHeading());
+        }
         if (consumptionForecast) {
             ladestandAutoChart.appendChild(buildCarConsumptionForecastDetails(
                 consumptionForecast.labels, consumptionForecast.consumptionKwh, consumptionForecast.consumptionBasis, presenceForecast));
