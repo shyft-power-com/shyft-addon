@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.19
+
+* **Fix: Eine laufende Optimierer-PV-Überschuss-„Auto laden"-Aktion hatte keine Stopp-Bedingung.** `_recheck_active_pv_surplus_optimizer_action` korrigierte nur den Ziel-kW-Wert anhand der PV-Leistung und lud bis zum Stundenende weiter — auch wenn längst kein Überschuss mehr da war und der Heimspeicher in die Wallbox entladen wurde (nur die separate Fallback-Session kannte den `PV_SURPLUS_BATTERY_STOP_SOC`-Stopp). Jetzt bricht dieser Pfad ab, sobald der Heimspeicher-SoC ≤ 97 % fällt **oder** der **live** gemessene Auto-Ladestand die Grenze „Limit PV-Überschussladen" (`evSocMaxPvSurplus`) erreicht — die wurde bisher nur gegen den evtl. veralteten `SOC_EV` aus der letzten `output.csv` geprüft. Dieselben zwei Wächter greifen jetzt auch in `compute_ev_charge_actions`, damit der nächste Optimierungslauf die Aktion nicht sofort neu anlegt.
+
 ## 0.0.45.18
 
 * Dashboard-Energiefluss: Der Auto-Status zeigt beim Laden jetzt „Lädt (11,0 kW)" (aktuelle Ladeleistung aus `WB - Current Charging Power`) statt nur „lädt". Ist die Leistung gerade nicht lesbar, bleibt es bei „lädt".

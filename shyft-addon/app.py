@@ -3969,6 +3969,16 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
             max_soc_pct = config.get("evSocMaxPvSurplus")
             if max_soc_pct is not None and soc_now >= float(max_soc_pct):
                 continue  # Ausnahme: Ziel-Ladestand (PV-Ueberschuss) fuer die laufende Stunde schon erreicht
+            # soc_now oben ist der (evtl. veraltete) SOC_EV aus der letzten output.csv - zusaetzlich
+            # gegen den LIVE-Ladestand pruefen, sonst startet die Aktion trotz erreichter Grenze neu.
+            live_ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
+            if max_soc_pct is not None and live_ev_soc is not None and live_ev_soc >= float(max_soc_pct):
+                continue
+            # Kein PV-Ueberschuss anlegen, wenn der Heimspeicher schon entladen wird (analog zum
+            # Stopp in _recheck_active_pv_surplus_optimizer_action / der Fallback-Session).
+            home_battery_soc = read_home_battery_soc(config)
+            if home_battery_soc is not None and home_battery_soc <= PV_SURPLUS_BATTERY_STOP_SOC:
+                continue
 
         if is_current_hour and not is_car_ready_to_charge(config):
             continue  # Grundvoraussetzung fuer eine (neu oder weiterhin) laufende Aktion in der aktuellen Stunde
@@ -4062,6 +4072,29 @@ def _apply_ev_pv_surplus_start_correction(action, config, context="bei Start"):
     return corrected
 
 
+def _stop_optimizer_pv_surplus_action(action, config, reason):
+    """Beendet eine laufende Optimierer-PV-Ueberschuss-'Auto laden'-Aktion samt Wallbox-Stopp
+    (execute_car_charge_stop) und Buchfuehrung (Status 'beendet' + Eintrag in endedShyftActionIds,
+    damit process_shyft_actions / _reconcile_computed_actions sie nicht erneut anfassen) - das
+    Optimierer-Pendant zu stop_pv_surplus_charging fuer die Fallback-Session. `reason` landet im Log."""
+    try:
+        execute_car_charge_stop(action.get("Target Value"))
+    except Exception as e:
+        print("[Shyft] PV-Überschussladen (Optimierer-Aktion): Wallbox-Stopp fehlgeschlagen:", repr(e))
+    action["Status"] = "beendet"
+    timestamp = datetime.now().strftime("%d.%m. %H:%M Uhr")
+    note = f"{timestamp}: beendet - {reason}"
+    action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+    _update_computed_action(action)
+    action_id = action.get("_id")
+    if action_id:
+        ended_ids = set(config.get("endedShyftActionIds", []))
+        if action_id not in ended_ids:
+            ended_ids.add(action_id)
+            config["endedShyftActionIds"] = sorted(ended_ids)
+            _write_current_config(config)
+
+
 def _recheck_active_pv_surplus_optimizer_action(config):
     """Periodisches Gegenstueck zu _apply_ev_pv_surplus_start_correction: laeuft gerade eine
     Optimierer-basierte PV-Ueberschuss-'Auto laden'-Aktion (Status "aktiv", wirklich gestartet - nicht
@@ -4077,6 +4110,24 @@ def _recheck_active_pv_surplus_optimizer_action(config):
                     and a.get("PV Surplus") and a.get("Execution Status") == "yes, started"), None)
     if not action:
         return
+
+    # Stopp-Waechter, die dieser Pfad bisher nicht hatte (nur die Fallback-Session in
+    # _run_pv_surplus_charging_tick_impl kannte sie): sobald der Heimspeicher nennenswert entladen
+    # wird, ist es kein PV-Ueberschuss mehr; und der beim Anlegen der Aktion nur gegen den
+    # veralteten output.csv-SOC_EV geprueften Nutzer-Grenze "Limit PV-Ueberschussladen" wird hier
+    # der LIVE-Ladestand des Autos gegenuebergestellt.
+    battery_soc = read_home_battery_soc(config)
+    if battery_soc is not None and battery_soc <= PV_SURPLUS_BATTERY_STOP_SOC:
+        _stop_optimizer_pv_surplus_action(
+            action, config, f"Heimspeicher-SOC auf {battery_soc:.0f}% gefallen - kein PV-Überschuss mehr")
+        return
+    ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
+    max_ev_soc = config.get("evSocMaxPvSurplus")
+    if ev_soc is not None and max_ev_soc is not None and ev_soc >= float(max_ev_soc):
+        _stop_optimizer_pv_surplus_action(
+            action, config, f"Auto-Ladestand {ev_soc:.0f}% ≥ Limit PV-Überschussladen ({float(max_ev_soc):.0f}%)")
+        return
+
     previous = action.get("Target Value")
     corrected = _apply_ev_pv_surplus_start_correction(action, config, context="laufend")
     if corrected == previous:
