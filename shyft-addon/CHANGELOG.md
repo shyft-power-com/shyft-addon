@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.24
+
+* **Fix: 0.0.45.23 startete nicht** (`NameError: name '_records_action_test' is not defined` beim Modul-Import). Der `@_records_action_test`-Decorator an den `/actions/**/test`-Endpunkten wird zur Ladezeit ausgewertet, die Helferfunktion war aber erst weiter unten in `app.py` definiert. Der komplette Bereitschafts-/Test-Helfer-Block liegt jetzt vor den Test-Endpunkten.
+
 ## 0.0.45.23
 
 * **Fehlgeschlagene Aktionen werden markiert.** Neue `Execution Status`-Werte `no, error` (Aktion konnte nicht gestartet werden) und `yes, not finished` (Aktion konnte nicht beendet werden), jeweils mit `Error Message` als Klartext-Grund. Die Aktionskarte im Gerätesteuerung-Tab wird dann **rot umrandet** und bekommt ein aufklappbares „Log" mit dem Grund (wie beim PV-Überschussladen). Bei jedem folgenden 15-Minuten-Poll wird die Aktion erneut versucht – sie „heilt" von selbst, sobald das Gerät wieder funktioniert. Benachrichtigt wird nur beim ersten Fehlschlag, nicht bei jedem Retry.

@@ -3047,6 +3047,137 @@ DHW_ACTIVATION_TEST_POLL_INTERVAL_SECONDS = 5
 DHW_ACTIVATION_TEST_POLL_TIMEOUT_SECONDS = 90
 
 
+# --- Aktions-Bereitschaft (vollstaendig eingerichtet + zuletzt erfolgreich getestet) -----------
+# Hier oben, weil die /actions/**/test-Handler weiter unten @_records_action_test als Decorator
+# nutzen (wird zur Modul-Ladezeit ausgewertet). Die Funktions-Ruempfe referenzieren spaeter
+# definierte Namen (resolve_control_variant, ACTION_NAME_TO_CONTROL_KEY, ...) - das ist ok, sie
+# laufen erst zur Aufrufzeit.
+BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS = {
+    "battery_charge_shift_pv_surplus": "battery_charge_limit_current",
+    "battery_discharge_shift": "battery_discharge_limit_current",
+    "battery_grid_charge": "battery_charge_limit_current",
+}
+
+
+def _action_ready_key(action_name):
+    "Schluessel eines Aktionstyps in config['actionTestPassed'] / _action_type_config_state - oder None, wenn der Typ nicht gegated wird."
+    if action_name in ACTION_NAME_TO_CONTROL_KEY:
+        return ACTION_NAME_TO_CONTROL_KEY[action_name]  # heating_target_temp, consumer_on_off
+    key = ACTION_NAME_TO_ACTOR_KEY.get(action_name)     # car_charge_start, hot_water, battery_*
+    return key if key not in ("pv_feed_in_limit", "consumption_limit_14a") else None
+
+
+def _action_type_config_state(config, ready_key):
+    """Die fuer diesen Aktionstyp ausfuehrungsrelevante Konfig-Teilmenge (portiert aus
+    isSectionComplete in www/app.js). {'flags': {..bools..}, 'fp': {..alles inkl. Varianten..}} -
+    'flags' entscheidet 'vollstaendig eingerichtet?', 'fp' geht in den Test-Fingerprint (ein
+    Varianten-/Recipe-Wechsel invalidiert damit ein zuvor gesetztes actionTestPassed)."""
+    im = config.get("integrationMappings", {}) or {}
+    sm = config.get("sensorMappings", {}) or {}
+    am = config.get("actorMappings", {}) or {}
+    cv = config.get("controlVariant", {}) or {}
+    if ready_key == "car_charge_start":
+        recipe = config.get("carChargeRecipe", {}) or {}
+        amp = recipe.get("amperage", {}) or {}
+        if recipe.get("type") == "ha_automation":
+            recipe_ok = bool(recipe.get("haAutomationEntityId"))
+        else:
+            recipe_ok = bool(recipe.get("type") == "three_stage" and (recipe.get("phaseCount", {}) or {}).get("service")
+                             and amp.get("service") and (amp.get("amountFields") or [])
+                             and (recipe.get("control", {}) or {}).get("service"))
+        return {"flags": {"auto": bool(im.get("auto")), "wallbox": bool(im.get("wallbox")), "recipe": recipe_ok},
+                "fp": {"auto": bool(im.get("auto")), "wallbox": bool(im.get("wallbox")),
+                       "recipe": recipe_ok, "recipeType": recipe.get("type")}}
+    if ready_key == "hot_water":
+        recipe = config.get("hotWaterRecipe", {}) or {}
+        recipe_ok = bool(recipe.get("haAutomationEntityId")) if recipe.get("type") == "ha_automation" else bool(recipe.get("service"))
+        entity_ok = bool(_dhw_target_temp_entity(config))
+        return {"flags": {"waermepumpe": bool(im.get("waermepumpe")), "recipe": recipe_ok, "dhwTargetEntity": entity_ok},
+                "fp": {"waermepumpe": bool(im.get("waermepumpe")), "recipe": recipe_ok,
+                       "recipeType": recipe.get("type"), "dhwTargetEntity": entity_ok}}
+    if ready_key == "heating_target_temp":
+        variant = resolve_control_variant("heating_target_temp", config)
+        entity_ok = bool(am.get("heating_target_temp")) if variant == "ha_automation" else bool(sm.get("heatpump_heating_target_temp_normal"))
+        return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
+    if ready_key == "consumer_on_off":
+        variant = resolve_control_variant("consumer_on_off", config)
+        entity_ok = (bool(am.get("consumer_on")) and bool(am.get("consumer_off"))) if variant == "ha_automation" else bool(sm.get("sonstiger_verbraucher_switch_entity"))
+        return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
+    if ready_key in BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS:
+        variant = cv.get(ready_key, "ha_automation")
+        entity_ok = bool(am.get(ready_key)) if variant == "ha_automation" else bool(sm.get(BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[ready_key]))
+        return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
+    return {"flags": {}, "fp": {}}
+
+
+def _action_type_fingerprint(config, ready_key):
+    return json.dumps(_action_type_config_state(config, ready_key)["fp"], sort_keys=True, ensure_ascii=False)
+
+
+def _action_type_ready(config, action_name):
+    """(ok, reason) - ok=True nur, wenn der Aktionstyp vollstaendig eingerichtet UND zuletzt
+    erfolgreich getestet ist (config['actionTestPassed'][key] == aktueller Fingerprint). Nicht
+    gegatete Typen (ready_key None) gelten immer als ok."""
+    ready_key = _action_ready_key(action_name)
+    if not ready_key:
+        return True, ""
+    if not all(_action_type_config_state(config, ready_key)["flags"].values()):
+        return False, f"„{action_name}“ ist noch nicht vollständig eingerichtet – bitte in der Konfiguration prüfen."
+    if config.get("actionTestPassed", {}).get(ready_key) != _action_type_fingerprint(config, ready_key):
+        return False, f"„{action_name}“ wurde noch nicht erfolgreich getestet – bitte in der Konfiguration testen."
+    return True, ""
+
+
+def _record_action_test_result(ready_key, ok):
+    "Setzt bzw. loescht config['actionTestPassed'][ready_key] nach einem /actions/**/test-Aufruf."
+    if not ready_key:
+        return
+    try:
+        cfg = _read_current_config()
+        passed = cfg.setdefault("actionTestPassed", {})
+        if ok:
+            passed[ready_key] = _action_type_fingerprint(cfg, ready_key)
+        else:
+            passed.pop(ready_key, None)
+        _write_current_config(cfg)
+    except Exception as e:
+        print("[Shyft] actionTestPassed konnte nicht aktualisiert werden:", repr(e))
+
+
+def _records_action_test(ready_key=None):
+    """Decorator fuer die /actions/**/test-Handler: liest 'success' aus der JSON-Antwort und
+    aktualisiert darueber config['actionTestPassed']. ready_key=None -> das (einzige) URL-Argument
+    des Handlers ist der Schluessel (testAutoManagedControl/testBatteryDirectControl; Flask uebergibt
+    Routen-Parameter als kwargs)."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            resp = fn(*args, **kwargs)
+            key = ready_key if ready_key is not None else (args[0] if args else next(iter(kwargs.values()), None))
+            try:
+                body = resp[0] if isinstance(resp, tuple) else resp
+                ok = bool((body.get_json(silent=True) or {}).get("success"))
+            except Exception:
+                ok = False
+            _record_action_test_result(key, ok)
+            return resp
+        return wrapper
+    return deco
+
+
+def _fail_action(action, config, exec_status, msg, prev_exec, verb):
+    """Markiert eine Aktion als fehlgeschlagen: Execution Status + Error Message setzen, Grund ans
+    'Log' anhaengen (rendert aufklappbar wie beim PV-Ueberschussladen), persistieren. Benachrichtigt
+    nur, wenn sich der Execution Status dadurch aendert (kein Spam bei Retry jedes Polls)."""
+    action["Execution Status"] = exec_status
+    action["Error Message"] = msg
+    note = f"{datetime.now().strftime('%d.%m. %H:%M Uhr')}: Fehler beim {verb} - {msg}"
+    action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+    _update_computed_action(action)
+    if prev_exec != exec_status:
+        notify_action_event(config, action, f"Fehler beim {verb}")
+
+
 @app.route("/actions/hot_water_target_temp/test", methods=["POST"])
 @_records_action_test("hot_water")
 def testHotWaterTargetTemp():
@@ -3811,133 +3942,6 @@ def _build_action_name_to_control_key():
 
 
 ACTION_NAME_TO_CONTROL_KEY = _build_action_name_to_control_key()
-
-# Ein Batterie-Aktionstyp gilt in der "direct"-Variante als eingerichtet, wenn diese eine Entitaet
-# zugeordnet ist (spiegelt BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS in www/app.js).
-BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS = {
-    "battery_charge_shift_pv_surplus": "battery_charge_limit_current",
-    "battery_discharge_shift": "battery_discharge_limit_current",
-    "battery_grid_charge": "battery_charge_limit_current",
-}
-
-
-def _action_ready_key(action_name):
-    "Schluessel eines Aktionstyps in config['actionTestPassed'] / _action_type_config_state - oder None, wenn der Typ nicht gegated wird."
-    if action_name in ACTION_NAME_TO_CONTROL_KEY:
-        return ACTION_NAME_TO_CONTROL_KEY[action_name]  # heating_target_temp, consumer_on_off
-    key = ACTION_NAME_TO_ACTOR_KEY.get(action_name)     # car_charge_start, hot_water, battery_*
-    return key if key not in ("pv_feed_in_limit", "consumption_limit_14a") else None
-
-
-def _action_type_config_state(config, ready_key):
-    """Die fuer diesen Aktionstyp ausfuehrungsrelevante Konfig-Teilmenge (portiert aus
-    isSectionComplete in www/app.js). {'flags': {..bools..}, 'fp': {..alles inkl. Varianten..}} -
-    'flags' entscheidet 'vollstaendig eingerichtet?', 'fp' geht in den Test-Fingerprint (ein
-    Varianten-/Recipe-Wechsel invalidiert damit ein zuvor gesetztes actionTestPassed)."""
-    im = config.get("integrationMappings", {}) or {}
-    sm = config.get("sensorMappings", {}) or {}
-    am = config.get("actorMappings", {}) or {}
-    cv = config.get("controlVariant", {}) or {}
-    if ready_key == "car_charge_start":
-        recipe = config.get("carChargeRecipe", {}) or {}
-        amp = recipe.get("amperage", {}) or {}
-        if recipe.get("type") == "ha_automation":
-            recipe_ok = bool(recipe.get("haAutomationEntityId"))
-        else:
-            recipe_ok = bool(recipe.get("type") == "three_stage" and (recipe.get("phaseCount", {}) or {}).get("service")
-                             and amp.get("service") and (amp.get("amountFields") or [])
-                             and (recipe.get("control", {}) or {}).get("service"))
-        return {"flags": {"auto": bool(im.get("auto")), "wallbox": bool(im.get("wallbox")), "recipe": recipe_ok},
-                "fp": {"auto": bool(im.get("auto")), "wallbox": bool(im.get("wallbox")),
-                       "recipe": recipe_ok, "recipeType": recipe.get("type")}}
-    if ready_key == "hot_water":
-        recipe = config.get("hotWaterRecipe", {}) or {}
-        recipe_ok = bool(recipe.get("haAutomationEntityId")) if recipe.get("type") == "ha_automation" else bool(recipe.get("service"))
-        entity_ok = bool(_dhw_target_temp_entity(config))
-        return {"flags": {"waermepumpe": bool(im.get("waermepumpe")), "recipe": recipe_ok, "dhwTargetEntity": entity_ok},
-                "fp": {"waermepumpe": bool(im.get("waermepumpe")), "recipe": recipe_ok,
-                       "recipeType": recipe.get("type"), "dhwTargetEntity": entity_ok}}
-    if ready_key == "heating_target_temp":
-        variant = resolve_control_variant("heating_target_temp", config)
-        entity_ok = bool(am.get("heating_target_temp")) if variant == "ha_automation" else bool(sm.get("heatpump_heating_target_temp_normal"))
-        return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
-    if ready_key == "consumer_on_off":
-        variant = resolve_control_variant("consumer_on_off", config)
-        entity_ok = (bool(am.get("consumer_on")) and bool(am.get("consumer_off"))) if variant == "ha_automation" else bool(sm.get("sonstiger_verbraucher_switch_entity"))
-        return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
-    if ready_key in BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS:
-        variant = cv.get(ready_key, "ha_automation")
-        entity_ok = bool(am.get(ready_key)) if variant == "ha_automation" else bool(sm.get(BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[ready_key]))
-        return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
-    return {"flags": {}, "fp": {}}
-
-
-def _action_type_fingerprint(config, ready_key):
-    return json.dumps(_action_type_config_state(config, ready_key)["fp"], sort_keys=True, ensure_ascii=False)
-
-
-def _action_type_ready(config, action_name):
-    """(ok, reason) - ok=True nur, wenn der Aktionstyp vollstaendig eingerichtet UND zuletzt
-    erfolgreich getestet ist (config['actionTestPassed'][key] == aktueller Fingerprint). Nicht
-    gegatete Typen (ready_key None) gelten immer als ok."""
-    ready_key = _action_ready_key(action_name)
-    if not ready_key:
-        return True, ""
-    if not all(_action_type_config_state(config, ready_key)["flags"].values()):
-        return False, f"„{action_name}“ ist noch nicht vollständig eingerichtet – bitte in der Konfiguration prüfen."
-    if config.get("actionTestPassed", {}).get(ready_key) != _action_type_fingerprint(config, ready_key):
-        return False, f"„{action_name}“ wurde noch nicht erfolgreich getestet – bitte in der Konfiguration testen."
-    return True, ""
-
-
-def _record_action_test_result(ready_key, ok):
-    "Setzt bzw. loescht config['actionTestPassed'][ready_key] nach einem /actions/**/test-Aufruf."
-    if not ready_key:
-        return
-    try:
-        cfg = _read_current_config()
-        passed = cfg.setdefault("actionTestPassed", {})
-        if ok:
-            passed[ready_key] = _action_type_fingerprint(cfg, ready_key)
-        else:
-            passed.pop(ready_key, None)
-        _write_current_config(cfg)
-    except Exception as e:
-        print("[Shyft] actionTestPassed konnte nicht aktualisiert werden:", repr(e))
-
-
-def _records_action_test(ready_key=None):
-    """Decorator fuer die /actions/**/test-Handler: liest 'success' aus der JSON-Antwort und
-    aktualisiert darueber config['actionTestPassed']. ready_key=None -> das (einzige) URL-Argument
-    des Handlers ist der Schluessel (testAutoManagedControl/testBatteryDirectControl; Flask uebergibt
-    Routen-Parameter als kwargs)."""
-    def deco(fn):
-        @functools.wraps(fn)
-        def wrapper(*args, **kwargs):
-            resp = fn(*args, **kwargs)
-            key = ready_key if ready_key is not None else (args[0] if args else next(iter(kwargs.values()), None))
-            try:
-                body = resp[0] if isinstance(resp, tuple) else resp
-                ok = bool((body.get_json(silent=True) or {}).get("success"))
-            except Exception:
-                ok = False
-            _record_action_test_result(key, ok)
-            return resp
-        return wrapper
-    return deco
-
-
-def _fail_action(action, config, exec_status, msg, prev_exec, verb):
-    """Markiert eine Aktion als fehlgeschlagen: Execution Status + Error Message setzen, Grund ans
-    'Log' anhaengen (rendert aufklappbar wie beim PV-Ueberschussladen), persistieren. Benachrichtigt
-    nur, wenn sich der Execution Status dadurch aendert (kein Spam bei Retry jedes Polls)."""
-    action["Execution Status"] = exec_status
-    action["Error Message"] = msg
-    note = f"{datetime.now().strftime('%d.%m. %H:%M Uhr')}: Fehler beim {verb} - {msg}"
-    action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
-    _update_computed_action(action)
-    if prev_exec != exec_status:
-        notify_action_event(config, action, f"Fehler beim {verb}")
 
 
 def is_action_type_enabled(config, action_name):
