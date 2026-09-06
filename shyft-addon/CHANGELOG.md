@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.16
+
+* **`WB - p_min` (`compute_wb_p_min`) berücksichtigt jetzt den Stromüberfluss-Fall** (aus der bisherigen Bubble-Logik übernommen): Ist in der letzten `output.csv` die Summe aus `GR_sum` + `PV_EV` über den gesamten Optimierungszeitraum > 5 kWh, wird `p_min` aus dem niedrigsten noch bevorstehenden **`p_sell`** + 0,02 € gerechnet statt aus `p_buy` + 0,02 € (neu: `_wb_p_min_price_column`). Die Schwelle wird bei jedem Sync anhand der aktuell gecachten `output.csv` neu ausgewertet. **Offen (auf Rückmeldung):** Richtung der `> 5`-Schwelle (`GR_sum` = Netto-Netzbezug, groß/positiv = Netzbezieher — passt das zum `p_sell`-Zweig?) und ob im `p_sell`-Zweig `+ 0,02` oder `− 0,02` korrekt ist.
+
 ## 0.0.45.15
 
 * **Fix: eine geplante (noch nicht gestartete) PV-Überschussladen-Aktion zeigte schon "Log anzeigen" an.** Der Log-Eintrag für eine PV-Überschuss-"Auto laden"-Aktion wird jetzt erst erzeugt, sobald die Aktion tatsächlich aktiv/gestartet ist - für rein geplante zukünftige Stunden gibt es gar kein `Log`-Feld mehr, "Log anzeigen" erscheint dort also nicht mehr.

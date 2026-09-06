@@ -2283,15 +2283,40 @@ def _read_current_price_info():
 
 # Sicherheitsmarge auf den guenstigsten noch bevorstehenden Strompreis - siehe compute_wb_p_min.
 WB_P_MIN_MARGIN_EUR = 0.02
+# Ab dieser Summe (kWh) aus GR_sum + PV_EV ueber den gesamten Optimierungszeitraum der letzten
+# output.csv wird p_min auf Basis von p_sell statt p_buy gerechnet (aus der bisherigen
+# Bubble-Logik uebernommen - Richtung der Schwelle und Vorzeichen der Marge im p_sell-Zweig sind
+# noch in Klaerung, siehe CHANGELOG 0.0.45.16).
+WB_P_MIN_PSELL_SWITCH_KWH = 5.0
+
+
+def _wb_p_min_price_column():
+    """'p_buy' (Normalfall) oder 'p_sell', je nach der letzten output.csv im Dashboard-Cache:
+    uebersteigt die Summe aus GR_sum + PV_EV ueber alle Stunden WB_P_MIN_PSELL_SWITCH_KWH, wird
+    'p_sell' gewaehlt. 'p_buy' als Rueckfall, wenn keine output.csv vorliegt oder sie nicht lesbar
+    ist."""
+    try:
+        with open(DASHBOARD_CACHE_PATH, "r") as f:
+            cache = json.load(f)
+        output_csv = cache.get("output_csv")
+        if not output_csv:
+            return "p_buy"
+        out_rows = list(csv.DictReader(io.StringIO(output_csv)))
+        combined = sum(_safe_float(r.get("GR_sum")) + _safe_float(r.get("PV_EV")) for r in out_rows)
+        return "p_sell" if combined > WB_P_MIN_PSELL_SWITCH_KWH else "p_buy"
+    except Exception:
+        return "p_buy"
 
 
 def compute_wb_p_min():
     """WB - p_min (EUR/kWh): der niedrigste ab jetzt (inklusive der aktuellen Stunde) noch
-    bevorstehende Strompreis (p_buy, aus demselben gecachten input.csv wie
-    _read_current_price_info) plus WB_P_MIN_MARGIN_EUR Sicherheitsmarge. Vergangene Stunden werden
-    bewusst ausgeschlossen - der Optimierer soll die Wallbox nie unterhalb dessen laden lassen, was
-    ohnehin der guenstigste noch kommende Preis waere. None, wenn noch kein Cache vorhanden oder
-    keine bevorstehende Stunde darin abgedeckt ist."""
+    bevorstehende Strompreis plus WB_P_MIN_MARGIN_EUR Sicherheitsmarge, aus der zuletzt
+    gecachten input.csv. Vergangene Stunden werden bewusst ausgeschlossen - der Optimierer soll
+    die Wallbox nie unterhalb dessen laden lassen, was ohnehin der guenstigste noch kommende
+    Preis waere. Basispreis ist normalerweise p_buy; hat der letzte Optimierungslauf ueber den
+    ganzen Zeitraum GR_sum + PV_EV > WB_P_MIN_PSELL_SWITCH_KWH ergeben (Stromueberfluss-Fall),
+    wird stattdessen p_sell verwendet (siehe _wb_p_min_price_column). None, wenn noch kein Cache
+    vorhanden oder keine bevorstehende Stunde darin abgedeckt ist."""
     try:
         with open(DASHBOARD_CACHE_PATH, "r") as f:
             cache = json.load(f)
@@ -2308,12 +2333,13 @@ def compute_wb_p_min():
         rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
     except Exception:
         return None
+    price_column = _wb_p_min_price_column()
     upcoming_prices = []
     for i, row in enumerate(rows):
         if i < current_index:
             continue  # Stunden vor "jetzt" ausschliessen
         try:
-            upcoming_prices.append(_safe_float(row.get("p_buy")))
+            upcoming_prices.append(_safe_float(row.get(price_column)))
         except (TypeError, ValueError):
             continue
     if not upcoming_prices:
