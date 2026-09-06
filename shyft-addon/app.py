@@ -2608,6 +2608,13 @@ def _run_pv_surplus_charging_tick_impl():
         if has_battery and battery_soc <= PV_SURPLUS_BATTERY_STOP_SOC:
             stop_pv_surplus_charging(actions, session, config, reason=f"Heimspeicher-SOC auf {battery_soc:.0f}% gefallen")
             return
+        ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
+        max_ev_soc = config.get("evSocMaxPvSurplus")
+        if ev_soc is not None and max_ev_soc is not None and ev_soc >= float(max_ev_soc):
+            stop_pv_surplus_charging(
+                actions, session, config,
+                reason=f"Auto-Ladestand {ev_soc:.0f}% ≥ Limit PV-Überschussladen ({float(max_ev_soc):.0f}%)")
+            return
         if grid_kw is None:
             return  # kein aktueller Messwert - Zielwert unveraendert bis zum naechsten Tick
 
@@ -2675,6 +2682,10 @@ def _run_pv_surplus_charging_tick_impl():
         # Check konnte eine gerade wegen niedrigem SOC beendete Session Sekunden spaeter sofort
         # wieder neu eroeffnet werden, sobald der Netz-Sensor kurz erneut Einspeisung meldete.
         if has_battery and battery_soc <= PV_SURPLUS_BATTERY_STOP_SOC:
+            return
+        start_ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
+        start_max_ev_soc = config.get("evSocMaxPvSurplus")
+        if start_ev_soc is not None and start_max_ev_soc is not None and start_ev_soc >= float(start_max_ev_soc):
             return
         # Der Ablauf der geplanten Stunde ist ein regulaerer, gewollter Uebergang (siehe oben,
         # "Stunde abgelaufen") - die naechste Stunde soll bei fortbestehendem Ueberschuss sofort
@@ -4047,13 +4058,10 @@ def _apply_ev_pv_surplus_start_correction(action, config, context="bei Start"):
     Store (siehe _update_computed_action). Nicht-PV-Ueberschuss-Aktionen bleiben unveraendert; ohne
     aktuellen PV-Messwert bleibt ebenfalls der urspruengliche Zielwert bestehen.
 
-    Wird sowohl im tatsaechlichen Startmoment aufgerufen (siehe handle_shyft_action_start, context=
-    "bei Start", Default) als auch periodisch waehrend die Aktion laeuft (siehe
-    _recheck_active_pv_surplus_optimizer_action, context="laufend") - EV_sum/PV Sum Forecast bleiben
-    dabei immer die FESTEN Werte aus der urspruenglichen Optimierung, nur live_pv_kw aendert sich von
-    Aufruf zu Aufruf, wodurch sich der Zielwert mit der tatsaechlichen PV-Erzeugung mitbewegt statt
-    (wie zuvor) nur einmalig beim Start festgezurrt zu werden und dann eine volle Stunde lang stehen
-    zu bleiben, selbst wenn sich die PV-Leistung zwischenzeitlich stark aendert."""
+    Nur im tatsaechlichen Startmoment aufgerufen (siehe handle_shyft_action_start, context=
+    "bei Start", Default) - liefert den Ausgangs-Zielwert. Die laufende Nachregelung uebernimmt ab
+    dem naechsten PV-Ueberschuss-Tick die Fallback-Session (siehe
+    _recheck_active_pv_surplus_optimizer_action, das die Aktion dorthin uebergibt)."""
     if not action.get("PV Surplus"):
         return action.get("Target Value")
     live_pv_kw = _read_mapped_numeric(config, "photovoltaic_powerflow_pv")
@@ -4072,79 +4080,53 @@ def _apply_ev_pv_surplus_start_correction(action, config, context="bei Start"):
     return corrected
 
 
-def _stop_optimizer_pv_surplus_action(action, config, reason):
-    """Beendet eine laufende Optimierer-PV-Ueberschuss-'Auto laden'-Aktion samt Wallbox-Stopp
-    (execute_car_charge_stop) und Buchfuehrung (Status 'beendet' + Eintrag in endedShyftActionIds,
-    damit process_shyft_actions / _reconcile_computed_actions sie nicht erneut anfassen) - das
-    Optimierer-Pendant zu stop_pv_surplus_charging fuer die Fallback-Session. `reason` landet im Log."""
-    try:
-        execute_car_charge_stop(action.get("Target Value"))
-    except Exception as e:
-        print("[Shyft] PV-Überschussladen (Optimierer-Aktion): Wallbox-Stopp fehlgeschlagen:", repr(e))
-    action["Status"] = "beendet"
-    timestamp = datetime.now().strftime("%d.%m. %H:%M Uhr")
-    note = f"{timestamp}: beendet - {reason}"
-    action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
-    _update_computed_action(action)
-    action_id = action.get("_id")
-    if action_id:
-        ended_ids = set(config.get("endedShyftActionIds", []))
-        if action_id not in ended_ids:
-            ended_ids.add(action_id)
-            config["endedShyftActionIds"] = sorted(ended_ids)
-            _write_current_config(config)
-
-
 def _recheck_active_pv_surplus_optimizer_action(config):
-    """Periodisches Gegenstueck zu _apply_ev_pv_surplus_start_correction: laeuft gerade eine
-    Optimierer-basierte PV-Ueberschuss-'Auto laden'-Aktion (Status "aktiv", wirklich gestartet - nicht
-    nur simuliert), wird ihr Zielwert erneut anhand der aktuellen PV-Leistung nachkorrigiert UND bei
-    Aenderung sofort an die Wallbox weitergegeben (execute_car_charge_start) - sonst wuerde eine
-    Korrektur zwar im Log/Store landen, aber nie tatsaechlich an der Wallbox ankommen. Aufgerufen aus
-    _run_pv_surplus_charging_tick_impl, damit dieselbe 5-Minuten-Cron- UND Live-Sensor-Trigger-
-    Infrastruktur wie die Fallback-Regelung mitgenutzt wird, ohne beide Systeme zu vermischen: die
-    Fallback-Session (PV_SURPLUS_ACTIONS_PATH) bleibt komplett unangetastet, hier geht es
-    ausschliesslich um die separate, optimierer-eigene Aktion im COMPUTED_ACTIONS_PATH-Store."""
+    """Uebergibt eine laufende Optimierer-PV-Ueberschuss-'Auto laden'-Aktion (Status "aktiv",
+    wirklich gestartet) an die Fallback-Session, sobald keine solche Session laeuft. Ab dann regelt
+    sie derselbe grid-basierte Regelkreis wie eine originaere Fallback-Session
+    (_run_pv_surplus_charging_tick_impl, if-session-Zweig: Mindestintervall zwischen Korrekturen,
+    additiver Anstieg nur bei echter neuer Netz-Messung = Anti-Eskalation, multiplikatives Absenken
+    bei Netzbezug, Deckel aus Wallbox-Eckdaten UND aktueller PV-Leistung) inkl. aller Stopp-Waechter
+    (Auto nicht mehr ladebereit, Heimspeicher-SOC <= PV_SURPLUS_BATTERY_STOP_SOC, Stunde abgelaufen,
+    Auto-Ladestand >= evSocMaxPvSurplus).
+
+    Frueher lief hier stattdessen eine einmalige Korrektur ueber die PV-Prognose des
+    Optimierungslaufs (_apply_ev_pv_surplus_start_correction, Kontext "laufend") - ohne
+    Mindestintervall, ohne Anti-Eskalation, ohne Netz-Rueckkopplung und ohne Stopp-Bedingung. Die
+    Korrektur beim tatsaechlichen Start (handle_shyft_action_start) bleibt unveraendert und liefert
+    den Ausgangs-Zielwert, von dem die Fallback-Regelung dann weiterarbeitet.
+
+    Die Wallbox laeuft bei der Uebergabe unterbrechungsfrei weiter - die Optimierer-Aktion wird nur
+    in der Buchfuehrung beendet (_convert_ev_charge_action_to_pv_surplus_fallback)."""
+    actions = _read_pv_surplus_actions()
     action = next((a for a in _read_computed_actions()
                     if a.get("Action Name") == EV_CHARGE_ACTION_NAME and (a.get("Status") or "").lower() == "aktiv"
                     and a.get("PV Surplus") and a.get("Execution Status") == "yes, started"), None)
     if not action:
         return
 
-    # Stopp-Waechter, die dieser Pfad bisher nicht hatte (nur die Fallback-Session in
-    # _run_pv_surplus_charging_tick_impl kannte sie): sobald der Heimspeicher nennenswert entladen
-    # wird, ist es kein PV-Ueberschuss mehr; und der beim Anlegen der Aktion nur gegen den
-    # veralteten output.csv-SOC_EV geprueften Nutzer-Grenze "Limit PV-Ueberschussladen" wird hier
-    # der LIVE-Ladestand des Autos gegenuebergestellt.
-    battery_soc = read_home_battery_soc(config)
-    if battery_soc is not None and battery_soc <= PV_SURPLUS_BATTERY_STOP_SOC:
-        _stop_optimizer_pv_surplus_action(
-            action, config, f"Heimspeicher-SOC auf {battery_soc:.0f}% gefallen - kein PV-Überschuss mehr")
+    # Optimierer-Aktion immer nur in der Buchfuehrung beenden (Wallbox laeuft weiter), damit nie
+    # zwei "aktiv"-EV-Ladeaktionen nebeneinander stehen. Eine neue Fallback-Session nur eroeffnen,
+    # wenn nicht ohnehin schon eine laeuft - die regelt dann einfach die weiterlaufende Wallbox mit.
+    _convert_ev_charge_action_to_pv_surplus_fallback(action, config)
+    if _find_active_pv_surplus_session(actions):
         return
-    ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
-    max_ev_soc = config.get("evSocMaxPvSurplus")
-    if ev_soc is not None and max_ev_soc is not None and ev_soc >= float(max_ev_soc):
-        _stop_optimizer_pv_surplus_action(
-            action, config, f"Auto-Ladestand {ev_soc:.0f}% ≥ Limit PV-Überschussladen ({float(max_ev_soc):.0f}%)")
-        return
-
-    previous = action.get("Target Value")
-    corrected = _apply_ev_pv_surplus_start_correction(action, config, context="laufend")
-    if corrected == previous:
-        return
-    try:
-        execute_car_charge_start(corrected)
-    except Exception as e:
-        print("[Shyft] PV-Überschussladen (laufende Optimierer-Aktion): Nachkorrektur fehlgeschlagen:", repr(e))
+    now_ms = time.time() * 1000
+    target_kw = round(max(PV_SURPLUS_MIN_KW,
+                          min(compute_wallbox_max_kw(config), action.get("Target Value") or PV_SURPLUS_MIN_KW)), 1)
+    session = {"active": True, "target_kw": target_kw, "has_battery": read_home_battery_soc(config) is not None,
+               "start_ms": int(now_ms), "planned_end_ms": _next_full_hour_ms(now_ms), "log": []}
+    _append_pv_surplus_log(session, target_kw, note="von Optimierer-Aktion übernommen")
+    actions.append(session)
+    _write_pv_surplus_actions(actions)
 
 
 def _active_optimizer_ev_charge_action():
     """Die aktuell aktive, wirklich gestartete Optimierer-'Auto laden'-Aktion (COMPUTED_ACTIONS_PATH),
     falls vorhanden - AUSSER sie ist selbst schon als PV-Ueberschuss markiert (PV Surplus=True): die
-    wird bereits ueber _recheck_active_pv_surplus_optimizer_action laufend anhand ihrer eigenen PV-
-    Prognose nachkorrigiert und braucht keine Uebernahme durch die Fallback-Session. Grundlage fuer
-    die Uebernahme in _run_pv_surplus_charging_tick_impl, damit nie zwei 'Auto laden'-Aktionen
-    (eine Optimierer-, eine Fallback-Session) gleichzeitig als aktiv auftauchen."""
+    uebergibt _recheck_active_pv_surplus_optimizer_action separat an die Fallback-Session. Grundlage
+    fuer die Uebernahme in _run_pv_surplus_charging_tick_impl (else-Zweig), damit nie zwei 'Auto
+    laden'-Aktionen (eine Optimierer-, eine Fallback-Session) gleichzeitig als aktiv auftauchen."""
     return next((a for a in _read_computed_actions()
                  if a.get("Action Name") == EV_CHARGE_ACTION_NAME and (a.get("Status") or "").lower() == "aktiv"
                  and a.get("Execution Status") == "yes, started" and not a.get("PV Surplus")), None)

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.21
+
+* **Die laufende Optimierer-PV-Überschuss-„Auto laden"-Aktion wird jetzt von derselben Regelkreis-Logik geregelt wie eine originäre Fallback-Session.** `_recheck_active_pv_surplus_optimizer_action` übergibt die Aktion an die Fallback-Session (Wallbox lädt unterbrechungsfrei weiter, Optimierer-Aktion nur buchhalterisch beendet), statt sie mit der einmaligen PV-Prognose-Formel `EV_sum + (PV_jetzt − PV_Prognose)/2` nachzukorrigieren. Ab der Übergabe greifen: Mindestintervall zwischen Korrekturen, additiver Anstieg nur bei echter neuer Netz-Messung (Anti-Eskalation gegen das früher beobachtete Hochlaufen bis zum Wallbox-Anschlag), multiplikatives Absenken bei Netzbezug, Deckel aus Wallbox-Eckdaten UND aktueller PV-Leistung — plus alle Stopp-Wächter (Auto nicht mehr ladebereit, Heimspeicher-SoC ≤ 97 %, Stunde abgelaufen).
+* Der Stopp bei **Auto-Ladestand ≥ „Limit PV-Überschussladen"** (`evSocMaxPvSurplus`, live gemessen) sitzt jetzt direkt in der Fallback-Session-Regelung (Start- und Regel-Zweig) und gilt damit für beide Pfade. Der aus 0.0.45.19 stammende separate Stopp im Optimierer-Recheck entfällt dadurch.
+* `_apply_ev_pv_surplus_start_correction` läuft nur noch beim tatsächlichen Start (Ausgangs-Zielwert), nicht mehr periodisch.
+
 ## 0.0.45.20
 
 * Dashboard: Die „Anwesenheitsprognose"-Überschrift (mit Erklär-`?`) sitzt jetzt unter dem „Ladestand Auto"-Chart als Überschrift der „Verbrauchsprognose (48h)"-Details, statt oben als Unterzeile des Charts. Die farbige Anwesenheits-Legende und die Overlay-Leiste im Chart bleiben.
