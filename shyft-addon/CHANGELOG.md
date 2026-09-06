@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.13
+
+* **Fix: "Auto laden"-Aktionen zeigten einen falschen Ladestand an (z.B. "von 1 % auf 1 %" statt korrekt "von 51 % auf 60 %").** Der Optimierer liefert `SOC_EV` als Bruch (0..1), nicht wie fälschlich angenommen schon in Prozent (0..100) - anders als `SOC_B` bei der Batterie, das tatsächlich schon 0..100-skaliert ist. Über die reine Anzeige hinaus hatte das einen echten Funktionsfehler zur Folge: die "Limit PV-Überschussladen"-Kappung (`evSocMaxPvSurplus`, in Prozent eingegeben) verglich einen Bruch gegen einen Prozentwert und griff dadurch nie - der Ladestand konnte beim PV-Überschussladen also nie auf dem eingestellten Maximum gedeckelt werden. Gefunden und verifiziert anhand echter Live-Daten des Nutzers.
+
 ## 0.0.45.12
 
 * **Sprungmarken-Leiste: "Benachrichtigungen" ergänzt.** Die Chip-Reihe auf der Konfigurationsseite scrollt jetzt auch zum Benachrichtigungen-Abschnitt - ohne Status-Icon, da es dafür kein Konfigurations-Vollständigkeits-/Fehlerkonzept gibt.

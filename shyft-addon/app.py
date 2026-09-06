@@ -3919,7 +3919,14 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
             continue
 
         pv_surplus = _is_ev_pv_surplus(output_row)
-        soc_now = _safe_float(output_row.get("SOC_EV"))  # bereits 0-100 skaliert, wie im Dashboard-Chart
+        # SOC_EV ist ein Bruch (0..1), genau wie der Input SOC_ev_0 (siehe sync_service.
+        # collect_live_values) - anders als SOC_B (Batterie), das schon 0..100-skaliert ist (siehe
+        # readDashboardChartData/buildLineChart's valueScale:100 fuer "Ladestand Auto", das genau
+        # deshalb noetig ist). Ohne diese Umrechnung verglich die PV-Ueberschuss-Kappung weiter unten
+        # faelschlich einen Bruch (z.B. 0.5) gegen die in Prozent eingegebene Nutzer-Grenze
+        # (evSocMaxPvSurplus, 60-95) - die griff dadurch nie - und die Subtitle zeigte einen viel zu
+        # niedrigen Ladestand an (z.B. "1 %" statt korrekt "51 %").
+        soc_now = _safe_float(output_row.get("SOC_EV")) * 100
 
         if is_current_hour and pv_surplus:
             max_soc_pct = config.get("evSocMaxPvSurplus")
@@ -3943,7 +3950,8 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
         else:
             avg_price = _hourly_average_price(output_row, input_row)
             next_row = output_rows[i + 1] if i + 1 < len(output_rows) else output_row
-            soc_next = float(next_row.get("SOC_EV") or soc_now)
+            soc_next_raw = next_row.get("SOC_EV")
+            soc_next = float(soc_next_raw) * 100 if soc_next_raw else soc_now
             subtitle = (f"Laden mit {ev_sum:.1f} kW (von {round(soc_now)} % "
                         f"auf {round(soc_next)} %) | Preis: {avg_price * 100:.1f} C/kWh")
 
