@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.45.25
+
+* **Neue „Strom"-Kachel oben auf der Konfigurationsseite** (vor den Geräte-Kacheln): Abschnitt „Stromverbrauch, Grundlast" (Dropdown jetzt mit Ø-Dauerleistung in W: 150 / 300 / 500 / 750 / 1.000 / 1.500 W) und Abschnitt „Stromtarif (Strombezug)" mit Umschalter **Fixer Tarif · Hoch-/Niedertarif · Dynamischer Tarif**.
+  * **Fixer Tarif**: ein Arbeitspreis in ct/kWh (brutto).
+  * **Hoch-/Niedertarif**: Hochtarif-Preis + Editor für Zeitfenster (Wochentag, von–bis Stunde, lokale Zeit, „Zeitraum hinzufügen" / Löschen); zu allen übrigen Zeiten gilt der eingegebene Niedertarif. Fenster über Mitternacht werden unterstützt.
+  * **Dynamischer Tarif**: die EPEX-Day-Ahead-Börsenpreise (brutto) werden automatisch von der Awattar-API abgerufen; dazu wird der eingegebene feste Aufschlag (Netzentgelt/Abgaben/Steuer/Marge) auf jeden Stundenpreis addiert. Randstunden jenseits des veröffentlichten Fensters werden über das Tagesprofil fortgeschrieben.
+* **Einspeisevergütung ist jetzt ein Eingabefeld (ct/kWh)** statt eines groben Dropdowns.
+* **Der stündliche Einkaufspreis-Vektor geht als neues Feld `p_buy_addon` an den Optimierer** (die Einspeisevergütung als `p_sell_addon`) – zusätzlich zum bisherigen `Electricity Price Buy`/`Electricity Price Sell`, damit der Server getrennt umgestellt werden kann. §14a-Modul-3 (variable Netzentgelte) folgt später.
+
 ## 0.0.45.24
 
 * **Fix: 0.0.45.23 startete nicht** (`NameError: name '_records_action_test' is not defined` beim Modul-Import). Der `@_records_action_test`-Decorator an den `/actions/**/test`-Endpunkten wird zur Ladezeit ausgewertet, die Helferfunktion war aber erst weiter unten in `app.py` definiert. Der komplette Bereitschafts-/Test-Helfer-Block liegt jetzt vor den Test-Endpunkten.

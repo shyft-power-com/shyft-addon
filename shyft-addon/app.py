@@ -466,8 +466,13 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         if price_arr:
             live_values["p_buy_addon"] = ";".join(f"{v:.5f}" for v in price_arr)
             live_values.setdefault("baseTime", price_base.isoformat())
+        # Einspeiseverguetung als Skalar (EUR/kWh) - ebenfalls neues Feld, damit der Server vom
+        # bisherigen "Electricity Price Sell"-Dropdown darauf umstellen kann.
+        sell_cent = config.get("electricitySellCent")
+        if sell_cent not in (None, ""):
+            live_values["p_sell_addon"] = round(float(sell_cent) / 100.0, 5)
     except Exception as e:
-        print("[Shyft] p_buy_addon konnte nicht berechnet werden:", repr(e))
+        print("[Shyft] p_buy_addon/p_sell_addon konnte nicht berechnet werden:", repr(e))
     wb_p_min = compute_wb_p_min()
     if wb_p_min is not None:
         live_values["WB - p_min"] = wb_p_min

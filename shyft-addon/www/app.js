@@ -600,6 +600,7 @@ async function saveConfigurationNow() {
         "electricityNtCent": configData["electricityNtCent"] ?? null,
         "electricityHtWindows": configData["electricityHtWindows"] ?? [],
         "electricityDynamicSurchargeCent": configData["electricityDynamicSurchargeCent"] ?? null,
+        "electricitySellCent": configData["electricitySellCent"] ?? null,
     };
     const response = await putJson(configUri, toBeWritten);
     configData = response;
@@ -1344,11 +1345,11 @@ function buildElectricityTariffControl() {
             panels.appendChild(note);
             panels.appendChild(centField('Kosten Hochtarif (brutto)',
                 'Arbeitspreis in den Hochtarif-Zeitfenstern.',
-                'electricity_ht_cent', 'electricityHtCent', 'z.B. 18'));
+                'electricity_ht_cent', 'electricityHtCent', 'z.B. 35'));
             panels.appendChild(buildHtWindowEditor());
             panels.appendChild(centField('Niedertarif (brutto)',
                 'Arbeitspreis zu allen übrigen Zeiten.',
-                'electricity_nt_cent', 'electricityNtCent', 'z.B. 7'));
+                'electricity_nt_cent', 'electricityNtCent', 'z.B. 25'));
         } else {
             const note = document.createElement('p');
             note.className = 'electricityHint';
@@ -2426,16 +2427,15 @@ function buildElectricityBaseLoadField() {
 }
 
 function buildElectricityPriceSellField() {
-    return buildConfigSelectField({
-        label: 'Einspeisevergütung',
-        tooltip: 'Deine ungefähre Einspeisevergütung für PV-Überschuss.',
-        id: 'electricity_price_sell',
-        configKey: 'electricityPriceSell',
-        options: [
-            'sehr niedrig (6 Cent)', 'niedrig (8 Cent)', 'mittel (10 Cent)',
-            'hoch (15 Cent)', 'sehr hoch (20 Cent)',
-        ].map(v => [v, v]),
-        defaultValue: 'mittel (10 Cent)',
+    return buildConfigNumberField({
+        label: 'Einspeisevergütung (brutto)',
+        tooltip: 'Deine Einspeisevergütung für PV-Überschuss pro Kilowattstunde.',
+        id: 'electricity_sell_cent',
+        configKey: 'electricitySellCent',
+        placeholder: 'z.B. 8',
+        step: '0.01',
+        min: '0',
+        unit: 'ct/kWh',
     });
 }
 
