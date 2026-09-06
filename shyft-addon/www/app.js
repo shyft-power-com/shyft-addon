@@ -1530,36 +1530,39 @@ function buildHtWindowEditor() {
 
 // Pruefzeile fuer den dynamischen Stromtarif. getSurcharge() liefert den aktuell im Feld
 // stehenden fixen Anteil in Cent (live, auch waehrend des Tippens) oder null. Ruft
-// /electricity/price-preview ab (Awattar-Boersenpreise + fixer Anteil) und zeigt die aktuellen
-// Gesamtpreise als Chips - umschaltbar stündlich / 15 Min.
+// /electricity/price-preview ab und zeigt NUR den gerade gueltigen Gesamtpreis (Boerse + fixer
+// Anteil) fuer die aktuelle Stunde bzw. die aktuelle Viertelstunde - keine Liste.
 function buildElectricityPricePreview(getSurcharge) {
     const box = document.createElement('div');
     box.className = 'electricityPricePreview';
     let debounceTimer = null;
-    let resolution = 'hourly';   // 'hourly' | 'quarter'
     let state = null;            // null | 'loading' | Antwortobjekt
 
     const fmt = (n, d = 1) => Number(n).toLocaleString('de-DE', {minimumFractionDigits: d, maximumFractionDigits: d});
+    const hhmm = (iso) => {
+        const t = new Date(iso);
+        return String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+    };
 
     function render() {
         box.innerHTML = '';
         if (getSurcharge() === null) {
             const h = document.createElement('p');
             h.className = 'electricityHint';
-            h.textContent = 'Sobald du den fixen Anteil einträgst, erscheint hier eine Prüfzeile mit den aktuellen Gesamtstrompreisen.';
+            h.textContent = 'Sobald du den fixen Anteil einträgst, erscheint hier der aktuelle Gesamtstrompreis zum Prüfen.';
             box.appendChild(h);
             return;
         }
 
         const title = document.createElement('div');
         title.className = 'electricityPricePreviewTitle';
-        title.textContent = 'Aktuelle Gesamtstrompreise (Börse + fixer Anteil)';
+        title.textContent = 'Aktueller Gesamtstrompreis (Börse + fixer Anteil)';
         box.appendChild(title);
 
         if (state === 'loading') {
             const p = document.createElement('p');
             p.className = 'electricityHint';
-            p.textContent = 'Börsenpreise werden abgerufen …';
+            p.textContent = 'Börsenpreis wird abgerufen …';
             box.appendChild(p);
             return;
         }
@@ -1567,45 +1570,33 @@ function buildElectricityPricePreview(getSurcharge) {
             const p = document.createElement('p');
             p.className = 'electricityHint';
             p.textContent = (state && state.reason === 'no_spot')
-                ? 'Börsenpreise sind derzeit nicht abrufbar (Awattar). Bitte später erneut prüfen.'
-                : 'Die Gesamtpreise konnten nicht berechnet werden.';
+                ? 'Börsenpreis ist derzeit nicht abrufbar (Awattar). Bitte später erneut prüfen.'
+                : 'Der Gesamtpreis konnte nicht berechnet werden.';
             box.appendChild(p);
             return;
         }
 
-        box.appendChild(buildSegmentedControl(
-            [['hourly', 'Stündlich'], ['quarter', '15 Min']],
-            resolution,
-            (v) => { resolution = v; render(); },
-        ));
-
-        const rows = resolution === 'quarter' ? state.quarter_hourly : state.hourly;
-        const strip = document.createElement('div');
-        strip.className = 'electricityPriceStrip';
-        for (const r of (rows || [])) {
-            const chip = document.createElement('div');
-            chip.className = 'electricityPriceChip';
-            const t = new Date(r.start);
-            const hh = String(t.getHours()).padStart(2, '0');
-            const time = document.createElement('span');
-            time.className = 'electricityPriceChipTime';
-            time.textContent = resolution === 'quarter'
-                ? hh + ':' + String(t.getMinutes()).padStart(2, '0')
-                : hh + ' Uhr';
-            const val = document.createElement('span');
-            val.className = 'electricityPriceChipValue';
-            val.textContent = fmt(r.total_ct, 1) + ' ct';
-            chip.title = 'Börse ' + fmt(r.spot_ct, 2) + ' ct + fixer Anteil ' + fmt(state.surcharge_ct, 2) + ' ct';
-            chip.append(time, val);
-            strip.appendChild(chip);
-        }
-        box.appendChild(strip);
+        const grid = document.createElement('div');
+        grid.className = 'electricityPriceNow';
+        const addRow = (label, row) => {
+            const l = document.createElement('span');
+            l.className = 'electricityPriceNowLabel';
+            l.textContent = label;
+            const v = document.createElement('span');
+            v.className = 'electricityPriceNowValue';
+            v.textContent = fmt(row.total_ct, 1) + ' ct/kWh';
+            grid.append(l, v);
+        };
+        addRow('Aktuelle Stunde (ab ' + hhmm(state.hour.start) + ' Uhr)', state.hour);
+        addRow('Aktuelle Viertelstunde (ab ' + hhmm(state.quarter.start) + ')', state.quarter);
+        box.appendChild(grid);
 
         const foot = document.createElement('p');
         foot.className = 'electricityPricePreviewFoot';
-        let footText = 'Quelle: ' + state.source + '. Stand ' + new Date(state.generated_at).toLocaleString('de-DE') + '.';
-        if (resolution === 'quarter' && state.quarter_hourly_derived) {
-            footText += ' Awattar liefert Stundenpreise – die Viertelstunden sind daraus abgeleitet (je Stunde vier gleiche Werte).';
+        let footText = 'Börse ' + fmt(state.spot_ct, 2) + ' ct + fixer Anteil ' + fmt(state.surcharge_ct, 2)
+            + ' ct. Stand ' + new Date(state.generated_at).toLocaleTimeString('de-DE') + '.';
+        if (state.quarter_derived) {
+            footText += ' Die Börse liefert Stundenpreise – die Viertelstunde entspricht der Stunde.';
         }
         foot.textContent = footText;
         box.appendChild(foot);

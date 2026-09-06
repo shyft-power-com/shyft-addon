@@ -423,11 +423,11 @@ def compute_price_buy_array(config, base_time_utc, hours):
 
 @app.route("/electricity/price-preview", methods=["GET"])
 def electricity_price_preview():
-    """Pruefzeile im dynamischen Stromtarif: aktuelle Gesamt-Einkaufspreise (Boersen-Brutto +
-    fixer Anteil) als Stunden- und (daraus abgeleitete) 15-Minuten-Werte. Der fixe Anteil kommt
-    per ?surcharge_ct= (waehrend der Nutzer noch tippt, also vor dem Speichern), sonst aus der
-    gespeicherten Config. Antwort immer HTTP 200; {"ok": false, "reason": ...} wenn nichts
-    berechenbar ist."""
+    """Pruefzeile im dynamischen Stromtarif: der Gesamt-Einkaufspreis (Boersen-Brutto + fixer
+    Anteil) fuer die AKTUELLE Stunde bzw. die aktuelle Viertelstunde - nur der eine gerade
+    gueltige Wert, keine Liste. Der fixe Anteil kommt per ?surcharge_ct= (waehrend der Nutzer noch
+    tippt, also vor dem Speichern), sonst aus der gespeicherten Config. Antwort immer HTTP 200;
+    {"ok": false, "reason": ...} wenn nichts berechenbar ist."""
     surcharge_ct = request.args.get("surcharge_ct", type=float)
     if surcharge_ct is None:
         try:
@@ -442,39 +442,28 @@ def electricity_price_preview():
     if not spot:
         return jsonify({"ok": False, "reason": "no_spot"})
 
-    now_ms = time.time() * 1000.0
-    hourly = []
-    for ts_ms in sorted(spot):
-        if ts_ms + 3600000 <= now_ms:
-            continue  # bereits vergangene Stunde
-        spot_ct = round(spot[ts_ms] * 100.0, 2)
-        start_local = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).astimezone()
-        hourly.append({
-            "start": start_local.isoformat(),
-            "spot_ct": spot_ct,
-            "total_ct": round(spot_ct + surcharge_ct, 2),
-        })
+    now = datetime.now(timezone.utc)
+    hour_start_ms = int(now.replace(minute=0, second=0, microsecond=0).timestamp() * 1000)
+    spot_eur = spot.get(hour_start_ms)
+    if spot_eur is None:  # aktuelle Stunde nicht abgedeckt -> letzten bekannten Wert davor nehmen
+        past = [ts for ts in spot if ts <= hour_start_ms]
+        spot_eur = spot[max(past)] if past else spot[min(spot)]
 
-    # Awattar veroeffentlicht nur Stundenpreise - je Stunde vier gleiche Viertelstunden
-    # (im Frontend klar als abgeleitet gekennzeichnet, siehe quarter_hourly_derived).
-    quarter_hourly = []
-    for h in hourly:
-        start = datetime.fromisoformat(h["start"])
-        for q in range(4):
-            quarter_hourly.append({
-                "start": (start + timedelta(minutes=15 * q)).isoformat(),
-                "spot_ct": h["spot_ct"],
-                "total_ct": h["total_ct"],
-            })
+    spot_ct = round(spot_eur * 100.0, 2)
+    total_ct = round(spot_ct + surcharge_ct, 2)
+    now_local = now.astimezone()
+    hour_local = now_local.replace(minute=0, second=0, microsecond=0)
+    quarter_local = now_local.replace(minute=(now_local.minute // 15) * 15, second=0, microsecond=0)
 
     return jsonify({
         "ok": True,
         "surcharge_ct": round(surcharge_ct, 2),
-        "generated_at": datetime.now(timezone.utc).astimezone().isoformat(),
-        "source": "Awattar / EPEX Day-Ahead, brutto inkl. 19 % USt",
-        "hourly": hourly,
-        "quarter_hourly": quarter_hourly,
-        "quarter_hourly_derived": True,
+        "spot_ct": spot_ct,
+        "generated_at": now_local.isoformat(),
+        # Awattar veroeffentlicht nur Stundenpreise - die aktuelle Viertelstunde hat denselben Wert.
+        "hour": {"start": hour_local.isoformat(), "total_ct": total_ct},
+        "quarter": {"start": quarter_local.isoformat(), "total_ct": total_ct},
+        "quarter_derived": True,
     })
 
 

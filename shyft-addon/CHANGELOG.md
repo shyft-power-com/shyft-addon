@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.27
+
+* **Prüfzeile im dynamischen Tarif zeigt jetzt nur den gerade gültigen Wert** – den Gesamtstrompreis für die aktuelle Stunde und die aktuelle Viertelstunde, statt der ganzen Preisliste. Fußzeile: Zusammensetzung (Börse + fixer Anteil) und Stand-Uhrzeit, ohne Quellenangabe.
+
 ## 0.0.45.26
 
 * **Dynamischer Stromtarif: Prüfzeile.** Sobald der feste Anteil eingetragen ist, zeigt die „Strom"-Kachel die aktuellen Gesamtstrompreise (Börse + fixer Anteil) als Chip-Leiste – umschaltbar **stündlich / 15 Min**. Neuer Endpunkt `GET /electricity/price-preview` (Awattar-Börsenpreise brutto + Aufschlag). Awattar liefert Stundenpreise; die 15-Minuten-Werte sind daraus abgeleitet (je Stunde vier gleiche Werte, im Fuß der Leiste vermerkt).
