@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.22
+
+* **Neu: PV-Prognose als eigenständiger Home-Assistant-Sensor.** `sensor.shyft_pv_prognose` wird jetzt per REST-API ins Addon-eigene Home Assistant gepusht (State = die für die aktuelle Stunde prognostizierte Leistung in kW, `forecast`-Attribut mit allen 48 Stunden ab heute 0 Uhr für eigene Diagramme/Automationen). Läuft automatisch mit, sobald ein PV-Erzeugungssensor zugeordnet ist - damit lässt sich das Addon jetzt auch ausschließlich für die PV-Prognose nutzen, ganz ohne die übrige Gerätesteuerung/Optimierung einzurichten. Aktualisiert sich stündlich, zusätzlich sofort nach jedem frischen Wetter-Abruf und beim Addon-Start.
+
 ## 0.0.45.21
 
 * **Die laufende Optimierer-PV-Überschuss-„Auto laden"-Aktion wird jetzt von derselben Regelkreis-Logik geregelt wie eine originäre Fallback-Session.** `_recheck_active_pv_surplus_optimizer_action` übergibt die Aktion an die Fallback-Session (Wallbox lädt unterbrechungsfrei weiter, Optimierer-Aktion nur buchhalterisch beendet), statt sie mit der einmaligen PV-Prognose-Formel `EV_sum + (PV_jetzt − PV_Prognose)/2` nachzukorrigieren. Ab der Übergabe greifen: Mindestintervall zwischen Korrekturen, additiver Anstieg nur bei echter neuer Netz-Messung (Anti-Eskalation gegen das früher beobachtete Hochlaufen bis zum Wallbox-Anschlag), multiplikatives Absenken bei Netzbezug, Deckel aus Wallbox-Eckdaten UND aktueller PV-Leistung — plus alle Stopp-Wächter (Auto nicht mehr ladebereit, Heimspeicher-SoC ≤ 97 %, Stunde abgelaufen).

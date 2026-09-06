@@ -5165,9 +5165,71 @@ def _pv_sensor_configured(config=None):
 
 
 def fetch_weather_forecast():
-    "Holt die open-meteo-Prognose in den Cache (siehe pv_forecast.fetch_weather)."
+    "Holt die open-meteo-Prognose in den Cache (siehe pv_forecast.fetch_weather) und aktualisiert direkt danach den gepushten PV-Prognose-Sensor (siehe push_pv_forecast_sensor), damit dieser nie laenger als noetig auf veralteten Wetterdaten basiert."
     lat, lon = _home_coordinates()
     pv_forecast.fetch_weather(lat, lon)
+    try:
+        push_pv_forecast_sensor()
+    except Exception as e:
+        print("[Shyft] PV-Prognose-Sensor: Push nach frischem Wetter-Abruf fehlgeschlagen:", repr(e))
+
+
+# Home-Assistant-Entity-Id fuer die per REST-API gepushte PV-Prognose (siehe
+# homeassistant_adapter.set_entity_state) - macht die Prognose als eigenstaendige Entitaet nutzbar,
+# unabhaengig vom shyft-power-Cloud-Dashboard (z.B. fuer eigene Automationen/Lovelace-Karten). Damit
+# koennen Nutzer das Addon auch ausschliesslich fuer die PV-Prognose einsetzen, ohne den Rest der
+# Geraetesteuerung/Optimierung zu konfigurieren - vorausgesetzt, ein PV-Erzeugungssensor ist
+# zugeordnet (siehe _pv_sensor_configured), sonst waere die Prognose ohnehin nur Nullen (siehe
+# pv_forecast.compute_site_weather_fields).
+PV_FORECAST_SENSOR_ENTITY_ID = "sensor.shyft_pv_prognose"
+
+
+def push_pv_forecast_sensor():
+    """Veroeffentlicht die PV-Prognose als Home-Assistant-Sensor-Entitaet per REST-API-Push. State =
+    die fuer die JETZT laufende Stunde prognostizierte Leistung (kW); das 'forecast'-Attribut traegt
+    alle 48 Stunden ab heute 0 Uhr (dieselbe Datengrundlage wie das Dashboard-Wetter-Widget, siehe
+    pv_forecast.dashboard_weather), fuer eigene Diagramme/Automationen. No-op ohne zugeordneten
+    PV-Erzeugungssensor. Aufgerufen stuendlich (Cron), zusaetzlich sofort nach jedem frischen
+    Wetter-Abruf (fetch_weather_forecast) und einmalig beim Addon-Start."""
+    config = _read_current_config()
+    if not _pv_sensor_configured(config):
+        return
+    try:
+        weather = pv_forecast.dashboard_weather(pv_sensor_configured=True)
+    except Exception as e:
+        print("[Shyft] PV-Prognose-Sensor: Berechnung fehlgeschlagen:", repr(e))
+        return
+
+    datetimes_ms = weather.get("datetimes") or []
+    pv_prediction = weather.get("pvPrediction") or []
+    current_hour_local = datetime.now().astimezone().replace(minute=0, second=0, microsecond=0)
+    current_hour_ms = int(current_hour_local.timestamp() * 1000)
+    try:
+        current_index = datetimes_ms.index(current_hour_ms)
+        current_kw = pv_prediction[current_index]
+    except (ValueError, IndexError):
+        current_kw = pv_prediction[0] if pv_prediction else 0.0
+
+    forecast = [
+        {"datetime": datetime.fromtimestamp(ms / 1000, tz=timezone.utc).astimezone().isoformat(), "kw": round(kw, 3)}
+        for ms, kw in zip(datetimes_ms, pv_prediction)
+    ]
+
+    try:
+        homeassistant_adapter.set_entity_state(
+            PV_FORECAST_SENSOR_ENTITY_ID,
+            round(current_kw, 3),
+            attributes={
+                "unit_of_measurement": "kW",
+                "device_class": "power",
+                "state_class": "measurement",
+                "friendly_name": "PV-Prognose (shyft-power)",
+                "icon": "mdi:solar-power-variant",
+                "forecast": forecast,
+            },
+        )
+    except Exception as e:
+        print("[Shyft] PV-Prognose-Sensor: Push nach Home Assistant fehlgeschlagen:", repr(e))
 
 
 def _pv_power_history_pairs(pv_entity_id, days):
@@ -5394,6 +5456,10 @@ def fetch_weather_forecast_periodically():
     with app.app_context():
         fetch_weather_forecast()
 
+def push_pv_forecast_sensor_periodically():
+    with app.app_context():
+        push_pv_forecast_sensor()
+
 def calibrate_pv_forecast_periodically():
     with app.app_context():
         calibrate_pv_forecast()
@@ -5472,6 +5538,10 @@ scheduler.add_job(maybe_compute_hw_soc_min_periodically, 'cron', hour="3", minut
 # die m2-Kalibrierung der PV-Prognose laeuft taeglich um 22:00 lokal (siehe pv_forecast.py)
 scheduler.add_job(fetch_weather_forecast_periodically, 'cron', hour="*/3", minute="2")
 scheduler.add_job(calibrate_pv_forecast_periodically, 'cron', hour="22", minute="0")
+# haelt den gepushten PV-Prognose-Sensor (siehe push_pv_forecast_sensor) auch zwischen den
+# 3-stuendlichen Wetter-Abrufen stundenaktuell - der State soll immer die JETZT laufende Stunde
+# zeigen, nicht bis zu 3h alt sein.
+scheduler.add_job(push_pv_forecast_sensor_periodically, 'cron', minute="0")
 scheduler.start()
 
 

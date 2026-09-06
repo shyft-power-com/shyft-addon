@@ -274,6 +274,16 @@ class HomeAssistantAdapter:
     def call_service(self, domain, service, data=None):
         return self.post_to_homeassistant(f"/api/services/{domain}/{service}", data)
 
+    def set_entity_state(self, entity_id, state, attributes=None):
+        """Creates or updates an entity's state via Home Assistant's REST API (POST
+        /api/states/<entity_id>) - used to push addon-computed values (e.g. die PV-Prognose, siehe
+        push_pv_forecast_sensor in app.py) into Home Assistant as first-class entities, nutzbar in
+        eigenen Automationen/Dashboards unabhaengig vom shyft-power-Cloud-Dashboard. Anders als eine
+        "echte" Integration hat eine so erzeugte Entitaet kein Geraet/keine config_entry und
+        ueberlebt einen Home-Assistant-Neustart nicht von selbst - sie erscheint erst wieder, sobald
+        das Addon sie erneut pusht (siehe dortige Cron-/Start-Trigger)."""
+        return self.post_to_homeassistant(f"/api/states/{entity_id}", {"state": state, "attributes": attributes or {}})
+
     def get_mobile_app_notify_targets(self):
         "Lists Home Assistant's notify services for paired phones (Mobile App integration, one service per device: notify.mobile_app_<device>) - these are services, not entities."
         response = self.get_from_homeassistant("/api/services")
