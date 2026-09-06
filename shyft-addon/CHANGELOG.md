@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.15
+
+* **Fix: eine geplante (noch nicht gestartete) PV-Überschussladen-Aktion zeigte schon "Log anzeigen" an.** Der Log-Eintrag für eine PV-Überschuss-"Auto laden"-Aktion wird jetzt erst erzeugt, sobald die Aktion tatsächlich aktiv/gestartet ist - für rein geplante zukünftige Stunden gibt es gar kein `Log`-Feld mehr, "Log anzeigen" erscheint dort also nicht mehr.
+
 ## 0.0.45.14
 
 * **Fix: zwei "Auto laden"-Aktionen konnten gleichzeitig aktiv sein** - eine optimierer-berechnete (COMPUTED_ACTIONS_PATH) und eine unabhängige PV-Überschussladen-Fallback-Session (PV_SURPLUS_ACTIONS_PATH), die bisher bewusst nichts voneinander wussten. Will die Fallback-Session jetzt eine neue Session eröffnen, während bereits eine reguläre (nicht schon selbst PV-Überschuss-markierte) Optimierer-Aktion aktiv läuft, wird diese stattdessen nur in der Buchführung beendet und als "in PV-Überschussladen (Fallback) umgewandelt" vermerkt - die Wallbox lädt dabei unterbrochungsfrei weiter, es existiert danach nur noch der eine, von der Fallback-Session verwaltete Eintrag. Zusätzlich abgesichert gegen zwei Nachbearbeitungspfade, die die umgewandelte Aktion sonst fälschlich ein zweites Mal (und damit die Wallbox real) gestoppt hätten.

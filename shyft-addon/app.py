@@ -3989,8 +3989,13 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
             # (siehe _apply_ev_pv_surplus_start_correction) - EV_sum liegt bereits in "Energy (electr)".
             action["PV Surplus"] = True
             action["PV Sum Forecast"] = _safe_float(output_row.get("PV_sum_44"))
-            timestamp = datetime.now().strftime("%d.%m. %H:%M Uhr")
-            action["Log"] = f"{timestamp}: geplant mit {target_value:.1f} kW (PV-Überschuss, Korrektur folgt beim Start)"
+            # Kein Log-Eintrag (und damit kein "Log anzeigen" im Frontend, siehe action['Log']-Check
+            # in app.js) fuer eine erst geplante, noch nicht gestartete Stunde - ein Log soll erst
+            # entstehen, sobald die Aktion tatsaechlich aktiv/gestartet ist. Fuer die gerade laufende
+            # Stunde (is_current_hour) ist das hier bereits der Fall.
+            if is_current_hour:
+                timestamp = datetime.now().strftime("%d.%m. %H:%M Uhr")
+                action["Log"] = f"{timestamp}: gestartet mit {target_value:.1f} kW (PV-Überschuss, Korrektur folgt beim Start)"
         result[i] = action
 
     return result
