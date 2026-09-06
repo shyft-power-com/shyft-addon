@@ -756,6 +756,30 @@ async function renderSystemHealth() {
 // ist (nichts zu pruefen); rotes "!", wenn entweder ein Pflichtfeld fehlt ODER eine fehlgeschlagene
 // Aktion dieser Kachel gerade aktiv gemeldet ist; sonst gruener Haken. Nutzt dieselben problems/
 // warnings, die renderSystemHealth ohnehin schon geladen hat - kein zusaetzlicher Request.
+// Baut einen einzelnen Chip fuer renderDeviceNav - iconState ist 'unconfigured' (kein Icon,
+// gedaempfte Farbe), 'error' (rotes "!") oder 'ok' (gruener Haken).
+function buildDeviceNavChip(label, sectionKey, iconState) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'deviceNavChip';
+
+    const icon = document.createElement('span');
+    icon.className = 'deviceNavChipIcon';
+    if (iconState === 'unconfigured') {
+        chip.classList.add('deviceNavChip--unconfigured');
+    } else if (iconState === 'error') {
+        icon.textContent = '!';
+        icon.classList.add('status-error');
+    } else {
+        icon.textContent = '✓';
+        icon.classList.add('status-ok');
+    }
+    chip.appendChild(icon);
+    chip.appendChild(document.createTextNode(label));
+    chip.addEventListener('click', () => scrollToIntegrationSection(sectionKey));
+    return chip;
+}
+
 function renderDeviceNav(problems, warnings) {
     const container = document.getElementById('deviceNav');
     if (!container) return;
@@ -766,27 +790,15 @@ function renderDeviceNav(problems, warnings) {
 
     for (const section of INTEGRATION_SECTIONS) {
         const currentIds = currentIntegrationSelections[section.key] || [];
-        const chip = document.createElement('button');
-        chip.type = 'button';
-        chip.className = 'deviceNavChip';
-
-        const icon = document.createElement('span');
-        icon.className = 'deviceNavChipIcon';
-        if (currentIds.length === 0) {
-            icon.textContent = '';
-            chip.classList.add('deviceNavChip--unconfigured');
-        } else if (failedSectionKeys.has(section.key) || warningSectionKeys.has(section.key)) {
-            icon.textContent = '!';
-            icon.classList.add('status-error');
-        } else {
-            icon.textContent = '✓';
-            icon.classList.add('status-ok');
-        }
-        chip.appendChild(icon);
-        chip.appendChild(document.createTextNode(section.label));
-        chip.addEventListener('click', () => scrollToIntegrationSection(section.key));
-        container.appendChild(chip);
+        const iconState = currentIds.length === 0 ? 'unconfigured'
+            : (failedSectionKeys.has(section.key) || warningSectionKeys.has(section.key)) ? 'error' : 'ok';
+        container.appendChild(buildDeviceNavChip(section.label, section.key, iconState));
     }
+
+    // "Benachrichtigungen" ist keine Geraetekachel (kein Eintrag in INTEGRATION_SECTIONS, kein
+    // Konfigurations-Vollstaendigkeits-/Fehler-Konzept dafuer) - deshalb ohne Status-Icon, nur als
+    // zusaetzliche Sprungmarke.
+    container.appendChild(buildDeviceNavChip('Benachrichtigungen', 'benachrichtigungen', 'unconfigured'));
 }
 
 // Ordnet ein "action_failed:<slug>"-Problem (siehe _action_problem_id/_note_action_outcome in
@@ -1368,6 +1380,9 @@ function renderNotificationSection() {
 
     const sectionDiv = document.createElement('div');
     sectionDiv.className = 'integrationSection';
+    // Fuer scrollToIntegrationSection (siehe renderDeviceNav) - kein eigenes bodyDiv/Toggle wie bei
+    // den Geraetekacheln, deshalb wird beim Scrollen dorthin nichts aufgeklappt, nur gescrollt.
+    sectionDiv.dataset.sectionKey = 'benachrichtigungen';
 
     const heading = document.createElement('div');
     heading.className = 'integrationHeading';
