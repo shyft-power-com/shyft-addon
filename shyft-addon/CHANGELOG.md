@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.17
+
+* **`WB - p_min`: PV-Überschuss-Erkennung jetzt über `PV_GR + PV_EV`** statt `GR_sum + PV_EV` (0.0.45.16). `PV_GR` (PV → Netz) und `PV_EV` (PV → Auto) sind beide ≥ 0 und beschreiben sauber die über den Sofortbedarf hinaus verfügbare PV-Energie — kein Vorzeichen-Durcheinander wie beim Netto-Netzbezug `GR_sum`. Übersteigt die Summe über den ganzen Optimierungszeitraum der letzten `output.csv` 5 kWh, wird `p_min` aus `min(p_sell) + 0,02 €` gerechnet, sonst aus `min(p_buy) + 0,02 €`. Die `+ 0,02 €`-Marge bleibt in beiden Zweigen: im `p_sell`-Zweig hält sie `p_min` knapp über der Einspeisevergütung (PV lädt das Auto weiter), aber unter dem Netz-Einkaufspreis (Netz lädt nur bei ungewöhnlich billigen/negativen Stunden).
+
 ## 0.0.45.16
 
 * **`WB - p_min` (`compute_wb_p_min`) berücksichtigt jetzt den Stromüberfluss-Fall** (aus der bisherigen Bubble-Logik übernommen): Ist in der letzten `output.csv` die Summe aus `GR_sum` + `PV_EV` über den gesamten Optimierungszeitraum > 5 kWh, wird `p_min` aus dem niedrigsten noch bevorstehenden **`p_sell`** + 0,02 € gerechnet statt aus `p_buy` + 0,02 € (neu: `_wb_p_min_price_column`). Die Schwelle wird bei jedem Sync anhand der aktuell gecachten `output.csv` neu ausgewertet. **Offen (auf Rückmeldung):** Richtung der `> 5`-Schwelle (`GR_sum` = Netto-Netzbezug, groß/positiv = Netzbezieher — passt das zum `p_sell`-Zweig?) und ob im `p_sell`-Zweig `+ 0,02` oder `− 0,02` korrekt ist.

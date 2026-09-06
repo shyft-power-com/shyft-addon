@@ -2283,18 +2283,18 @@ def _read_current_price_info():
 
 # Sicherheitsmarge auf den guenstigsten noch bevorstehenden Strompreis - siehe compute_wb_p_min.
 WB_P_MIN_MARGIN_EUR = 0.02
-# Ab dieser Summe (kWh) aus GR_sum + PV_EV ueber den gesamten Optimierungszeitraum der letzten
-# output.csv wird p_min auf Basis von p_sell statt p_buy gerechnet (aus der bisherigen
-# Bubble-Logik uebernommen - Richtung der Schwelle und Vorzeichen der Marge im p_sell-Zweig sind
-# noch in Klaerung, siehe CHANGELOG 0.0.45.16).
+# Ab dieser Summe (kWh) aus PV_GR + PV_EV ueber den gesamten Optimierungszeitraum der letzten
+# output.csv gilt der Zeitraum als PV-Ueberschuss-Fall und p_min wird auf Basis von p_sell statt
+# p_buy gerechnet. PV_GR (PV -> Netz) und PV_EV (PV -> Auto) sind beide >= 0 und beschreiben die
+# ueber den Sofortbedarf hinaus verfuegbare PV-Energie.
 WB_P_MIN_PSELL_SWITCH_KWH = 5.0
 
 
 def _wb_p_min_price_column():
     """'p_buy' (Normalfall) oder 'p_sell', je nach der letzten output.csv im Dashboard-Cache:
-    uebersteigt die Summe aus GR_sum + PV_EV ueber alle Stunden WB_P_MIN_PSELL_SWITCH_KWH, wird
-    'p_sell' gewaehlt. 'p_buy' als Rueckfall, wenn keine output.csv vorliegt oder sie nicht lesbar
-    ist."""
+    uebersteigt die Summe aus PV_GR + PV_EV ueber alle Stunden WB_P_MIN_PSELL_SWITCH_KWH (deutlich
+    PV-Ueberschuss vorhanden), wird 'p_sell' gewaehlt. 'p_buy' als Rueckfall, wenn keine
+    output.csv vorliegt oder sie nicht lesbar ist."""
     try:
         with open(DASHBOARD_CACHE_PATH, "r") as f:
             cache = json.load(f)
@@ -2302,8 +2302,8 @@ def _wb_p_min_price_column():
         if not output_csv:
             return "p_buy"
         out_rows = list(csv.DictReader(io.StringIO(output_csv)))
-        combined = sum(_safe_float(r.get("GR_sum")) + _safe_float(r.get("PV_EV")) for r in out_rows)
-        return "p_sell" if combined > WB_P_MIN_PSELL_SWITCH_KWH else "p_buy"
+        pv_surplus = sum(_safe_float(r.get("PV_GR")) + _safe_float(r.get("PV_EV")) for r in out_rows)
+        return "p_sell" if pv_surplus > WB_P_MIN_PSELL_SWITCH_KWH else "p_buy"
     except Exception:
         return "p_buy"
 
@@ -2314,7 +2314,7 @@ def compute_wb_p_min():
     gecachten input.csv. Vergangene Stunden werden bewusst ausgeschlossen - der Optimierer soll
     die Wallbox nie unterhalb dessen laden lassen, was ohnehin der guenstigste noch kommende
     Preis waere. Basispreis ist normalerweise p_buy; hat der letzte Optimierungslauf ueber den
-    ganzen Zeitraum GR_sum + PV_EV > WB_P_MIN_PSELL_SWITCH_KWH ergeben (Stromueberfluss-Fall),
+    ganzen Zeitraum PV_GR + PV_EV > WB_P_MIN_PSELL_SWITCH_KWH ergeben (PV-Ueberschuss-Fall),
     wird stattdessen p_sell verwendet (siehe _wb_p_min_price_column). None, wenn noch kein Cache
     vorhanden oder keine bevorstehende Stunde darin abgedeckt ist."""
     try:
