@@ -14,7 +14,9 @@ import shutil
 import time
 import csv
 import io
+import functools
 import threading
+import requests
 from datetime import datetime, timezone, timedelta, date
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
@@ -293,6 +295,132 @@ def maybe_create_real_account(old_integration_mappings, new_integration_mappings
 _last_site_data_submit = {"at": None}
 
 
+# ============================================================================
+# Stromtarif -> stuendlicher Einkaufspreis (EUR/kWh) fuer die optimizer-input.csv. Drei Modi
+# (electricityTariffMode, siehe Konfigurationsseite "Strom"):
+#   - "fixed":   ein fester Arbeitspreis (electricityFixedCent) fuer jede Stunde
+#   - "ht_nt":   Hoch-/Niedertarif - electricityHtCent in den electricityHtWindows-Zeitfenstern
+#                (Wochentag + Stundenfenster, LOKALE Zeit), sonst electricityNtCent
+#   - "dynamic": EPEX-Day-Ahead-Boersenpreis (Awattar-API, brutto) + fester Aufschlag
+#                (electricityDynamicSurchargeCent)
+# Ergebnis geht als NEUES Feld "p_buy_addon" (";"-joined) in liveValues - der bestehende
+# staticConfig-Wert "Electricity Price Buy" bleibt unangetastet, bis der Server umgestellt ist.
+# §14a-Modul-3 (variable Netzentgelte) ist bewusst noch nicht abgebildet.
+# ============================================================================
+
+AWATTAR_URL = "https://api.awattar.de/v1/marketdata"
+AWATTAR_CACHE_PATH = "/data/awattar_cache.json"
+AWATTAR_CACHE_TTL_SECONDS = 1800  # halbstuendlich frisch holen reicht (Day-Ahead aendert sich nur 1x/Tag)
+
+
+def _fetch_awattar_prices():
+    """{hour_start_epoch_ms: EUR/kWh} des aktuell von Awattar veroeffentlichten Fensters (heute +,
+    ab ~13 Uhr, morgen). Brutto (Awattar liefert EUR/MWh netto -> *1.19/1000). Mit Datei-Cache
+    (AWATTAR_CACHE_TTL_SECONDS), damit der stuendliche sync_site_data die API nicht bei jedem Lauf
+    trifft. Rueckgabe {} bei Fehler/leer - der Aufrufer faellt dann auf den letzten bekannten Wert
+    bzw. gar keinen p_buy_addon-Send zurueck."""
+    try:
+        with open(AWATTAR_CACHE_PATH, "r") as f:
+            cached = json.load(f)
+        if time.time() - cached.get("fetched_at", 0) < AWATTAR_CACHE_TTL_SECONDS and cached.get("prices"):
+            return {int(k): v for k, v in cached["prices"].items()}
+    except Exception:
+        pass
+    try:
+        resp = requests.get(AWATTAR_URL, timeout=20)
+        resp.raise_for_status()
+        rows = resp.json().get("data", [])
+    except Exception as e:
+        print("[Shyft] Awattar-Preise konnten nicht geladen werden:", repr(e))
+        return {}
+    prices = {}
+    for row in rows:
+        try:
+            # EUR/MWh netto -> EUR/kWh brutto (19% USt)
+            prices[int(row["start_timestamp"])] = round(float(row["marketprice"]) / 1000.0 * 1.19, 5)
+        except (KeyError, TypeError, ValueError):
+            continue
+    if prices:
+        try:
+            with open(AWATTAR_CACHE_PATH, "w") as f:
+                json.dump({"fetched_at": time.time(), "prices": {str(k): v for k, v in prices.items()}}, f)
+        except Exception as e:
+            print("[Shyft] Awattar-Cache konnte nicht geschrieben werden:", repr(e))
+    return prices
+
+
+def _hour_in_ht_windows(local_dt, windows):
+    "True, wenn local_dt (lokale Zeit) in einem der HT-Zeitfenster liegt. Fenster: {weekday 0=Mo, from 0-23, to 1-24}; to<=from = ueber Mitternacht."
+    wd, hour = local_dt.weekday(), local_dt.hour
+    for w in windows or []:
+        try:
+            if int(w["weekday"]) != wd:
+                continue
+            a, b = int(w["from"]), int(w["to"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if b > a:
+            if a <= hour < b:
+                return True
+        else:  # Wrap ueber Mitternacht, z.B. 22 -> 6
+            if hour >= a or hour < b:
+                return True
+    return False
+
+
+def compute_price_buy_array(config, base_time_utc, hours):
+    """Stuendlicher Einkaufspreis (EUR/kWh) ab base_time_utc fuer 'hours' Stunden - je nach
+    electricityTariffMode. None, wenn der gewaehlte Modus nicht ausreichend konfiguriert ist
+    (dann sendet sync_site_data kein p_buy_addon und der Server nutzt weiter seinen eigenen Preis)."""
+    mode = config.get("electricityTariffMode") or "fixed"
+
+    def _cent(key):
+        v = config.get(key)
+        try:
+            return float(v) / 100.0 if v is not None and v != "" else None
+        except (TypeError, ValueError):
+            return None
+
+    if mode == "fixed":
+        p = _cent("electricityFixedCent")
+        return [p] * hours if p is not None else None
+
+    if mode == "ht_nt":
+        ht, nt = _cent("electricityHtCent"), _cent("electricityNtCent")
+        if ht is None or nt is None:
+            return None
+        windows = config.get("electricityHtWindows") or []
+        out = []
+        for i in range(hours):
+            local_dt = (base_time_utc + timedelta(hours=i)).astimezone()
+            out.append(ht if _hour_in_ht_windows(local_dt, windows) else nt)
+        return out
+
+    if mode == "dynamic":
+        surcharge = _cent("electricityDynamicSurchargeCent")
+        if surcharge is None:
+            return None
+        spot = _fetch_awattar_prices()  # {epoch_ms: EUR/kWh brutto}
+        if not spot:
+            return None
+        by_hour = {}
+        for ts_ms, price in spot.items():
+            by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
+        # Fehlende Randstunden (jenseits des veroeffentlichten Fensters) ueber das Tagesprofil des
+        # letzten abgedeckten Tages fortschreiben, damit der Optimizer-Horizont vollstaendig ist.
+        out = []
+        for i in range(hours):
+            h = (base_time_utc + timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
+            price = by_hour.get(h)
+            if price is None:
+                fallback = by_hour.get(h - timedelta(days=1)) or by_hour.get(h - timedelta(days=2))
+                price = fallback if fallback is not None else (out[-1] - surcharge if out else 0.0)
+            out.append(round(price + surcharge, 5))
+        return out
+
+    return None
+
+
 def _optimizer_result_pending(cached_creation_date_ms):
     "True, solange nach dem letzten Send noch auf ein frisches Optimierungsergebnis gewartet wird (innerhalb des Nachfrage-Fensters und der Cache noch aelter als der Absendezeitpunkt)."
     submitted = _last_site_data_submit["at"]
@@ -329,6 +457,17 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         live_values["hw_usage_h"] = hw_fields["hw_usage_h"]
         live_values["hotwaterkwh"] = hw_fields["hotwaterkwh"]
         live_values["baseTime"] = hw_fields["baseTime"]
+    # Stuendlicher Einkaufspreis aus dem Stromtarif (siehe compute_price_buy_array) - NEUES Feld
+    # p_buy_addon, damit der Server es getrennt vom bisherigen "Electricity Price Buy" uebernehmen
+    # kann. optimizer_period + 24 wie beim Wetter, damit der Horizont ab der aktuellen Stunde voll ist.
+    try:
+        price_base = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        price_arr = compute_price_buy_array(config, price_base, optimizer_period + 24)
+        if price_arr:
+            live_values["p_buy_addon"] = ";".join(f"{v:.5f}" for v in price_arr)
+            live_values.setdefault("baseTime", price_base.isoformat())
+    except Exception as e:
+        print("[Shyft] p_buy_addon konnte nicht berechnet werden:", repr(e))
     wb_p_min = compute_wb_p_min()
     if wb_p_min is not None:
         live_values["WB - p_min"] = wb_p_min
@@ -2909,6 +3048,7 @@ DHW_ACTIVATION_TEST_POLL_TIMEOUT_SECONDS = 90
 
 
 @app.route("/actions/hot_water_target_temp/test", methods=["POST"])
+@_records_action_test("hot_water")
 def testHotWaterTargetTemp():
     """Ein einziger Test fuer die komplette Warmwasserbereitung (ersetzt die frueher getrennten
     "Test: Warmwasserbereitung"/"Test: Solltemperatur"-Buttons): erhoeht den aktuell gelesenen
@@ -3048,6 +3188,7 @@ def readServices():
 
 
 @app.route("/actions/car_charge_start/test", methods=["POST"])
+@_records_action_test("car_charge_start")
 def testCarChargeStart():
     "Runs the exact same kW -> Phasen/Ampere pipeline as a real shyft-power action (see execute_car_charge_start), so this test is a faithful dry run rather than a simplified stand-in."
     config = _read_current_config()
@@ -3094,6 +3235,7 @@ def testCarChargeStart():
 
 
 @app.route("/actions/car_charge_stop/test", methods=["POST"])
+@_records_action_test("car_charge_start")
 def testCarChargeStop():
     config = _read_current_config()
     recipe = config.get("carChargeRecipe", {})
@@ -3271,6 +3413,7 @@ def statusAutoManagedControl(control_key):
 
 
 @app.route("/actions/<control_key>/test", methods=["POST"])
+@_records_action_test()
 def testAutoManagedControl(control_key):
     control = AUTO_MANAGED_CONTROLS.get(control_key)
     if not control:
@@ -3574,6 +3717,7 @@ def batteryDirectControlStatus(action_key):
 
 
 @app.route("/actions/battery/<action_key>/test", methods=["POST"])
+@_records_action_test()
 def testBatteryDirectControl(action_key):
     if action_key not in BATTERY_DIRECT_TEST_FIELDS:
         return jsonify({"success": False, "message": "unbekannte Steuerung"}), 404
@@ -3668,6 +3812,133 @@ def _build_action_name_to_control_key():
 
 ACTION_NAME_TO_CONTROL_KEY = _build_action_name_to_control_key()
 
+# Ein Batterie-Aktionstyp gilt in der "direct"-Variante als eingerichtet, wenn diese eine Entitaet
+# zugeordnet ist (spiegelt BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS in www/app.js).
+BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS = {
+    "battery_charge_shift_pv_surplus": "battery_charge_limit_current",
+    "battery_discharge_shift": "battery_discharge_limit_current",
+    "battery_grid_charge": "battery_charge_limit_current",
+}
+
+
+def _action_ready_key(action_name):
+    "Schluessel eines Aktionstyps in config['actionTestPassed'] / _action_type_config_state - oder None, wenn der Typ nicht gegated wird."
+    if action_name in ACTION_NAME_TO_CONTROL_KEY:
+        return ACTION_NAME_TO_CONTROL_KEY[action_name]  # heating_target_temp, consumer_on_off
+    key = ACTION_NAME_TO_ACTOR_KEY.get(action_name)     # car_charge_start, hot_water, battery_*
+    return key if key not in ("pv_feed_in_limit", "consumption_limit_14a") else None
+
+
+def _action_type_config_state(config, ready_key):
+    """Die fuer diesen Aktionstyp ausfuehrungsrelevante Konfig-Teilmenge (portiert aus
+    isSectionComplete in www/app.js). {'flags': {..bools..}, 'fp': {..alles inkl. Varianten..}} -
+    'flags' entscheidet 'vollstaendig eingerichtet?', 'fp' geht in den Test-Fingerprint (ein
+    Varianten-/Recipe-Wechsel invalidiert damit ein zuvor gesetztes actionTestPassed)."""
+    im = config.get("integrationMappings", {}) or {}
+    sm = config.get("sensorMappings", {}) or {}
+    am = config.get("actorMappings", {}) or {}
+    cv = config.get("controlVariant", {}) or {}
+    if ready_key == "car_charge_start":
+        recipe = config.get("carChargeRecipe", {}) or {}
+        amp = recipe.get("amperage", {}) or {}
+        if recipe.get("type") == "ha_automation":
+            recipe_ok = bool(recipe.get("haAutomationEntityId"))
+        else:
+            recipe_ok = bool(recipe.get("type") == "three_stage" and (recipe.get("phaseCount", {}) or {}).get("service")
+                             and amp.get("service") and (amp.get("amountFields") or [])
+                             and (recipe.get("control", {}) or {}).get("service"))
+        return {"flags": {"auto": bool(im.get("auto")), "wallbox": bool(im.get("wallbox")), "recipe": recipe_ok},
+                "fp": {"auto": bool(im.get("auto")), "wallbox": bool(im.get("wallbox")),
+                       "recipe": recipe_ok, "recipeType": recipe.get("type")}}
+    if ready_key == "hot_water":
+        recipe = config.get("hotWaterRecipe", {}) or {}
+        recipe_ok = bool(recipe.get("haAutomationEntityId")) if recipe.get("type") == "ha_automation" else bool(recipe.get("service"))
+        entity_ok = bool(_dhw_target_temp_entity(config))
+        return {"flags": {"waermepumpe": bool(im.get("waermepumpe")), "recipe": recipe_ok, "dhwTargetEntity": entity_ok},
+                "fp": {"waermepumpe": bool(im.get("waermepumpe")), "recipe": recipe_ok,
+                       "recipeType": recipe.get("type"), "dhwTargetEntity": entity_ok}}
+    if ready_key == "heating_target_temp":
+        variant = resolve_control_variant("heating_target_temp", config)
+        entity_ok = bool(am.get("heating_target_temp")) if variant == "ha_automation" else bool(sm.get("heatpump_heating_target_temp_normal"))
+        return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
+    if ready_key == "consumer_on_off":
+        variant = resolve_control_variant("consumer_on_off", config)
+        entity_ok = (bool(am.get("consumer_on")) and bool(am.get("consumer_off"))) if variant == "ha_automation" else bool(sm.get("sonstiger_verbraucher_switch_entity"))
+        return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
+    if ready_key in BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS:
+        variant = cv.get(ready_key, "ha_automation")
+        entity_ok = bool(am.get(ready_key)) if variant == "ha_automation" else bool(sm.get(BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[ready_key]))
+        return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
+    return {"flags": {}, "fp": {}}
+
+
+def _action_type_fingerprint(config, ready_key):
+    return json.dumps(_action_type_config_state(config, ready_key)["fp"], sort_keys=True, ensure_ascii=False)
+
+
+def _action_type_ready(config, action_name):
+    """(ok, reason) - ok=True nur, wenn der Aktionstyp vollstaendig eingerichtet UND zuletzt
+    erfolgreich getestet ist (config['actionTestPassed'][key] == aktueller Fingerprint). Nicht
+    gegatete Typen (ready_key None) gelten immer als ok."""
+    ready_key = _action_ready_key(action_name)
+    if not ready_key:
+        return True, ""
+    if not all(_action_type_config_state(config, ready_key)["flags"].values()):
+        return False, f"„{action_name}“ ist noch nicht vollständig eingerichtet – bitte in der Konfiguration prüfen."
+    if config.get("actionTestPassed", {}).get(ready_key) != _action_type_fingerprint(config, ready_key):
+        return False, f"„{action_name}“ wurde noch nicht erfolgreich getestet – bitte in der Konfiguration testen."
+    return True, ""
+
+
+def _record_action_test_result(ready_key, ok):
+    "Setzt bzw. loescht config['actionTestPassed'][ready_key] nach einem /actions/**/test-Aufruf."
+    if not ready_key:
+        return
+    try:
+        cfg = _read_current_config()
+        passed = cfg.setdefault("actionTestPassed", {})
+        if ok:
+            passed[ready_key] = _action_type_fingerprint(cfg, ready_key)
+        else:
+            passed.pop(ready_key, None)
+        _write_current_config(cfg)
+    except Exception as e:
+        print("[Shyft] actionTestPassed konnte nicht aktualisiert werden:", repr(e))
+
+
+def _records_action_test(ready_key=None):
+    """Decorator fuer die /actions/**/test-Handler: liest 'success' aus der JSON-Antwort und
+    aktualisiert darueber config['actionTestPassed']. ready_key=None -> das (einzige) URL-Argument
+    des Handlers ist der Schluessel (testAutoManagedControl/testBatteryDirectControl; Flask uebergibt
+    Routen-Parameter als kwargs)."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            resp = fn(*args, **kwargs)
+            key = ready_key if ready_key is not None else (args[0] if args else next(iter(kwargs.values()), None))
+            try:
+                body = resp[0] if isinstance(resp, tuple) else resp
+                ok = bool((body.get_json(silent=True) or {}).get("success"))
+            except Exception:
+                ok = False
+            _record_action_test_result(key, ok)
+            return resp
+        return wrapper
+    return deco
+
+
+def _fail_action(action, config, exec_status, msg, prev_exec, verb):
+    """Markiert eine Aktion als fehlgeschlagen: Execution Status + Error Message setzen, Grund ans
+    'Log' anhaengen (rendert aufklappbar wie beim PV-Ueberschussladen), persistieren. Benachrichtigt
+    nur, wenn sich der Execution Status dadurch aendert (kein Spam bei Retry jedes Polls)."""
+    action["Execution Status"] = exec_status
+    action["Error Message"] = msg
+    note = f"{datetime.now().strftime('%d.%m. %H:%M Uhr')}: Fehler beim {verb} - {msg}"
+    action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+    _update_computed_action(action)
+    if prev_exec != exec_status:
+        notify_action_event(config, action, f"Fehler beim {verb}")
+
 
 def is_action_type_enabled(config, action_name):
     "Addon-side replacement for shyft-power's own '(deaktiviert)' status suffix - the per-Aktionstyp toggle decides, not shyft-power."
@@ -3724,13 +3995,31 @@ def _note_action_outcome(label, phase, error=None):
 def handle_shyft_action_start(action, actions_enabled, config):
     "For direct-entity-control Aktionstypen (see AUTO_MANAGED_CONTROLS) this really executes; everything else is still a placeholder pending a later step."
     label = action.get("Action Name", "?")
+    prev_exec = action.get("Execution Status")
     target = action.get("Target Value")
     control_key = ACTION_NAME_TO_CONTROL_KEY.get(label)
 
     if not actions_enabled:
         print(f"[Shyft] Start faellig fuer '{label}' (Ziel: {target}) - Aktionstyp ist deaktiviert, nur simuliert.")
         _note_action_outcome(label, "gestartet")  # deaktiviert = kein Ausfuehrungsfehler, evtl. alten Eintrag freigeben
-    elif label == "Auto laden":
+        action["Execution Status"] = "no, deactivated"
+        action.pop("Error Message", None)
+        _update_computed_action(action)
+        notify_action_event(config, action, "gestartet (nur simuliert)")
+        return
+
+    # Ein Geraet, das noch nicht vollstaendig eingerichtet ODER nicht zuletzt erfolgreich getestet
+    # ist, wird gar nicht erst ausgefuehrt - der garantierte Fehlschlag wird dem Nutzer stattdessen
+    # in der Fehlerkarte / im Problem-Banner mit "zu den Einstellungen"-Link gezeigt.
+    ready, reason = _action_type_ready(config, label)
+    if not ready:
+        print(f"[Shyft] Start fuer '{label}' blockiert: {reason}")
+        problem_registry.register(_action_problem_id(label), reason)
+        _fail_action(action, config, "no, error", reason, prev_exec, "Starten")
+        return
+
+    start_error = None
+    if label == "Auto laden":
         try:
             target = _apply_ev_pv_surplus_start_correction(action, config)
             execute_car_charge_start(target)
@@ -3739,6 +4028,7 @@ def handle_shyft_action_start(action, actions_enabled, config):
         except Exception as e:
             print(f"[Shyft] Start fuer '{label}' fehlgeschlagen: {e!r}")
             _note_action_outcome(label, "gestartet", e)
+            start_error = str(e)
     elif label == "Warmwasser":
         # Solltemperatur-Boost und Aktivierung sind unabhaengig voneinander - beide werden immer
         # versucht, auch wenn der jeweils andere fehlschlaegt (siehe _start_dhw_target_temp_boost),
@@ -3753,9 +4043,9 @@ def handle_shyft_action_start(action, actions_enabled, config):
         except Exception as e:
             errors.append(str(e))
         if errors:
-            combined = Exception("; ".join(errors))
-            print(f"[Shyft] Start fuer '{label}' fehlgeschlagen: {combined!r}")
-            _note_action_outcome(label, "gestartet", combined)
+            start_error = "; ".join(errors)
+            print(f"[Shyft] Start fuer '{label}' fehlgeschlagen: {start_error}")
+            _note_action_outcome(label, "gestartet", Exception(start_error))
         else:
             print(f"[Shyft] Start ausgefuehrt fuer '{label}'.")
             _note_action_outcome(label, "gestartet")
@@ -3772,6 +4062,7 @@ def handle_shyft_action_start(action, actions_enabled, config):
         except Exception as e:
             print(f"[Shyft] Start fuer '{label}' fehlgeschlagen: {e!r}")
             _note_action_outcome(label, "gestartet", e)
+            start_error = str(e)
     elif control_key:
         try:
             execute_auto_managed_action(control_key, "start", target)
@@ -3780,32 +4071,38 @@ def handle_shyft_action_start(action, actions_enabled, config):
         except Exception as e:
             print(f"[Shyft] Start fuer '{label}' fehlgeschlagen: {e!r}")
             _note_action_outcome(label, "gestartet", e)
+            start_error = str(e)
     else:
         print(f"[Shyft] Start faellig fuer '{label}' (Ziel: {target}) - Ausfuehrung pro Aktion noch nicht implementiert.")
 
-    # Merkt sich, ob dieser Start "echt" war oder nur simuliert (Aktionstyp deaktiviert) - massgeblich
-    # dafuer, ob beim spaeteren Beenden wirklich die Geraete-Steuerung ausgeloest werden muss (siehe
-    # die Aufrufer von handle_shyft_action_end: die pruefen "Execution Status" == "yes, started" statt
-    # den Aktionstyp-Toggle zum Beenden-Zeitpunkt erneut auszuwerten - der kann sich zwischen Start
-    # und Ende geaendert haben).
-    action["Execution Status"] = "yes, started" if actions_enabled else "no, deactivated"
+    if start_error is not None:
+        _fail_action(action, config, "no, error", start_error, prev_exec, "Starten")
+        return
+
+    action["Execution Status"] = "yes, started"
+    action.pop("Error Message", None)
     _update_computed_action(action)
 
-    notify_action_event(config, action, "gestartet" if actions_enabled else "gestartet (nur simuliert)")
+    notify_action_event(config, action, "gestartet")
 
 
 def handle_shyft_action_end(action, actions_enabled, config):
     "For direct-entity-control Aktionstypen (see AUTO_MANAGED_CONTROLS) this really executes; everything else is still a placeholder pending a later step."
     label = action.get("Action Name", "?")
+    prev_exec = action.get("Execution Status")
     # only the "ha_automation" car-charge variant makes use of this - the addon-driven 3-stage
     # stop doesn't need a target, but the user's own automation might want to know it
     target = action.get("Target Value")
     control_key = ACTION_NAME_TO_CONTROL_KEY.get(label)
 
     if not actions_enabled:
-        print(f"[Shyft] Ende faellig fuer '{label}' - Aktionstyp ist deaktiviert, nur simuliert.")
-        _note_action_outcome(label, "beendet")  # deaktiviert = kein Ausfuehrungsfehler, evtl. alten Eintrag freigeben
-    elif label == "Auto laden":
+        print(f"[Shyft] Ende faellig fuer '{label}' - nicht wirklich gestartet, nur simuliert.")
+        _note_action_outcome(label, "beendet")  # kein Ausfuehrungsfehler, evtl. alten Eintrag freigeben
+        notify_action_event(config, action, "beendet (nur simuliert)")
+        return
+
+    end_error = None
+    if label == "Auto laden":
         try:
             execute_car_charge_stop(target)
             print(f"[Shyft] Ende ausgefuehrt fuer '{label}'.")
@@ -3813,6 +4110,7 @@ def handle_shyft_action_end(action, actions_enabled, config):
         except Exception as e:
             print(f"[Shyft] Ende fuer '{label}' fehlgeschlagen: {e!r}")
             _note_action_outcome(label, "beendet", e)
+            end_error = str(e)
     elif label == "Warmwasser":
         try:
             _end_dhw_target_temp_restore(action, config)
@@ -3821,6 +4119,7 @@ def handle_shyft_action_end(action, actions_enabled, config):
         except Exception as e:
             print(f"[Shyft] Ende fuer '{label}' fehlgeschlagen: {e!r}")
             _note_action_outcome(label, "beendet", e)
+            end_error = str(e)
     elif ACTION_NAME_TO_ACTOR_KEY.get(label) in BATTERY_SHIFT_ACTOR_KEYS:
         try:
             # shared across all three battery Aktionstypen - see BATTERY_SHIFT_ACTOR_KEYS - and no
@@ -3835,6 +4134,7 @@ def handle_shyft_action_end(action, actions_enabled, config):
         except Exception as e:
             print(f"[Shyft] Ende fuer '{label}' fehlgeschlagen: {e!r}")
             _note_action_outcome(label, "beendet", e)
+            end_error = str(e)
     elif control_key:
         try:
             execute_auto_managed_action(control_key, "end", None)
@@ -3843,10 +4143,18 @@ def handle_shyft_action_end(action, actions_enabled, config):
         except Exception as e:
             print(f"[Shyft] Ende fuer '{label}' fehlgeschlagen: {e!r}")
             _note_action_outcome(label, "beendet", e)
+            end_error = str(e)
     else:
         print(f"[Shyft] Ende faellig fuer '{label}' - Ausfuehrung pro Aktion noch nicht implementiert.")
 
-    notify_action_event(config, action, "beendet" if actions_enabled else "beendet (nur simuliert)")
+    if end_error is not None:
+        _fail_action(action, config, "yes, not finished", end_error, prev_exec, "Beenden")
+        return
+
+    action["Execution Status"] = "yes, finished"
+    action.pop("Error Message", None)
+    _update_computed_action(action)
+    notify_action_event(config, action, "beendet")
 
 
 # ============================================================================
@@ -4916,16 +5224,22 @@ def process_shyft_actions():
         date_end = action.get("Date End")
         enabled = is_action_type_enabled(config, action.get("Action Name"))
 
-        if is_active and date_start is not None and date_start <= now_ms and action_id and action_id not in started_ids:
+        end_passed = date_end is not None and date_end <= now_ms
+        if is_active and date_start is not None and date_start <= now_ms and not end_passed and action_id and action_id not in started_ids:
             handle_shyft_action_start(action, enabled, config)
-            started_ids.add(action_id)
+            # "no, error" (nicht bereit / Geraet meldete Fehler): NICHT als gestartet vormerken -
+            # der naechste Poll versucht es erneut, bis der Nutzer das Geraet fixt.
+            if action.get("Execution Status") != "no, error":
+                started_ids.add(action_id)
 
-        if date_end is not None and date_end <= now_ms and action_id and action_id not in ended_ids:
+        if end_passed and action_id and action_id not in ended_ids:
             # der aktuelle Toggle-Zustand ist hier nicht massgeblich (koennte sich seit dem Start
             # geaendert haben) - entscheidend ist, ob die Aktion beim Start wirklich ausgefuehrt wurde
-            was_really_started = action.get("Execution Status") == "yes, started"
+            was_really_started = action.get("Execution Status") in ("yes, started", "yes, not finished", "yes, finished")
             handle_shyft_action_end(action, was_really_started, config)
-            ended_ids.add(action_id)
+            # "yes, not finished": Ende schlug fehl -> nicht als beendet vormerken, naechster Poll erneut.
+            if action.get("Execution Status") != "yes, not finished":
+                ended_ids.add(action_id)
 
         currently_running = is_active and date_start is not None and date_start <= now_ms and not (date_end is not None and date_end <= now_ms)
         if currently_running:
@@ -4979,10 +5293,12 @@ def apply_action_type_toggle_changes(old_map, new_map, config):
         now_enabled = is_action_type_enabled(config, action_name)
         if now_enabled and action_id and action_id not in started_ids:
             handle_shyft_action_start(action, True, config)
-            started_ids.add(action_id)
+            if action.get("Execution Status") != "no, error":
+                started_ids.add(action_id)
         elif not now_enabled and action_id and action_id not in ended_ids:
             handle_shyft_action_end(action, True, config)
-            ended_ids.add(action_id)
+            if action.get("Execution Status") != "yes, not finished":
+                ended_ids.add(action_id)
 
     config["startedShyftActionIds"] = sorted(started_ids)
     config["endedShyftActionIds"] = sorted(ended_ids)

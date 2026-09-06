@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.23
+
+* **Fehlgeschlagene Aktionen werden markiert.** Neue `Execution Status`-Werte `no, error` (Aktion konnte nicht gestartet werden) und `yes, not finished` (Aktion konnte nicht beendet werden), jeweils mit `Error Message` als Klartext-Grund. Die Aktionskarte im Gerätesteuerung-Tab wird dann **rot umrandet** und bekommt ein aufklappbares „Log" mit dem Grund (wie beim PV-Überschussladen). Bei jedem folgenden 15-Minuten-Poll wird die Aktion erneut versucht – sie „heilt" von selbst, sobald das Gerät wieder funktioniert. Benachrichtigt wird nur beim ersten Fehlschlag, nicht bei jedem Retry.
+* **Eine Aktion wird nur noch ausgeführt, wenn ihr Gerät vollständig eingerichtet UND zuletzt erfolgreich getestet ist.** Sonst: `Execution Status = no, error` statt `yes, started`, plus ein Eintrag in der Fehlerkarte / im Problem-Banner mit „zu den Einstellungen"-Link. Der Testerfolg wird pro Aktionstyp in `config.actionTestPassed` gespeichert (Fingerprint der relevanten Konfig-Felder) – die Test-Buttons (`/actions/**/test`) setzen ihn bei Erfolg, löschen ihn bei Misserfolg, und jede Änderung an den zugehörigen Sensor-/Aktor-/Recipe-Feldern invalidiert ihn automatisch. **Nach diesem Update muss jeder genutzte Aktionstyp einmal erfolgreich getestet werden, sonst pausiert er.**
+
 ## 0.0.45.22
 
 * **Neu: PV-Prognose als eigenständiger Home-Assistant-Sensor.** `sensor.shyft_pv_prognose` wird jetzt per REST-API ins Addon-eigene Home Assistant gepusht (State = die für die aktuelle Stunde prognostizierte Leistung in kW, `forecast`-Attribut mit allen 48 Stunden ab heute 0 Uhr für eigene Diagramme/Automationen). Läuft automatisch mit, sobald ein PV-Erzeugungssensor zugeordnet ist - damit lässt sich das Addon jetzt auch ausschließlich für die PV-Prognose nutzen, ganz ohne die übrige Gerätesteuerung/Optimierung einzurichten. Aktualisiert sich stündlich, zusätzlich sofort nach jedem frischen Wetter-Abruf und beim Addon-Start.

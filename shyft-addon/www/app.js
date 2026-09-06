@@ -593,7 +593,13 @@ async function saveConfigurationNow() {
         "optimizationPeriodsSite": configData["optimizationPeriodsSite"] ?? 48,
         "electricityBaseLoad": configData["electricityBaseLoad"] ?? 'niedrig__2628',
         "electricityPriceBuy": configData["electricityPriceBuy"] ?? 'mittel (30 Cent)',
-        "electricityPriceSell": configData["electricityPriceSell"] ?? 'mittel (10 Cent)'
+        "electricityPriceSell": configData["electricityPriceSell"] ?? 'mittel (10 Cent)',
+        "electricityTariffMode": configData["electricityTariffMode"] ?? 'fixed',
+        "electricityFixedCent": configData["electricityFixedCent"] ?? null,
+        "electricityHtCent": configData["electricityHtCent"] ?? null,
+        "electricityNtCent": configData["electricityNtCent"] ?? null,
+        "electricityHtWindows": configData["electricityHtWindows"] ?? [],
+        "electricityDynamicSurchargeCent": configData["electricityDynamicSurchargeCent"] ?? null,
     };
     const response = await putJson(configUri, toBeWritten);
     configData = response;
@@ -1248,20 +1254,204 @@ function watchForErrorsToExpand(bodyDiv, onError) {
 // Eingabefeld (bleibt serverseitig beim Default 48h, spaeter automatisch reduziert falls der
 // Optimizer zu lange braucht) und Gaspreis gehoert an ein noch nicht implementiertes
 // "Blockheizkraftwerk"-Geraet - beide Felder bleiben in collect_static_config vorbereitet, nur ohne UI.
+const WEEKDAY_NAMES = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
+
 function renderGeneralConfigSection() {
     const container = document.getElementById('config');
     if (!container) {
         return;
     }
     container.innerHTML = '';
+    // Eigene Kachel im .integrationSection-Look, oberhalb der Geraete-Kacheln (siehe #config in index.html).
+    container.className = 'integrationSection electricitySection';
 
-    const heading = document.createElement('h2');
-    heading.textContent = 'Strom';
+    const heading = document.createElement('div');
+    heading.className = 'integrationHeading';
+    const h2 = document.createElement('h2');
+    h2.textContent = 'Strom';
+    heading.appendChild(h2);
     container.appendChild(heading);
 
+    container.appendChild(buildElectricitySubheading('Stromverbrauch, Grundlast'));
     container.appendChild(buildElectricityBaseLoadField());
-    container.appendChild(buildElectricityPriceBuyField());
+
+    container.appendChild(buildElectricitySubheading('Stromtarif (Strombezug)'));
+    container.appendChild(buildElectricityTariffControl());
+
+    container.appendChild(buildElectricitySubheading('Einspeisung'));
     container.appendChild(buildElectricityPriceSellField());
+}
+
+function buildElectricitySubheading(text) {
+    const h = document.createElement('h3');
+    h.className = 'electricitySubheading';
+    h.textContent = text;
+    return h;
+}
+
+// Drei-Wege-Umschalter (segmented control) - kein bestehendes Widget dafuer, buildToggleSwitch ist binaer.
+function buildSegmentedControl(options, current, onChange) {
+    const group = document.createElement('div');
+    group.className = 'segmentedControl';
+    for (const [value, label] of options) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = label;
+        btn.className = 'segmentedControlButton' + (value === current ? ' active' : '');
+        btn.addEventListener('click', () => {
+            if (btn.classList.contains('active')) return;
+            for (const b of group.children) b.classList.toggle('active', b === btn);
+            onChange(value);
+        });
+        group.appendChild(btn);
+    }
+    return group;
+}
+
+function buildElectricityTariffControl() {
+    const wrap = document.createElement('div');
+    const mode = configData['electricityTariffMode'] || 'fixed';
+    if (configData['electricityTariffMode'] === undefined) configData['electricityTariffMode'] = 'fixed';
+
+    wrap.appendChild(buildSegmentedControl([
+        ['fixed', 'Fixer Tarif'],
+        ['ht_nt', 'Hoch-/Niedertarif'],
+        ['dynamic', 'Dynamischer Tarif'],
+    ], mode, (val) => {
+        configData['electricityTariffMode'] = val;
+        renderPanels(val);
+        autoSave();
+    }));
+
+    const panels = document.createElement('div');
+    panels.className = 'electricityTariffPanels';
+    wrap.appendChild(panels);
+
+    function centField(label, tooltip, id, configKey, placeholder) {
+        return buildConfigNumberField({label, tooltip, id, configKey, placeholder, step: '0.01', min: '0', unit: 'ct/kWh'});
+    }
+
+    function renderPanels(m) {
+        panels.innerHTML = '';
+        if (m === 'fixed') {
+            panels.appendChild(centField('Kosten (brutto)',
+                'Dein fester Arbeitspreis pro Kilowattstunde.',
+                'electricity_fixed_cent', 'electricityFixedCent', 'z.B. 30'));
+        } else if (m === 'ht_nt') {
+            const note = document.createElement('p');
+            note.className = 'electricityHint';
+            note.textContent = 'Zwei-Stufen-Tarif: zu den unten definierten Zeitfenstern gilt der Hochtarif, zu allen übrigen Zeiten der Niedertarif.';
+            panels.appendChild(note);
+            panels.appendChild(centField('Kosten Hochtarif (brutto)',
+                'Arbeitspreis in den Hochtarif-Zeitfenstern.',
+                'electricity_ht_cent', 'electricityHtCent', 'z.B. 18'));
+            panels.appendChild(buildHtWindowEditor());
+            panels.appendChild(centField('Niedertarif (brutto)',
+                'Arbeitspreis zu allen übrigen Zeiten.',
+                'electricity_nt_cent', 'electricityNtCent', 'z.B. 7'));
+        } else {
+            const note = document.createElement('p');
+            note.className = 'electricityHint';
+            note.textContent = 'Die Börsenpreise (Brutto, EPEX Day-Ahead) werden automatisch von der Strombörse abgerufen. Trag hier nur deinen festen Aufschlag ein (Netzentgelt, Abgaben, Steuer, Lieferantenmarge) - er wird auf jeden Börsen-Stundenpreis addiert.';
+            panels.appendChild(note);
+            panels.appendChild(centField('Fixer Anteil (brutto)',
+                'Wird auf jeden Börsen-Stundenpreis aufgeschlagen.',
+                'electricity_dyn_surcharge_cent', 'electricityDynamicSurchargeCent', 'z.B. 15'));
+        }
+    }
+    renderPanels(mode);
+    return wrap;
+}
+
+function buildHtWindowEditor() {
+    const wrap = document.createElement('div');
+    wrap.className = 'htWindowEditor';
+
+    const form = document.createElement('div');
+    form.className = 'htWindowForm';
+    const wdSel = document.createElement('select');
+    wdSel.className = 'sensorInput';
+    WEEKDAY_NAMES.forEach((n, i) => {
+        const o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = n;
+        wdSel.appendChild(o);
+    });
+    const fromSel = document.createElement('select');
+    fromSel.className = 'sensorInput';
+    for (let h = 0; h < 24; h++) {
+        const o = document.createElement('option');
+        o.value = String(h);
+        o.textContent = h + ' Uhr';
+        fromSel.appendChild(o);
+    }
+    const toSel = document.createElement('select');
+    toSel.className = 'sensorInput';
+    for (let h = 1; h <= 24; h++) {
+        const o = document.createElement('option');
+        o.value = String(h);
+        o.textContent = h + ' Uhr';
+        toSel.appendChild(o);
+    }
+    toSel.value = '1';
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'htWindowAddButton';
+    addBtn.textContent = 'Zeitraum hinzufügen';
+    const lbl = (t) => {
+        const s = document.createElement('span');
+        s.className = 'htWindowFormLabel';
+        s.textContent = t;
+        return s;
+    };
+    form.append(wdSel, lbl('von'), fromSel, lbl('bis'), toSel, addBtn);
+    wrap.appendChild(form);
+
+    const list = document.createElement('div');
+    list.className = 'htWindowList';
+    wrap.appendChild(list);
+
+    function render() {
+        list.innerHTML = '';
+        const windows = configData['electricityHtWindows'] || [];
+        if (!windows.length) {
+            const empty = document.createElement('p');
+            empty.className = 'electricityHint';
+            empty.textContent = 'Noch keine Hochtarif-Zeitfenster - ohne Fenster gilt durchgehend der Niedertarif.';
+            list.appendChild(empty);
+            return;
+        }
+        windows.forEach((w, idx) => {
+            const chip = document.createElement('div');
+            chip.className = 'htWindowChip';
+            const text = document.createElement('span');
+            text.textContent = `${WEEKDAY_NAMES[w.weekday] || '?'}: ${w.from} - ${w.to} Uhr`;
+            const del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'htWindowDelete';
+            del.title = 'Zeitfenster entfernen';
+            del.textContent = '🗑';
+            del.addEventListener('click', () => {
+                configData['electricityHtWindows'].splice(idx, 1);
+                render();
+                autoSave();
+            });
+            chip.append(text, del);
+            list.appendChild(chip);
+        });
+    }
+
+    addBtn.addEventListener('click', () => {
+        const w = {weekday: parseInt(wdSel.value, 10), from: parseInt(fromSel.value, 10), to: parseInt(toSel.value, 10)};
+        if (w.to === w.from) return;
+        configData['electricityHtWindows'] = configData['electricityHtWindows'] || [];
+        configData['electricityHtWindows'].push(w);
+        render();
+        autoSave();
+    });
+
+    render();
+    return wrap;
 }
 
 function renderIntegrationSections() {
@@ -2216,34 +2406,22 @@ function buildOptimizationPeriodsField() {
 // instead, same trick as buildHpHeatingBufferField/HpHeatingBuffer.java's extractValueFromName -
 // Java's future JSON parser needs the equivalent fallback for this field.
 function buildElectricityBaseLoadField() {
+    // value = "<Label>__<kWh/Jahr>"; die kWh/Jahr entsprechen exakt der Ø-Dauerleistung in Klammern
+    // (kWh/Jahr / 8760 h = W). Der Wert-Teil geht unveraendert an Bubble (collect_static_config).
     return buildConfigSelectField({
-        label: 'Grundlast Strom (Jahr)',
-        tooltip: 'Dein jährlicher Stromverbrauch ohne Wärmepumpe/EV/Batterie (Haushaltsgeräte, Beleuchtung etc.).',
+        label: 'Grundlast (Ø Dauerleistung)',
+        tooltip: 'Dein Grundverbrauch ohne Wärmepumpe/EV/Batterie (Haushaltsgeräte, Standby, Beleuchtung etc.) als durchschnittliche Dauerleistung über das Jahr.',
         id: 'electricity_base_load',
         configKey: 'electricityBaseLoad',
         options: [
-            ['sehr niedrig__1314', 'sehr niedrig'],
-            ['niedrig__2628', 'niedrig'],
-            ['mittel__4380', 'mittel'],
-            ['hoch__6570', 'hoch'],
-            ['noch höher__8760', 'noch höher'],
-            ['sehr hoch__13140', 'sehr hoch'],
+            ['sehr niedrig__1314', 'sehr niedrig (150 W)'],
+            ['niedrig__2628', 'niedrig (300 W)'],
+            ['mittel__4380', 'mittel (500 W)'],
+            ['hoch__6570', 'hoch (750 W)'],
+            ['noch höher__8760', 'noch höher (1.000 W)'],
+            ['sehr hoch__13140', 'sehr hoch (1.500 W)'],
         ],
         defaultValue: 'niedrig__2628',
-    });
-}
-
-function buildElectricityPriceBuyField() {
-    return buildConfigSelectField({
-        label: 'Strompreis (Einkauf)',
-        tooltip: 'Dein ungefährer Strompreis, falls du keinen dynamischen Tarif hast.',
-        id: 'electricity_price_buy',
-        configKey: 'electricityPriceBuy',
-        options: [
-            'sehr niedrig (20 Cent)', 'niedrig (25 Cent)', 'mittel (30 Cent)',
-            'hoch (35 Cent)', 'sehr hoch (40 Cent)',
-        ].map(v => [v, v]),
-        defaultValue: 'mittel (30 Cent)',
     });
 }
 
@@ -3952,9 +4130,13 @@ function buildShyftActionCard(action) {
     const isActive = normalizedStatus.startsWith('aktiv');
     const isDeactivated = normalizedStatus.includes('deaktiviert');
     const baseStatus = status.replace(/\s*\(deaktiviert\)/i, '').trim();
+    // "no, error" = Start nicht moeglich (nicht eingerichtet/getestet ODER Geraetefehler),
+    // "yes, not finished" = Beenden fehlgeschlagen - beides rot umranden (siehe .shyftActionCard.is-error).
+    const exec = (action['Execution Status'] || '').toLowerCase();
+    const isError = exec === 'no, error' || exec === 'yes, not finished';
 
     const card = document.createElement('div');
-    card.className = 'shyftActionCard' + (isActive ? ' is-active' : '') + (isDeactivated ? ' is-deactivated' : '');
+    card.className = 'shyftActionCard' + (isActive ? ' is-active' : '') + (isDeactivated ? ' is-deactivated' : '') + (isError ? ' is-error' : '');
 
     const time = document.createElement('div');
     time.className = 'shyftActionTime';
@@ -3989,7 +4171,8 @@ function buildShyftActionCard(action) {
         subtitleEl.textContent = action['Subtitle'];
         main.appendChild(subtitleEl);
     }
-    if (action['Log']) {
+    const logText = action['Log'] || action['Error Message'];
+    if (logText) {
         const logDetails = document.createElement('details');
         logDetails.className = 'shyftActionLog';
         const logKey = actionLogKey(action);
@@ -4002,7 +4185,7 @@ function buildShyftActionCard(action) {
         logSummary.textContent = 'Log anzeigen';
         logDetails.appendChild(logSummary);
         const logPre = document.createElement('pre');
-        logPre.textContent = action['Log'];
+        logPre.textContent = logText;
         logDetails.appendChild(logPre);
         main.appendChild(logDetails);
     }
