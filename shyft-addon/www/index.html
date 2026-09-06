@@ -583,7 +583,7 @@
             padding: 0.1em 0.2em;
         }
         /* Prüfzeile im dynamischen Stromtarif (siehe buildElectricityPricePreview) - nur der
-           gerade gültige Gesamtpreis (Börse + fixer Anteil), Stunde + Viertelstunde. */
+           Gesamtpreis (Börse + fixer Anteil) der aktuellen Stunde. */
         .electricityPricePreview {
             margin: 0.8em 0 0.2em;
         }
@@ -594,10 +594,9 @@
             margin-bottom: 0.5em;
         }
         .electricityPriceNow {
-            display: grid;
-            grid-template-columns: auto auto;
-            justify-content: start;
-            gap: 0.2em 1em;
+            display: flex;
+            align-items: baseline;
+            gap: 0.7em;
             margin-top: 0.4em;
         }
         .electricityPriceNowLabel {
@@ -605,7 +604,7 @@
             color: var(--color-text-secondary);
         }
         .electricityPriceNowValue {
-            font-size: 0.95em;
+            font-size: 1.15em;
             font-weight: 700;
             color: var(--color-text);
             white-space: nowrap;

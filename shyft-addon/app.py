@@ -453,17 +453,14 @@ def electricity_price_preview():
     total_ct = round(spot_ct + surcharge_ct, 2)
     now_local = now.astimezone()
     hour_local = now_local.replace(minute=0, second=0, microsecond=0)
-    quarter_local = now_local.replace(minute=(now_local.minute // 15) * 15, second=0, microsecond=0)
 
+    # Awattar veroeffentlicht nur Stundenpreise - es gibt keinen 15-Minuten-Kurs zum Anzeigen.
     return jsonify({
         "ok": True,
         "surcharge_ct": round(surcharge_ct, 2),
         "spot_ct": spot_ct,
         "generated_at": now_local.isoformat(),
-        # Awattar veroeffentlicht nur Stundenpreise - die aktuelle Viertelstunde hat denselben Wert.
         "hour": {"start": hour_local.isoformat(), "total_ct": total_ct},
-        "quarter": {"start": quarter_local.isoformat(), "total_ct": total_ct},
-        "quarter_derived": True,
     })
 
 
@@ -1027,6 +1024,43 @@ def _wallbox_status_mapping_warning(config):
     }
 
 
+# ready_key (siehe _action_ready_key / config['actionTestFailed']) -> (Klartext-Label,
+# Geraetekachel-sectionKey fuer den "zu den Einstellungen"-Link, vgl. ACTION_FAILED_SLUG_TO_SECTION
+# in www/app.js).
+_READY_KEY_TO_LABEL_SECTION = {
+    "hot_water": ("Warmwasser", "waermepumpe"),
+    "heating_target_temp": ("Heizung Soll-Temperatur", "waermepumpe"),
+    "car_charge_start": ("Auto laden", "wallbox"),
+    "consumer_on_off": ("Verbraucher an/aus", "sonstiger_verbraucher"),
+    "battery_charge_shift_pv_surplus": ("Batterie-Laden verschieben (PV-Überschuss)", "batterie"),
+    "battery_discharge_shift": ("Batterie-Entladen verschieben", "batterie"),
+    "battery_grid_charge": ("Batterie netzladen", "batterie"),
+}
+
+
+def _action_not_ready_warnings(config):
+    """Je Aktionstyp, dessen letzter Test in der Konfiguration fehlgeschlagen ist (siehe
+    _record_action_test_result / config['actionTestFailed']) und dessen Konfiguration sich seither
+    nicht geaendert hat: eine Warnung mit sectionKey. Dadurch zeigt die Geraete-Navigation ein
+    Fehler-"!" statt des gruenen Hakens und der Zaehler im Problem-Banner stimmt."""
+    failed = config.get("actionTestFailed", {}) or {}
+    out = []
+    for ready_key, fp in failed.items():
+        meta = _READY_KEY_TO_LABEL_SECTION.get(ready_key)
+        if not meta:
+            continue
+        if fp != _action_type_fingerprint(config, ready_key):
+            continue  # Konfig seit dem fehlgeschlagenen Test geaendert -> Marker veraltet
+        label, section_key = meta
+        out.append({
+            "key": f"action_test_failed:{ready_key}",
+            "sectionKey": section_key,
+            "message": f"„{label}“: Der letzte Test in der Konfiguration ist fehlgeschlagen – "
+                       f"bitte das Gerät prüfen und erneut testen.",
+        })
+    return out
+
+
 def compute_config_warnings():
     config = _read_current_config()
     checks = [_wallbox_status_mapping_warning]
@@ -1035,6 +1069,7 @@ def compute_config_warnings():
         warning = check(config)
         if warning:
             warnings.append(warning)
+    warnings.extend(_action_not_ready_warnings(config))
     return warnings
 
 
@@ -3180,16 +3215,23 @@ def _action_type_ready(config, action_name):
 
 
 def _record_action_test_result(ready_key, ok):
-    "Setzt bzw. loescht config['actionTestPassed'][ready_key] nach einem /actions/**/test-Aufruf."
+    """Nach einem /actions/**/test-Aufruf: setzt bzw. loescht config['actionTestPassed'][ready_key]
+    (Bereitschafts-Gating) und fuehrt parallel config['actionTestFailed'][ready_key] mit dem
+    Fingerprint des fehlgeschlagenen Tests - Grundlage fuer das Fehler-"!" an der Geraetekachel in
+    der Navigation (siehe _action_not_ready_warnings). Ein spaeterer Konfig-Wechsel invalidiert den
+    Eintrag automatisch ueber den Fingerprint-Vergleich, ein erfolgreicher Test loescht ihn."""
     if not ready_key:
         return
     try:
         cfg = _read_current_config()
         passed = cfg.setdefault("actionTestPassed", {})
+        failed = cfg.setdefault("actionTestFailed", {})
         if ok:
             passed[ready_key] = _action_type_fingerprint(cfg, ready_key)
+            failed.pop(ready_key, None)
         else:
             passed.pop(ready_key, None)
+            failed[ready_key] = _action_type_fingerprint(cfg, ready_key)
         _write_current_config(cfg)
     except Exception as e:
         print("[Shyft] actionTestPassed konnte nicht aktualisiert werden:", repr(e))

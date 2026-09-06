@@ -1530,8 +1530,8 @@ function buildHtWindowEditor() {
 
 // Pruefzeile fuer den dynamischen Stromtarif. getSurcharge() liefert den aktuell im Feld
 // stehenden fixen Anteil in Cent (live, auch waehrend des Tippens) oder null. Ruft
-// /electricity/price-preview ab und zeigt NUR den gerade gueltigen Gesamtpreis (Boerse + fixer
-// Anteil) fuer die aktuelle Stunde bzw. die aktuelle Viertelstunde - keine Liste.
+// /electricity/price-preview ab und zeigt NUR den Gesamtpreis (Boerse + fixer Anteil) der
+// aktuellen Stunde - die Strombörse (Awattar) stellt keine 15-Minuten-Preise bereit.
 function buildElectricityPricePreview(getSurcharge) {
     const box = document.createElement('div');
     box.className = 'electricityPricePreview';
@@ -1576,29 +1576,21 @@ function buildElectricityPricePreview(getSurcharge) {
             return;
         }
 
-        const grid = document.createElement('div');
-        grid.className = 'electricityPriceNow';
-        const addRow = (label, row) => {
-            const l = document.createElement('span');
-            l.className = 'electricityPriceNowLabel';
-            l.textContent = label;
-            const v = document.createElement('span');
-            v.className = 'electricityPriceNowValue';
-            v.textContent = fmt(row.total_ct, 1) + ' ct/kWh';
-            grid.append(l, v);
-        };
-        addRow('Aktuelle Stunde (ab ' + hhmm(state.hour.start) + ' Uhr)', state.hour);
-        addRow('Aktuelle Viertelstunde (ab ' + hhmm(state.quarter.start) + ')', state.quarter);
-        box.appendChild(grid);
+        const now = document.createElement('div');
+        now.className = 'electricityPriceNow';
+        const label = document.createElement('span');
+        label.className = 'electricityPriceNowLabel';
+        label.textContent = 'Stunde ab ' + hhmm(state.hour.start) + ' Uhr';
+        const value = document.createElement('span');
+        value.className = 'electricityPriceNowValue';
+        value.textContent = fmt(state.hour.total_ct, 1) + ' ct/kWh';
+        now.append(label, value);
+        box.appendChild(now);
 
         const foot = document.createElement('p');
         foot.className = 'electricityPricePreviewFoot';
-        let footText = 'Börse ' + fmt(state.spot_ct, 2) + ' ct + fixer Anteil ' + fmt(state.surcharge_ct, 2)
-            + ' ct. Stand ' + new Date(state.generated_at).toLocaleTimeString('de-DE') + '.';
-        if (state.quarter_derived) {
-            footText += ' Die Börse liefert Stundenpreise – die Viertelstunde entspricht der Stunde.';
-        }
-        foot.textContent = footText;
+        foot.textContent = 'Börse ' + fmt(state.spot_ct, 2) + ' ct + fixer Anteil ' + fmt(state.surcharge_ct, 2)
+            + ' ct. Stand ' + new Date(state.generated_at).toLocaleTimeString('de-DE') + '. Die Strombörse stellt nur Stundenpreise bereit.';
         box.appendChild(foot);
     }
 
@@ -4016,6 +4008,9 @@ function buildBatteryDirectTestRow(actionKey) {
             valuesDisplay.textContent = 'Fehler beim Testen';
         } finally {
             button.disabled = false;
+            // Der Testausgang ist serverseitig in actionTestFailed/actionTestPassed hinterlegt -
+            // Fehlerkarte + Geraete-Navigation ("!" statt grünem Haken) sofort neu bewerten.
+            renderSystemHealth();
         }
     });
 

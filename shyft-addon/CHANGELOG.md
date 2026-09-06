@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.28
+
+* **Prüfzeile im dynamischen Tarif zeigt nur noch den aktuellen Stundenpreis.** Die Strombörse (Awattar) stellt keine 15-Minuten-Preise bereit – Umschalter und Viertelstunden-Zeile sind entfallen. `GET /electricity/price-preview` liefert entsprechend nur noch `hour`.
+* **Ein fehlgeschlagener Gerätetest zeigt jetzt ein Fehler-„!" in der Geräte-Navigation** (statt des grünen Hakens) und einen Eintrag in der Fehlerkarte / im Problem-Banner mit „zu den Einstellungen"-Link. Der Testausgang wird pro Aktionstyp in `config.actionTestFailed` gemerkt (mit Konfig-Fingerprint – ein erfolgreicher Test oder eine Konfig-Änderung räumt den Marker wieder ab). Nach einem Test wird die Bewertung sofort aktualisiert, ohne Reload.
+
 ## 0.0.45.27
 
 * **Prüfzeile im dynamischen Tarif zeigt jetzt nur den gerade gültigen Wert** – den Gesamtstrompreis für die aktuelle Stunde und die aktuelle Viertelstunde, statt der ganzen Preisliste. Fußzeile: Zusammensetzung (Börse + fixer Anteil) und Stand-Uhrzeit, ohne Quellenangabe.
