@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.14
+
+* **Fix: zwei "Auto laden"-Aktionen konnten gleichzeitig aktiv sein** - eine optimierer-berechnete (COMPUTED_ACTIONS_PATH) und eine unabhängige PV-Überschussladen-Fallback-Session (PV_SURPLUS_ACTIONS_PATH), die bisher bewusst nichts voneinander wussten. Will die Fallback-Session jetzt eine neue Session eröffnen, während bereits eine reguläre (nicht schon selbst PV-Überschuss-markierte) Optimierer-Aktion aktiv läuft, wird diese stattdessen nur in der Buchführung beendet und als "in PV-Überschussladen (Fallback) umgewandelt" vermerkt - die Wallbox lädt dabei unterbrochungsfrei weiter, es existiert danach nur noch der eine, von der Fallback-Session verwaltete Eintrag. Zusätzlich abgesichert gegen zwei Nachbearbeitungspfade, die die umgewandelte Aktion sonst fälschlich ein zweites Mal (und damit die Wallbox real) gestoppt hätten.
+
 ## 0.0.45.13
 
 * **Fix: "Auto laden"-Aktionen zeigten einen falschen Ladestand an (z.B. "von 1 % auf 1 %" statt korrekt "von 51 % auf 60 %").** Der Optimierer liefert `SOC_EV` als Bruch (0..1), nicht wie fälschlich angenommen schon in Prozent (0..100) - anders als `SOC_B` bei der Batterie, das tatsächlich schon 0..100-skaliert ist. Über die reine Anzeige hinaus hatte das einen echten Funktionsfehler zur Folge: die "Limit PV-Überschussladen"-Kappung (`evSocMaxPvSurplus`, in Prozent eingegeben) verglich einen Bruch gegen einen Prozentwert und griff dadurch nie - der Ladestand konnte beim PV-Überschussladen also nie auf dem eingestellten Maximum gedeckelt werden. Gefunden und verifiziert anhand echter Live-Daten des Nutzers.

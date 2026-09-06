@@ -2670,6 +2670,17 @@ def _run_pv_surplus_charging_tick_impl():
             print("[Shyft] PV-Überschussladen: Start fehlgeschlagen:", repr(e))
             return
 
+        # Verhindert, dass eine bereits aktive Optimierer-"Auto laden"-Aktion (anderer Store,
+        # COMPUTED_ACTIONS_PATH) und diese neue Fallback-Session gleichzeitig als "aktiv" auftauchen
+        # (siehe readShyftActions, das beide Stores zusammenfuehrt) - die Wallbox laedt in beiden
+        # Faellen bereits, die obige execute_car_charge_start-Anweisung bestaetigt nur den (ggf.
+        # geaenderten) Zielwert erneut. Die Optimierer-Aktion wird nur in der Buchfuehrung beendet,
+        # NICHT ueber handle_shyft_action_end/execute_car_charge_stop - das wuerde die Wallbox
+        # unnoetig unterbrechen.
+        active_optimizer_action = _active_optimizer_ev_charge_action()
+        if active_optimizer_action:
+            _convert_ev_charge_action_to_pv_surplus_fallback(active_optimizer_action, config)
+
         new_session = {"active": True, "target_kw": target_kw, "has_battery": has_battery,
                         "start_ms": int(now_ms), "planned_end_ms": _next_full_hour_ms(now_ms), "log": [],
                         "last_regulation_grid_kw": grid_kw}
@@ -4045,6 +4056,47 @@ def _recheck_active_pv_surplus_optimizer_action(config):
         print("[Shyft] PV-Überschussladen (laufende Optimierer-Aktion): Nachkorrektur fehlgeschlagen:", repr(e))
 
 
+def _active_optimizer_ev_charge_action():
+    """Die aktuell aktive, wirklich gestartete Optimierer-'Auto laden'-Aktion (COMPUTED_ACTIONS_PATH),
+    falls vorhanden - AUSSER sie ist selbst schon als PV-Ueberschuss markiert (PV Surplus=True): die
+    wird bereits ueber _recheck_active_pv_surplus_optimizer_action laufend anhand ihrer eigenen PV-
+    Prognose nachkorrigiert und braucht keine Uebernahme durch die Fallback-Session. Grundlage fuer
+    die Uebernahme in _run_pv_surplus_charging_tick_impl, damit nie zwei 'Auto laden'-Aktionen
+    (eine Optimierer-, eine Fallback-Session) gleichzeitig als aktiv auftauchen."""
+    return next((a for a in _read_computed_actions()
+                 if a.get("Action Name") == EV_CHARGE_ACTION_NAME and (a.get("Status") or "").lower() == "aktiv"
+                 and a.get("Execution Status") == "yes, started" and not a.get("PV Surplus")), None)
+
+
+def _convert_ev_charge_action_to_pv_surplus_fallback(action, config):
+    """Beendet eine Optimierer-'Auto laden'-Aktion NUR in der Buchfuehrung (Status -> 'beendet'),
+    OHNE die Wallbox anzufassen (kein execute_car_charge_stop) - die laedt ja bereits und soll das
+    unterbrechungsfrei weiter tun, jetzt aber von der PV-Ueberschussladen-Fallback-Session verwaltet.
+    Verhindert, dass beide gleichzeitig als 'aktiv' auftauchen (siehe readShyftActions, das beide
+    Stores zusammenfuehrt, und _run_pv_surplus_charging_tick_impl).
+
+    Zwei unabhaengige Nachbearbeitungs-Pfade koennten diese Aktion sonst trotzdem noch (ein zweites
+    Mal) beenden und dabei die Wallbox stoppen: _reconcile_computed_actions (prueft dafuer das Flag
+    _convertedToPvSurplusFallback unten) UND process_shyft_actions, dessen Ende-Trigger laut eigenem
+    Docstring bewusst "regardless of Status" ist und nur ueber die persistierte endedShyftActionIds-
+    Liste ausgeschlossen werden kann - deshalb wird die Aktion hier zusaetzlich sofort in diese Liste
+    eingetragen, genau wie ein "echtes" Beenden es auch taete."""
+    action["Status"] = "beendet"
+    action["_convertedToPvSurplusFallback"] = True
+    timestamp = datetime.now().strftime("%d.%m. %H:%M Uhr")
+    note = f"{timestamp}: in PV-Überschussladen (Fallback) umgewandelt - Wallbox lädt unverändert weiter"
+    action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+    _update_computed_action(action)
+
+    action_id = action.get("_id")
+    if action_id:
+        ended_ids = set(config.get("endedShyftActionIds", []))
+        if action_id not in ended_ids:
+            ended_ids.add(action_id)
+            config["endedShyftActionIds"] = sorted(ended_ids)
+            _write_current_config(config)
+
+
 # ============================================================================
 # Warmwasser (DHW) - zweiter Aktionstyp nach demselben Muster wie "Auto laden": Berechnung aus
 # output_csv, Reconciliation ueber die generische _reconcile_computed_actions. Die Aktivierung
@@ -4589,6 +4641,12 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
             kept.append(hour0_existing)
         else:
             kept.append(computed_by_hour[0])
+    elif hour0_existing and hour0_existing.get("_convertedToPvSurplusFallback"):
+        # Bereits an die PV-Ueberschussladen-Fallback-Session uebergeben (siehe
+        # _convert_ev_charge_action_to_pv_surplus_fallback) - wird hier NICHT nochmal beendet, das
+        # wuerde execute_car_charge_stop auf eine Wallbox loslassen, die die Fallback-Session gerade
+        # aktiv steuert. Bleibt als (bereits beendeter) historischer Eintrag im Store erhalten.
+        kept.append(hour0_existing)
     elif hour0_existing:
         # War wirklich aktiv (Execution Status "yes, started"), nicht nur der aktuelle Toggle-Zustand:
         # der Aktionstyp koennte zwischen Start und jetzt deaktiviert worden sein, ohne dass die
