@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.30
+
+* **Unbestätigte Default-Werte werden jetzt sichtbar gemacht.** Ein Konfigurationsfeld, das der Nutzer noch nie angefasst hat und das exakt auf seinem Default steht, bekommt einen **roten Rahmen**, und die zugehörige Geräte-Kachel (bzw. die „Strom"-Kachel) startet **aufgeklappt** statt eingeklappt – damit jeder Default bewusst geprüft statt stillschweigend übernommen wird. Sobald das Feld einmal geändert/bestätigt wurde, verschwindet die Markierung dauerhaft (gemerkt in `config.touchedFields`). Betrifft die Zahlen-/Auswahlfelder unter Wärmepumpe, Batterie, Auto, Wallbox und Strom (Grundlast).
+
 ## 0.0.45.29
 
 * **Neuer Hinweis "Demomodus. Jetzt Geräte einrichten" statt "Alle Systeme laufen"**, solange ausschließlich Demo-Geräte zugeordnet sind (kein einziges echtes Gerät) - sowohl in der Statuskarte auf der Konfigurationsseite als auch im klickbaren Dashboard-Banner.

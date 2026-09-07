@@ -622,6 +622,9 @@ async function saveConfigurationNow() {
         "electricityHtWindows": configData["electricityHtWindows"] ?? [],
         "electricityDynamicSurchargeCent": configData["electricityDynamicSurchargeCent"] ?? null,
         "electricitySellCent": configData["electricitySellCent"] ?? null,
+        // Konfig-Keys, die der Nutzer bewusst geaendert/bestaetigt hat (siehe markConfigFieldTouched) -
+        // steuert den roten Rahmen um unbestaetigte Default-Felder und das Aufklappen der Kachel.
+        "touchedFields": configData["touchedFields"] || [],
     };
     const response = await putJson(configUri, toBeWritten);
     configData = response;
@@ -1362,6 +1365,10 @@ function renderGeneralConfigSection() {
     bodyDiv.appendChild(buildElectricityPriceSellField());
     container.appendChild(bodyDiv);
 
+    // Ein nie bestaetigtes Default-Feld (z.B. Grundlast) haelt die Kachel offen (siehe
+    // isUnconfirmedDefault) - wie bei den Geraetekacheln.
+    if (bodyDiv.querySelector('.configFieldUnconfirmed')) expanded = true;
+
     function updateBodyVisibility() {
         bodyDiv.style.display = expanded ? '' : 'none';
         toggleButton.classList.toggle('collapsed', !expanded);
@@ -1744,6 +1751,9 @@ function renderIntegrationSections() {
 
         if (currentIds.length > 0) {
             renderSectionBody(bodyDiv, section, currentIds);
+            // Ein nie bestaetigtes Default-Feld (siehe isUnconfirmedDefault) haelt die Kachel offen,
+            // damit der Nutzer den Wert bewusst prueft statt ihn eingeklappt zu uebersehen.
+            if (bodyDiv.querySelector('.configFieldUnconfirmed')) expanded = true;
         }
         updateBodyVisibility();
 
@@ -2248,6 +2258,28 @@ function buildWallboxConnectionStatusMapping() {
 
 // Reine Konfigurationszahl (keine Entity-Zuordnung), gleiches Muster fuer mehrere Felder unter
 // "Auto" (Akkukapazitaet, Verbrauch/100km) - siehe buildCarBatteryCapacityField/buildCarConsumptionField.
+// Ein Konfig-Feld gilt als "vom Nutzer bestaetigt", sobald er es einmal geaendert hat (change-
+// Event, auch wenn er den Default-Wert nur bestaetigt). Die Liste wird mitgespeichert (siehe
+// toBeWritten in saveConfigurationNow). Ein Pflichtfeld, das noch nie angefasst wurde und dessen
+// Wert exakt der Default ist, wird rot umrandet (.configFieldUnconfirmed) und haelt seine
+// Geraetekachel offen (siehe renderIntegrationSections / renderGeneralConfigSection) - der Nutzer
+// soll jeden Default bewusst pruefen statt ihn stillschweigend zu uebernehmen.
+function isConfigFieldTouched(configKey) {
+    return (configData['touchedFields'] || []).includes(configKey);
+}
+function markConfigFieldTouched(configKey) {
+    if (!configKey) return;
+    const list = configData['touchedFields'] || (configData['touchedFields'] = []);
+    if (!list.includes(configKey)) list.push(configKey);
+}
+// true, wenn das Feld nie bestaetigt wurde UND noch exakt auf seinem (nicht-leeren) Default steht.
+function isUnconfirmedDefault(configKey, defaultValue) {
+    if (defaultValue === null || defaultValue === undefined) return false;
+    if (isConfigFieldTouched(configKey)) return false;
+    const v = configData[configKey];
+    return v !== undefined && v !== null && String(v) === String(defaultValue);
+}
+
 function buildConfigNumberField({label, tooltip, id, configKey, placeholder, step = '0.1', defaultValue = null, min = '0', max = null, unit = ''}) {
     const wrapper = document.createElement('div');
     const table = document.createElement('table');
@@ -2271,9 +2303,12 @@ function buildConfigNumberField({label, tooltip, id, configKey, placeholder, ste
     if ((configData[configKey] === undefined || configData[configKey] === null) && defaultValue !== null) {
         configData[configKey] = defaultValue;
     }
+    if (isUnconfirmedDefault(configKey, defaultValue)) input.classList.add('configFieldUnconfirmed');
     input.addEventListener('change', () => {
         const parsed = parseFloat(input.value);
         configData[configKey] = isNaN(parsed) ? null : parsed;
+        markConfigFieldTouched(configKey);
+        input.classList.remove('configFieldUnconfirmed');
         autoSave();
     });
     if (unit) {
@@ -2327,8 +2362,11 @@ function buildConfigSelectField({label, tooltip, id, configKey, options, default
     if (configData[configKey] === undefined || configData[configKey] === null) {
         configData[configKey] = select.value;
     }
+    if (isUnconfirmedDefault(configKey, defaultValue)) select.classList.add('configFieldUnconfirmed');
     select.addEventListener('change', () => {
         configData[configKey] = select.value;
+        markConfigFieldTouched(configKey);
+        select.classList.remove('configFieldUnconfirmed');
         autoSave();
     });
     valueCell.appendChild(select);

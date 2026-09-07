@@ -96,6 +96,15 @@
             border-width: 2px !important;
         }
 
+        /* Ein Pflicht-Konfigfeld, das noch nie bestaetigt wurde und exakt auf seinem Default steht
+           (siehe isUnconfirmedDefault in app.js). Gleicher roter Rahmen wie .configFieldError, aber
+           eigene Klasse - applyConfigFieldErrorHighlights raeumt sie nicht weg, und das Feld
+           entfernt sie beim ersten change-Event selbst. */
+        .configFieldUnconfirmed {
+            border-color: var(--color-error) !important;
+            border-width: 2px !important;
+        }
+
         /* Batterie-Steuerung: eine Entitaet, die schon an anderer Stelle in "Steuerung" zugeordnet
            wurde, wird hier nur noch schreibgeschuetzt angezeigt statt erneut editierbar zu sein
            (siehe buildBatteryCoupledEntityField) - optisch an .sensorInput angelehnt, aber gedaempft,
