@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.36
+
+* **„Auto laden" / Stufe „2. Amperezahl setzen": die Befehl-Vorschlagsliste zeigt jetzt nur noch Services, die ein Zahlen-Feld mit Einheit „A" haben.** Integrationsunabhängig über die vom Service in Home Assistant deklarierte `unit_of_measurement` (nicht per fest verdrahteter Integrations-Liste). Deklariert eine Wallbox-Integration an ihrem Ampere-Feld keine Einheit, wird weiterhin die volle Liste angezeigt.
+
 ## 0.0.45.35
 
 * **Fix: „Status-Zuordnung für Anwesenheitsprognose" erschien nicht, nachdem „Wallbox: Auto verbunden?" zugeordnet wurde.** Der Abschnitt fragte die beobachteten Status-Werte nur einmalig beim Rendern ab; jetzt wird die Wallbox-Kachel nach dem Zuordnen des Sensors neu aufgebaut (nach abgeschlossenem Speichern), sodass die Status-Werte sofort erscheinen – ohne Seiten-Reload.

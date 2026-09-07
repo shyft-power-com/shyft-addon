@@ -3437,7 +3437,20 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
     const serviceDatalistId = idPrefix + 'ServiceOptions_' + stageKey;
     const serviceDatalist = document.createElement('datalist');
     serviceDatalist.id = serviceDatalistId;
-    for (const s of candidateServices) {
+    // In einer Stufe mit fester Ziel-Einheit (amountUnit, aktuell nur "Amperezahl setzen" -> "A")
+    // die Vorschlagsliste auf Services eingrenzen, die tatsaechlich ein Zahlen-Feld dieser Einheit
+    // haben - integrationsunabhaengig ueber die vom Service deklarierte unit_of_measurement (siehe
+    // /services in app.py), nicht per fest verdrahteter easee.*-Liste. Fallback: deklariert die
+    // Integration an ihrem Number-Feld gar keine Einheit, wird die volle Liste gezeigt statt einer leeren.
+    let stageServices = candidateServices;
+    if (amountUnit) {
+        const want = String(amountUnit).toLowerCase();
+        const unitSynonyms = want === 'a' ? ['a', 'amp', 'amps', 'ampere', 'amperes'] : [want];
+        const filtered = candidateServices.filter(s => (s.fields || []).some(
+            f => f.isNumber && unitSynonyms.includes(String(f.unit || '').toLowerCase())));
+        if (filtered.length > 0) stageServices = filtered;
+    }
+    for (const s of stageServices) {
         const option = document.createElement('option');
         option.value = s.service;
         option.textContent = s.label;
