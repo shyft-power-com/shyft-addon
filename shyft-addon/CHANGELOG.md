@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.33
+
+* Hinweistext beim Demo-Gerät umformuliert: „Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du über keine Batterie verfügst, oder binde deine echte Batterie aus deiner Home-Assistant-Umgebung ein."
+
 ## 0.0.45.32
 
 * **Ct/kWh-Preisfelder (Fixer Tarif, Hoch-/Niedertarif, Einspeisevergütung) ändern jetzt in ganzen Cent** über die Pfeiltasten am Zahlenfeld, statt in Hundertstel-Cent-Schritten.

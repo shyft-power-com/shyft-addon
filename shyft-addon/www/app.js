@@ -2067,7 +2067,7 @@ function renderSectionBody(bodyDiv, section, entryIds) {
     if (entryIds.length === 1 && entryIds[0] === DEMO_INTEGRATION_ID) {
         const note = document.createElement('div');
         note.className = 'intro';
-        note.textContent = 'Demo-Gerät aktiv – zeigt Beispieldaten. Wähle oben ein echtes Gerät aus deiner Home-Assistant-Umgebung, sobald du eines hinterlegen willst.';
+        note.textContent = 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du über keine Batterie verfügst, oder binde deine echte Batterie aus deiner Home-Assistant-Umgebung ein.';
         bodyDiv.appendChild(note);
         return;
     }
