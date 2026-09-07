@@ -1,7 +1,7 @@
 {
   "actionTypeEnabled": {
-    "pv_feed_in_limit": true,
-    "consumption_limit_14a": true,
+    "pv_feed_in_limit": false,
+    "consumption_limit_14a": false,
     "battery_charge_shift_pv_surplus": true,
     "battery_discharge_shift": true,
     "battery_grid_charge": true,

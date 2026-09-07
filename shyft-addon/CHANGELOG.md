@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.45.34
+
+* **„PV: Einspeisung begrenzen" und „Verbrauch begrenzen §14a" sind jetzt standardmäßig deaktiviert** und haben je ein „?" mit Erklärtext (§9 EEG bzw. §14a EnWG, Nutzung in Verbindung mit einem SPiNE EnergyLink One Gateway) - beide Automationen werden bislang von den wenigsten Nutzern gebraucht.
+* **„Steuerung" ist beim Wechselrichter jetzt einklappbar** (Standard: eingeklappt) - enthält dort nur die beiden oben genannten, selten genutzten Automationen. Klappt automatisch auf, sobald ein Fehler/unbestätigter Default darin auftaucht.
+* **Fix: „?"-Erklärtexte konnten am linken/rechten Bildschirmrand über den Rand hinausragen.** Betrifft alle Tooltips im Addon, nicht nur einen bestimmten - die Sprechblase weicht jetzt beim Einblenden automatisch zur Seite aus, wenn sie sonst am Rand abgeschnitten würde.
+* **Batterie: „Aktuelle max. Ladeleistung"/„Aktuelle max. Entladeleistung" umbenannt in „Ladeleistung begrenzen"/„Entladeleistung begrenzen".**
+* **Fix: die Entität für „Ladeleistung begrenzen"/„Entladeleistung begrenzen" ließ sich nach dem ersten Ausfüllen nicht mehr ändern.** Das Feld ist jetzt dauerhaft editierbar; da dieselbe Entität an bis zu drei Stellen hinterlegt wird, aktualisiert eine Änderung an einer Stelle jetzt auch die anderen.
+* **Maximale Ladeleistung (kW) der Batterie** lässt sich über die Pfeiltasten jetzt in 0,5-kW-Schritten statt 0,1-kW-Schritten einstellen.
+* **Varianten-Dropdowns bei der Batterie-Direktsteuerung starten jetzt auf „Direkte Entitäts-Steuerung"** statt „HA-Automation" (bei noch keiner Auswahl); Erklärtext dazu präzisiert: direkte Steuerung bevorzugen, eigene HA-Automation nur als Fallback, falls die Batterie das nicht direkt unterstützt.
+* **Testen-Zeile bei der Batterie-Direktsteuerung überarbeitet:** „Ladeleistung" heißt jetzt „Limit Ladeleistung" (Verwechslungsgefahr mit der tatsächlichen Ladeleistung); „Modus" und „Timeout" werden nicht mehr angezeigt („Timeout" hat aktuell kein Konfigurationsfeld und stand ohnehin immer auf „–").
+* **Fix: ein Testklick bei der Batterie-Direktsteuerung veränderte die Batterie dauerhaft.** Die für den Test geschriebenen Werte (Ladeleistungslimit, Modus, Timeout) werden jetzt 5 Sekunden nach dem Test automatisch auf ihren Stand von vor dem Test zurückgestellt.
+
 ## 0.0.45.33
 
 * Hinweistext beim Demo-Gerät umformuliert: „Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du über keine Batterie verfügst, oder binde deine echte Batterie aus deiner Home-Assistant-Umgebung ein."

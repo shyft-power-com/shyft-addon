@@ -3856,7 +3856,7 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
     if action_key == "battery_grid_charge":
         if timeout_entity:
             write_number(timeout_entity, BATTERY_COMMAND_TIMEOUT_SECONDS["battery_grid_charge"], "Timeout")
-        write_number(charge_limit_entity, round((target_kw or 0) * 1000), "Ladeleistung")
+        write_number(charge_limit_entity, round((target_kw or 0) * 1000), "Limit Ladeleistung")
         write_mode(netzladen_mode_value, "Modus")
     elif action_key == "battery_discharge_shift":
         if timeout_entity:
@@ -3864,14 +3864,14 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         write_number(discharge_limit_entity, 0, "Entladeleistung")
     elif action_key == "battery_charge_shift_pv_surplus":
         write_mode(self_consumption_mode_value, "Modus")
-        write_number(charge_limit_entity, round((target_kw or 0) * 1000), "Ladeleistung")
+        write_number(charge_limit_entity, round((target_kw or 0) * 1000), "Limit Ladeleistung")
     elif action_key == "battery_action_stop":
         write_mode(self_consumption_mode_value, "Modus")
         # Kein eigenes "maximale Entladeleistung"-Konfigurationsfeld vorhanden - nutzt denselben
         # Wert wie die Ladeleistungs-Grenze als bestmoegliche Annaeherung an "kein Limit mehr".
         if max_charge_watts:
             write_number(discharge_limit_entity, max_charge_watts, "Entladeleistung")
-            write_number(charge_limit_entity, max_charge_watts, "Ladeleistung")
+            write_number(charge_limit_entity, max_charge_watts, "Limit Ladeleistung")
 
     if failed:
         if notify_on_failure:
@@ -3899,11 +3899,12 @@ BATTERY_DIRECT_TEST_TIMEOUT_SECONDS = 20
 BATTERY_DIRECT_TEST_TARGET_KW = 0.5
 
 # Je Aktionstyp die Entitaeten, die execute_battery_direct fuer ihn tatsaechlich schreibt (siehe
-# dort) - fuer die Live-Werte-Anzeige neben dem Testen-Button (buildBatteryControlBlock in app.js).
-BATTERY_DIRECT_TEST_FIELDS = {
+# dort) - Grundlage fuer BATTERY_DIRECT_TEST_FIELDS (Anzeige) UND fuer den Vor-Test-Snapshot, den
+# _revert_battery_test_after_delay 5s nach einem Testklick zurueckschreibt (siehe testBatteryDirectControl).
+BATTERY_DIRECT_WRITTEN_SENSOR_KEYS = {
     "battery_grid_charge": [
         ("battery_command_timeout", "Timeout"),
-        ("battery_charge_limit_current", "Ladeleistung"),
+        ("battery_charge_limit_current", "Limit Ladeleistung"),
         ("battery_storage_command_mode", "Modus"),
     ],
     "battery_discharge_shift": [
@@ -3912,13 +3913,23 @@ BATTERY_DIRECT_TEST_FIELDS = {
     ],
     "battery_charge_shift_pv_surplus": [
         ("battery_storage_command_mode", "Modus"),
-        ("battery_charge_limit_current", "Ladeleistung"),
+        ("battery_charge_limit_current", "Limit Ladeleistung"),
     ],
     "battery_action_stop": [
         ("battery_storage_command_mode", "Modus"),
         ("battery_discharge_limit_current", "Entladeleistung"),
-        ("battery_charge_limit_current", "Ladeleistung"),
+        ("battery_charge_limit_current", "Limit Ladeleistung"),
     ],
+}
+
+# Fuer die kompakte Live-Werte-Anzeige neben dem Testen-Button (buildBatteryControlBlock in app.js)
+# ohne "Timeout" (die zugehoerige "Command Timeout"-Entitaet hat kein Konfigurationsfeld mehr, siehe
+# BATTERY_COMMAND_TIMEOUT_SECONDS-Kommentar - fuer praktisch jeden Nutzer dauerhaft "-", reine
+# Verwirrung) und ohne "Modus" (Nutzer-Feedback: in dieser Zeile nicht hilfreich).
+BATTERY_DIRECT_TEST_FIELDS = {
+    action_key: [(sensor_key, label) for sensor_key, label in fields
+                 if sensor_key not in ("battery_command_timeout", "battery_storage_command_mode")]
+    for action_key, fields in BATTERY_DIRECT_WRITTEN_SENSOR_KEYS.items()
 }
 
 
@@ -3945,6 +3956,58 @@ def _battery_test_problem_labels(action_key):
     return [ACTION_TYPE_TOGGLE_KEYS[action_key]]
 
 
+# Ein Testklick soll die Batterie-Steuerung nicht dauerhaft veraendern - BATTERY_TEST_REVERT_DELAY_SECONDS
+# nach dem Test werden alle dabei potenziell beschriebenen Entitaeten auf ihren Ausgangswert (vor dem
+# Test) zurueckgestellt. Nutzer-Feedback: vorher blieb z.B. das Ladeleistungslimit beim eingestellten
+# Testwert (BATTERY_DIRECT_TEST_TARGET_KW) stehen.
+BATTERY_TEST_REVERT_DELAY_SECONDS = 5
+
+
+def _capture_battery_pre_test_state(config, action_key):
+    """Liest, VOR dem eigentlichen Testschreiben aufgerufen, den aktuellen Rohzustand jeder Entitaet,
+    die execute_battery_direct fuer diesen Aktionstyp potenziell beschreibt (siehe
+    BATTERY_DIRECT_WRITTEN_SENSOR_KEYS) - Ergebnis wird an _revert_battery_test_after_delay
+    weitergereicht. Nicht zugeordnete oder gerade nicht lesbare Entitaeten werden übersprungen (kein
+    Revert noetig/moeglich, wie ueberall sonst im Code best-effort)."""
+    sensor_mappings = config.get("sensorMappings", {}) or {}
+    result = []
+    for sensor_key, _label in BATTERY_DIRECT_WRITTEN_SENSOR_KEYS.get(action_key, []):
+        entity_id = sensor_mappings.get(sensor_key)
+        if not entity_id:
+            continue
+        try:
+            original_value = homeassistant_adapter.load_entity_state(entity_id).state
+        except Exception as e:
+            print(f"[Shyft] Batterie-Test: Ausgangswert von '{entity_id}' nicht lesbar, kein Rueckstellen moeglich:", repr(e))
+            continue
+        if sensor_key == "battery_storage_command_mode":
+            result.append((entity_id, "select", "select_option", "option", original_value))
+        else:
+            try:
+                original_value = round(float(original_value))
+            except (TypeError, ValueError):
+                continue  # z.B. "unavailable" - kein sinnvoller Zahlenwert zum Zurueckstellen
+            result.append((entity_id, "number", "set_value", "value", original_value))
+    return result
+
+
+def _revert_battery_test_after_delay(pre_test_state):
+    "Schreibt den von _capture_battery_pre_test_state gelesenen Ausgangszustand nach BATTERY_TEST_REVERT_DELAY_SECONDS zurueck - einmaliger, unverifizierter Best-Effort-Schreibversuch (kein Retry: ein Testklick soll nicht minutenlang nachwirken)."
+    if not pre_test_state:
+        return
+
+    def revert():
+        for entity_id, domain, service, data_key, original_value in pre_test_state:
+            try:
+                homeassistant_adapter.call_service(domain, service, {"entity_id": entity_id, data_key: original_value})
+            except Exception as e:
+                print(f"[Shyft] Batterie-Test: Ruecksetzen von '{entity_id}' auf Ausgangswert fehlgeschlagen:", repr(e))
+
+    timer = threading.Timer(BATTERY_TEST_REVERT_DELAY_SECONDS, revert)
+    timer.daemon = True
+    timer.start()
+
+
 @app.route("/actions/battery/<action_key>/status", methods=["GET"])
 def batteryDirectControlStatus(action_key):
     if action_key not in BATTERY_DIRECT_TEST_FIELDS:
@@ -3959,6 +4022,7 @@ def testBatteryDirectControl(action_key):
     if action_key not in BATTERY_DIRECT_TEST_FIELDS:
         return jsonify({"success": False, "message": "unbekannte Steuerung"}), 404
     config = _read_current_config()
+    pre_test_state = _capture_battery_pre_test_state(config, action_key)
     try:
         execute_battery_direct(action_key, "getestet", BATTERY_DIRECT_TEST_TARGET_KW, config,
                                 retry_timeout_seconds=BATTERY_DIRECT_TEST_TIMEOUT_SECONDS, notify_on_failure=False)
@@ -3967,6 +4031,8 @@ def testBatteryDirectControl(action_key):
         return jsonify({"success": True, "values": _battery_direct_field_values(config, action_key)})
     except Exception as e:
         return jsonify({"success": False, "message": str(e), "values": _battery_direct_field_values(config, action_key)}), 500
+    finally:
+        _revert_battery_test_after_delay(pre_test_state)
 
 
 # Notification types the user can toggle in the "Benachrichtigungen" config section - extend this

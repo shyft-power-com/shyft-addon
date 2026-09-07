@@ -324,8 +324,10 @@ const AUTO_MANAGED_CONTROLS = [
     {key: 'heating_target_temp', type: 'number', sensorField: 'heatpump_heating_target_temp_normal', actionKeys: ['heating_target_temp'], titleLabel: 'Heizung Soll-Temperatur (aktuell)', unit: '°C', step: 1},
     // Reine Steuerungen ohne Sensor-Gegenstueck (kein sensorField, keine "Direkt steuern"-Option) -
     // siehe automationOnly in buildAutoManagedNumberControl.
-    {key: 'pv_feed_in_limit', type: 'number', actionKeys: ['pv_feed_in_limit'], titleLabel: 'PV: Einspeisung begrenzen', unit: '', step: 1, automationOnly: true},
-    {key: 'consumption_limit_14a', type: 'number', actionKeys: ['consumption_limit_14a'], titleLabel: 'Verbrauch begrenzen §14a', unit: '', step: 1, automationOnly: true},
+    {key: 'pv_feed_in_limit', type: 'number', actionKeys: ['pv_feed_in_limit'], titleLabel: 'PV: Einspeisung begrenzen', unit: '', step: 1, automationOnly: true,
+        tooltip: 'Diese Automation kannst du in Verbindung mit einem SPiNE EnergyLink One Gateway nutzen, um nach §9 EEG die PV-Einspeiseleistung zu begrenzen.'},
+    {key: 'consumption_limit_14a', type: 'number', actionKeys: ['consumption_limit_14a'], titleLabel: 'Verbrauch begrenzen §14a', unit: '', step: 1, automationOnly: true,
+        tooltip: 'Diese Automation kannst du in Verbindung mit einem SPiNE EnergyLink One Gateway nutzen, um nach §14a EnWG den Stromnetzbezug zu begrenzen.'},
     {key: 'consumer_on_off', type: 'switch', sensorField: 'sonstiger_verbraucher_switch_entity', actionKeys: ['consumer_on', 'consumer_off'], titleLabel: 'Sonstiger Verbraucher (aktuell)', hasAutomationVariant: true},
 ];
 const AUTO_MANAGED_ACTION_KEYS = new Set(AUTO_MANAGED_CONTROLS.flatMap(c => c.actionKeys));
@@ -883,7 +885,7 @@ const ACTION_FAILED_SLUG_TO_ACTION_KEY = {
 // und actionFailedFieldId (fehlgeschlagene Aktion).
 function resolveActionControlFieldId(actionKey) {
     if (BATTERY_DIRECT_ACTION_KEYS.has(actionKey)) {
-        const variant = (configData['controlVariant'] || {})[actionKey] || 'ha_automation';
+        const variant = (configData['controlVariant'] || {})[actionKey] || 'direct';
         return variant === 'ha_automation'
             ? actionKey + '_ha_automation_entity'
             : BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[actionKey] + VALUE_POSTFIX;
@@ -1143,7 +1145,7 @@ function isSectionComplete(section, currentIds) {
     }
 
     for (const key of section.actions.filter(k => BATTERY_DIRECT_ACTION_KEYS.has(k))) {
-        const variant = (configData['controlVariant'] || {})[key] || 'ha_automation';
+        const variant = (configData['controlVariant'] || {})[key] || 'direct';
         if (variant === 'ha_automation') {
             if (!actorMappings[key]) return false;
         } else if (!sensorMappings[BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[key]]) {
@@ -1235,7 +1237,7 @@ function computeMissingRequiredFieldsWarnings() {
         }
 
         for (const key of section.actions.filter(k => BATTERY_DIRECT_ACTION_KEYS.has(k))) {
-            const variant = (configData['controlVariant'] || {})[key] || 'ha_automation';
+            const variant = (configData['controlVariant'] || {})[key] || 'direct';
             const label = (actorHelpInformation[key] || {}).label || key;
             if (variant === 'ha_automation') {
                 if (!actorMappings[key]) missing.push({label, fieldId: key + '_ha_automation_entity'});
@@ -2147,27 +2149,74 @@ function renderSectionBody(bodyDiv, section, entryIds) {
     const hasCarCharge = section.actions.some(k => CAR_CHARGE_ACTION_KEYS.has(k));
     const hasHotWater = section.actions.some(k => HOT_WATER_ACTION_KEYS.has(k));
 
+    // Ausnahmsweise einklappbar, nur fuer "Wechselrichter": deren Steuerung besteht ausschliesslich
+    // aus PV: Einspeisung begrenzen/Verbrauch begrenzen §14a - Automationen, die nur mit einem
+    // SPiNE EnergyLink One Gateway gebraucht werden und deshalb standardmaessig deaktiviert sind
+    // (siehe defaultShyftConfig.json). Andere Sektionen (Waermepumpe/Sonstiger Verbraucher/Auto)
+    // haben hier aktiv genutzte Steuerungen und bleiben unveraendert immer ausgeklappt.
+    const isCollapsibleSteuerung = section.key === 'wechselrichter';
+    const steuerungTarget = isCollapsibleSteuerung ? document.createElement('div') : bodyDiv;
+    let steuerungExpanded = false;
+    let steuerungToggle = null;
+
     if (manualActions.length > 0 || sectionControls.length > 0 || hasCarCharge || hasHotWater) {
         const controlHeading = document.createElement('div');
         controlHeading.className = 'sectionSubHeading controlSectionHeading';
-        controlHeading.textContent = 'Steuerung';
+        const controlHeadingText = document.createElement('span');
+        controlHeadingText.textContent = 'Steuerung';
+        controlHeading.appendChild(controlHeadingText);
+        if (isCollapsibleSteuerung) {
+            steuerungToggle = document.createElement('button');
+            steuerungToggle.type = 'button';
+            steuerungToggle.className = 'sectionToggleButton controlSectionToggleButton collapsed';
+            steuerungToggle.setAttribute('aria-label', 'Steuerung ein-/ausklappen');
+            steuerungToggle.textContent = '▾';
+            steuerungToggle.addEventListener('click', () => {
+                steuerungExpanded = !steuerungExpanded;
+                steuerungTarget.style.display = steuerungExpanded ? '' : 'none';
+                steuerungToggle.classList.toggle('collapsed', !steuerungExpanded);
+            });
+            controlHeading.appendChild(steuerungToggle);
+            // Die roten Markierungen (fehlendes Pflichtfeld/fehlgeschlagene Aktion/unbestaetigter
+            // Default) landen erst asynchron NACH diesem Render (siehe applyConfigFieldErrorHighlights/
+            // renderSystemHealth) - ein einmaliger Check hier waere immer leer. Ein MutationObserver
+            // faengt das nachtraeglich ab und klappt notfalls auf, statt eine Fehlermeldung in einer
+            // eingeklappten Sektion zu verstecken.
+            const steuerungErrorObserver = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    const cls = mutation.target.classList;
+                    if (cls && (cls.contains('configFieldError') || cls.contains('configFieldUnconfirmed'))) {
+                        steuerungExpanded = true;
+                        steuerungTarget.style.display = '';
+                        steuerungToggle.classList.remove('collapsed');
+                        steuerungErrorObserver.disconnect();
+                        return;
+                    }
+                }
+            });
+            steuerungErrorObserver.observe(steuerungTarget, {attributes: true, attributeFilter: ['class'], subtree: true});
+        }
         bodyDiv.appendChild(controlHeading);
+        if (isCollapsibleSteuerung) {
+            steuerungTarget.style.display = 'none';
+            bodyDiv.appendChild(steuerungTarget);
+        }
     }
 
     if (manualActions.length > 0) {
-        bodyDiv.appendChild(buildMappingTable(manualActions, configData["actorMappings"] || {}, actorHelpInformation, ACTOR_VALUE_POSTFIX, () => 'allEntityOptions', false, configData["actionTypeEnabled"] || {}));
+        steuerungTarget.appendChild(buildMappingTable(manualActions, configData["actorMappings"] || {}, actorHelpInformation, ACTOR_VALUE_POSTFIX, () => 'allEntityOptions', false, configData["actionTypeEnabled"] || {}));
     }
 
     for (const control of sectionControls) {
-        bodyDiv.appendChild(control.type === 'switch' ? buildAutoManagedSwitchControl(control) : buildAutoManagedNumberControl(control));
+        steuerungTarget.appendChild(control.type === 'switch' ? buildAutoManagedSwitchControl(control) : buildAutoManagedNumberControl(control));
     }
 
     if (hasCarCharge) {
-        bodyDiv.appendChild(buildCarChargeControl());
+        steuerungTarget.appendChild(buildCarChargeControl());
     }
 
     if (hasHotWater) {
-        bodyDiv.appendChild(buildHotWaterControl());
+        steuerungTarget.appendChild(buildHotWaterControl());
     }
 }
 
@@ -2541,7 +2590,7 @@ function buildBatteryMaxChargeKwField() {
         id: 'battery_max_charge_kw',
         configKey: 'batteryMaxChargeKw',
         placeholder: 'z.B. 5',
-        step: '0.1',
+        step: '0.5',
         unit: 'kW',
     });
 }
@@ -2816,6 +2865,9 @@ function buildAutoActionTitle(control, toggleKey) {
     const titleText = document.createElement('span');
     titleText.textContent = control.titleLabel;
     title.appendChild(titleText);
+    if (control.tooltip) {
+        title.appendChild(buildTooltip(control.tooltip));
+    }
     const checkmark = document.createElement('span');
     checkmark.className = 'autoActionCheckmark';
     checkmark.textContent = ' ✓';
@@ -4006,21 +4058,26 @@ function buildBatteryModeValueSelect(id, currentValue, options) {
 function buildBatteryCoupledEntityField(sensorKey, datalistId, onChange) {
     const sensorMappings = configData['sensorMappings'] || {};
     const currentValue = sensorMappings[sensorKey] || '';
-    if (currentValue) {
-        const display = document.createElement('span');
-        display.className = 'batteryLockedEntity';
-        display.textContent = formatEntityDisplay(currentValue);
-        return display;
-    }
     const input = document.createElement('input');
     input.id = sensorKey + VALUE_POSTFIX;
     input.className = 'sensorInput';
     input.setAttribute('autocomplete', 'off');
-    input.addEventListener('change', () => {
+    input.value = formatEntityDisplay(currentValue);
+    // Dieselbe sensorKey (z.B. battery_charge_limit_current) taucht in bis zu drei Aktionstyp-
+    // Bloecken gleichzeitig auf (siehe buildBatterySteuerungSection) - eine hier vorgenommene
+    // Aenderung muss ueberall gleich sein. onChange() ist "refresh" (renderSectionBody neu), das
+    // laedt configData bereits aktualisiert erneut und rendert damit auch die anderen Vorkommen
+    // mit dem neuen Wert - ein frueheres Sperren nach dem ersten Ausfuellen (read-only Span) ist
+    // damit nicht mehr noetig und hat den Nutzer nur daran gehindert, die Entitaet je zu korrigieren.
+    input.addEventListener('change', async () => {
+        const entityId = extractEntityId(input.value);
+        input.value = formatEntityDisplay(entityId);
         configData['sensorMappings'] = configData['sensorMappings'] || {};
-        configData['sensorMappings'][sensorKey] = extractEntityId(input.value);
-        autoSave();
-        if (onChange) onChange();
+        configData['sensorMappings'][sensorKey] = entityId;
+        // autoSave() erst abwarten, bevor onChange laeuft - z.B. laedt die Modus-Entitaet danach
+        // /battery-mode-options neu, das serverseitig die frisch geschriebene Zuordnung braucht.
+        await autoSave();
+        if (onChange) await onChange();
     });
     return datalistId ? attachEntityDropdown(input, {datalistId, headerText: 'Home-Assistant-Entität'}) : input;
 }
@@ -4126,9 +4183,9 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields) 
     headingRow.appendChild(toggle);
     wrapper.appendChild(headingRow);
 
-    const variant = (configData['controlVariant'] || {})[actionKey] || 'ha_automation';
+    const variant = (configData['controlVariant'] || {})[actionKey] || 'direct';
     const variantSelect = buildVariantSelect(actionKey + '_variant', variant, 'Direkte Entitäts-Steuerung');
-    wrapper.appendChild(buildLabeledRow('Varianten', 'Wie das Addon diese Aktion umsetzt: entweder direkt über Home-Assistant-Entitäten (mit Retry/Verifikation), oder indem es eine selbst erstellte Automation triggert.', variantSelect));
+    wrapper.appendChild(buildLabeledRow('Varianten', 'Wähle möglichst "Direkte Entitäts-Steuerung", um die Ladeleistung direkt von shyft-power zu steuern. Funktioniert dies mit deiner Batterie nicht, so erstelle selber eine Automation in Home-Assistant, die du hier dann hinterlegen kannst.', variantSelect));
 
     const directFields = document.createElement('div');
     directFields.style.display = variant === 'direct' ? '' : 'none';
@@ -4169,6 +4226,14 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
 
     const refresh = () => renderSectionBody(bodyDiv, section, entryIds);
 
+    // Nach dem Zuordnen der Modus-Entitaet die Rohwert-Liste (/battery-mode-options) frisch holen -
+    // sonst blieben die beiden Modus-Dropdowns leer, bis die Seite neu geladen wird.
+    const reloadModeOptions = async () => {
+        batteryModeOptionsCache = null;
+        await loadBatteryModeOptions();
+        refresh();
+    };
+
     // Eine gemeinsame Datalist fuer alle Batterie-Steuerungs-Entitaeten (Modus/Lade-/Entladelimit/
     // Timeout) - dieselben Kandidaten wie fuer die normalen Sensoren dieser Sektion, ungefiltert
     // nach device_class (die Entitaets-Typen variieren zu stark je Wechselrichter-Integration).
@@ -4185,7 +4250,7 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
     container.appendChild(buildBatteryControlBlock('battery_charge_shift_pv_surplus', 'Batterie-Laden verschieben (PV-Überschuss)',
         'Verhindert gezieltes Laden aus PV-Überschuss, wenn sich das aktuell nicht lohnt.', () => {
             const wrap = document.createElement('div');
-            wrap.appendChild(buildLabeledRow('Aktuelle max. Ladeleistung', 'Entität, über die das Addon die Ladeleistung der Batterie begrenzt (Zahlenwert in kW).',
+            wrap.appendChild(buildLabeledRow('Ladeleistung begrenzen', 'Entität, über die das Addon die Ladeleistung der Batterie begrenzt (Zahlenwert in kW).',
                 buildBatteryCoupledEntityField('battery_charge_limit_current', datalistId, refresh)));
             return wrap;
         }));
@@ -4193,7 +4258,7 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
     container.appendChild(buildBatteryControlBlock('battery_discharge_shift', 'Batterie-Entladen verschieben',
         'Hält die Batterie diese Stunde bewusst vom Entladen ab.', () => {
             const wrap = document.createElement('div');
-            wrap.appendChild(buildLabeledRow('Aktuelle max. Entladeleistung', 'Entität, über die das Addon die Entladeleistung der Batterie begrenzt (Zahlenwert in kW).',
+            wrap.appendChild(buildLabeledRow('Entladeleistung begrenzen', 'Entität, über die das Addon die Entladeleistung der Batterie begrenzt (Zahlenwert in kW).',
                 buildBatteryCoupledEntityField('battery_discharge_limit_current', datalistId, refresh)));
             return wrap;
         }));
@@ -4201,10 +4266,12 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
     container.appendChild(buildBatteryControlBlock('battery_grid_charge', 'Batterie netzladen',
         'Lädt die Batterie gezielt aus dem Netz, wenn sich das laut Optimierung lohnt.', () => {
             const wrap = document.createElement('div');
+            wrap.appendChild(buildLabeledRow('Modus-Entität', 'Die "Steuerungsmodus"-Entität deiner Batterie (meist ein select), deren Modus das Addon umstellt. Dieselbe Entität wie bei "Batterie-Aktion beenden".',
+                buildBatteryCoupledEntityField('battery_storage_command_mode', datalistId, reloadModeOptions)));
             const modeOptions = batteryModeOptionsCache || [];
             const modeSelect = buildBatteryModeValueSelect('battery_mode_netzladen_value', configData['batteryModeNetzladenValue'], modeOptions);
             wrap.appendChild(buildLabeledRow('Modus "Netzladen"', 'Welcher Rohwert der Batterie-Modus-Entität bedeutet "aus dem Netz laden" (z.B. "Charge from Solar Power and Grid").', modeSelect));
-            wrap.appendChild(buildLabeledRow('Aktuelle max. Ladeleistung', 'Dieselbe Entität wie bei "Batterie-Laden verschieben" - dort bereits ausgefüllt, falls du das schon gemacht hast.',
+            wrap.appendChild(buildLabeledRow('Ladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie-Laden verschieben" - dort bereits ausgefüllt, falls du das schon gemacht hast.',
                 buildBatteryCoupledEntityField('battery_charge_limit_current', datalistId, refresh)));
             return wrap;
         }));
@@ -4212,12 +4279,14 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
     container.appendChild(buildBatteryControlBlock('battery_action_stop', 'Batterie-Aktion beenden',
         'Setzt den Modus zurück und hebt die Lade-/Entladelimits wieder auf - wird ausgelöst, sobald eine der drei Aktionen oben endet.', () => {
             const wrap = document.createElement('div');
+            wrap.appendChild(buildLabeledRow('Modus-Entität', 'Die "Steuerungsmodus"-Entität deiner Batterie (meist ein select), deren Modus das Addon umstellt. Dieselbe Entität wie bei "Batterie netzladen".',
+                buildBatteryCoupledEntityField('battery_storage_command_mode', datalistId, reloadModeOptions)));
             const modeOptions = batteryModeOptionsCache || [];
             const modeSelect = buildBatteryModeValueSelect('battery_mode_self_consumption_value', configData['batteryModeSelfConsumptionValue'], modeOptions);
             wrap.appendChild(buildLabeledRow('Modus zurückstellen auf "Eigenverbrauchsmaximierung"', 'Welcher Rohwert der Batterie-Modus-Entität den Normalbetrieb bedeutet (z.B. "Maximize Self Consumption").', modeSelect));
-            wrap.appendChild(buildLabeledRow('Aktuelle max. Ladeleistung', 'Dieselbe Entität wie bei "Batterie-Laden verschieben"/"Batterie netzladen".',
+            wrap.appendChild(buildLabeledRow('Ladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie-Laden verschieben"/"Batterie netzladen".',
                 buildBatteryCoupledEntityField('battery_charge_limit_current', datalistId, refresh)));
-            wrap.appendChild(buildLabeledRow('Aktuelle max. Entladeleistung', 'Dieselbe Entität wie bei "Batterie-Entladen verschieben".',
+            wrap.appendChild(buildLabeledRow('Entladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie-Entladen verschieben".',
                 buildBatteryCoupledEntityField('battery_discharge_limit_current', datalistId, refresh)));
             return wrap;
         }));
@@ -4238,6 +4307,13 @@ function formatEntityDisplay(entityId) {
     return `${entityId} (${stateAndUnit})`;
 }
 
+// Haelt die Sprechblase innerhalb des sichtbaren Bereichs: .tooltip-text ist per CSS auf das
+// "?"-Icon zentriert (left:50%; transform:translateX(-50%)) - sitzt das Icon nahe am linken/rechten
+// Rand, ragt eine breite Blase dort ohne jeden Abstand ueber den Bildschirmrand hinaus (Nutzer-
+// Feedback: "fehlt links Margin"). Bei jedem Einblenden neu vermessen (nicht nur einmal beim Bauen),
+// da sich die Position der Kachel zwischenzeitlich veraendert haben kann (z.B. nach Auf-/Zuklappen).
+const TOOLTIP_EDGE_MARGIN_PX = 8;
+
 function buildTooltip(description) {
     const tooltip = document.createElement("span");
     tooltip.className = 'tooltip';
@@ -4249,6 +4325,26 @@ function buildTooltip(description) {
     tooltipText.className = 'tooltip-text';
     tooltipText.textContent = description;
     tooltip.appendChild(tooltipText);
+
+    tooltip.addEventListener('mouseenter', () => {
+        tooltipText.style.transform = '';
+        const rect = tooltipText.getBoundingClientRect();
+        let shift = 0;
+        if (rect.left < TOOLTIP_EDGE_MARGIN_PX) {
+            shift = TOOLTIP_EDGE_MARGIN_PX - rect.left;
+        } else if (rect.right > window.innerWidth - TOOLTIP_EDGE_MARGIN_PX) {
+            shift = (window.innerWidth - TOOLTIP_EDGE_MARGIN_PX) - rect.right;
+        }
+        // Die kleine Pfeilspitze (::after) soll trotz Verschiebung der Blase weiter genau auf das
+        // "?"-Icon zeigen, nicht einfach mittig in der (jetzt verschobenen) Blase bleiben - siehe
+        // die --tooltip-arrow-shift-Variable in der ::after-Regel.
+        if (shift !== 0) {
+            tooltipText.style.transform = `translateX(calc(-50% + ${shift}px))`;
+            tooltipText.style.setProperty('--tooltip-arrow-shift', shift + 'px');
+        } else {
+            tooltipText.style.removeProperty('--tooltip-arrow-shift');
+        }
+    });
     return tooltip;
 }
 

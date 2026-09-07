@@ -268,6 +268,25 @@
             margin-top: 2em;
             padding-top: 1.5em;
             border-top: 1px solid var(--color-border);
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+        }
+        /* Ausnahmsweise einklappbare "Steuerung" (aktuell nur Wechselrichter - siehe
+           renderSectionBody/isCollapsibleSteuerung) - anders als .sectionToggleButton bewusst NICHT
+           absolut positioniert, sondern inline direkt neben dem Ueberschriftentext. */
+        .controlSectionToggleButton {
+            background: none;
+            border: none;
+            padding: 0.1em 0.3em;
+            font-size: 1.1em;
+            color: var(--color-text-secondary);
+            cursor: pointer;
+            transition: transform 0.15s ease;
+            line-height: 1;
+        }
+        .controlSectionToggleButton.collapsed {
+            transform: rotate(-90deg);
         }
         .controlSectionHeading + table td:first-child {
             font-weight: 600;
@@ -344,7 +363,11 @@
             content: "";
             position: absolute;
             top: 100%;
-            left: 50%;
+            /* --tooltip-arrow-shift wird per JS gesetzt (siehe buildTooltip), sobald die Blase
+               selbst verschoben wurde, um innerhalb des Bildschirms zu bleiben - die Pfeilspitze
+               zeigt dadurch weiterhin genau auf das "?"-Icon statt einfach mittig in der (jetzt
+               verschobenen) Blase zu bleiben. */
+            left: calc(50% - var(--tooltip-arrow-shift, 0px));
             transform: translateX(-50%);
             border-width: 5px;
             border-style: solid;
