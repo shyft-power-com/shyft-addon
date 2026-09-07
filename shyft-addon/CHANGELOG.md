@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.35
+
+* **Fix: „Status-Zuordnung für Anwesenheitsprognose" erschien nicht, nachdem „Wallbox: Auto verbunden?" zugeordnet wurde.** Der Abschnitt fragte die beobachteten Status-Werte nur einmalig beim Rendern ab; jetzt wird die Wallbox-Kachel nach dem Zuordnen des Sensors neu aufgebaut (nach abgeschlossenem Speichern), sodass die Status-Werte sofort erscheinen – ohne Seiten-Reload.
+* **„Wallbox: Auto verbunden?" sitzt jetzt unter „Max. Stromstärke (pro Phase)"** – direkt über der davon abhängigen Status-Zuordnung, statt oben in der Sensor-Tabelle.
+* **Auto: Schrittweiten der Pfeiltasten angepasst** – Ø Fahrleistung in 5-km-Schritten, Verbrauch in 1-kWh-Schritten, Akkukapazität in 5-kWh-Schritten.
+
 ## 0.0.45.34
 
 * **„PV: Einspeisung begrenzen" und „Verbrauch begrenzen §14a" sind jetzt standardmäßig deaktiviert** und haben je ein „?" mit Erklärtext (§9 EEG bzw. §14a EnWG, Nutzung in Verbindung mit einem SPiNE EnergyLink One Gateway) - beide Automationen werden bislang von den wenigsten Nutzern gebraucht.

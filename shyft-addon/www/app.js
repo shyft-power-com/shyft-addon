@@ -2105,11 +2105,23 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         sensorsHeading.textContent = 'Sensoren';
         bodyDiv.appendChild(sensorsHeading);
 
-        bodyDiv.appendChild(buildMappingTable(section.sensors, configData["sensorMappings"] || {}, helpinformation, VALUE_POSTFIX, key => sensorDatalistIds[key], true));
+        // "Wallbox: Auto verbunden?" (wallbox_plugged) wird bewusst NICHT in dieser oberen Tabelle,
+        // sondern weiter unten nach "Max. Stromstärke (pro Phase)" gerendert (siehe wallbox-Block) -
+        // direkt vor der davon abhaengigen Status-Zuordnung.
+        const topSensorKeys = section.key === 'wallbox'
+            ? section.sensors.filter(k => k !== 'wallbox_plugged')
+            : section.sensors;
+        bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, helpinformation, VALUE_POSTFIX, key => sensorDatalistIds[key], true));
 
         if (section.key === 'wallbox') {
             bodyDiv.appendChild(buildWallboxMaxPhasesField());
             bodyDiv.appendChild(buildWallboxMaxCurrentField());
+            // Die Status-Zuordnung (buildWallboxConnectionStatusMapping) fragt beim Bauen einmalig
+            // /wallbox-connection-status-options ab - ohne Neu-Rendern bliebe nach dem erstmaligen
+            // Zuordnen von "Auto verbunden?" dauerhaft "Noch keine Status-Werte beobachtet" stehen.
+            // Deshalb hier: nach dem (abgewarteten) autoSave die ganze Sektion neu aufbauen.
+            const wallboxRefresh = () => renderSectionBody(bodyDiv, section, entryIds);
+            bodyDiv.appendChild(buildMappingTable(['wallbox_plugged'], configData["sensorMappings"] || {}, helpinformation, VALUE_POSTFIX, key => sensorDatalistIds[key], true, undefined, wallboxRefresh));
             bodyDiv.appendChild(buildWallboxConnectionStatusMapping());
         }
         if (section.key === 'batterie') {
@@ -2735,6 +2747,7 @@ function buildCarBatteryCapacityField() {
         id: 'car_battery_capacity_kwh',
         configKey: 'carBatteryCapacityKwh',
         placeholder: 'z.B. 60',
+        step: '5',
     });
 }
 
@@ -2748,6 +2761,7 @@ function buildCarConsumptionField() {
         id: 'car_consumption_kwh_per_100km',
         configKey: 'carConsumptionKwhPer100km',
         placeholder: 'z.B. 18',
+        step: '1',
     });
 }
 
@@ -2761,7 +2775,7 @@ function buildCarAvgDailyDistanceField() {
         id: 'car_avg_daily_distance_km',
         configKey: 'carAvgDailyDistanceKm',
         placeholder: 'z.B. 50',
-        step: '1',
+        step: '5',
         defaultValue: 50,
     });
 }
@@ -3952,13 +3966,13 @@ function buildHotWaterControl() {
     return wrapper;
 }
 
-function buildMappingTable(keys, mappingData, helpInfo, valuePostfix, getDatalistId, showLiveValue, toggleData) {
+function buildMappingTable(keys, mappingData, helpInfo, valuePostfix, getDatalistId, showLiveValue, toggleData, onChange) {
     const table = document.createElement('table');
 
     const tbody = document.createElement('tbody');
     for (const key of keys) {
         const hasToggle = !!toggleData && ACTION_TYPE_TOGGLE_KEYS.has(key);
-        tbody.appendChild(buildMappingRow(key, mappingData[key] || '', helpInfo, valuePostfix, getDatalistId(key), showLiveValue, hasToggle ? (toggleData[key] !== false) : null));
+        tbody.appendChild(buildMappingRow(key, mappingData[key] || '', helpInfo, valuePostfix, getDatalistId(key), showLiveValue, hasToggle ? (toggleData[key] !== false) : null, onChange));
     }
     table.appendChild(tbody);
 
@@ -4348,7 +4362,7 @@ function buildTooltip(description) {
     return tooltip;
 }
 
-function buildMappingRow(key, value, helpInfo, valuePostfix, datalistId, showLiveValue, toggleChecked) {
+function buildMappingRow(key, value, helpInfo, valuePostfix, datalistId, showLiveValue, toggleChecked, onChange) {
     const row = document.createElement('tr');
     const keyCell = document.createElement('td');
     const context = helpInfo[key] ?? {label: key};
@@ -4363,11 +4377,12 @@ function buildMappingRow(key, value, helpInfo, valuePostfix, datalistId, showLiv
     inputValue.value = showLiveValue ? formatEntityDisplay(value) : value;
     inputValue.setAttribute("class", "sensorInput");
     inputValue.setAttribute("autocomplete", "off");
-    inputValue.addEventListener('change', () => {
+    inputValue.addEventListener('change', async () => {
         if (showLiveValue) {
             inputValue.value = formatEntityDisplay(extractEntityId(inputValue.value));
         }
-        autoSave();
+        await autoSave();
+        if (onChange) onChange();
     });
     inputWrapper.appendChild(attachEntityDropdown(inputValue, {datalistId, headerText: 'Home-Assistant-Entität'}));
 
