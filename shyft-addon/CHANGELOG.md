@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.32
+
+* **Ct/kWh-Preisfelder (Fixer Tarif, Hoch-/Niedertarif, Einspeisevergütung) ändern jetzt in ganzen Cent** über die Pfeiltasten am Zahlenfeld, statt in Hundertstel-Cent-Schritten.
+* **Die Pfeile an Zahlenfeldern deutlich vergrößert** (per CSS, betrifft Chrome/Edge/die HA-App-WebViews - Firefox stellt dafür keinen stylebaren Hook bereit) - vorher kaum sichtbar/schwer zu treffen.
+
 ## 0.0.45.31
 
 * **Prüfzeile im dynamischen Tarif zeigt den Börsenpreis jetzt netto UND brutto.** Bisher nur brutto (inkl. 19% USt., wie awattar ihn dem Addon liefert) - im Vergleich mit anderen Apps (z.B. Tibber, die ihren "Spotpreis" netto ausweisen) wirkte der Wert dadurch fälschlich viel zu hoch. Zeile lautet jetzt: "Börse X ct (Netto, Y ct Brutto) + fixer Anteil Z ct".

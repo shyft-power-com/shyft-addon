@@ -138,6 +138,19 @@
             white-space: nowrap;
         }
 
+        /* Die nativen Auf/Ab-Pfeile eines <input type="number"> sind winzig und schwer zu treffen
+           (Nutzer-Feedback) - ueber transform:scale() deutlich vergroessert. Nur Chromium/WebKit
+           (Chrome, Edge, die Android/iOS-HA-App-WebViews) unterstuetzen ::-webkit-*-spin-button
+           ueberhaupt - Firefox hat dafuer keinen stylebaren Pseudo-Element-Hook, zeigt dort also
+           weiterhin die normalgrossen Pfeile. */
+        input[type="number"].sensorInput::-webkit-inner-spin-button,
+        input[type="number"].sensorInput::-webkit-outer-spin-button {
+            transform: scale(1.8);
+            transform-origin: center right;
+            margin-left: 0.3em;
+            cursor: pointer;
+        }
+
         .clearableInput {
             position: relative;
         }

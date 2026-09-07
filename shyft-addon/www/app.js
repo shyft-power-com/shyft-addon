@@ -1427,7 +1427,10 @@ function buildElectricityTariffControl() {
     wrap.appendChild(panels);
 
     function centField(label, tooltip, id, configKey, placeholder) {
-        return buildConfigNumberField({label, tooltip, id, configKey, placeholder, step: '0.01', min: '0', unit: 'ct/kWh'});
+        // step: '1' statt '0.01' - die Pfeile am Zahlenfeld sollen um ganze Cent aendern, nicht um
+        // Hundertstel-Cent (Nutzer-Vorgabe). Freie Eingabe (Tippen) bleibt davon unberuehrt, nur die
+        // Schrittweite der Spinner-Pfeile aendert sich.
+        return buildConfigNumberField({label, tooltip, id, configKey, placeholder, step: '1', min: '0', unit: 'ct/kWh'});
     }
 
     function renderPanels(m) {
@@ -2670,7 +2673,7 @@ function buildElectricityPriceSellField() {
         id: 'electricity_sell_cent',
         configKey: 'electricitySellCent',
         placeholder: 'z.B. 8',
-        step: '0.01',
+        step: '1',
         min: '0',
         unit: 'ct/kWh',
     });
