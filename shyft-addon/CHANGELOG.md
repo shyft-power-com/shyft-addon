@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.31
+
+* **Prüfzeile im dynamischen Tarif zeigt den Börsenpreis jetzt netto UND brutto.** Bisher nur brutto (inkl. 19% USt., wie awattar ihn dem Addon liefert) - im Vergleich mit anderen Apps (z.B. Tibber, die ihren "Spotpreis" netto ausweisen) wirkte der Wert dadurch fälschlich viel zu hoch. Zeile lautet jetzt: "Börse X ct (Netto, Y ct Brutto) + fixer Anteil Z ct".
+
 ## 0.0.45.30
 
 * **Unbestätigte Default-Werte werden jetzt sichtbar gemacht.** Ein Konfigurationsfeld, das der Nutzer noch nie angefasst hat und das exakt auf seinem Default steht, bekommt einen **roten Rahmen**, und die zugehörige Geräte-Kachel (bzw. die „Strom"-Kachel) startet **aufgeklappt** statt eingeklappt – damit jeder Default bewusst geprüft statt stillschweigend übernommen wird. Sobald das Feld einmal geändert/bestätigt wurde, verschwindet die Markierung dauerhaft (gemerkt in `config.touchedFields`). Betrifft die Zahlen-/Auswahlfelder unter Wärmepumpe, Batterie, Auto, Wallbox und Strom (Grundlast).

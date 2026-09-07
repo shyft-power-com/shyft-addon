@@ -311,6 +311,12 @@ _last_site_data_submit = {"at": None}
 AWATTAR_URL = "https://api.awattar.de/v1/marketdata"
 AWATTAR_CACHE_PATH = "/data/awattar_cache.json"
 AWATTAR_CACHE_TTL_SECONDS = 1800  # halbstuendlich frisch holen reicht (Day-Ahead aendert sich nur 1x/Tag)
+# Awattar liefert den Marktpreis netto (EUR/MWh) - dieselbe 19%-Aufschlagsrechnung, mit der
+# _fetch_awattar_prices daraus einen Brutto-Preis (EUR/kWh) macht, braucht electricity_price_preview
+# umgekehrt (Brutto -> Netto), um beide Werte in der Pruefzeile anzuzeigen (siehe Nutzer-Vorgabe:
+# andere Anbieter wie Tibber zeigen ihren "Spotpreis" netto, ein reiner Brutto-Vergleich fuehrte
+# sonst zu einer scheinbar viel zu grossen, unerklaerten Differenz).
+AWATTAR_VAT_FACTOR = 1.19
 
 
 def _fetch_awattar_prices():
@@ -337,7 +343,7 @@ def _fetch_awattar_prices():
     for row in rows:
         try:
             # EUR/MWh netto -> EUR/kWh brutto (19% USt)
-            prices[int(row["start_timestamp"])] = round(float(row["marketprice"]) / 1000.0 * 1.19, 5)
+            prices[int(row["start_timestamp"])] = round(float(row["marketprice"]) / 1000.0 * AWATTAR_VAT_FACTOR, 5)
         except (KeyError, TypeError, ValueError):
             continue
     if prices:
@@ -450,6 +456,7 @@ def electricity_price_preview():
         spot_eur = spot[max(past)] if past else spot[min(spot)]
 
     spot_ct = round(spot_eur * 100.0, 2)
+    spot_ct_netto = round(spot_ct / AWATTAR_VAT_FACTOR, 2)
     total_ct = round(spot_ct + surcharge_ct, 2)
     now_local = now.astimezone()
     hour_local = now_local.replace(minute=0, second=0, microsecond=0)
@@ -459,6 +466,7 @@ def electricity_price_preview():
         "ok": True,
         "surcharge_ct": round(surcharge_ct, 2),
         "spot_ct": spot_ct,
+        "spot_ct_netto": spot_ct_netto,
         "generated_at": now_local.isoformat(),
         "hour": {"start": hour_local.isoformat(), "total_ct": total_ct},
     })

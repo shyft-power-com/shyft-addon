@@ -1627,10 +1627,14 @@ function buildElectricityPricePreview(getSurcharge) {
         now.append(label, value);
         box.appendChild(now);
 
+        // Netto UND Brutto zeigen: andere Anbieter (z.B. Tibber) weisen ihren "Spotpreis" netto aus,
+        // waehrend awattar (und damit dieses Addon) brutto (inkl. 19% USt., siehe
+        // AWATTAR_VAT_FACTOR in app.py) rechnet - ein reiner Brutto-Wert liess den Boersenpreis im
+        // Vergleich mit anderen Apps faelschlich viel zu hoch wirken (Nutzer-Feedback).
         const foot = document.createElement('p');
         foot.className = 'electricityPricePreviewFoot';
-        foot.textContent = 'Börse ' + fmt(state.spot_ct, 2) + ' ct + fixer Anteil ' + fmt(state.surcharge_ct, 2)
-            + ' ct. Stand ' + new Date(state.generated_at).toLocaleTimeString('de-DE') + '. Die Strombörse stellt nur Stundenpreise bereit.';
+        foot.textContent = 'Börse ' + fmt(state.spot_ct_netto, 2) + ' ct (Netto, ' + fmt(state.spot_ct, 2) + ' ct Brutto) + fixer Anteil ' + fmt(state.surcharge_ct, 2)
+            + ' ct. Stand ' + new Date(state.generated_at).toLocaleTimeString('de-DE') + '.';
         box.appendChild(foot);
     }
 
