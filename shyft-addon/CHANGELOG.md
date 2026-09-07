@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.39
+
+* Benachrichtigungen: der Trennstrich zwischen der Handy-Auswahl und der Überschrift „Benachrichtigen bei" ist entfernt.
+
 ## 0.0.45.38
 
 * **Fix: bei noch nicht eingerichteten Geräte-Kacheln (z.B. „Sonstiger Verbraucher", „Raumtemperatur") ließ sich nichts auswählen.** Eine leere Kachel gilt als „vollständig" und startete daher eingeklappt – dabei war zusätzlich der Geräte-Dropdown ausgeblendet, der Aufklapp-Pfeil deaktiviert und „Details einblenden" nicht vorhanden. Der Geräte-Dropdown bleibt jetzt immer sichtbar, solange noch kein Gerät gewählt ist.

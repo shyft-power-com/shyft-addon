@@ -1863,7 +1863,9 @@ function renderNotificationSection() {
     sectionDiv.appendChild(table);
 
     const notifyHeading = document.createElement('div');
-    notifyHeading.className = 'sectionSubHeading controlSectionHeading';
+    // Wie die "Steuerung"-Ueberschrift, aber ohne den Trennstrich darueber (Nutzerwunsch) - hier
+    // trennt schon die Handy-Auswahl-Tabelle sichtbar genug ab.
+    notifyHeading.className = 'sectionSubHeading controlSectionHeading controlSectionHeading--noRule';
     notifyHeading.textContent = 'Benachrichtigen bei';
     sectionDiv.appendChild(notifyHeading);
 

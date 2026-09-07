@@ -291,6 +291,12 @@
         .controlSectionHeading + table td:first-child {
             font-weight: 600;
         }
+        /* "Benachrichtigen bei" (siehe renderNotificationSection): wie .controlSectionHeading, aber
+           ohne den Trennstrich darueber. */
+        .controlSectionHeading--noRule {
+            border-top: none;
+            padding-top: 0;
+        }
         #deviceSections table th:first-child,
         #deviceSections table td:first-child {
             width: 1%;
