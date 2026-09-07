@@ -3387,6 +3387,15 @@ def readServices():
                 # in minutes, not amps) - see amountUnit/amountFields in app.js.
                 number_selector = (field_info.get("selector") or {}).get("number") or {}
                 is_number_field = bool(number_selector)
+                # Sonderfall number.set_value: HA deklariert dessen "value"-Feld nur als generischen
+                # "text"-Selektor (kein fixes min/max/step in der Dienstbeschreibung moeglich, das
+                # haengt ja von der jeweiligen Zahlen-Entitaet ab) - obwohl es genau das Zahlenfeld
+                # ist, das die "Amperezahl setzen"-Stufe automatisch befuellen soll (siehe Tooltip in
+                # buildBranchedStageFields/app.js: "meist eine number-Entitaet ... mit set_value").
+                # Ohne diesen Sonderfall bliebe das Feld sichtbar UND unbefuellt - fuer die meisten
+                # Nutzer, da dies der von uns selbst empfohlene Standardweg ist.
+                if domain == "number" and service_name == "set_value" and field_name == "value":
+                    is_number_field = True
                 fields.append({
                     "name": field_name,
                     "label": field_info.get("name") or field_name,

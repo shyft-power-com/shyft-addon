@@ -432,6 +432,12 @@ function readStageFromDom(idPrefix, stageKey, integrationKey, amountUnit, branch
     const stage = {service: serviceElement.value, sharedFields: {}, branchFields: {}, amountFields: []};
     const match = allServiceOptions.find(s => s.service === serviceElement.value);
     if (match) {
+        // Mehrere Zahlenfelder gleichzeitig (z.B. Easee's set_charger_dynamic_limit: Strom UND
+        // time_to_live) lassen sich nur ueber die deklarierte Einheit unterscheiden. Gibt es aber
+        // nur EIN Zahlenfeld ueberhaupt (z.B. number.set_value's "value" - HA deklariert dafuer
+        // keine feste Einheit, die haengt ja von der Zahlen-Entitaet ab), gibt es nichts zu
+        // verwechseln - das ist dann immer das Mengenfeld, auch ohne Einheitstreffer.
+        const numberFieldsInMatch = match.fields.filter(f => f.isNumber && f.options.length === 0);
         for (const field of match.fields) {
             if (field.options.length === 0) {
                 if (field.isDevice) {
@@ -441,10 +447,10 @@ function readStageFromDom(idPrefix, stageKey, integrationKey, amountUnit, branch
                     continue;
                 }
                 if (amountUnit && field.isNumber) {
-                    if (field.unit === amountUnit) {
-                        // reliably picked out via its declared unit (e.g. "A") rather than
-                        // guessed - never shown in the UI, always gets the computed value at
-                        // call time
+                    if (field.unit === amountUnit || numberFieldsInMatch.length === 1) {
+                        // reliably picked out via its declared unit (e.g. "A"), or - if it's the
+                        // only number field this service has at all - by elimination; never shown
+                        // in the UI, always gets the computed value at call time
                         stage.amountFields.push(field.name);
                     } else if (previousSharedFields && previousSharedFields[field.name] !== undefined) {
                         // a stage that cares about an amount field (e.g. the amperage stage) also
@@ -1762,8 +1768,11 @@ function renderIntegrationSections() {
             // Eingeklappt (expanded=false) zeigt NUR die Ueberschriften-Zeile - der Geraete-Dropdown
             // blendet sich mit aus, nicht nur die Sensor-Zuordnungsfelder darunter. Einklappen ist
             // erst moeglich, wenn schon ein Geraet gewaehlt ist (toggleButton.disabled unten), das
-            // Ausblenden des Dropdowns kann die Erstauswahl also nie versperren.
-            picker.style.display = expanded ? '' : 'none';
+            // Ausblenden des Dropdowns kann die Erstauswahl also nie versperren: solange KEIN Geraet
+            // gewaehlt ist, bleibt der Dropdown immer sichtbar (eine noch leere Kachel gilt via
+            // isSectionComplete als "vollstaendig" -> expanded=false, Pfeil disabled, kein
+            // "Details einblenden" - ohne diese Ausnahme koennte man dort nie ein Geraet auswaehlen).
+            picker.style.display = (expanded || !hasSelection) ? '' : 'none';
             toggleButton.classList.toggle('collapsed', !expanded);
             toggleButton.disabled = !hasSelection;
             showDetailsButton.style.display = (hasSelection && !expanded) ? '' : 'none';
