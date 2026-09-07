@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.37
+
+* Demo-Geräte-Hinweistext (0.0.45.33) je Gerätekachel mit dem passenden Begriff statt überall „Batterie" - eigene Formulierung für Batterie / Wärmepumpe / Auto / Wallbox / Raumtemperatur (`DEMO_DEVICE_NOTE_BY_SECTION`), generischer Fallback für künftige Demo-Kacheln.
+
 ## 0.0.45.36
 
 * **„Auto laden" / Stufe „2. Amperezahl setzen": die Befehl-Vorschlagsliste zeigt jetzt nur noch Services, die ein Zahlen-Feld mit Einheit „A" haben.** Integrationsunabhängig über die vom Service in Home Assistant deklarierte `unit_of_measurement` (nicht per fest verdrahteter Integrations-Liste). Deklariert eine Wallbox-Integration an ihrem Ampere-Feld keine Einheit, wird weiterhin die volle Liste angezeigt.

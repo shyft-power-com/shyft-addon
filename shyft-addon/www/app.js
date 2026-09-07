@@ -246,6 +246,17 @@ const INTEGRATION_SECTIONS = [
     },
 ]
 
+// Hinweistext beim aktiven Demo-Gerät, je Geraetekachel mit dem passenden Begriff (siehe
+// renderSectionBody). Fallback fuer kuenftige hasDemo-Sektionen ohne eigenen Eintrag.
+const DEMO_DEVICE_NOTE_BY_SECTION = {
+    batterie: 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du über keine Batterie verfügst, oder binde deine echte Batterie aus deiner Home-Assistant-Umgebung ein.',
+    waermepumpe: 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du über keine Wärmepumpe verfügst, oder binde deine echte Wärmepumpe aus deiner Home-Assistant-Umgebung ein.',
+    auto: 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du über kein Elektroauto verfügst, oder binde dein echtes Auto aus deiner Home-Assistant-Umgebung ein.',
+    wallbox: 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du über keine Wallbox verfügst, oder binde deine echte Wallbox aus deiner Home-Assistant-Umgebung ein.',
+    raumtemperatur: 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du keinen Innenraum-Temperatursensor einbinden möchtest (Shyft simuliert die Raumtemperatur dann), oder binde deinen echten Sensor aus deiner Home-Assistant-Umgebung ein.',
+};
+const DEMO_DEVICE_NOTE_FALLBACK = 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du dieses Gerät nicht nutzt, oder binde dein echtes Gerät aus deiner Home-Assistant-Umgebung ein.';
+
 // True, sobald mindestens eine Geraetekachel ein Geraet zugeordnet hat UND JEDE zugeordnete Kachel
 // ausschliesslich das Demo-Geraet nutzt (kein einziges echtes Geraet irgendwo) - Grundlage fuer den
 // "Demomodus. Jetzt Geräte einrichten"-Hinweis (siehe renderDashboardProblemBanner/
@@ -2069,7 +2080,7 @@ function renderSectionBody(bodyDiv, section, entryIds) {
     if (entryIds.length === 1 && entryIds[0] === DEMO_INTEGRATION_ID) {
         const note = document.createElement('div');
         note.className = 'intro';
-        note.textContent = 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du über keine Batterie verfügst, oder binde deine echte Batterie aus deiner Home-Assistant-Umgebung ein.';
+        note.textContent = DEMO_DEVICE_NOTE_BY_SECTION[section.key] || DEMO_DEVICE_NOTE_FALLBACK;
         bodyDiv.appendChild(note);
         return;
     }
