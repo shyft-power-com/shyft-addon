@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.29
+
+* **Neuer Hinweis "Demomodus. Jetzt Geräte einrichten" statt "Alle Systeme laufen"**, solange ausschließlich Demo-Geräte zugeordnet sind (kein einziges echtes Gerät) - sowohl in der Statuskarte auf der Konfigurationsseite als auch im klickbaren Dashboard-Banner.
+* **Fix: das Dashboard-Problem-Banner konnte leer erscheinen.** Die Sichtbarkeit hängt jetzt an einem tatsächlich vorhandenen, nicht-leeren Hinweistext statt nur an einer Zählvariable - ein unerwarteter Zwischenzustand zeigt den Floater jetzt gar nicht mehr an, statt leer zu erscheinen.
+
 ## 0.0.45.28
 
 * **Prüfzeile im dynamischen Tarif zeigt nur noch den aktuellen Stundenpreis.** Die Strombörse (Awattar) stellt keine 15-Minuten-Preise bereit – Umschalter und Viertelstunden-Zeile sind entfallen. `GET /electricity/price-preview` liefert entsprechend nur noch `hour`.

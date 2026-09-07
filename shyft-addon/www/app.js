@@ -246,6 +246,27 @@ const INTEGRATION_SECTIONS = [
     },
 ]
 
+// True, sobald mindestens eine Geraetekachel ein Geraet zugeordnet hat UND JEDE zugeordnete Kachel
+// ausschliesslich das Demo-Geraet nutzt (kein einziges echtes Geraet irgendwo) - Grundlage fuer den
+// "Demomodus. Jetzt Geräte einrichten"-Hinweis (siehe renderDashboardProblemBanner/
+// renderSystemHealth). Eine komplett leere Kachel (noch nie etwas ausgewaehlt, z.B. Raumtemperatur/
+// Sonstiger Verbraucher im frischen defaultShyftConfig.json) zaehlt dabei nicht gegen den
+// Demomodus - sie ist einfach ungenutzt, nicht "auf Demo gestellt".
+function isFullyDemoMode() {
+    const integrationMappings = configData['integrationMappings'] || {};
+    let hasAnyDemo = false;
+    for (const section of INTEGRATION_SECTIONS) {
+        const currentIds = integrationMappings[section.key] || [];
+        if (currentIds.length === 0) continue;
+        if (currentIds.length === 1 && currentIds[0] === DEMO_INTEGRATION_ID) {
+            hasAnyDemo = true;
+            continue;
+        }
+        return false;
+    }
+    return hasAnyDemo;
+}
+
 async function getJson(url) {
     const response = await fetch(url);
 
@@ -726,7 +747,7 @@ async function renderSystemHealth() {
         icon.textContent = '✓';
         container.appendChild(icon);
         const text = document.createElement('span');
-        text.textContent = 'Alle Systeme laufen';
+        text.textContent = isFullyDemoMode() ? 'Demomodus. Jetzt Geräte einrichten' : 'Alle Systeme laufen';
         container.appendChild(text);
         applyConfigFieldErrorHighlights([]);
         renderDeviceNav([], []);
@@ -902,31 +923,43 @@ function actionFailedFieldId(problemId) {
 async function renderDashboardProblemBanner() {
     const banner = document.getElementById('dashboardProblemBanner');
     if (!banner) return;
-    let problemCount = 0;
-    try {
-        const health = await getJson(systemHealthUri);
-        if (!health.ok) {
-            problemCount += health.problemCount || (health.problems || []).length;
+    // Ein einziger String traegt die Entscheidung "ueberhaupt anzeigen?" - baut sich der Banner
+    // je (Demomodus vs. Probleme) unten trotzdem auf einen leeren Text zusammen (z.B. ein
+    // unerwarteter Zwischenzustand), bleibt er verlaesslich versteckt statt als leerer Floater
+    // sichtbar zu werden.
+    let bannerText = '';
+    if (isFullyDemoMode()) {
+        bannerText = 'Demomodus. Jetzt Geräte einrichten';
+    } else {
+        let problemCount = 0;
+        try {
+            const health = await getJson(systemHealthUri);
+            if (!health.ok) {
+                problemCount += health.problemCount || (health.problems || []).length;
+            }
+        } catch (err) {
+            console.log(err);
         }
-    } catch (err) {
-        console.log(err);
+        try {
+            const warningsResult = await getJson(insideHomeAssistant + '/config/warnings');
+            problemCount += (warningsResult.warnings || []).length;
+        } catch (err) {
+            console.log(err);
+        }
+        problemCount += computeMissingRequiredFieldsWarnings().length;
+        if (problemCount > 0) {
+            bannerText = problemCount === 1
+                ? '1 Problem erfordert deine Aufmerksamkeit'
+                : `${problemCount} Probleme erfordern deine Aufmerksamkeit`;
+        }
     }
-    try {
-        const warningsResult = await getJson(insideHomeAssistant + '/config/warnings');
-        problemCount += (warningsResult.warnings || []).length;
-    } catch (err) {
-        console.log(err);
-    }
-    problemCount += computeMissingRequiredFieldsWarnings().length;
-    if (problemCount === 0) {
+    if (!bannerText) {
         banner.hidden = true;
         return;
     }
     banner.innerHTML = '';
     const text = document.createElement('span');
-    text.textContent = problemCount === 1
-        ? '1 Problem erfordert deine Aufmerksamkeit'
-        : `${problemCount} Probleme erfordern deine Aufmerksamkeit`;
+    text.textContent = bannerText;
     banner.appendChild(text);
     const arrow = document.createElement('span');
     arrow.className = 'dashboardProblemBannerArrow';
