@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.41
+
+* Warmwasserbereitung: Die Varianten-Option „HA-Aktion" heißt jetzt „Direkte Entitäts-Steuerung" (konsistent mit den anderen Aktionstypen).
+* Wärmepumpen-Konfiguration: Das Feld „Warmwasser-Speichergröße" steht jetzt direkt unter der Sensor-Zeile „Temperatur Warmwassertank" statt weiter unten im Konfigurationsblock.
+
 ## 0.0.45.40
 
 * Energiefluss-Widget (Mobil): Die Strom-Punkte auf dem waagerechten Verbraucher-Bus liefen links vom Knotenpunkt (vor dem Haus) in die falsche Richtung. Der Bus wird jetzt am Knoten in zwei Segmente geteilt, die beide vom Knoten nach außen zum jeweiligen Gerät fließen (analog zum Desktop-Layout). Betraf u.a. die Leitung zwischen Knoten und Wärmepumpe.

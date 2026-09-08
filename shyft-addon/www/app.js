@@ -2127,12 +2127,23 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         sensorsHeading.textContent = 'Sensoren';
         bodyDiv.appendChild(sensorsHeading);
 
+        if (section.key === 'waermepumpe') {
+            // "Warmwasser-Speichergröße" gehoert direkt unter die zugehoerige Sensor-Zeile
+            // "Temperatur Warmwassertank" (Nutzer-Feedback) - dafuer wird dieser eine Sensor hier
+            // vorgezogen und das Feld gleich daruntergesetzt, statt es weiter unten im Konfig-Block
+            // zu belassen. heatpump_dhw_tank_temp ist ohnehin der erste Eintrag in section.sensors.
+            bodyDiv.appendChild(buildMappingTable(['heatpump_dhw_tank_temp'], configData["sensorMappings"] || {}, helpinformation, VALUE_POSTFIX, key => sensorDatalistIds[key], true));
+            bodyDiv.appendChild(buildHpDhwTankSizeField());
+        }
+
         // "Wallbox: Auto verbunden?" (wallbox_plugged) wird bewusst NICHT in dieser oberen Tabelle,
         // sondern weiter unten nach "Max. Stromstärke (pro Phase)" gerendert (siehe wallbox-Block) -
         // direkt vor der davon abhaengigen Status-Zuordnung.
         const topSensorKeys = section.key === 'wallbox'
             ? section.sensors.filter(k => k !== 'wallbox_plugged')
-            : section.sensors;
+            : section.key === 'waermepumpe'
+                ? section.sensors.filter(k => k !== 'heatpump_dhw_tank_temp')
+                : section.sensors;
         bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, helpinformation, VALUE_POSTFIX, key => sensorDatalistIds[key], true));
 
         if (section.key === 'wallbox') {
@@ -2168,7 +2179,7 @@ function renderSectionBody(bodyDiv, section, entryIds) {
             bodyDiv.appendChild(buildHpTypeField());
             bodyDiv.appendChild(buildHpBuildingSizeField());
             bodyDiv.appendChild(buildHpEnergyEfficiencyField());
-            bodyDiv.appendChild(buildHpDhwTankSizeField());
+            // buildHpDhwTankSizeField() steht jetzt oben direkt unter "Temperatur Warmwassertank".
             bodyDiv.appendChild(buildHpMaxPowerField());
             bodyDiv.appendChild(buildHpMaxSupplyTempField());
             bodyDiv.appendChild(buildHpHeatingTargetTempMinField());
@@ -3866,7 +3877,7 @@ function buildHotWaterControl() {
 
     const recipe = configData['hotWaterRecipe'] || {};
     // Drei echte Zustaende statt nur zwei: '' (noch nichts gewaehlt - weder "Befehl" noch die
-    // Automations-Zeile werden angezeigt), 'direct' ("HA-Aktion"), 'ha_automation'. Vorher fiel
+    // Automations-Zeile werden angezeigt), 'direct' ("Direkte Entitäts-Steuerung"), 'ha_automation'. Vorher fiel
     // alles, was nicht explizit "ha_automation" war, automatisch auf "direct" zurueck, wodurch das
     // "Befehl"-Feld schon vor jeder Auswahl sichtbar war.
     let variant = recipe.type === 'ha_automation' ? 'ha_automation' : (recipe.type === 'direct' ? 'direct' : '');
@@ -3877,7 +3888,7 @@ function buildHotWaterControl() {
     const variantSelect = document.createElement('select');
     variantSelect.id = 'hot_water_variant';
     variantSelect.className = 'sensorInput';
-    for (const [value, text] of [['', 'Befehl auswählen'], ['direct', 'HA-Aktion'], ['ha_automation', 'HA-Automation']]) {
+    for (const [value, text] of [['', 'Befehl auswählen'], ['direct', 'Direkte Entitäts-Steuerung'], ['ha_automation', 'HA-Automation']]) {
         const option = document.createElement('option');
         option.value = value;
         option.textContent = text;
