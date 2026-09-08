@@ -2596,6 +2596,7 @@ function buildHpHeatingCurveLevelField() {
         configKey: 'hpHeatingCurveLevel',
         placeholder: 'z.B. 0',
         defaultValue: 0,
+        step: '1',
     });
 }
 

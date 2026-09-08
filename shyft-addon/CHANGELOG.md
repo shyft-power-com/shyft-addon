@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.43
+
+* Feld „Heizkurve, Niveau": Die Spinner-Pfeile verändern den Wert jetzt in ganzen Schritten (`step: 1`) statt in 0,1er-Schritten.
+
 ## 0.0.45.42
 
 * Erklärtext zu „Max. Vorlauftemperatur" umformuliert: „Vorlauftemperatur, auf die Shyft Warmwasser maximal erwärmen soll / maximale Systemtemperatur."
