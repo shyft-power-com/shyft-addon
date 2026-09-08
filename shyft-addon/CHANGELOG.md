@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.51
+
+* **Fix: eine "aktive" Aktion konnte nach einem Addon-Neustart bis zu 15-60 Minuten fälschlich aktiv bleiben**, obwohl ihre Zeit längst abgelaufen war (z.B. wenn ein Update-Neustart mitten in eine laufende Stunde fällt). `process_shyft_actions`/`run_hourly_action_transition` liefen bisher nur über ihren Cron (alle 15 Min. bzw. zur vollen Stunde) - sie laufen jetzt zusätzlich einmal sofort beim Hochfahren des Addons, wie alle anderen Selbst-Heilungs-Routinen (PV-Kalibrierung, Anwesenheitslog, PV-Überschussladen usw.) auch schon.
+
 ## 0.0.45.50
 
 * **Geräte-Dropdown filtert jetzt sinnvoll vor:** In jeder Geräte-Kachel stehen oben die **„Passenden Geräte"** – Integrationen, die laut ihrer HA-Domain (`www/integrationDomainHints.json`, erzeugt aus dem offiziellen HA-Integrationskatalog von `scripts/gen-integration-hints.mjs`) und/oder der Form ihrer Entitäten (z. B. `climate.*`/`water_heater.*` ⇒ Wärmepumpe, `select.*` + Leistungssensor ⇒ Batterie, `number.*` + Strom/Leistung ⇒ Wallbox) zur Kachel passen. Alles andere landet in einer eingeklappten Gruppe **„Weitere Geräte (N)"**.

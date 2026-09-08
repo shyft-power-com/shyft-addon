@@ -6130,6 +6130,21 @@ if __name__ == "__main__":
     except Exception as e:
         print("Failed to run initial PV forecast calibration at startup:", repr(e))
 
+    try:
+        # Self-Heal fuer Addon-Neustarts (z.B. durch ein Update - auto_update ist an, ein Neustart
+        # kann also jederzeit mitten in einer laufenden Stunde passieren): process_shyft_actions/
+        # run_hourly_action_transition liefen bisher nur ueber ihren Cron (alle 15 Min. bzw. zur
+        # vollen Stunde, siehe scheduler.add_job oben) - eine Aktion, deren "Date End" waehrend der
+        # Downtime verstrichen ist, bliebe bis zu 15 bzw. 60 Minuten lang faelschlich "aktiv"
+        # stehen (Geraet liefe unnoetig weiter). Einmal sofort ausfuehren schliesst das direkt beim
+        # Hochfahren - beide Funktionen sind bereits idempotent/restart-sicher (persistierte
+        # startedShyftActionIds/endedShyftActionIds), ein zusaetzlicher Aufruf hier ist also
+        # gefahrlos, auch wenn der naechste Cron-Tick kurz danach ohnehin dasselbe pruefen wuerde.
+        process_shyft_actions()
+        run_hourly_action_transition()
+    except Exception as e:
+        print("Failed to reconcile shyft actions at startup:", repr(e))
+
     live_entity_watcher.start()
 
     app.run(host="0.0.0.0", port=8080)
