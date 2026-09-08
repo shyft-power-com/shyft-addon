@@ -590,16 +590,26 @@ def readNotificationTargets():
         return jsonify([])
 
 
+# Der lokale Aktions-Store (COMPUTED_ACTIONS_PATH) wird bewusst NICHT beschnitten - Aktionen bleiben
+# ueber Jahre erhalten, um sie spaeter auswerten zu koennen. Nur die Gerätesteuerung-Anzeige zeigt
+# ein begrenztes Fenster, damit die Liste nicht endlos waechst.
+SHYFT_ACTIONS_DISPLAY_MAX_DAYS = 3
+
+
 @app.route("/shyft/actions", methods=["GET"])
 def readShyftActions():
     """Liefert die Aktionsliste fuer die Gerätesteuerung-Tab-Anzeige (die tatsaechliche Ausfuehrung
     gegen die Geraete passiert separat in process_shyft_actions): die vom Addon selbst berechneten
     Aktionen (siehe COMPUTED_ACTIONS_PATH/recompute_actions_from_optimizer_run - kein Bubble-Call
     mehr, siehe CHANGELOG), gemergt mit der addon-eigenen PV-Überschussladen-Rückfalllogik (siehe
-    run_pv_surplus_charging_tick), damit beide nahtlos in einer Liste erscheinen."""
-    computed_actions = _read_computed_actions()
-    pv_surplus_actions = [_pv_surplus_session_to_action(s) for s in _read_pv_surplus_actions()]
-    return jsonify({"status": "success", "response": {"actions": computed_actions + pv_surplus_actions}})
+    run_pv_surplus_charging_tick), damit beide nahtlos in einer Liste erscheinen.
+    Fuer die Anzeige auf die letzten SHYFT_ACTIONS_DISPLAY_MAX_DAYS Tage (plus alle noch
+    laufenden/geplanten) begrenzt - der Store selbst bleibt vollstaendig erhalten."""
+    all_actions = _read_computed_actions() + [_pv_surplus_session_to_action(s) for s in _read_pv_surplus_actions()]
+    cutoff_ms = (time.time() - SHYFT_ACTIONS_DISPLAY_MAX_DAYS * 86400) * 1000
+    visible = [a for a in all_actions if a.get("Date End") is None or a.get("Date End") >= cutoff_ms]
+    return jsonify({"status": "success",
+                    "response": {"actions": visible, "display_max_days": SHYFT_ACTIONS_DISPLAY_MAX_DAYS}})
 
 
 @app.route("/dashboard/chart-data", methods=["GET"])

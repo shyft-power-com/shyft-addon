@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.49
+
+* **Gerätesteuerung: die Aktionsliste zeigt jetzt nur noch die letzten 3 Tage** (plus alle noch laufenden/geplanten Aktionen), statt der kompletten, unbegrenzt wachsenden Historie – die Liste wurde bei jedem 30-Sekunden-Refresh komplett neu aufgebaut. Der lokale Aktions-Store (`computed_actions.json`) wird dabei **nicht** beschnitten: alle Aktionen bleiben für spätere Auswertungen dauerhaft erhalten, nur die Anzeige ist begrenzt (`SHYFT_ACTIONS_DISPLAY_MAX_DAYS`).
+
 ## 0.0.45.48
 
 * Geräte-Kachel „Auto": „?" mit Tipp ergänzt – wer sein Auto schwer direkt in Home Assistant einbindet und Tibber nutzt, kann es in der Tibber-App hinterlegen und den Ladestand über die Tibber-Integration auslesen.

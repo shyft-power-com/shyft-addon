@@ -3,12 +3,17 @@ const insideHomeAssistant = window.location.pathname;
 const configUri = insideHomeAssistant + "/config";
 const sensorIdsUri = insideHomeAssistant + "/sensorids";
 const integrationsUri = insideHomeAssistant + "/integrations";
+// Statisch im Repo (shyft-addon/www/integrationDomainHints.json), erzeugt von
+// scripts/gen-integration-hints.mjs aus dem HA-Kern-Integrationskatalog. { "<domain>": ["batterie",
+// "wechselrichter", ...] } - reines Ranking-Signal fuer den Geraete-Picker, nie zum Ausblenden.
+const integrationDomainHintsUri = insideHomeAssistant + "/integrationDomainHints.json";
 const shyftActionsUri = insideHomeAssistant + "/shyft/actions";
 const notificationTargetsUri = insideHomeAssistant + "/notification-targets";
 const servicesUri = insideHomeAssistant + "/services";
 const systemHealthUri = insideHomeAssistant + "/system-health";
 let configData = {}
 let integrationsData = {integrations: [], entityMap: {}};
+let integrationDomainHints = {};
 let allSensorIdOptions = [];
 let allServiceOptions = [];
 let notificationTargetOptions = [];
@@ -1032,6 +1037,12 @@ const loadConfiguration = async (event) => {
         allSensorIdOptions = await getJson(sensorIdsUri);
         integrationsData = await getJson(integrationsUri);
         try {
+            integrationDomainHints = await getJson(integrationDomainHintsUri);
+        } catch (err) {
+            console.log(err);
+            integrationDomainHints = {};
+        }
+        try {
             notificationTargetOptions = await getJson(notificationTargetsUri);
         } catch (err) {
             console.log(err);
@@ -1109,6 +1120,77 @@ function integrationHasDeviceClass(entryId, deviceClass) {
     // integration with one unrelated unavailable entity would satisfy every possible requirement
     const entityIds = integrationsData.entityMap[entryId] || [];
     return allSensorIdOptions.some(entity => entityIds.includes(entity.entity_id) && entity.device_class === deviceClass);
+}
+
+// Stichwoerter je Geraetekachel fuer die Entitaets-Namens-Heuristik in scoreIntegrationForSection -
+// gegen entity_id + Anzeigename geprueft, klein geschrieben. Ergaenzt integrationDomainHints
+// (Domain-basiert, aus dem HA-Katalog) um ein integrations-agnostisches Signal, das sich selbst
+// pflegt: es liest die real vorhandenen Entitaeten der Integration statt eine feste Liste.
+const SECTION_MATCH_KEYWORDS = {
+    wechselrichter: ['solar', 'pv_', 'photovolt', 'inverter', 'wechselrichter', 'einspeis', 'grid_power'],
+    batterie: ['batter', 'akku', 'speicher', 'powerwall', 'state_of_charge', '_soc', 'bess'],
+    waermepumpe: ['heat_pump', 'heatpump', 'waermepumpe', 'wärmepumpe', 'thermostat', 'vorlauf', 'heizung', 'heating', 'warmwasser', '_dhw', 'flow_temp', 'hvac', 'klima'],
+    auto: ['vehicle', '_car', 'ev_', 'fahrzeug', 'odometer', 'state_of_charge', '_soc'],
+    wallbox: ['wallbox', 'charg', 'evse', 'ladeleist', 'ladestrom', 'charge_current', 'charging_power', 'chargepoint', 'go_e'],
+};
+
+// Verdichtete Sicht auf die Entitaeten einer Integration - Grundlage der Form-Heuristik in
+// scoreIntegrationForSection (entity-Domain, device_class, Namens-Heuhaufen).
+function integrationEntityShape(entryId) {
+    const entityIds = new Set(integrationsData.entityMap[entryId] || []);
+    const shape = {entityDomains: new Set(), deviceClasses: new Set(), haystack: []};
+    for (const entity of allSensorIdOptions) {
+        if (!entityIds.has(entity.entity_id)) continue;
+        shape.entityDomains.add(entity.entity_id.split('.')[0]);
+        if (entity.device_class) shape.deviceClasses.add(entity.device_class);
+        shape.haystack.push((entity.entity_id + ' ' + (entity.label || '')).toLowerCase());
+    }
+    return shape;
+}
+
+// HA-Integrations-Domain (stabil, wird praktisch nie umbenannt). Bevorzugt das vom Adapter
+// mitgelieferte Feld, faellt sonst auf "Titel (domain)" im Namen zurueck.
+function integrationDomainOf(integration) {
+    if (!integration) return '';
+    if (integration.domain) return String(integration.domain).toLowerCase();
+    const m = /\(([a-z0-9_]+)\)\s*$/i.exec(integration.name || '');
+    return m ? m[1].toLowerCase() : '';
+}
+
+// > 0  => Integration passt plausibel zu dieser Geraetekachel ("Passende Geräte", oben einsortiert).
+//   0  => kein Signal ("Weitere Geräte (N)", eingeklappt) - NIE ausgeblendet: Wrapper wie modbus/
+//         esphome/template/mqtt koennen jedes Geraet hosten.
+function scoreIntegrationForSection(integration, section) {
+    if (!integration || integration.id === DEMO_INTEGRATION_ID) return 0;
+    let score = 0;
+
+    const hints = integrationDomainHints[integrationDomainOf(integration)] || [];
+    if (hints.includes(section.key)) score += 10;
+
+    const shape = integrationEntityShape(integration.id);
+    const keywords = SECTION_MATCH_KEYWORDS[section.key] || [];
+    const nameHit = keywords.some(k => shape.haystack.some(h => h.includes(k)));
+    if (nameHit) score += 2;
+
+    if (section.key === 'waermepumpe') {
+        if (shape.entityDomains.has('climate') || shape.entityDomains.has('water_heater')) score += 6;
+    } else if (section.key === 'batterie') {
+        const hasPower = shape.deviceClasses.has('power') || shape.deviceClasses.has('energy') || shape.deviceClasses.has('battery');
+        if (shape.entityDomains.has('select') && hasPower) score += 4;
+    } else if (section.key === 'wallbox') {
+        const hasCurrentOrPower = shape.deviceClasses.has('current') || shape.deviceClasses.has('power');
+        if (shape.entityDomains.has('number') && hasCurrentOrPower) score += 4;
+    } else if (section.key === 'wechselrichter') {
+        const hasPower = shape.deviceClasses.has('power') || shape.deviceClasses.has('energy');
+        if (hasPower && nameHit) score += 4;
+    } else if (section.key === 'auto') {
+        if (shape.deviceClasses.has('battery') && nameHit) score += 4;
+    }
+
+    if (section.requiresDeviceClass && integrationHasDeviceClass(integration.id, section.requiresDeviceClass)) {
+        score += 1;
+    }
+    return score;
 }
 
 let openIntegrationPicker = null;
@@ -4638,16 +4720,20 @@ function hasActiveOrUpcomingAction(actions) {
     });
 }
 
-function renderShyftActions(container, actions) {
+function renderShyftActions(container, actions, displayMaxDays = 3) {
     // Aufgeklappt-Zustand der Logs behalten, aber nicht mehr vorhandene Aktionen aus dem Set werfen.
     const validLogKeys = new Set(actions.map(actionLogKey));
     for (const k of [...openActionLogKeys]) if (!validLogKeys.has(k)) openActionLogKeys.delete(k);
     container.innerHTML = '';
 
+    // Die Liste zeigt bewusst nur ein begrenztes Fenster (serverseitig, siehe readShyftActions /
+    // SHYFT_ACTIONS_DISPLAY_MAX_DAYS) - der Aktions-Store selbst wird nicht beschnitten.
+    const windowLabel = displayMaxDays === 1 ? 'im letzten Tag' : `in den letzten ${displayMaxDays} Tagen`;
+
     if (actions.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'shyftActionsEmpty';
-        empty.textContent = 'Es wurden in den letzten drei Tagen keine Aktionen berechnet.';
+        empty.textContent = `Es wurden ${windowLabel} keine Aktionen berechnet.`;
         container.appendChild(empty);
         return;
     }
@@ -4752,7 +4838,8 @@ async function loadShyftActions() {
             return;
         }
         const actions = (result.response && result.response.actions) || [];
-        renderShyftActions(container, actions);
+        const displayMaxDays = (result.response && result.response.display_max_days) || 3;
+        renderShyftActions(container, actions, displayMaxDays);
     } catch (err) {
         console.log(err);
         showShyftActionsError(container);
