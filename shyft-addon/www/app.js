@@ -2017,12 +2017,21 @@ function buildIntegrationPicker(section, currentIds, onChange) {
 
     wrapper.appendChild(panel);
 
+    // Bewusst NICHT mehr per requiresDeviceClass hart gefiltert - jede Integration mit mindestens
+    // einer Entitaet bleibt waehlbar (Wrapper wie modbus/esphome/template/mqtt hosten beliebige
+    // Geraete). Die Einordnung "Passende Geräte" vs. eingeklappte "Weitere Geräte (N)" macht
+    // scoreIntegrationForSection weiter unten in renderList.
     const options = integrationsData.integrations.filter(integration =>
-        !section.requiresDeviceClass || integrationHasDeviceClass(integration.id, section.requiresDeviceClass)
+        (integrationsData.entityMap[integration.id] || []).length > 0
     );
     // Demo-Geraet als eigene, synthetische Option ganz oben - kein integrationsData-Eintrag, wird
     // separat behandelt (siehe DEMO_INTEGRATION_ID).
     const demoOption = section.hasDemo ? {id: DEMO_INTEGRATION_ID, name: 'Demo-Gerät'} : null;
+
+    // Einklapp-Zustand der "Weitere Geräte"-Gruppe, ueber die renderList-Aufrufe hinweg gehalten
+    // (Tippen im Suchfeld zeichnet die Liste neu). Bei aktiver Suche immer aufgeklappt, damit die
+    // Suche auch dort trifft.
+    let showOtherDevices = false;
 
     let selectedIds = [...currentIds];
 
@@ -2141,8 +2150,57 @@ function buildIntegrationPicker(section, currentIds, onChange) {
             divider.className = 'integrationPickerDivider';
             list.appendChild(divider);
         }
-        for (const integration of filtered) {
+        // Zwei Ebenen: "Passende Geräte" (Score > 0, nach Score sortiert) zuerst, dann - nur wenn es
+        // ueberhaupt Treffer gab - eine aufklappbare Gruppe "Weitere Geräte (N)" fuer den Rest.
+        // Ohne jeglichen Treffer bleibt es eine flache Liste unter "Gerät".
+        const scored = filtered.map(integration => ({
+            integration,
+            // Bereits ausgewaehlte Geraete immer oben zeigen, egal wie sie scoren - sonst waere ihre
+            // Checkbox in der eingeklappten "Weitere Geräte"-Gruppe versteckt.
+            score: selectedIds.includes(integration.id)
+                ? Infinity
+                : scoreIntegrationForSection(integration, section),
+        }));
+        const matching = scored.filter(s => s.score > 0).sort((a, b) => b.score - a.score);
+        const others = scored.filter(s => s.score <= 0);
+        const hasSearch = normalizedFilter.length > 0;
+
+        if (matching.length === 0) {
+            for (const {integration} of scored) {
+                list.appendChild(buildCheckbox(integration.id, integration.name));
+            }
+            return;
+        }
+
+        const matchHeader = document.createElement('div');
+        matchHeader.className = 'integrationPickerHeader';
+        matchHeader.textContent = 'Passende Geräte';
+        list.appendChild(matchHeader);
+        for (const {integration} of matching) {
             list.appendChild(buildCheckbox(integration.id, integration.name));
+        }
+
+        if (others.length === 0) return;
+
+        const othersOpen = showOtherDevices || hasSearch;
+        const toggle = document.createElement('div');
+        toggle.className = 'integrationPickerHeader integrationPickerHeaderToggle';
+        toggle.textContent = `${othersOpen ? '▾' : '▸'} Weitere Geräte (${others.length})`;
+        if (!hasSearch) {
+            toggle.setAttribute('role', 'button');
+            toggle.tabIndex = 0;
+            const flip = () => { showOtherDevices = !showOtherDevices; renderList(search.value); };
+            toggle.addEventListener('click', flip);
+            toggle.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); flip(); }
+            });
+        }
+        list.appendChild(toggle);
+
+        if (othersOpen) {
+            for (const {integration} of others) {
+                list.appendChild(buildCheckbox(integration.id, integration.name));
+            }
         }
     }
 

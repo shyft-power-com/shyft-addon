@@ -839,6 +839,19 @@
             border-top: 1px solid var(--color-border);
             margin: 0.4em 0.2em;
         }
+        /* "Weitere Geräte (N)" - aufklappbare Zwischenüberschrift für Integrationen ohne
+           Treffer-Signal (siehe scoreIntegrationForSection in app.js). Nie ausgeblendet, nur
+           eingeklappt - jede Integration bleibt wählbar. */
+        .integrationPickerHeaderToggle {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            gap: 0.35em;
+        }
+        .integrationPickerHeaderToggle:hover {
+            color: var(--color-text);
+        }
 
         /* --topbar-height wird von syncTopBarHeightVar in app.js einmal beim Laden gesetzt (die
            echte Hoehe haengt von Logo/Schriftgroesse ab, aendert sich aber nie durch Viewport-

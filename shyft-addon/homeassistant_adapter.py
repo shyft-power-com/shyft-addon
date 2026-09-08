@@ -182,7 +182,7 @@ class HomeAssistantAdapter:
             domain = entry.get("domain", "")
             title = entry.get("title") or domain or entry_id
             name = f"{title} ({domain})" if domain else title
-            integration_list.append({"id": entry_id, "name": name})
+            integration_list.append({"id": entry_id, "name": name, "domain": domain})
             entity_map[entry_id] = []
             device_map[entry_id] = []
 

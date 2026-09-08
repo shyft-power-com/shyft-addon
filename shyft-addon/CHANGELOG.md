@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.45.50
+
+* **Geräte-Dropdown filtert jetzt sinnvoll vor:** In jeder Geräte-Kachel stehen oben die **„Passenden Geräte"** – Integrationen, die laut ihrer HA-Domain (`www/integrationDomainHints.json`, erzeugt aus dem offiziellen HA-Integrationskatalog von `scripts/gen-integration-hints.mjs`) und/oder der Form ihrer Entitäten (z. B. `climate.*`/`water_heater.*` ⇒ Wärmepumpe, `select.*` + Leistungssensor ⇒ Batterie, `number.*` + Strom/Leistung ⇒ Wallbox) zur Kachel passen. Alles andere landet in einer eingeklappten Gruppe **„Weitere Geräte (N)"**.
+* **Nichts wird mehr hart ausgeblendet.** Die bisherige `device_class`-Pflichtfilterung (Batterie/Wechselrichter brauchten `power`, Wärmepumpe `temperature`) ist entfallen – Wrapper-Integrationen wie Modbus, ESPHome, MQTT oder Template-Helfer können beliebige Geräte bereitstellen und blieben sonst unsichtbar. Der `device_class`-Treffer fließt jetzt nur noch als schwaches Signal in die Einsortierung ein.
+* Die Wallbox-Kachel hatte bisher gar keine Vorsortierung – jetzt schon.
+* `homeassistant_adapter`: jede Integration liefert zusätzlich ihre stabile HA-Domain (`domain`) mit, damit die Zuordnung nicht auf Namens-Rennerei angewiesen ist.
+
 ## 0.0.45.49
 
 * **Gerätesteuerung: die Aktionsliste zeigt jetzt nur noch die letzten 3 Tage** (plus alle noch laufenden/geplanten Aktionen), statt der kompletten, unbegrenzt wachsenden Historie – die Liste wurde bei jedem 30-Sekunden-Refresh komplett neu aufgebaut. Der lokale Aktions-Store (`computed_actions.json`) wird dabei **nicht** beschnitten: alle Aktionen bleiben für spätere Auswertungen dauerhaft erhalten, nur die Anzeige ist begrenzt (`SHYFT_ACTIONS_DISPLAY_MAX_DAYS`).
