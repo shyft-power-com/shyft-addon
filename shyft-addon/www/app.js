@@ -6211,17 +6211,24 @@ function buildEnergyFlowSvgMobile(data) {
         const n = devices.length;
         const colXs = devices.map((_, i) => (VIEW_W / (n + 1)) * (i + 1));
 
-        // Vereinfachung gegenueber dem Desktop-Spine (siehe dortiger Kommentar zu upper-/lowerSpine):
-        // die gesamte waagerechte Bus-Leitung nutzt hier die Summe ALLER aktiven Zweige fuer ihre
-        // Punkte-Geschwindigkeit, statt pro Segment nur die ab dort noch abzweigenden Verbraucher zu
-        // zaehlen - bei bis zu 4 Spalten waere die exakte Segment-Aufteilung unverhaeltnismaessig
-        // komplex fuer einen rein optischen Geschwindigkeitswert.
-        const trunkKw = flows.heatpumpFlowKw + flows.carFlowKw + flows.sonstigerFlowKw + flows.householdFlowKw;
-        const trunkLine = buildFlowLineFromPath(buildFlowPath(houseCx, trunkTopY, houseCx, busY), trunkKw, {thresholdKw: 0.1});
+        // Der waagerechte Verbraucher-Bus wird am Knotenpunkt (houseCx, wo der Trunk vom Haus
+        // eintritt) in zwei Segmente geteilt - eine einzige durchgehende Linie liesse die Punkte auf
+        // der Haelfte LINKS vom Knoten in die falsche Richtung laufen (der Strom fliesst vom Knoten
+        // nach BEIDEN Seiten nach aussen, nicht quer durch). Jedes Segment startet am Knoten, die
+        // Punkte laufen also nach aussen zum jeweiligen Geraet. Analog zum Desktop-upper-/lowerSpine.
+        const branchKwByType = {heatpump: flows.heatpumpFlowKw, car: flows.carFlowKw, sonstiger: flows.sonstigerFlowKw, household: flows.householdFlowKw};
+        let leftKw = 0, rightKw = 0;
+        devices.forEach((type, i) => {
+            const kw = branchKwByType[type] || 0;
+            if (colXs[i] <= houseCx) leftKw += kw; else rightKw += kw;
+        });
+        const trunkLine = buildFlowLineFromPath(buildFlowPath(houseCx, trunkTopY, houseCx, busY), leftKw + rightKw, {thresholdKw: 0.1});
         if (trunkLine) svg.appendChild(trunkLine);
         if (n > 1) {
-            const busLine = buildFlowLineFromPath(`M ${colXs[0]},${busY} H ${colXs[n - 1]}`, trunkKw, {thresholdKw: 0.1});
-            if (busLine) svg.appendChild(busLine);
+            const leftBus = buildFlowLineFromPath(`M ${houseCx},${busY} H ${colXs[0]}`, leftKw, {thresholdKw: 0.1});
+            if (leftBus) svg.appendChild(leftBus);
+            const rightBus = buildFlowLineFromPath(`M ${houseCx},${busY} H ${colXs[n - 1]}`, rightKw, {thresholdKw: 0.1});
+            if (rightBus) svg.appendChild(rightBus);
         }
 
         // Nur die Icons stehen nebeneinander (wie gewuenscht) - das volle Detail je Geraet (wie auf
