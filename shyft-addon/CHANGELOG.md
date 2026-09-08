@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.48
+
+* Geräte-Kachel „Auto": „?" mit Tipp ergänzt – wer sein Auto schwer direkt in Home Assistant einbindet und Tibber nutzt, kann es in der Tibber-App hinterlegen und den Ladestand über die Tibber-Integration auslesen.
+
 ## 0.0.45.47
 
 * **„Heizung aktiviert?" (`heatpump_heating_activated`) ist jetzt kein Pflichtfeld mehr** – eine leere Zuordnung markiert die Wärmepumpen-Kachel nicht länger als unvollständig.

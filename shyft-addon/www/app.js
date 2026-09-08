@@ -221,7 +221,8 @@ const INTEGRATION_SECTIONS = [
         label: 'Auto',
         sensors: ['electronicvehicle_state_of_charge'],
         actions: [],
-        hasDemo: true
+        hasDemo: true,
+        description: 'Tipp, wenn du Schwierigkeiten hast, dein Auto in Home Assistant einzubinden und Tibber als Stromanbieter nutzt: Hinterlege dein Auto in der Tibber App, dann kannst du über die Tibber-Integration den Ladestand deines Autos auslesen.'
     },
     {
         key: 'wallbox',
