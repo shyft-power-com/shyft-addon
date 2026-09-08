@@ -308,6 +308,14 @@ class SyncService:
                 except (TypeError, ValueError):
                     pass
             live_values[entry["sensor"]] = value
+        # "heatpump_heating_activated" ist bewusst kein Pflichtfeld (siehe REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS
+        # in app.js) - fehlt die Zuordnung, wird "HP - Heating Activated" oben uebersprungen (entry == "").
+        # shyft's RunTimeService.calculateHeatingActivated faellt dann serverseitig auf FALSE zurueck
+        # (kein Legacy-Sensor gefunden), nicht auf "an" - ohne diesen Fallback wuerde eine bestehende
+        # Installation ohne diesen (neuen, optionalen) Sensor also faelschlich als "Heizung aus"
+        # ankommen. Explizit "on" nachtragen, wenn der Key fehlt.
+        if LIST_OF_SENSORS["heatpump_heating_activated"] not in live_values:
+            live_values[LIST_OF_SENSORS["heatpump_heating_activated"]] = "on"
         return live_values
 
     def _load_sensor_value(self, key, bubbleSensorIdentifier, data):

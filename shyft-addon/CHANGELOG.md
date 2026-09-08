@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.47
+
+* **„Heizung aktiviert?" (`heatpump_heating_activated`) ist jetzt kein Pflichtfeld mehr** – eine leere Zuordnung markiert die Wärmepumpen-Kachel nicht länger als unvollständig.
+* **Fix: fehlt die Zuordnung für „Heizung aktiviert?", schickt das Addon jetzt explizit „on" an shyft-power statt den Wert einfach wegzulassen.** shyft-power fällt beim Fehlen server-seitig sonst auf „aus" zurück – bestehende Installationen ohne diesen (optionalen) Sensor kämen dadurch sonst fälschlich als „Heizung deaktiviert" an, sobald der Server diesen Wert für die Optimierung nutzt. (Das Berechnen der „Heizung Soll-Temperatur"-Aktion bei explizit deaktivierter Heizung wird bereits seit 0.0.44.86 übersprungen.)
+* Warmwassertest: Statuszeile umformuliert zu „Warmwasser gerade erwärmt? Aktueller Status: An/Aus" (vorher der unübersetzte rohe Sensorzustand, z.B. „on").
+
 ## 0.0.45.46
 
 * Fehlermeldung beim „Optimierung anstoßen"-Button auf „Fehler beim Senden der Daten. Bitte wende dich an info@shyft-power.com." geändert (vorher „… Sensordatan … shyft-Token prüfen").

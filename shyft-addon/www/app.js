@@ -1194,9 +1194,11 @@ function isSectionComplete(section, currentIds) {
 // - anders als isSectionComplete oben (das behandelt bewusst ALLE Felder als Voraussetzung fuer die
 // Abschnitts-Checkmarkierung) gelten diese hier NICHT als Pflichtfeld fuer die Warnmeldung unten:
 // die Waermepumpen-Leistung ist rein informativ, der Raumtemperatur-Sensor hat einen eigenen
-// Auto-Simulations-Fallback (siehe dessen description oben in INTEGRATION_SECTIONS), und §14a/
-// PV-Einspeisung sind seltene Zusatzfunktionen, keine Grundvoraussetzung.
-const REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS = new Set(['heatpump_current_power_elect', 'heatpump_temp_indoor_measured']);
+// Auto-Simulations-Fallback (siehe dessen description oben in INTEGRATION_SECTIONS), §14a/
+// PV-Einspeisung sind seltene Zusatzfunktionen, keine Grundvoraussetzung, und "Heizung aktiviert?"
+// blockiert ohne Zuordnung nichts (compute_heizung_actions/collect_live_values in app.py bzw.
+// sync_service.py behandeln nicht-zugeordnet wie "an", nicht wie "aus").
+const REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS = new Set(['heatpump_current_power_elect', 'heatpump_temp_indoor_measured', 'heatpump_heating_activated']);
 const REQUIRED_FIELD_OPTIONAL_ACTION_KEYS = new Set(['consumption_limit_14a', 'pv_feed_in_limit']);
 
 // Ausfuehrlichere Schwester von isSectionComplete oben: statt nur true/false liefert das hier je
@@ -3963,11 +3965,15 @@ function buildHotWaterControl() {
     function refreshHotWaterStatus() {
         const entity = (configData['sensorMappings'] || {})['heatpump_dhw_on_off'] || '';
         if (!entity) {
-            statusDisplay.textContent = 'Warmwasser gerade erwärmt?: – (kein Sensor zugeordnet)';
+            statusDisplay.textContent = 'Warmwasser gerade erwärmt? Aktueller Status: – (kein Sensor zugeordnet)';
             return;
         }
         const match = allSensorIdOptions.find(e => e.entity_id === entity);
-        statusDisplay.textContent = 'Warmwasser gerade erwärmt?: ' + (match ? match.state : '–');
+        const rawState = match ? match.state : null;
+        // rohe HA-Zustaende ("on"/"off") uebersetzen statt sie unuebersetzt anzuzeigen - wie ueberall
+        // sonst im Addon (siehe z.B. formatEntityDisplay-Umgebung), nur hier bisher vergessen.
+        const displayState = rawState === 'on' ? 'An' : rawState === 'off' ? 'Aus' : (rawState || '–');
+        statusDisplay.textContent = 'Warmwasser gerade erwärmt? Aktueller Status: ' + displayState;
     }
 
     // Ein einziger Test fuer die komplette Warmwasserbereitung (ersetzt die frueher getrennten
