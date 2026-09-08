@@ -1655,7 +1655,7 @@
             .then(response => response.json())
             .then(data => {
                 if(data["external_status"] === 401) {
-                    alert('Fehler beim Senden der Sensordatan. Bitte shyft-Token prüfen.');
+                    alert('Fehler beim Senden der Daten. Bitte wende dich an info@shyft-power.com.');
                 } else {
                     alert('Optimierung angestoßen. Das Ergebnis wird in einigen Minuten importiert.')
                 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.46
+
+* Fehlermeldung beim „Optimierung anstoßen"-Button auf „Fehler beim Senden der Daten. Bitte wende dich an info@shyft-power.com." geändert (vorher „… Sensordatan … shyft-Token prüfen").
+
 ## 0.0.45.45
 
 * Button „Verbindung testen" heißt jetzt „Optimierung anstoßen"; die Erfolgsmeldung lautet „Optimierung angestoßen. Das Ergebnis wird in einigen Minuten importiert."
