@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.44
+
+* Die direkten Entitäts-Steuerungsfelder (z.B. „Ladeleistung begrenzen", „Modus-Entität" bei der Batterie) haben jetzt wie die Sensor-Zuordnungsfelder einen „×"-Knopf, um eine eingetragene Entität wieder zu löschen (`wrapEntityInputWithClear`, gemeinsam mit `buildMappingRow`).
+
 ## 0.0.45.43
 
 * Feld „Heizkurve, Niveau": Die Spinner-Pfeile verändern den Wert jetzt in ganzen Schritten (`step: 1`) statt in 0,1er-Schritten.

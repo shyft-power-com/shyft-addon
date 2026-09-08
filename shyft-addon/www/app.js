@@ -4140,7 +4140,8 @@ function buildBatteryCoupledEntityField(sensorKey, datalistId, onChange) {
         await autoSave();
         if (onChange) await onChange();
     });
-    return datalistId ? attachEntityDropdown(input, {datalistId, headerText: 'Home-Assistant-Entität'}) : input;
+    const dropdownEl = datalistId ? attachEntityDropdown(input, {datalistId, headerText: 'Home-Assistant-Entität'}) : input;
+    return wrapEntityInputWithClear(dropdownEl, input);
 }
 
 // "Testen"-Zeile fuer die "direkte Entitaets-Steuerung"-Variante eines Batterie-Aktionstyps: ein
@@ -4409,15 +4410,42 @@ function buildTooltip(description) {
     return tooltip;
 }
 
+// Umschliesst ein (bereits per attachEntityDropdown gewrapptes) Entitaets-Eingabefeld mit einem
+// "×"-Loeschknopf und dem dekorativen Dropdown-Pfeil (siehe .clearableInput/.clearInputButton/
+// .inputDropdownArrow in index.html). Gemeinsam genutzt von buildMappingRow (Sensor-/Aktor-
+// Zuordnung) und den direkten Entitaets-Steuerungsfeldern (buildBatteryCoupledEntityField).
+function wrapEntityInputWithClear(dropdownEl, input) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'clearableInput';
+    wrapper.appendChild(dropdownEl);
+
+    const clearButton = document.createElement('button');
+    clearButton.type = 'button';
+    clearButton.className = 'clearInputButton';
+    clearButton.textContent = '×';
+    clearButton.setAttribute('aria-label', 'Eingabe löschen');
+    clearButton.addEventListener('click', () => {
+        input.value = '';
+        input.dispatchEvent(new Event('change'));
+        input.focus();
+    });
+    wrapper.appendChild(clearButton);
+
+    // Rein dekorativ, pointer-events:none reicht Klicks ans Input darunter durch.
+    const dropdownArrow = document.createElement('span');
+    dropdownArrow.className = 'inputDropdownArrow';
+    dropdownArrow.textContent = '▾';
+    dropdownArrow.setAttribute('aria-hidden', 'true');
+    wrapper.appendChild(dropdownArrow);
+    return wrapper;
+}
+
 function buildMappingRow(key, value, helpInfo, valuePostfix, datalistId, showLiveValue, toggleChecked, onChange) {
     const row = document.createElement('tr');
     const keyCell = document.createElement('td');
     const context = helpInfo[key] ?? {label: key};
     keyCell.textContent = context.label;
     keyCell.appendChild(buildTooltip(context.description ?? key));
-
-    const inputWrapper = document.createElement('div');
-    inputWrapper.className = 'clearableInput';
 
     const inputValue = document.createElement('input');
     inputValue.id = key + valuePostfix;
@@ -4431,27 +4459,8 @@ function buildMappingRow(key, value, helpInfo, valuePostfix, datalistId, showLiv
         await autoSave();
         if (onChange) onChange();
     });
-    inputWrapper.appendChild(attachEntityDropdown(inputValue, {datalistId, headerText: 'Home-Assistant-Entität'}));
-
-    const clearButton = document.createElement('button');
-    clearButton.type = 'button';
-    clearButton.className = 'clearInputButton';
-    clearButton.textContent = '×';
-    clearButton.setAttribute('aria-label', 'Eingabe löschen');
-    clearButton.addEventListener('click', () => {
-        inputValue.value = '';
-        inputValue.dispatchEvent(new Event('change'));
-        inputValue.focus();
-    });
-    inputWrapper.appendChild(clearButton);
-
-    // Eigener, immer sichtbarer Pfeil ganz rechts (siehe .inputDropdownArrow) - rein dekorativ,
-    // pointer-events:none reicht Klicks ans Input darunter durch.
-    const dropdownArrow = document.createElement('span');
-    dropdownArrow.className = 'inputDropdownArrow';
-    dropdownArrow.textContent = '▾';
-    dropdownArrow.setAttribute('aria-hidden', 'true');
-    inputWrapper.appendChild(dropdownArrow);
+    const inputWrapper = wrapEntityInputWithClear(
+        attachEntityDropdown(inputValue, {datalistId, headerText: 'Home-Assistant-Entität'}), inputValue);
 
     const valueCell = document.createElement('td');
     valueCell.appendChild(inputWrapper);
