@@ -5807,6 +5807,59 @@ OPTIMIZER_WAIT_POLL_DELAYS_MINUTES = [1, 2, 4.5, 7, 10]
 # aufgegeben und ein Fehler gemeldet, statt endlos weiter zu versuchen.
 MAX_OPTIMIZER_TIMEOUT_RETRIES = 2
 OPTIMIZER_PERIOD_REDUCTION_ON_TIMEOUT = 2
+# Die geplanten Nachfrage-Jobs leben nur im Prozessspeicher (BackgroundScheduler ohne persistenten
+# Jobstore) - ein Addon-Neustart waehrend des Wartefensters (z.B. durch ein Update, auto_update ist
+# an) loescht sie ersatzlos, das Optimierungsergebnis wuerde dann nie abgeholt. Deshalb zusaetzlich
+# als kleine Datei gemerkt und beim naechsten Start wieder aufgegriffen, siehe
+# resume_pending_optimizer_wait_if_any.
+PENDING_OPTIMIZER_WAIT_PATH = "/data/pending_optimizer_wait.json"
+# Aelter als das laengste Poll-Delay (10 Min.) plus Puffer fuer die Neustart-/Reschedule-Zeit selbst
+# - danach lohnt sich ein Wiederaufgreifen nicht mehr, der naechste stuendliche Sync kommt ohnehin
+# bald von selbst.
+PENDING_OPTIMIZER_WAIT_MAX_AGE_MINUTES = 20
+
+
+def _write_pending_optimizer_wait(submitted_at, optimizer_period, attempt):
+    try:
+        with open(PENDING_OPTIMIZER_WAIT_PATH, "w") as f:
+            json.dump({"submitted_at": submitted_at.isoformat(), "optimizer_period": optimizer_period, "attempt": attempt}, f)
+    except Exception as e:
+        print("[Shyft] Warten-Merker (pending_optimizer_wait) konnte nicht geschrieben werden:", repr(e))
+
+
+def _clear_pending_optimizer_wait():
+    try:
+        os.remove(PENDING_OPTIMIZER_WAIT_PATH)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print("[Shyft] Warten-Merker (pending_optimizer_wait) konnte nicht geloescht werden:", repr(e))
+
+
+def resume_pending_optimizer_wait_if_any():
+    """Beim Addon-Start (siehe __main__): ein durch einen Neustart mitten im Wartefenster
+    verlorener Satz Nachfrage-Jobs (siehe PENDING_OPTIMIZER_WAIT_PATH) wird hier neu eingeplant -
+    laengst faellige Zeitpunkte feuern dank des grosszuegigen misfire_grace_time in
+    schedule_optimizer_result_wait praktisch sofort."""
+    try:
+        with open(PENDING_OPTIMIZER_WAIT_PATH, "r") as f:
+            pending = json.load(f)
+    except FileNotFoundError:
+        return
+    except Exception as e:
+        print("[Shyft] Warten-Merker (pending_optimizer_wait) konnte nicht gelesen werden:", repr(e))
+        return
+    try:
+        submitted_at = datetime.fromisoformat(pending["submitted_at"])
+        age_minutes = (datetime.now(timezone.utc) - submitted_at).total_seconds() / 60
+        if age_minutes > PENDING_OPTIMIZER_WAIT_MAX_AGE_MINUTES:
+            print(f"[Shyft] Verwaister Warten-Merker ist {age_minutes:.0f} Min. alt - wird verworfen, naechster stuendlicher Sync uebernimmt.")
+            _clear_pending_optimizer_wait()
+            return
+        print(f"[Shyft] Setze auf einen Addon-Neustart verlorenes Warten auf ein Optimierungsergebnis fort (Alter: {age_minutes:.1f} Min.).")
+        schedule_optimizer_result_wait(submitted_at, pending["optimizer_period"], attempt=pending["attempt"])
+    except Exception as e:
+        print("[Shyft] Fortsetzen des Wartens auf ein Optimierungsergebnis fehlgeschlagen:", repr(e))
 
 
 def schedule_optimizer_result_wait(submitted_at, optimizer_period, attempt=1):
@@ -5816,7 +5869,11 @@ def schedule_optimizer_result_wait(submitted_at, optimizer_period, attempt=1):
     _check_optimizer_result). Kommt output_csv leer zurueck (Optimizer-Timeout), wird bis zu
     MAX_OPTIMIZER_TIMEOUT_RETRIES mal mit reduzierter Optimizer-Periode neu getriggert (siehe
     _handle_optimizer_timeout); bleibt nach der letzten Nachfrage des letzten Versuchs alles leer,
-    meldet _handle_optimizer_wait_exhausted einen Fehler an shyft-power."""
+    meldet _handle_optimizer_wait_exhausted einen Fehler an shyft-power.
+    Merkt sich den Wartezustand zusaetzlich in PENDING_OPTIMIZER_WAIT_PATH, damit ein
+    Addon-Neustart waehrend des Wartefensters die geplanten Nachfragen nicht ersatzlos verliert
+    (siehe resume_pending_optimizer_wait_if_any)."""
+    _write_pending_optimizer_wait(submitted_at, optimizer_period, attempt)
     sibling_job_ids = []
     for index, delay_minutes in enumerate(OPTIMIZER_WAIT_POLL_DELAYS_MINUTES):
         is_last = index == len(OPTIMIZER_WAIT_POLL_DELAYS_MINUTES) - 1
@@ -5828,7 +5885,10 @@ def schedule_optimizer_result_wait(submitted_at, optimizer_period, attempt=1):
             run_date=submitted_at + timedelta(minutes=delay_minutes),
             id=job_id,
             args=[submitted_at, optimizer_period, attempt, is_last, sibling_job_ids],
-            misfire_grace_time=120,
+            # grosszuegig statt der urspruenglichen 120s: ein Addon-Neustart kann diesen Job um
+            # mehrere Minuten verspaeten (siehe resume_pending_optimizer_wait_if_any) - ein zu
+            # kurzes Fenster wuerde ihn dann als "misfired" verwerfen statt ihn nachzuholen.
+            misfire_grace_time=OPTIMIZER_WAIT_POLL_DELAYS_MINUTES[-1] * 60,
             replace_existing=True,
         )
 
@@ -5870,6 +5930,10 @@ def _check_optimizer_result(submitted_at, optimizer_period, attempt, is_last, si
 
     # Ergebnis da - die uebrigen fuer DIESEN Versuch noch ausstehenden Nachfragen sind ueberfluessig
     _cancel_remaining_optimizer_wait_jobs(sibling_job_ids)
+    # ein evtl. anschliessender Retry (siehe _handle_optimizer_timeout) schreibt den Merker sofort
+    # wieder frisch - hier loeschen deckt trotzdem alle Faelle ab, die KEINEN Retry ausloesen
+    # (Erfolg, endgueltiger Timeout-Abbruch, fehlende input_csv/creation_date).
+    _clear_pending_optimizer_wait()
 
     output_csv = optimizer_run.get("output_csv")
     input_csv = optimizer_run.get("input_csv")
@@ -5920,6 +5984,7 @@ def _handle_optimizer_timeout(submitted_at, optimizer_period, attempt):
 
 def _handle_optimizer_wait_exhausted(submitted_at, optimizer_period, attempt):
     "Nach der letzten geplanten Nachfrage (siehe OPTIMIZER_WAIT_POLL_DELAYS_MINUTES) kam kein Ergebnis - Fehler an shyft-power melden."
+    _clear_pending_optimizer_wait()
     log_error_to_shyft(
         "optimizer_wait",
         "optimizer_no_result",
@@ -6092,6 +6157,11 @@ if __name__ == "__main__":
         sync_dashboard_chart_data()
     except Exception as e:
         print("Failed to sync dashboard chart data at startup:", repr(e))
+
+    try:
+        resume_pending_optimizer_wait_if_any()
+    except Exception as e:
+        print("Failed to resume pending optimizer wait at startup:", repr(e))
 
     try:
         sync_car_presence_log()

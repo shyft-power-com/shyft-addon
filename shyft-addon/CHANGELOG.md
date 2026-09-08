@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.53
+
+* **Fix: ein manuell (oder stündlich) angestoßenes Optimierungsergebnis konnte komplett verloren gehen**, wenn das Addon während des Wartefensters (1-10 Min. nach dem Absenden) neu startet (z.B. durch ein Update - `auto_update` ist an). Die geplanten Nachfragen lebten bisher nur im Prozessspeicher und wurden durch den Neustart ersatzlos gelöscht - "Einsatzplan" zeigte dann nie ein neues Ergebnis an. Der Wartezustand wird jetzt zusätzlich in einer Datei gemerkt und beim nächsten Addon-Start automatisch fortgesetzt; überfällige Nachfragen feuern dank eines großzügigeren Zeitfensters (10 statt 2 Minuten) praktisch sofort nach.
+
 ## 0.0.45.52
 
 * **Gerätesteuerung: neue Geräte-Filterzeile oben.** Eine Checkbox je vorkommendem Gerät (Wallbox, Wärmepumpe, Batterie, Wechselrichter, Sonstiger Verbraucher …) plus „Alle Geräte" (Tri-State). Die Auswahl filtert die Aktionsliste sofort, ohne neuen Abruf, und wird pro Browser gemerkt (`localStorage`). Erscheint nur, wenn mindestens zwei Gerätetypen in der Liste vorkommen.
