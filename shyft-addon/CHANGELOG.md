@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.45
+
+* Button „Verbindung testen" heißt jetzt „Optimierung anstoßen"; die Erfolgsmeldung lautet „Optimierung angestoßen. Das Ergebnis wird in einigen Minuten importiert."
+
 ## 0.0.45.44
 
 * Die direkten Entitäts-Steuerungsfelder (z.B. „Ladeleistung begrenzen", „Modus-Entität" bei der Batterie) haben jetzt wie die Sensor-Zuordnungsfelder einen „×"-Knopf, um eine eingetragene Entität wieder zu löschen (`wrapEntityInputWithClear`, gemeinsam mit `buildMappingRow`).
