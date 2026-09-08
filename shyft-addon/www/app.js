@@ -2579,7 +2579,7 @@ function buildHpHeatingBufferField() {
 function buildHpMaxSupplyTempField() {
     return buildConfigNumberField({
         label: 'Max. Vorlauftemperatur (°C)',
-        tooltip: 'Höchste Vorlauftemperatur, die deine Wärmepumpe liefern kann.',
+        tooltip: 'Vorlauftemperatur, auf die Shyft Warmwasser maximal erwärmen soll / maximale Systemtemperatur.',
         id: 'hp_max_supply_temp',
         configKey: 'hpMaxSupplyTempC',
         placeholder: 'z.B. 55',

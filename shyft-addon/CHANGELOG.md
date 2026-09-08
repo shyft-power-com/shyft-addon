@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.42
+
+* Erklärtext zu „Max. Vorlauftemperatur" umformuliert: „Vorlauftemperatur, auf die Shyft Warmwasser maximal erwärmen soll / maximale Systemtemperatur."
+
 ## 0.0.45.41
 
 * Warmwasserbereitung: Die Varianten-Option „HA-Aktion" heißt jetzt „Direkte Entitäts-Steuerung" (konsistent mit den anderen Aktionstypen).
