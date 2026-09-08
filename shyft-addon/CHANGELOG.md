@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.52
+
+* **Gerätesteuerung: neue Geräte-Filterzeile oben.** Eine Checkbox je vorkommendem Gerät (Wallbox, Wärmepumpe, Batterie, Wechselrichter, Sonstiger Verbraucher …) plus „Alle Geräte" (Tri-State). Die Auswahl filtert die Aktionsliste sofort, ohne neuen Abruf, und wird pro Browser gemerkt (`localStorage`). Erscheint nur, wenn mindestens zwei Gerätetypen in der Liste vorkommen.
+
 ## 0.0.45.51
 
 * **Fix: eine "aktive" Aktion konnte nach einem Addon-Neustart bis zu 15-60 Minuten fälschlich aktiv bleiben**, obwohl ihre Zeit längst abgelaufen war (z.B. wenn ein Update-Neustart mitten in eine laufende Stunde fällt). `process_shyft_actions`/`run_hourly_action_transition` liefen bisher nur über ihren Cron (alle 15 Min. bzw. zur vollen Stunde) - sie laufen jetzt zusätzlich einmal sofort beim Hochfahren des Addons, wie alle anderen Selbst-Heilungs-Routinen (PV-Kalibrierung, Anwesenheitslog, PV-Überschussladen usw.) auch schon.

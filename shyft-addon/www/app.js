@@ -4778,6 +4778,91 @@ function hasActiveOrUpcomingAction(actions) {
     });
 }
 
+// --- Gerätesteuerung: Geräte-Filter (Checkbox-Zeile oben, siehe #shyftActionsFilter) ----------
+const SHYFT_ACTIONS_HIDDEN_DEVICES_KEY = 'shyftActionsHiddenDevices';
+
+// Aktions-"Gerät" = die Geraetekachel, zu der der Aktionstyp gehoert (ACTION_NAME_TO_SECTION_KEY);
+// alles Unbekannte landet im Sammel-Eimer "sonstige".
+function shyftActionDeviceKey(action) {
+    return ACTION_NAME_TO_SECTION_KEY[action && action['Action Name']] || 'sonstige';
+}
+function shyftDeviceLabel(key) {
+    if (key === 'sonstige') return 'Sonstige';
+    const section = INTEGRATION_SECTIONS.find(s => s.key === key);
+    return section ? section.label : key;
+}
+function getHiddenShyftDevices() {
+    try {
+        const raw = localStorage.getItem(SHYFT_ACTIONS_HIDDEN_DEVICES_KEY);
+        return new Set(raw ? JSON.parse(raw) : []);
+    } catch (e) {
+        return new Set();
+    }
+}
+function setHiddenShyftDevices(set) {
+    try {
+        localStorage.setItem(SHYFT_ACTIONS_HIDDEN_DEVICES_KEY, JSON.stringify([...set]));
+    } catch (e) { /* privater Modus o.ae. - Filter wirkt dann nur bis zum Reload */ }
+}
+
+// Zuletzt geladene Aktionsliste, damit eine Filteraenderung ohne erneuten /shyft/actions-Abruf
+// neu rendern kann.
+let lastShyftActions = [];
+let lastShyftDisplayMaxDays = 3;
+
+function renderShyftActionsFilter(actions) {
+    const bar = document.getElementById('shyftActionsFilter');
+    if (!bar) return;
+    // vorkommende Geraete in fester Reihenfolge (siehe INTEGRATION_SECTIONS), "Sonstige" ans Ende
+    const present = new Set((actions || []).map(shyftActionDeviceKey));
+    const devices = [...INTEGRATION_SECTIONS.map(s => s.key), 'sonstige'].filter(k => present.has(k));
+
+    bar.innerHTML = '';
+    if (devices.length < 2) return; // nur ein Geraetetyp -> nichts zu filtern
+
+    const hidden = getHiddenShyftDevices();
+    const rerender = () => {
+        setHiddenShyftDevices(hidden);
+        const container = document.getElementById('shyftActionsBody');
+        if (container) renderShyftActions(container, lastShyftActions, lastShyftDisplayMaxDays);
+        renderShyftActionsFilter(lastShyftActions);
+    };
+
+    const allShown = devices.every(k => !hidden.has(k));
+    const noneShown = devices.every(k => hidden.has(k));
+
+    const allLabel = document.createElement('label');
+    allLabel.className = 'shyftActionsFilterLabel shyftActionsFilterAll';
+    const allCb = document.createElement('input');
+    allCb.type = 'checkbox';
+    allCb.checked = allShown;
+    allCb.indeterminate = !allShown && !noneShown;
+    allCb.addEventListener('change', () => {
+        for (const k of devices) allCb.checked ? hidden.delete(k) : hidden.add(k);
+        rerender();
+    });
+    allLabel.append(allCb, document.createTextNode('Alle Geräte'));
+    bar.appendChild(allLabel);
+
+    const sep = document.createElement('span');
+    sep.className = 'shyftActionsFilterSep';
+    bar.appendChild(sep);
+
+    for (const key of devices) {
+        const label = document.createElement('label');
+        label.className = 'shyftActionsFilterLabel';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !hidden.has(key);
+        cb.addEventListener('change', () => {
+            cb.checked ? hidden.delete(key) : hidden.add(key);
+            rerender();
+        });
+        label.append(cb, document.createTextNode(shyftDeviceLabel(key)));
+        bar.appendChild(label);
+    }
+}
+
 function renderShyftActions(container, actions, displayMaxDays = 3) {
     // Aufgeklappt-Zustand der Logs behalten, aber nicht mehr vorhandene Aktionen aus dem Set werfen.
     const validLogKeys = new Set(actions.map(actionLogKey));
@@ -4796,7 +4881,18 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
         return;
     }
 
-    if (!hasActiveOrUpcomingAction(actions)) {
+    // Geräte-Filter (siehe renderShyftActionsFilter) anwenden.
+    const hidden = getHiddenShyftDevices();
+    const visible = actions.filter(a => !hidden.has(shyftActionDeviceKey(a)));
+    if (visible.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'shyftActionsEmpty';
+        empty.textContent = 'Für die ausgewählten Geräte gibt es keine Aktionen.';
+        container.appendChild(empty);
+        return;
+    }
+
+    if (!hasActiveOrUpcomingAction(visible)) {
         const hint = document.createElement('div');
         hint.className = 'shyftActionsEmpty';
         hint.textContent = `Keine Aktionen in den nächsten ${UPCOMING_ACTION_WINDOW_HOURS} Stunden geplant.`;
@@ -4804,7 +4900,7 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
     }
 
     // sorted by Date End descending to match shyft-power's own ordering
-    const sorted = [...actions].sort((a, b) => (b['Date End'] || 0) - (a['Date End'] || 0));
+    const sorted = [...visible].sort((a, b) => (b['Date End'] || 0) - (a['Date End'] || 0));
 
     const groups = new Map();
     for (const action of sorted) {
@@ -4897,6 +4993,9 @@ async function loadShyftActions() {
         }
         const actions = (result.response && result.response.actions) || [];
         const displayMaxDays = (result.response && result.response.display_max_days) || 3;
+        lastShyftActions = actions;
+        lastShyftDisplayMaxDays = displayMaxDays;
+        renderShyftActionsFilter(actions);
         renderShyftActions(container, actions, displayMaxDays);
     } catch (err) {
         console.log(err);
@@ -4906,6 +5005,8 @@ async function loadShyftActions() {
 
 function showShyftActionsError(container) {
     container.innerHTML = '';
+    const bar = document.getElementById('shyftActionsFilter');
+    if (bar) bar.innerHTML = '';
     const error = document.createElement('div');
     error.className = 'shyftActionsError';
     error.textContent = 'Leider konnten keine Aktionen abgerufen werden, überprüfe die Verbindung zu shyft-power.';

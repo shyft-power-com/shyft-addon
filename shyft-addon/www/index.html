@@ -922,6 +922,41 @@
         #shyftActionsBody {
             margin-top: 1em;
         }
+        /* Geräte-Filter-Zeile oben auf der Gerätesteuerung-Seite (siehe renderShyftActionsFilter in
+           app.js) - eine Checkbox je vorkommendem Gerät plus "Alle Geräte" (Tri-State). */
+        .shyftActionsFilter {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.45em 1em;
+            padding: 0.7em 0.9em;
+            margin-top: 1em;
+            background: var(--color-bg-card);
+            border: 1px solid var(--color-border);
+            border-radius: 10px;
+            font-size: 0.9em;
+        }
+        .shyftActionsFilter:empty {
+            display: none;
+        }
+        .shyftActionsFilterLabel {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35em;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .shyftActionsFilterLabel input {
+            cursor: pointer;
+        }
+        .shyftActionsFilterAll {
+            font-weight: 700;
+        }
+        .shyftActionsFilterSep {
+            width: 1px;
+            align-self: stretch;
+            background: var(--color-border);
+        }
         .shyftDayGroup {
             margin-bottom: 1.75em;
         }
@@ -1643,6 +1678,7 @@
 </div>
 
 <div id="tab-geraetesteuerung" class="tabPanel">
+    <div id="shyftActionsFilter" class="shyftActionsFilter"></div>
     <div id="shyftActionsBody"></div>
 </div>
 
