@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.61
+
+* **Fix Build-Pipeline: `arch` auf `aarch64` + `amd64` reduziert** (Add-on-`config.yaml` und Builder-Workflow-Matrix). `armv7` (sowie das schon zuvor entfernte `armhf`/`i386`) wird von Home Assistant nicht mehr unterstützt – der `home-assistant/builder` warf dafür `Argument '--armv7' unknown` und ließ den kompletten Multi-Arch-Build fehlschlagen, sodass für neue Versionen kein `amd64`/`aarch64`-Image entstand.
+* Hinweis: Damit `Aktualisieren` funktioniert, müssen die GHCR-Pakete `ghcr.io/shyft-power-com/{aarch64,amd64}-shyft-addon` **öffentlich** sein (sonst `manifest ... unauthorized` / „update konnte nicht ausgeführt werden"). Einmalig in den Paket-Einstellungen der Organisation umstellen.
+
 ## 0.0.45.60
 
 * Demo-Charts: fixer Anteil für die Live-Strompreiskurve von 15 auf **22 ct/kWh** angehoben (`DEMO_DYNAMIC_SURCHARGE_CENT`).

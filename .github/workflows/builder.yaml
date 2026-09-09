@@ -21,8 +21,11 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
+      # Nur die Architekturen, die der aktuelle home-assistant/builder noch kann und die in
+      # shyft-addon/config.yaml stehen. armv7/armhf/i386 sind bei HA raus - "--armv7" wirft im
+      # Builder 2026.02.x "Argument unknown".
       matrix:
-        arch: [aarch64, amd64, armv7]
+        arch: [aarch64, amd64]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
