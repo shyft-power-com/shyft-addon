@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.63
+
+* **Fix: die Konfigurationsseite blieb komplett leer, wenn das Add-on keine Home-Assistant-API erreicht** (kein/ungültiger `SUPERVISOR_TOKEN` → HA-Core-API `401`). `loadConfiguration()` brach beim ersten fehlgeschlagenen `/sensorids`- bzw. `/integrations`-Aufruf ab; auch der Dashboard-Banner blieb leer und „Optimierung anstoßen" aktiv. Beide Aufrufe laufen jetzt in `try/catch` mit Fallback – die lokale `config.json` reicht, um alle Kacheln zu rendern (nur die Entitäts-Dropdowns bleiben dann leer). Das ist genau der Fall, für den der Demomodus gedacht ist.
+
 ## 0.0.45.62
 
 * **Base Case ("was ohne Shyft-Optimierung passiert wäre").** Neues Modul `base_case.py`: sequentielle Stunden-Simulation über denselben `input_csv`, den der Julia-Optimierer bekommt – Bedarf wird im Moment des Anfalls gedeckt, die Batterie fährt reine Eigenverbrauchsmaximierung, das E-Auto lädt sofort bis `ev_soc_norm` und Fahrten so spät wie möglich. Formeln, Wirkungsgrade und Restwert-Terme sind 1:1 aus `run_SHEMS.jl`/`main.jl` übernommen (COP `5.5 − ΔT/20`, Batterie-η 0.92, `b_soc_min` aus dem CSV, WP deckt exakt den Stundenbedarf ohne Modulationsuntergrenze), damit `netProfitBase48HoursSum` und die später identisch nachgerechnete Optimierer-Zahl auf demselben Fundament stehen. Ergebnis (`netProfitBase48HoursSum`, `netProfitBaseList`, `PowerUsageBaseList` = Brutto-Verbrauch je Stunde inkl. EV- und Batterieladung) wird bei jedem Optimierungslauf in den Dashboard-Cache geschrieben. Die eigentliche Ersparnis-Berechnung je Aktion folgt separat.

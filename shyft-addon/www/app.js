@@ -1070,8 +1070,22 @@ const loadConfiguration = async (event) => {
     try {
         console.log("loadConfiguration called");
         configData = await getJson(configUri);
-        allSensorIdOptions = await getJson(sensorIdsUri);
-        integrationsData = await getJson(integrationsUri);
+        // /sensorids und /integrations brauchen die Home-Assistant-API. Schlaegt die fehl (z.B.
+        // fehlender/ungueltiger Supervisor-Token, gerade fuer den Demomodus ein realistischer Fall),
+        // darf die Konfigurationsseite trotzdem laden - configData (aus der lokalen config.json)
+        // reicht, um alle Kacheln zu rendern; die Entitaets-Dropdowns bleiben dann eben leer.
+        try {
+            allSensorIdOptions = await getJson(sensorIdsUri);
+        } catch (err) {
+            console.log(err);
+            allSensorIdOptions = [];
+        }
+        try {
+            integrationsData = await getJson(integrationsUri);
+        } catch (err) {
+            console.log(err);
+            integrationsData = {integrations: [], entityMap: {}};
+        }
         try {
             integrationDomainHints = await getJson(integrationDomainHintsUri);
         } catch (err) {
