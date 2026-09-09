@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.58
+
+* Fix: doppelter Punkt am Ende der Add-on-Beschreibung (Home Assistant hängt dahinter automatisch noch einen "Weitere Informationen …"-Satz mit eigenem Punkt an).
+
 ## 0.0.45.57
 
 * **Vorgebaute Add-on-Images statt lokalem Build bei jedem Nutzer.** Bisher hatte die `config.yaml` keinen `image:`-Key – jede Installation baute das Add-on auf der Hardware des Nutzers aus dem `Dockerfile` (Docker-Hub-Pull von `python:3.14-alpine` + `pip install` auf dem Raspberry Pi, langsam und fehleranfällig). Jetzt bauen die GitHub Actions (`.github/workflows/builder.yaml`) bei jeder Add-on-Änderung auf `main` Multi-Arch-Images und pushen sie nach `ghcr.io/shyft-power-com/<arch>-shyft-addon`; die Installation ist nur noch ein Image-Pull.

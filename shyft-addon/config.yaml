@@ -1,7 +1,7 @@
 name: "shyft-power"
 description: >-
   Dein Energy Management System für Home Assistant. Mit diesem Add-on kannst du deine Geräte in Home Assistant unkompliziert von shyft-power steuern lassen und so deine Stromkosten minimieren
-version: "0.0.45.57"
+version: "0.0.45.58"
 slug: "shyft_addon"
 init: false
 # Vorgebaute Multi-Arch-Images aus der GitHub Registry (siehe .github/workflows/builder.yaml).
