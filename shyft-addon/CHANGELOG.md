@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.54
+
+* **Fix: „?"-Sprechblasen wurden am linken Rand abgeschnitten** (z.B. beim neuen „Auto"-Tipp). Die Randerkennung verglich mit `window.innerWidth`, im Home-Assistant-Ingress-iframe ist der sichtbare Inhalt aber der zentrierte, per `overflow-x: clip` beschnittene `<body>`-Kasten (max. 960 px). Sie richtet sich jetzt nach dessen tatsächlichen Kanten, sodass die Blase vollständig sichtbar bleibt und die Pfeilspitze weiter aufs Icon zeigt.
+
 ## 0.0.45.53
 
 * **Fix: ein manuell (oder stündlich) angestoßenes Optimierungsergebnis konnte komplett verloren gehen**, wenn das Addon während des Wartefensters (1-10 Min. nach dem Absenden) neu startet (z.B. durch ein Update - `auto_update` ist an). Die geplanten Nachfragen lebten bisher nur im Prozessspeicher und wurden durch den Neustart ersatzlos gelöscht - "Einsatzplan" zeigte dann nie ein neues Ergebnis an. Der Wartezustand wird jetzt zusätzlich in einer Datei gemerkt und beim nächsten Addon-Start automatisch fortgesetzt; überfällige Nachfragen feuern dank eines großzügigeren Zeitfensters (10 statt 2 Minuten) praktisch sofort nach.

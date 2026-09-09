@@ -3598,7 +3598,7 @@ function getIntegrationDevices(integrationKey) {
 // exactly the kind of field that differs between the two - the user never has to know or type the
 // raw values, and the addon assembles the actual service-call data at runtime (see
 // call_recipe_stage in app.py).
-function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateServices, stageData, branchKeys, branchLabels, placeholderExample, amountUnit, showDot = true) {
+function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateServices, stageData, branchKeys, branchLabels, placeholderExample, amountUnit, showDot = true, integrationKey = null) {
     const wrapper = document.createElement('div');
     wrapper.className = 'carChargeStage';
 
@@ -3703,15 +3703,21 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
                 if (field.isEntity) {
                     // an "entity_id" target selector (e.g. number.set_value) has no fixed
                     // choices of its own - offer a searchable dropdown of known entities
-                    // instead of asking the user to type an id by hand, narrowed to the
-                    // relevant unit where given (e.g. "A" for the amperage stage, so only
-                    // Ladestrom-Entitäten show up)
+                    // instead of asking the user to type an id by hand, narrowed down by
+                    // whichever of the two is given: the relevant unit (e.g. "A" for the
+                    // amperage stage, so only Ladestrom-Entitäten show up) and/or the domain(s)
+                    // of the section's own integration (e.g. "waermepumpe" for Warmwasserbereitung,
+                    // via getIntegrationServiceDomains - the same domain set already used above to
+                    // narrow the service suggestions) - without integrationKey, every entity in HA
+                    // showed up here regardless of relevance (Nutzer-Feedback).
                     const entityDatalistId = idPrefix + 'EntityOptions_' + stageKey + '_' + field.name;
                     const entityDatalist = document.createElement('datalist');
                     entityDatalist.id = entityDatalistId;
-                    const candidates = amountUnit
-                        ? allSensorIdOptions.filter(e => e.unit === amountUnit)
-                        : allSensorIdOptions;
+                    const candidates = allSensorIdOptions.filter(e => {
+                        if (amountUnit && e.unit !== amountUnit) return false;
+                        if (integrationKey && !getIntegrationServiceDomains(integrationKey).has(e.entity_id.split('.')[0])) return false;
+                        return true;
+                    });
                     for (const entity of candidates) {
                         const option = document.createElement('option');
                         option.value = entity.entity_id;
@@ -3844,17 +3850,17 @@ function buildCarChargeControl() {
         'Befehl, mit dem die Phasenzahl an deiner Wallbox eingestellt wird.',
         candidateServices, phaseCountStage,
         CAR_CHARGE_STAGE_BRANCHES.phaseCount.keys, CAR_CHARGE_STAGE_BRANCHES.phaseCount.labels,
-        'z.B. set_charger_phase_mode'));
+        'z.B. set_charger_phase_mode', undefined, true, 'wallbox'));
     stagesWrapper.appendChild(buildBranchedStageFields('car_charge_', 'amperage', '2. Amperezahl setzen',
         'Befehl, mit dem die Ladestromstärke (Ampere) an deiner Wallbox eingestellt wird. Wähle die Entität, die den Ladestrom entgegennimmt (meist eine number-Entität mit Einheit "A") - das Addon berechnet die passende Amperezahl aus dem Ziel-kW-Wert von shyft-power und sendet sie automatisch.',
         candidateServices, amperageStage,
         CAR_CHARGE_STAGE_BRANCHES.amperage.keys, CAR_CHARGE_STAGE_BRANCHES.amperage.labels,
-        'z.B. set_value', CAR_CHARGE_STAGE_BRANCHES.amperage.amountUnit));
+        'z.B. set_value', CAR_CHARGE_STAGE_BRANCHES.amperage.amountUnit, true, 'wallbox'));
     stagesWrapper.appendChild(buildBranchedStageFields('car_charge_', 'control', '3. Ladevorgang steuern',
         'Befehl, mit dem der Ladevorgang gestartet bzw. beendet wird.',
         candidateServices, controlStage,
         CAR_CHARGE_STAGE_BRANCHES.control.keys, CAR_CHARGE_STAGE_BRANCHES.control.labels,
-        'z.B. action_command'));
+        'z.B. action_command', undefined, true, 'wallbox'));
     stagesWrapper.style.display = recipeSelect.value === 'three_stage' ? '' : 'none';
     wrapper.appendChild(stagesWrapper);
 
@@ -4056,7 +4062,7 @@ function buildHotWaterControl() {
     const candidateServices = allServiceOptions.filter(s => getIntegrationServiceDomains('waermepumpe').has(s.service.split('.')[0]));
     const stageWrapper = buildBranchedStageFields('hot_water_', 'hotWater', 'Befehl',
         'Befehl, mit dem die (einmalige) Warmwasserbereitung an deiner Wärmepumpe aktiviert wird.',
-        candidateServices, recipe, [], [], 'z.B. activate_onetimecharge', undefined, false);
+        candidateServices, recipe, [], [], 'z.B. activate_onetimecharge', undefined, false, 'waermepumpe');
     stageWrapper.style.display = variant === 'direct' ? '' : 'none';
     wrapper.appendChild(stageWrapper);
 
@@ -4538,11 +4544,18 @@ function buildTooltip(description) {
     tooltip.addEventListener('mouseenter', () => {
         tooltipText.style.transform = '';
         const rect = tooltipText.getBoundingClientRect();
+        // Grenze ist der tatsaechlich beschneidende Kasten: <body> ist per overflow-x:clip
+        // beschnitten UND auf max-width:960px zentriert. Im HA-Ingress-iframe ist window.innerWidth
+        // breiter als dieser Inhalt - ein linker Ueberlauf des Inhalts wurde deshalb bisher gar
+        // nicht erkannt und die Blase links abgeschnitten (Nutzer-Screenshot).
+        const host = document.body.getBoundingClientRect();
+        const minLeft = Math.max(host.left, 0) + TOOLTIP_EDGE_MARGIN_PX;
+        const maxRight = Math.min(host.right, window.innerWidth) - TOOLTIP_EDGE_MARGIN_PX;
         let shift = 0;
-        if (rect.left < TOOLTIP_EDGE_MARGIN_PX) {
-            shift = TOOLTIP_EDGE_MARGIN_PX - rect.left;
-        } else if (rect.right > window.innerWidth - TOOLTIP_EDGE_MARGIN_PX) {
-            shift = (window.innerWidth - TOOLTIP_EDGE_MARGIN_PX) - rect.right;
+        if (rect.left < minLeft) {
+            shift = minLeft - rect.left;
+        } else if (rect.right > maxRight) {
+            shift = maxRight - rect.right;
         }
         // Die kleine Pfeilspitze (::after) soll trotz Verschiebung der Blase weiter genau auf das
         // "?"-Icon zeigen, nicht einfach mittig in der (jetzt verschobenen) Blase bleiben - siehe
