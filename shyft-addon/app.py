@@ -5604,13 +5604,78 @@ def _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms):
 DEMO_INPUT_CSV_PATH = "demo_data/demo_input.csv"
 DEMO_OUTPUT_CSV_PATH = "demo_data/demo_output.csv"
 
+# Fixer Anteil (Netzentgelt/Abgaben/Steuer/Lieferantenmarge, brutto) fuer die LIVE-Strompreiskurve
+# im Demo-Modus - es gibt keinen echten Config-Default dafuer (siehe defaultShyftConfig.json), also
+# hier ein realistischer Richtwert, damit die Demo-Charts zur aktuellen Boersenlage passen.
+DEMO_DYNAMIC_SURCHARGE_CENT = 15
+
+
+def _overlay_live_demo_series(input_csv, start_utc):
+    """Ueberschreibt im statischen Demo-input_csv die Spalten Temperature / PV_generation / p_buy
+    mit LIVE-Werten (open-meteo-Wetter + Default-m2-PV-Prognose + Awattar-Boersenpreis + fixer
+    Anteil), damit die Dashboard-Charts im Demo-Modus zur aktuellen Jahreszeit / Boersenlage passen
+    statt eine statische Sommerkurve zu zeigen. Bewusst inkonsistent zum restlichen (statischen)
+    Demo-Datensatz - Nutzerwunsch. Best effort: schlaegt eine Quelle fehl, bleibt die jeweilige
+    Spalte auf ihren statischen Demo-Werten."""
+    try:
+        reader = csv.DictReader(io.StringIO(input_csv), delimiter=";")
+        rows = list(reader)
+        fieldnames = reader.fieldnames
+    except Exception as e:
+        print("[Shyft] Demo-Charts: input_csv nicht parsebar, nutze statische Werte:", repr(e))
+        return input_csv
+    if not rows or not fieldnames:
+        return input_csv
+    n = len(rows)
+
+    # Wetter/PV: compute_site_weather_fields indiziert ab lokaler Mitternacht heute - auf die
+    # start_utc-Zeile (= Zeile 0 der Charts) ausrichten.
+    temps, pv_kw = [], []
+    try:
+        midnight_local = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+        offset_h = max(0, round((start_utc.timestamp() - midnight_local.timestamp()) / 3600))
+        wf = pv_forecast.compute_site_weather_fields(offset_h + n, pv_sensor_configured=True)
+        temps = wf["temperature"].split(",")[offset_h:offset_h + n]
+        pv_kw = wf["pvPrediction"].split(",")[offset_h:offset_h + n]
+    except Exception as e:
+        print("[Shyft] Demo-Charts: Live-Wetter/PV nicht verfuegbar, nutze statische Werte:", repr(e))
+    weather_ok = bool(temps) and any(t not in ("", "0", "0.0") for t in temps)
+
+    # Boersenpreis (EUR/kWh) + fixer Anteil, stundengenau ab start_utc.
+    try:
+        price_arr = compute_price_buy_array(
+            {"electricityTariffMode": "dynamic", "electricityDynamicSurchargeCent": DEMO_DYNAMIC_SURCHARGE_CENT},
+            start_utc, n)
+    except Exception as e:
+        print("[Shyft] Demo-Charts: Live-Strompreis nicht verfuegbar, nutze statische Werte:", repr(e))
+        price_arr = None
+
+    if not weather_ok and not price_arr:
+        return input_csv
+
+    for i, row in enumerate(rows):
+        if weather_ok:
+            if i < len(temps):
+                row["Temperature"] = temps[i]
+            if i < len(pv_kw):
+                row["PV_generation"] = pv_kw[i]
+        if price_arr and i < len(price_arr):
+            row["p_buy"] = f"{price_arr[i]:.5f}"
+
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=list(fieldnames), delimiter=";", lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    return out.getvalue()
+
 
 def _load_demo_dashboard_data():
     """Demo-Pendant zu einer echten shyft-power-Antwort (input_csv/output_csv/creation_date) - aus
     zwei statischen CSV-Dateien (DEMO_INPUT_CSV_PATH/DEMO_OUTPUT_CSV_PATH), damit Dashboard-Charts
     auch im Demo-Modus etwas zeigen. creation_date wird bei jedem Aufruf auf die aktuelle volle
     Stunde gesetzt, damit die (immer gleichen) Beispieldaten stets "aktuell" wirken, statt nach ein
-    paar Stunden aus dem abgedeckten Zeitraum zu laufen. None, wenn die Demo-Dateien (noch) nicht
+    paar Stunden aus dem abgedeckten Zeitraum zu laufen. Temperatur/PV/Strompreis werden zusaetzlich
+    live ueberlagert (siehe _overlay_live_demo_series). None, wenn die Demo-Dateien (noch) nicht
     vorhanden sind."""
     try:
         with open(DEMO_INPUT_CSV_PATH, "r", encoding="utf-8") as f:
@@ -5620,6 +5685,15 @@ def _load_demo_dashboard_data():
     except FileNotFoundError:
         return None
     now_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    # Ohne (aktuellen) Wetter-Cache erst einmal live holen, damit schon der erste Demo-Render zur
+    # Jahreszeit passt - best effort, blockiert den Sync nicht bei Netzproblemen.
+    try:
+        age = pv_forecast.weather_cache_age_hours()
+        if age is None or age > 6:
+            fetch_weather_forecast()
+    except Exception as e:
+        print("[Shyft] Demo-Charts: Wetter-Abruf fehlgeschlagen:", repr(e))
+    input_csv = _overlay_live_demo_series(input_csv, now_hour)
     return {"input_csv": input_csv, "output_csv": output_csv, "creation_date": int(now_hour.timestamp() * 1000)}
 
 

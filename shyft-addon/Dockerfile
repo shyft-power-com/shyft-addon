@@ -19,6 +19,8 @@ RUN pip install --no-cache-dir --root-user-action=ignore -r requirements.txt
 COPY *.py .
 COPY config.yaml .
 COPY www /app/www
+# Statische Demo-Dashboard-Daten (nur im Demo-Modus genutzt, siehe _load_demo_dashboard_data)
+COPY demo_data /app/demo_data
 
 # Startskript
 COPY run.sh /run.sh

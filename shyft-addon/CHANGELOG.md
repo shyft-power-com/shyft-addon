@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.59
+
+* **Fix: im Demo-Modus zeigte das Dashboard gar keine Charts mehr.** Der Demo-Zweig von `sync_dashboard_chart_data()` liest `demo_data/demo_input.csv` + `demo_output.csv` – diese Dateien waren nie im Repo (nur ein README) und fehlten zusätzlich im vorgebauten GHCR-Image (`Dockerfile` kopierte `demo_data/` nicht). Beide Dateien sind jetzt vorhanden (ein echtes Optimierungslauf-Paar) und werden per `COPY demo_data /app/demo_data` ins Image übernommen.
+* **Demo-Charts: Temperatur, PV-Leistung und Strompreis werden jetzt live überlagert** (`_overlay_live_demo_series`) – open-meteo-Wetter + Default-m²-PV-Prognose + Awattar-Börsenpreis samt fixem Anteil (`DEMO_DYNAMIC_SURCHARGE_CENT = 15`), damit die Kurven zur aktuellen Jahreszeit/Börsenlage passen statt eine statische Sommerkurve zu zeigen. Bewusst inkonsistent zum restlichen (statischen) Demo-Datensatz; fällt eine Live-Quelle aus, bleibt die jeweilige Spalte auf den statischen Werten.
+
 ## 0.0.45.58
 
 * Fix: doppelter Punkt am Ende der Add-on-Beschreibung (Home Assistant hängt dahinter automatisch noch einen "Weitere Informationen …"-Satz mit eigenem Punkt an).
