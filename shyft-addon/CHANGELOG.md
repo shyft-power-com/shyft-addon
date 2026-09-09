@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.45.57
+
+* **Vorgebaute Add-on-Images statt lokalem Build bei jedem Nutzer.** Bisher hatte die `config.yaml` keinen `image:`-Key – jede Installation baute das Add-on auf der Hardware des Nutzers aus dem `Dockerfile` (Docker-Hub-Pull von `python:3.14-alpine` + `pip install` auf dem Raspberry Pi, langsam und fehleranfällig). Jetzt bauen die GitHub Actions (`.github/workflows/builder.yaml`) bei jeder Add-on-Änderung auf `main` Multi-Arch-Images und pushen sie nach `ghcr.io/shyft-power-com/<arch>-shyft-addon`; die Installation ist nur noch ein Image-Pull.
+  * Neu: `shyft-addon/build.yaml` (HA-Basis-Images je Architektur), `image:` in `config.yaml`.
+  * `Dockerfile` nimmt das Basis-Image jetzt über `BUILD_FROM` entgegen (Fallback `python:3.13-alpine` für lokale Builds) und installiert `tzdata` für `tzlocal`/APScheduler.
+  * `arch` auf `aarch64`, `amd64`, `armv7` reduziert – `armhf` (armv6) und `i386` waren mit dem Python-Alpine-Image ohnehin nicht sinnvoll bedienbar und hätten betroffenen Nutzern nur einen harten Fehlschlag beschert.
+* Repo-README: „Add repository"-Button-Link korrekt URL-kodiert (führte zu „invalid parameters given") und manuelle Fallback-URL ergänzt.
+* Veraltete `shyft-addon/README.adoc` (falsche Repo-URL, überholte Dev-Hinweise) durch ein `DOCS.md` ersetzt, das Home Assistant im „Documentation"-Tab des Add-ons anzeigt.
+
 ## 0.0.45.56
 
 * **Dashboard-Floating-Hinweis erkennt jetzt auch den Fall "echte Geräte konfiguriert, aber kein gültiger shyft-power-Account"** – bisher basierte der Hinweis rein auf der Geräte-Konfiguration (Demomodus = alle Geräte sind Demo-Geräte) und blieb unsichtbar, wenn der Account-Status (`/account-status`) unabhängig davon verloren ging. Zeigt in diesem Fall "Optimierung nicht möglich. Prüfe deinen shyft_access_key in der Konfiguration des Addons oder wende dich an info@shyft-power.com." statt des normalen "Demomodus. Jetzt Geräte einrichten"-Hinweises.

@@ -1,17 +1,26 @@
-FROM python:3.14-alpine
+# Basis-Image wird vom HA-Add-on-Builder je Architektur injiziert (siehe build.yaml).
+# Lokaler Fallback-Build ohne Builder: python:3.13-alpine.
+ARG BUILD_FROM=python:3.13-alpine
+FROM ${BUILD_FROM}
+
+ENV LANG=C.UTF-8 \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# tzdata: tzlocal/APScheduler brauchen die Zeitzonendatenbank zur Laufzeit.
+RUN apk add --no-cache tzdata
 
-# Copy app code
+# Abhaengigkeiten zuerst (eigene Layer-Cache-Ebene)
+COPY requirements.txt .
+RUN pip install --no-cache-dir --root-user-action=ignore -r requirements.txt
+
+# App-Code
 COPY *.py .
 COPY config.yaml .
 COPY www /app/www
 
-# Copy startup script
+# Startskript
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
 

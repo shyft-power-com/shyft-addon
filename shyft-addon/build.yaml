@@ -1,0 +1,11 @@
+# Basis-Images fuer den HA-Add-on-Builder (GitHub Action .github/workflows/builder.yaml).
+# https://developers.home-assistant.io/docs/add-ons/configuration#add-on-dockerfile
+build_from:
+  aarch64: ghcr.io/home-assistant/aarch64-base-python:3.13-alpine3.21
+  amd64: ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.21
+  armv7: ghcr.io/home-assistant/armv7-base-python:3.13-alpine3.21
+labels:
+  org.opencontainers.image.title: "shyft-power HEMS"
+  org.opencontainers.image.description: "Energy Management System fuer Home Assistant von shyft-power"
+  org.opencontainers.image.source: "https://github.com/shyft-power-com/shyft-addon"
+  org.opencontainers.image.licenses: "See repository"

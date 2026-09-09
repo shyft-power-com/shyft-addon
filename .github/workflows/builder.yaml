@@ -1,0 +1,45 @@
+name: Build add-on images
+
+# Baut die Multi-Arch-Images des shyft-power-Add-ons und pusht sie nach
+# ghcr.io/shyft-power-com/<arch>-shyft-addon (siehe image: in shyft-addon/config.yaml).
+# Laeuft bei jeder Aenderung am Add-on auf main sowie manuell.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "shyft-addon/**"
+      - ".github/workflows/builder.yaml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [aarch64, amd64, armv7]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Bild-Name und Version liest der Builder aus shyft-addon/config.yaml
+      # (image: ghcr.io/shyft-power-com/{arch}-shyft-addon, version: ...).
+      - name: Build and push ${{ matrix.arch }}
+        uses: home-assistant/builder@master
+        with:
+          args: |
+            --${{ matrix.arch }} \
+            --target /data/shyft-addon \
+            --addon
