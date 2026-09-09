@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.60
+
+* Demo-Charts: fixer Anteil für die Live-Strompreiskurve von 15 auf **22 ct/kWh** angehoben (`DEMO_DYNAMIC_SURCHARGE_CENT`).
+
 ## 0.0.45.59
 
 * **Fix: im Demo-Modus zeigte das Dashboard gar keine Charts mehr.** Der Demo-Zweig von `sync_dashboard_chart_data()` liest `demo_data/demo_input.csv` + `demo_output.csv` – diese Dateien waren nie im Repo (nur ein README) und fehlten zusätzlich im vorgebauten GHCR-Image (`Dockerfile` kopierte `demo_data/` nicht). Beide Dateien sind jetzt vorhanden (ein echtes Optimierungslauf-Paar) und werden per `COPY demo_data /app/demo_data` ins Image übernommen.

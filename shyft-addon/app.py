@@ -5607,7 +5607,7 @@ DEMO_OUTPUT_CSV_PATH = "demo_data/demo_output.csv"
 # Fixer Anteil (Netzentgelt/Abgaben/Steuer/Lieferantenmarge, brutto) fuer die LIVE-Strompreiskurve
 # im Demo-Modus - es gibt keinen echten Config-Default dafuer (siehe defaultShyftConfig.json), also
 # hier ein realistischer Richtwert, damit die Demo-Charts zur aktuellen Boersenlage passen.
-DEMO_DYNAMIC_SURCHARGE_CENT = 15
+DEMO_DYNAMIC_SURCHARGE_CENT = 22
 
 
 def _overlay_live_demo_series(input_csv, start_utc):
