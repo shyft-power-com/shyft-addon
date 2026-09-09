@@ -1,4 +1,5 @@
 {
+  "shyftAccountCreated": false,
   "actionTypeEnabled": {
     "pv_feed_in_limit": false,
     "consumption_limit_14a": false,

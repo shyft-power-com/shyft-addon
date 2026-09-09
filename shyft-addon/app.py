@@ -230,7 +230,15 @@ def _persist_shyft_access_key(new_access_key):
     tab for this addon - the addon can't just write /data/options.json itself and expect it to
     stick, Supervisor owns that file and would overwrite it again from its own state. Also updates
     the in-memory value right away (SHYFT_ACCESS_KEY, shyft_adapter.set_access_key) so a restart
-    isn't needed before the new key takes effect."""
+    isn't needed before the new key takes effect.
+
+    Ein einmal hinterlegter echter Schluessel darf niemals vom Addon selbst wieder geloescht/
+    ueberschrieben werden - dies ist die EINZIGE Stelle im gesamten Code, die shyft_access_key
+    schreibt (siehe maybe_create_real_account, ihr einziger Aufrufer), deshalb hier defensiv
+    verhindern, dass sie je mit einem leeren/Platzhalter-Wert aufgerufen wird."""
+    if not new_access_key or new_access_key == UNSET_SHYFT_ACCESS_KEY:
+        print("[Shyft] _persist_shyft_access_key mit leerem/Platzhalter-Wert aufgerufen - ignoriert, ein bestehender Schluessel wird nie geloescht.")
+        return
     global SHYFT_ACCESS_KEY
     homeassistant_adapter.post_to_supervisor("/addons/self/options", {"options": {"shyft_access_key": new_access_key}})
     SHYFT_ACCESS_KEY = new_access_key
@@ -258,8 +266,23 @@ def maybe_create_real_account(old_integration_mappings, new_integration_mappings
     Popup, keine E-Mail/Passwort-Abfrage, Bubble erzeugt beides selbst (siehe
     ShyftAdapter.create_user). No-op, wenn schon ein echter Account existiert, oder wenn sich fuer
     keine Section tatsaechlich etwas von Demo auf echt geaendert hat. Wird von writeConfig nach
-    jedem Config-Speichern aufgerufen."""
+    jedem Config-Speichern aufgerufen.
+
+    create_user_addon darf im gesamten Lebenszyklus des Addons nur EIN EINZIGES MAL erfolgreich
+    aufgerufen werden - ein zweiter erfolgreicher Aufruf wuerde bei Bubble einen weiteren, komplett
+    neuen Account (neue E-Mail-Adresse) anlegen, unabhaengig vom bereits bestehenden. Sich allein auf
+    is_demo_mode() zu verlassen waere dafuer nicht robust genug: sollte der Supervisor-Options-Wert
+    shyft_access_key durch irgendein aeusseres Ereignis (z.B. ein Options-Schema-Reset bei einem
+    Addon-Update) wieder auf "notset" zurueckfallen, wuerde is_demo_mode() faelschlich wieder True
+    liefern und beim naechsten Demo->Echt-Wechsel eine zweite Kontoerstellung ausloesen. Deshalb
+    zusaetzlich ein eigener, dauerhafter Merker (shyftAccountCreated) in der addon-eigenen Config
+    (config.json, NICHT von Supervisor verwaltet) - der bleibt auch dann bestehen, wenn der
+    Zugangsschluessel selbst verloren geht."""
     if not is_demo_mode():
+        return
+    config = _read_current_config()
+    if config.get("shyftAccountCreated"):
+        print("[Shyft] shyftAccountCreated bereits gesetzt - kein erneuter create_user_addon-Aufruf (unabhaengig vom aktuellen Zugangsschluessel).")
         return
     became_real = any(
         not _is_real_device(old_integration_mappings.get(section, []))
@@ -277,6 +300,9 @@ def maybe_create_real_account(old_integration_mappings, new_integration_mappings
     if has_account_raw in ("yes", "true", "1"):
         # Sollte im automatischen Ablauf eigentlich nicht vorkommen (Bubble erzeugt ja jedes Mal eine
         # neue E-Mail-Adresse) - lieber nichts uebernehmen als versehentlich falsch ueberschreiben.
+        # Kein shyftAccountCreated gesetzt: Addon bleibt im Demomodus, ein spaeterer Demo->Echt-
+        # Wechsel darf es erneut versuchen (siehe Docstring: "Ist der Aufruf nicht erfolgreich,
+        # bleibt das Addon im Demomodus").
         print("[Shyft] create_user_addon meldet 'has an account: yes' - unerwartet, kein Zugangstoken uebernommen.")
         return
     new_access_key = result.get("access_key")
@@ -285,9 +311,21 @@ def maybe_create_real_account(old_integration_mappings, new_integration_mappings
         return
     try:
         _persist_shyft_access_key(new_access_key)
+        config["shyftAccountCreated"] = True
+        _write_current_config(config)
         print("[Shyft] Echter Account automatisch angelegt, Zugangstoken uebernommen.")
     except Exception as e:
         print("[Shyft] Zugangstoken nach automatischer Konto-Erstellung konnte nicht gespeichert werden:", repr(e))
+        return
+    try:
+        # Erster echter Wetter-Abruf genau in dem Moment, in dem der Demomodus verlassen wird - nicht
+        # erst auf den naechsten 3h-Cron-Tick warten (siehe fetch_weather_forecast_periodically):
+        # der baldige erste echte update_site_addon-Sync braucht fuer sein "PV Prediction"/
+        # "Temperature"-Feld (siehe pv_forecast.compute_site_weather_fields) bereits einen gefuellten
+        # Wetter-Cache, sonst ginge er mit veralteten/leeren Werten raus.
+        fetch_weather_forecast()
+    except Exception as e:
+        print("[Shyft] Erster Wetter-Abruf nach Verlassen des Demomodus fehlgeschlagen:", repr(e))
 
 # Zeitpunkt (UTC) des letzten update_site_addon-Sends - fuer die "Neue Optimierung laeuft..."-Anzeige
 # im Dashboard (siehe _optimizer_result_pending / readDashboardChartData). Nur In-Memory: nach einem

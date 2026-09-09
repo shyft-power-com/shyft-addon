@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.45.55
+
+* **Fix: ein einmal hinterlegter echter shyft-power-Zugangsschlüssel konnte theoretisch ein zweites Mal überschrieben werden**, falls der Account jemals wieder als „nicht angelegt" erschien (z.B. durch einen externen Reset des Supervisor-Konfigurationswerts). Ein neuer, dauerhafter Merker (`shyftAccountCreated` in der addon-eigenen Config) sorgt jetzt dafür, dass `create_user_addon` im gesamten Leben des Addons **nur ein einziges Mal erfolgreich** aufgerufen wird – unabhängig vom aktuellen Zustand des Zugangsschlüssels. Zusätzlich verweigert `_persist_shyft_access_key` jetzt grundsätzlich das Schreiben eines leeren/Platzhalter-Werts.
+* **Erster Wetter-Abruf jetzt direkt beim Verlassen des Demomodus**, nicht erst beim nächsten 3-Stunden-Takt – damit der bald folgende erste echte Sync an shyft-power nicht mit veralteten/leeren Wetterdaten rausgeht.
+* **„Optimierung anstoßen" ist jetzt deaktiviert, solange kein echter shyft-power-Account existiert** (Demomodus), mit Hinweistext „Bitte zuerst ein eigenes Gerät hinterlegen." – vorher lief der Klick ins Leere (das Addon hat den Aufruf ohnehin nur stillschweigend übersprungen), ohne dass das sichtbar war.
+* **Klarere Fehlermeldungen beim „Optimierung anstoßen"-Button:** „Aufruf nicht erlaubt. Prüfe deinen shyft_access_key in der Konfiguration des Addons oder wende dich an info@shyft-power.com." bei einer Unauthorized-Antwort (z.B. ungültiger/abgelaufener Schlüssel), eine eigene Meldung für den (jetzt durch den deaktivierten Button eigentlich unerreichbaren) Demomodus-Fall, und eine für einen echten Verbindungsfehler – vorher zeigten alle drei dieselbe generische Meldung bzw. fälschlich eine Erfolgsmeldung.
+
 ## 0.0.45.54
 
 * **Fix: „?"-Sprechblasen wurden am linken Rand abgeschnitten** (z.B. beim neuen „Auto"-Tipp). Die Randerkennung verglich mit `window.innerWidth`, im Home-Assistant-Ingress-iframe ist der sichtbare Inhalt aber der zentrierte, per `overflow-x: clip` beschnittene `<body>`-Kasten (max. 960 px). Sie richtet sich jetzt nach dessen tatsächlichen Kanten, sodass die Blase vollständig sichtbar bleibt und die Pfeilspitze weiter aufs Icon zeigt.

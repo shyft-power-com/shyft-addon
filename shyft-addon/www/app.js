@@ -746,7 +746,29 @@ function applyConfigFieldErrorHighlights(fieldIds) {
 // (renderSystemHealth/renderConfigWarnings), wobei nur der System-Health-Block eine Ueberschrift mit
 // Anzahl hatte - die Zahl dort passte dadurch nicht zur Gesamtsumme im Dashboard-Problem-Banner
 // (siehe renderDashboardProblemBanner, das von Anfang an beide Quellen zusammenzaehlt).
+// "Optimierung anstoßen" darf im Demomodus (kein echter shyft-power-Account, siehe is_demo_mode in
+// app.py) nicht aufgerufen werden koennen - das Addon wuerde den Aufruf ohnehin nur mit
+// {"status": "skipped"} kommentarlos verwerfen (siehe trigger() in index.html), ohne deaktivierten
+// Button wirkte das aber wie ein hilfloser Klick ins Leere. isFullyDemoMode() (rein aus der
+// Geraete-Konfiguration abgeleitet) ist dafuer NICHT das richtige Signal: der eigentliche
+// Account-Status kommt vom Server (/account-status), unabhaengig davon welche Geraete gerade
+// konfiguriert sind (z.B. wenn der Zugangsschluessel aus irgendeinem Grund verloren ging, obwohl
+// laengst echte Geraete hinterlegt sind).
+async function applyTriggerButtonDemoState() {
+    const button = document.getElementById('triggerOptimizationButton');
+    const hint = document.getElementById('triggerOptimizationHint');
+    if (!button || !hint) return;
+    try {
+        const status = await getJson(insideHomeAssistant + '/account-status');
+        button.disabled = !!status.isDemo;
+        hint.hidden = !status.isDemo;
+    } catch (err) {
+        console.log(err);
+    }
+}
+
 async function renderSystemHealth() {
+    applyTriggerButtonDemoState();
     const container = document.getElementById('systemHealthCard');
     if (!container) return;
     let health;

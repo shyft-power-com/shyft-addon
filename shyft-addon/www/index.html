@@ -407,6 +407,14 @@
         .actionMenu button:hover {
             opacity: 0.85;
         }
+        .actionMenu button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .triggerOptimizationHint {
+            color: var(--color-text-secondary);
+            font-size: 0.9em;
+        }
 
         .autoActionControl {
             margin-top: 1.5em;
@@ -1691,7 +1699,8 @@
     <div id="deviceSections"></div>
     <div id="notificationSection"></div>
     <div class="actionMenu">
-        <button onclick="trigger()">Optimierung anstoßen</button>
+        <button id="triggerOptimizationButton" onclick="trigger()">Optimierung anstoßen</button>
+        <span id="triggerOptimizationHint" class="triggerOptimizationHint" hidden>Bitte zuerst ein eigenes Gerät hinterlegen.</span>
         <span id="saveStatus"></span>
     </div>
 </div>
@@ -1703,8 +1712,16 @@
         })
             .then(response => response.json())
             .then(data => {
-                if(data["external_status"] === 401) {
-                    alert('Fehler beim Senden der Daten. Bitte wende dich an info@shyft-power.com.');
+                // "status": "skipped" kommt vom Addon selbst, noch bevor ueberhaupt versucht wurde
+                // shyft-power zu erreichen (Demomodus, kein echter Account) - der Button ist dafuer
+                // eigentlich schon deaktiviert (siehe applyTriggerButtonDemoState in app.js), diese
+                // Zweig ist nur ein zusaetzliches Sicherheitsnetz.
+                if (data["status"] === "skipped") {
+                    alert('Noch kein eigener shyft-power-Account vorhanden. Bitte zuerst ein eigenes Gerät hinterlegen.');
+                } else if (data["external_status"] === 401) {
+                    alert('Aufruf nicht erlaubt. Prüfe deinen shyft_access_key in der Konfiguration des Addons oder wende dich an info@shyft-power.com.');
+                } else if (data["status"] === "error") {
+                    alert('Fehler beim Senden der Daten: ' + (data["message"] || 'unbekannter Fehler') + '. Bitte wende dich an info@shyft-power.com.');
                 } else {
                     alert('Optimierung angestoßen. Das Ergebnis wird in einigen Minuten importiert.')
                 }
