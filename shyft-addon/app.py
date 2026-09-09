@@ -4,6 +4,7 @@ from shyft_adapter import ShyftAdapter
 from live_entity_watcher import LiveEntityWatcher
 import problem_registry
 import pv_forecast
+import base_case
 
 import os
 from flask import Flask, send_from_directory, jsonify, request, Response
@@ -634,6 +635,58 @@ def readNotificationTargets():
 SHYFT_ACTIONS_DISPLAY_MAX_DAYS = 3
 
 
+# Illustrative Aktionsliste fuer den Demo-Modus - in demo laeuft recompute_actions_from_optimizer_run
+# nicht, der Gerätesteuerung-Tab waere sonst leer. Rein zur Anzeige: nichts davon wird ausgefuehrt
+# oder persistiert, die _id-/"Optimizer Run"-Werte sind fest "demo_...".
+def _demo_shyft_actions():
+    now = datetime.now(timezone.utc)
+    hour0 = now.replace(minute=0, second=0, microsecond=0)
+
+    def ms(hours_from_hour0):
+        return int((hour0 + timedelta(hours=hours_from_hour0)).timestamp() * 1000)
+
+    # (Action Name, id-Praefix, Start-Offset h, Dauer h, Status, Subtitle, Target, costsopt, Log)
+    specs = [
+        ("Batterie-Entladen verschieben", "batterie_entladen_verschieben", -9, 4, "beendet",
+         "Entladen in günstigere Abendstunden verschoben (Netzpreis nachts 9,8 C/kWh)", 0.0, -0.42, None),
+        ("Auto laden", "auto_laden", -6, 2, "beendet",
+         "Laden mit 6,9 kW (von 41 % auf 78 %) | Preis: 18,3 C/kWh", 6.9, 1.98, None),
+        ("Warmwasser", "warmwasser", -3, 1, "beendet",
+         "Warmwassertank auf 52 °C erwärmt (von 45 °C) | Preis: 17,1 C/kWh", 52.0, 0.63, None),
+        ("Heizung Soll-Temperatur", "heizung_soll", 0, 1, "aktiv",
+         "Vorlauf-Soll 34,0 °C (Heizkurve -1) | günstige Stunde, leicht vorheizen", 34.0, 0.21,
+         f"{now.strftime('%d.%m. %H:%M Uhr')}: gestartet, Vorlauf-Soll auf 34,0 °C gesetzt"),
+        ("Batterie-Laden verschieben (PV-Überschuss)", "batterie_laden_verschieben", 1, 2, "geplant",
+         "Batterieladung in die PV-Mittagsspitze verschieben", 0.0, 0.0, None),
+        ("Auto laden", "auto_laden", 3, 3, "geplant",
+         "PV-Überschussladen", 4.1, 0.0, None),
+        ("Verbraucher an", "verbraucher_an", 6, 2, "geplant",
+         "Gerät für 2 h einschalten | Preis: 9,1 C/kWh (unter Schwelle)", 0.75, 0.14, None),
+    ]
+    exec_by_status = {"beendet": "yes, finished", "aktiv": "yes, started", "geplant": "yes, planned"}
+    actions = []
+    for name, prefix, off, dur, status, subtitle, target, costsopt, log in specs:
+        action = {
+            "_id": f"demo_{prefix}_{ms(off)}",
+            "Action Name": name,
+            "Action Trigger Type": "Optimizer",
+            "Status": status,
+            "Execution Status": exec_by_status[status],
+            "Subtitle": subtitle,
+            "Target Value": target,
+            "Savings": None,
+            "costsbase": None,
+            "costsopt": costsopt,
+            "Date Start": int(now.timestamp() * 1000) if status == "aktiv" else ms(off),
+            "Date End": ms(off + dur),
+            "Optimizer Run": "demo",
+        }
+        if log:
+            action["Log"] = log
+        actions.append(action)
+    return actions
+
+
 @app.route("/shyft/actions", methods=["GET"])
 def readShyftActions():
     """Liefert die Aktionsliste fuer die Gerätesteuerung-Tab-Anzeige (die tatsaechliche Ausfuehrung
@@ -643,6 +696,9 @@ def readShyftActions():
     run_pv_surplus_charging_tick), damit beide nahtlos in einer Liste erscheinen.
     Fuer die Anzeige auf die letzten SHYFT_ACTIONS_DISPLAY_MAX_DAYS Tage (plus alle noch
     laufenden/geplanten) begrenzt - der Store selbst bleibt vollstaendig erhalten."""
+    if is_demo_mode():
+        return jsonify({"status": "success",
+                        "response": {"actions": _demo_shyft_actions(), "display_max_days": SHYFT_ACTIONS_DISPLAY_MAX_DAYS}})
     all_actions = _read_computed_actions() + [_pv_surplus_session_to_action(s) for s in _read_pv_surplus_actions()]
     cutoff_ms = (time.time() - SHYFT_ACTIONS_DISPLAY_MAX_DAYS * 86400) * 1000
     visible = [a for a in all_actions if a.get("Date End") is None or a.get("Date End") >= cutoff_ms]
@@ -5699,9 +5755,15 @@ def _load_demo_dashboard_data():
 
 def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_run_id=None):
     "Shared cache-write (DASHBOARD_CACHE_PATH) - used by sync_dashboard_chart_data's hourly refresh and by _check_optimizer_result's post-/trigger wait, so both end up feeding the Dashboard-tab charts the same way. Also the single choke point that triggers the addon-side action recomputation (see recompute_actions_from_optimizer_run) whenever a fresh optimizer run arrives."
+    payload = {"input_csv": input_csv, "output_csv": output_csv, "creation_date": creation_date_ms, "optimizer_run_id": optimizer_run_id}
+    # Base Case ("was ohne Shyft-Optimierung passiert waere") aus demselben input_csv - Grundlage
+    # fuer die spaetere Ersparnis-Berechnung je Aktion (siehe base_case.compute_base_case).
+    base = base_case.compute_base_case(input_csv) if input_csv else None
+    if base:
+        payload.update(base)
     try:
         with open(DASHBOARD_CACHE_PATH, "w") as f:
-            json.dump({"input_csv": input_csv, "output_csv": output_csv, "creation_date": creation_date_ms, "optimizer_run_id": optimizer_run_id}, f)
+            json.dump(payload, f)
     except Exception as e:
         print("[Shyft] Dashboard-Chart-Daten konnten nicht zwischengespeichert werden:", repr(e))
     _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms)
