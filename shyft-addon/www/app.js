@@ -978,7 +978,21 @@ async function renderDashboardProblemBanner() {
     // unerwarteter Zwischenzustand), bleibt er verlaesslich versteckt statt als leerer Floater
     // sichtbar zu werden.
     let bannerText = '';
-    if (isFullyDemoMode()) {
+    // Sonderfall, unabhaengig von isFullyDemoMode() (das ist rein aus der Geraete-Konfiguration
+    // abgeleitet): echte Geraete sind konfiguriert, aber der Server hat (noch/nicht mehr) einen
+    // gueltigen shyft-power-Account (/account-status) - andere Ursache, anderer Hinweistext als der
+    // normale "richte deine Geraete ein"-Demomodus-Hinweis unten (siehe Nutzer-Feedback: das war
+    // vorher gar nicht sichtbar, obwohl update_site_addon in diesem Zustand nie etwas sendet).
+    let accountIsDemo = false;
+    try {
+        const accountStatus = await getJson(insideHomeAssistant + '/account-status');
+        accountIsDemo = !!accountStatus.isDemo;
+    } catch (err) {
+        console.log(err);
+    }
+    if (accountIsDemo && !isFullyDemoMode()) {
+        bannerText = 'Optimierung nicht möglich. Prüfe deinen shyft_access_key in der Konfiguration des Addons oder wende dich an info@shyft-power.com.';
+    } else if (isFullyDemoMode()) {
         bannerText = 'Demomodus. Jetzt Geräte einrichten';
     } else {
         let problemCount = 0;

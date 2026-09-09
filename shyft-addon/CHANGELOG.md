@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.56
+
+* **Dashboard-Floating-Hinweis erkennt jetzt auch den Fall "echte Geräte konfiguriert, aber kein gültiger shyft-power-Account"** – bisher basierte der Hinweis rein auf der Geräte-Konfiguration (Demomodus = alle Geräte sind Demo-Geräte) und blieb unsichtbar, wenn der Account-Status (`/account-status`) unabhängig davon verloren ging. Zeigt in diesem Fall "Optimierung nicht möglich. Prüfe deinen shyft_access_key in der Konfiguration des Addons oder wende dich an info@shyft-power.com." statt des normalen "Demomodus. Jetzt Geräte einrichten"-Hinweises.
+
 ## 0.0.45.55
 
 * **Fix: ein einmal hinterlegter echter shyft-power-Zugangsschlüssel konnte theoretisch ein zweites Mal überschrieben werden**, falls der Account jemals wieder als „nicht angelegt" erschien (z.B. durch einen externen Reset des Supervisor-Konfigurationswerts). Ein neuer, dauerhafter Merker (`shyftAccountCreated` in der addon-eigenen Config) sorgt jetzt dafür, dass `create_user_addon` im gesamten Leben des Addons **nur ein einziges Mal erfolgreich** aufgerufen wird – unabhängig vom aktuellen Zustand des Zugangsschlüssels. Zusätzlich verweigert `_persist_shyft_access_key` jetzt grundsätzlich das Schreiben eines leeren/Platzhalter-Werts.
