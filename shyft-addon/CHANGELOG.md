@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.69
+
+* **„Wallbox verbunden?"-Gerätedropdown blendet jetzt reine Steuerelemente aus** (`switch`, `button`, `input_boolean`, `input_button`, `number`, `input_number`, `select`, `input_select`, `input_text`) – das Feld erwartet einen abgelesenen Status (`sensor.`/`binary_sensor.`), kein schaltbares Element. Ein `binary_sensor` mit on/off bleibt gültig.
+
 ## 0.0.45.68
 
 * **Raumtemperatur-Gerätedropdown sortiert jetzt auch vor:** Integrationen mit einer Temperatur-Entität (device_class `temperature`) bzw. passendem Namen (Temperatur/Raum/Zimmer/Thermostat/Klima …) stehen als „Passende Geräte" oben, der Rest in der eingeklappten „Weitere Geräte (N)"-Gruppe – wie bei den anderen Gerätekacheln. Nichts wird hart ausgeblendet.

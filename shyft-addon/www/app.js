@@ -181,7 +181,11 @@ const SENSOR_ENTITY_FILTERS = {
     'heatpump_temp_indoor_measured': {type: 'device_class', value: 'temperature'},
     'electronicvehicle_state_of_charge': {type: 'device_class', value: 'battery'},
     'wallbox_current_charging_power': {type: 'device_class', value: 'power'},
-    'wallbox_plugged': {type: 'exclude_units', values: ['kWh', 'kW', 'W', 'A', 'V', '°C', '%', 'Wh']},
+    // Zusaetzlich zu den numerischen Einheiten die reinen Steuerelemente ausblenden (switch/button/
+    // input_*/number/select): "Wallbox verbunden?" ist ein abgelesener Status (sensor./binary_sensor.),
+    // kein schaltbares Element - ein binary_sensor mit on/off bleibt aber gueltig.
+    'wallbox_plugged': {type: 'exclude_units', values: ['kWh', 'kW', 'W', 'A', 'V', '°C', '%', 'Wh'],
+        excludeDomains: ['switch', 'input_boolean', 'button', 'input_button', 'number', 'input_number', 'select', 'input_select', 'input_text']},
     'sonstiger_verbraucher_switch_entity': {type: 'state_on_off'},
 }
 
@@ -1160,7 +1164,11 @@ function entityMatchesSensorFilter(entity, filter) {
     if (filter.type === 'device_class') return matchesDeviceClass(entity, filter.value);
     if (filter.type === 'state_on_off') return matchesOnOffState(entity);
     if (filter.type === 'power_unit') return matchesPowerUnit(entity);
-    if (filter.type === 'exclude_units') return !filter.values.includes(entity.unit);
+    if (filter.type === 'exclude_units') {
+        if (filter.values.includes(entity.unit)) return false;
+        if (filter.excludeDomains && filter.excludeDomains.includes(entity.entity_id.split('.')[0])) return false;
+        return true;
+    }
     if (filter.type === 'domain') return filter.values.includes(entity.entity_id.split('.')[0]);
     return true;
 }
