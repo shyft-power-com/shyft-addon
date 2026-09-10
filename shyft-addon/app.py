@@ -137,7 +137,22 @@ PV_SURPLUS_REGULATION_MIN_INTERVAL_MS = 2 * 60 * 1000
 # nicht belastbar (lieber "noch unbekannt" als eine Zufalls-Mehrheit aus 1-2 Stunden).
 BATTERY_SIGN_DETECTION_DAYS = 7
 BATTERY_SIGN_MIN_SAMPLES = 6
-SUPERVISOR_TOKEN = os.getenv("SUPERVISOR_TOKEN")
+def _read_supervisor_token():
+    """SUPERVISOR_TOKEN zuerst aus der Umgebung, sonst aus der s6-overlay-contenv-Datei - neuere
+    Home-Assistant-Basis-Images exportieren die Supervisor-Variablen nicht mehr in die Umgebung des
+    Startbefehls (run.sh laeuft ohne `with-contenv`), dann steht der Token nur noch als Datei da.
+    Ohne diesen Fallback liefen alle HA-Core-API-Aufrufe mit 'Bearer None' auf 401."""
+    v = os.getenv("SUPERVISOR_TOKEN")
+    if v:
+        return v
+    try:
+        with open("/run/s6/container_environment/SUPERVISOR_TOKEN", "r") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+SUPERVISOR_TOKEN = _read_supervisor_token()
 HASSIO_URI_RUNNING_ON_HAOS = "http://supervisor/core"
 HASSIO_URI_RUNNING_REMOTE = "http://homeassistant.local:8123"
 HEATING_TARGET_TEMP_SCRIPT_ID = "shyft_heizung_soll_temperatur"

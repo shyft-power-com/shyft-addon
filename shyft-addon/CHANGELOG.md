@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.64
+
+* **Fix: `SUPERVISOR_TOKEN` wird jetzt auch aus der s6-overlay-Datei gelesen.** Neuere Home-Assistant-Basis-Images exportieren die vom Supervisor injizierten Variablen nicht mehr in die Umgebung des Startbefehls (`run.sh` läuft ohne `with-contenv`) – dadurch war `os.getenv("SUPERVISOR_TOKEN")` leer und jeder HA-Core-API-Aufruf lief mit `Bearer None` auf `401` (leere Konfigurationsseite, kein Wetter/keine Live-Entitäten, Skript-Sync schlug fehl). `app.py` und `homeassistant_adapter` lesen den Token jetzt zusätzlich aus `/run/s6/container_environment/SUPERVISOR_TOKEN`; der Adapter beschafft ihn bei jedem Request frisch, statt einmal beim Import.
+
 ## 0.0.45.63
 
 * **Fix: die Konfigurationsseite blieb komplett leer, wenn das Add-on keine Home-Assistant-API erreicht** (kein/ungültiger `SUPERVISOR_TOKEN` → HA-Core-API `401`). `loadConfiguration()` brach beim ersten fehlgeschlagenen `/sensorids`- bzw. `/integrations`-Aufruf ab; auch der Dashboard-Banner blieb leer und „Optimierung anstoßen" aktiv. Beide Aufrufe laufen jetzt in `try/catch` mit Fallback – die lokale `config.json` reicht, um alle Kacheln zu rendern (nur die Entitäts-Dropdowns bleiben dann leer). Das ist genau der Fall, für den der Demomodus gedacht ist.

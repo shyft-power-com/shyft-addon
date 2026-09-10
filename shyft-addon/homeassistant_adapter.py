@@ -3,6 +3,7 @@ from typing import Any
 from constants import HOMEASSISTANT_URI
 
 from datetime import datetime
+import os
 import requests
 import websocket
 import json
@@ -53,6 +54,25 @@ class HomeAssistantAdapter:
         self.supervisor_token = supervisor_token
         self.detailed_logging = False
         self._bucket_size_in_minutes = bucket_size_in_minutes
+
+    @staticmethod
+    def _read_contenv_token():
+        "SUPERVISOR_TOKEN aus der s6-overlay-Datei (siehe _token)."
+        try:
+            with open("/run/s6/container_environment/SUPERVISOR_TOKEN", "r") as f:
+                return f.read().strip() or None
+        except OSError:
+            return None
+
+    def _token(self):
+        """Den Supervisor-Token moeglichst frisch beschaffen: zuerst aus der Prozess-Umgebung, dann
+        aus der s6-overlay-v3-contenv-Datei. Neuere Home-Assistant-Basis-Images exportieren die vom
+        Supervisor injizierten Variablen NICHT mehr in die Umgebung des Startbefehls, wenn dieser
+        nicht ueber `with-contenv` laeuft - dann ist os.getenv('SUPERVISOR_TOKEN') leer und jeder
+        HA-Core-API-Aufruf lief mit 'Bearer None' auf 401. Zuletzt der beim Bau uebergebene Wert."""
+        return (os.environ.get("SUPERVISOR_TOKEN")
+                or self._read_contenv_token()
+                or self.supervisor_token)
 
     def load_entity_state(self,
                           sensor_id: str):
@@ -153,7 +173,7 @@ class HomeAssistantAdapter:
         ws = websocket.create_connection(ws_uri)
         try:
             ws.recv()  # auth_required
-            ws.send(json.dumps({"type": "auth", "access_token": self.supervisor_token}))
+            ws.send(json.dumps({"type": "auth", "access_token": self._token()}))
             auth_response = json.loads(ws.recv())
             if auth_response.get("type") != "auth_ok":
                 raise Exception("Home Assistant websocket authentication failed")
@@ -214,7 +234,7 @@ class HomeAssistantAdapter:
     def get_from_homeassistant(self, path):
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": f"Bearer {self.supervisor_token}"
+            "Authorization": f"Bearer {self._token()}"
         }
         completeUri = self.homeassistant_uri + path
         response = requests.get(completeUri, headers=headers)
@@ -226,7 +246,7 @@ class HomeAssistantAdapter:
     def post_to_homeassistant(self, path, json_body=None):
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.supervisor_token}"
+            "Authorization": f"Bearer {self._token()}"
         }
         completeUri = self.homeassistant_uri + path
         response = requests.post(completeUri, headers=headers, json=json_body if json_body is not None else {})
@@ -246,7 +266,7 @@ class HomeAssistantAdapter:
         "Like post_to_homeassistant, but against the Supervisor API itself (http://supervisor/...) rather than HA Core's API - e.g. /addons/self/options to persist this addon's own Supervisor-managed config options (see _persist_shyft_access_key in app.py)."
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.supervisor_token}"
+            "Authorization": f"Bearer {self._token()}"
         }
         completeUri = self.SUPERVISOR_API_URI + path
         response = requests.post(completeUri, headers=headers, json=json_body if json_body is not None else {})
@@ -258,7 +278,7 @@ class HomeAssistantAdapter:
             return {}
 
     def delete_from_homeassistant(self, path):
-        headers = {"Authorization": f"Bearer {self.supervisor_token}"}
+        headers = {"Authorization": f"Bearer {self._token()}"}
         completeUri = self.homeassistant_uri + path
         response = requests.delete(completeUri, headers=headers)
         if not response.ok and response.status_code != 404:
