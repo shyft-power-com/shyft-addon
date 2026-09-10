@@ -64,25 +64,24 @@ class ShyftAdapter:
     # komplett lokal im Addon (siehe recompute_actions_from_optimizer_run in app.py), Bubble wird
     # dafuer weder gelesen noch beschrieben.
 
-# Bewusst fest verdrahtet auf die Testumgebung (nicht ueber _create_complete_uri/development_mode
-    # geroutet) - der Workflow existiert bislang nur dort, unabhaengig davon, gegen welche Umgebung
-    # der aktuell hinterlegte (Demo-)Token sonst laeuft. Wenn der Workflow live geht, hier auf
-    # _create_complete_uri("create_user_addon") umstellen.
-    CREATE_USER_URI = "https://shyft-power.com/version-test/api/1.1/wf/create_user_addon"
-
     def create_user(self):
         """Signs a new shyft-power account up (create_user_addon workflow) in the background, the
         first time a demo-mode addon user configures a real device (see maybe_create_real_account in
         app.py) - no parameters: Bubble generates its own email/username/password server-side (the
         addon never asks the user for these). Returns the parsed response dict, expected to contain
         'access_key' and a 'has an account' yes/no flag (see maybe_create_real_account for how
-        that's interpreted). Raises on a network/HTTP failure, unlike _call_workflow."""
+        that's interpreted). Raises on a network/HTTP failure, unlike _call_workflow.
+
+        Routet ueber _create_complete_uri, richtet sich also nach development_mode: ein "notset"-
+        (bzw. jeder nicht mit test_ praefixierte) Schluessel zaehlt als Produktivumgebung und trifft
+        https://shyft-power.com/api/1.1/wf/create_user_addon (nicht version-test)."""
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.bubble_token}"
         }
-        self._log_info(f"create_user uri={self.CREATE_USER_URI}")
-        response = requests.post(self.CREATE_USER_URI, headers=headers, data=json.dumps({}))
+        uri = self._create_complete_uri("create_user_addon")
+        self._log_info(f"create_user uri={uri}")
+        response = requests.post(uri, headers=headers, data=json.dumps({}))
         response.raise_for_status()
         return response.json()
 
