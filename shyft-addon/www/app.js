@@ -241,6 +241,7 @@ const INTEGRATION_SECTIONS = [
         label: 'Raumtemperatur',
         sensors: ['heatpump_temp_indoor_measured'],
         actions: [],
+        requiresDeviceClass: 'temperature',
         description: 'Hinterlege einen Innenraum-Temperatursensor. Shyft stellt dann sicher, dass deine Räume nie zu kalt werden. Die Vorlauftemperatur deiner Wärmepumpe kann dann ohne Reserven gesteuert werden und so Kosten sparen. Hinterlegst du keinen Sensor, simulieren wir die Raumtemperatur.\nTipp: Wenn du das Minimum mehrerer Temperatursensoren verwenden willst, erstelle in Home Assistant einen entsprechenden Hilfssensor.'
     },
     {
@@ -1182,6 +1183,7 @@ const SECTION_MATCH_KEYWORDS = {
     waermepumpe: ['heat_pump', 'heatpump', 'waermepumpe', 'wärmepumpe', 'thermostat', 'vorlauf', 'heizung', 'heating', 'warmwasser', '_dhw', 'flow_temp', 'hvac', 'klima'],
     auto: ['vehicle', '_car', 'ev_', 'fahrzeug', 'odometer', 'state_of_charge', '_soc'],
     wallbox: ['wallbox', 'charg', 'evse', 'ladeleist', 'ladestrom', 'charge_current', 'charging_power', 'chargepoint', 'go_e'],
+    raumtemperatur: ['temperatur', 'temperature', 'raum', 'zimmer', 'room', 'indoor', 'thermostat', 'klima', 'climate'],
 };
 
 // Verdichtete Sicht auf die Entitaeten einer Integration - Grundlage der Form-Heuristik in
@@ -1235,6 +1237,11 @@ function scoreIntegrationForSection(integration, section) {
         if (hasPower && nameHit) score += 4;
     } else if (section.key === 'auto') {
         if (shape.deviceClasses.has('battery') && nameHit) score += 4;
+    } else if (section.key === 'raumtemperatur') {
+        // Innenraum-Temperatur: alles mit einer temperature-device_class-Entitaet (sensor.* oder
+        // climate.*) gilt als passend - der Nutzer hinterlegt dort ohnehin einen einzelnen
+        // Temperatursensor bzw. einen selbst gebauten Min-Hilfssensor, kein ganzes Geraet.
+        if (shape.deviceClasses.has('temperature')) score += 6;
     }
 
     if (section.requiresDeviceClass && integrationHasDeviceClass(integration.id, section.requiresDeviceClass)) {
@@ -2552,12 +2559,13 @@ function buildWallboxConnectionStatusMapping() {
 
 // Reine Konfigurationszahl (keine Entity-Zuordnung), gleiches Muster fuer mehrere Felder unter
 // "Auto" (Akkukapazitaet, Verbrauch/100km) - siehe buildCarBatteryCapacityField/buildCarConsumptionField.
-// Ein Konfig-Feld gilt als "vom Nutzer bestaetigt", sobald er es einmal geaendert hat (change-
-// Event, auch wenn er den Default-Wert nur bestaetigt). Die Liste wird mitgespeichert (siehe
-// toBeWritten in saveConfigurationNow). Ein Pflichtfeld, das noch nie angefasst wurde und dessen
-// Wert exakt der Default ist, wird rot umrandet (.configFieldUnconfirmed) und haelt seine
-// Geraetekachel offen (siehe renderIntegrationSections / renderGeneralConfigSection) - der Nutzer
-// soll jeden Default bewusst pruefen statt ihn stillschweigend zu uebernehmen.
+// Ein Konfig-Feld gilt als "vom Nutzer bestaetigt", sobald er es einmal angefasst hat - entweder
+// per change-Event (Wert geaendert, auch nur bestaetigt) ODER einfach per Hineinklicken/Fokus
+// (focus-Event, siehe markConfigFieldConfirmedOnInteraction): der Nutzer soll den Default nicht
+// erst aendern und zuruecksetzen muessen, um die rote Markierung loszuwerden. Die Liste wird
+// mitgespeichert (siehe toBeWritten in saveConfigurationNow). Ein Pflichtfeld, das noch nie
+// angefasst wurde und dessen Wert exakt der Default ist, wird rot umrandet (.configFieldUnconfirmed)
+// und haelt seine Geraetekachel offen (siehe renderIntegrationSections / renderGeneralConfigSection).
 function isConfigFieldTouched(configKey) {
     return (configData['touchedFields'] || []).includes(configKey);
 }
@@ -2565,6 +2573,17 @@ function markConfigFieldTouched(configKey) {
     if (!configKey) return;
     const list = configData['touchedFields'] || (configData['touchedFields'] = []);
     if (!list.includes(configKey)) list.push(configKey);
+}
+// Fokus/Klick ins Feld genuegt als Bestaetigung - markiert das Feld als angefasst, entfernt die
+// rote Umrandung und speichert (nur beim ersten Mal, danach No-op). Der Wert selbst bleibt
+// unveraendert (der Default ist ohnehin schon in configData festgehalten, siehe die build*-Funktionen).
+function markConfigFieldConfirmedOnInteraction(el, configKey) {
+    el.addEventListener('focus', () => {
+        if (isConfigFieldTouched(configKey)) return;
+        markConfigFieldTouched(configKey);
+        el.classList.remove('configFieldUnconfirmed');
+        autoSave();
+    });
 }
 // true, wenn das Feld nie bestaetigt wurde UND noch exakt auf seinem (nicht-leeren) Default steht.
 function isUnconfirmedDefault(configKey, defaultValue) {
@@ -2598,6 +2617,7 @@ function buildConfigNumberField({label, tooltip, id, configKey, placeholder, ste
         configData[configKey] = defaultValue;
     }
     if (isUnconfirmedDefault(configKey, defaultValue)) input.classList.add('configFieldUnconfirmed');
+    markConfigFieldConfirmedOnInteraction(input, configKey);
     input.addEventListener('change', () => {
         const parsed = parseFloat(input.value);
         configData[configKey] = isNaN(parsed) ? null : parsed;
@@ -2657,6 +2677,7 @@ function buildConfigSelectField({label, tooltip, id, configKey, options, default
         configData[configKey] = select.value;
     }
     if (isUnconfirmedDefault(configKey, defaultValue)) select.classList.add('configFieldUnconfirmed');
+    markConfigFieldConfirmedOnInteraction(select, configKey);
     select.addEventListener('change', () => {
         configData[configKey] = select.value;
         markConfigFieldTouched(configKey);

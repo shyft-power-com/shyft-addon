@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.68
+
+* **Raumtemperatur-Gerätedropdown sortiert jetzt auch vor:** Integrationen mit einer Temperatur-Entität (device_class `temperature`) bzw. passendem Namen (Temperatur/Raum/Zimmer/Thermostat/Klima …) stehen als „Passende Geräte" oben, der Rest in der eingeklappten „Weitere Geräte (N)"-Gruppe – wie bei den anderen Gerätekacheln. Nichts wird hart ausgeblendet.
+* **Ein Default-Feld gilt jetzt schon als bestätigt, sobald man einmal hineinklickt** (Fokus), nicht erst nach einer Wertänderung. Die rote Umrandung verschwindet dann sofort – man muss den Wert nicht mehr ändern und zurücksetzen.
+
 ## 0.0.45.67
 
 * **`create_user_addon` (automatische Konto-Erstellung) ruft jetzt den umgebungsrichtigen Endpunkt auf** statt fest die Testumgebung. Ein Zugangsschlüssel ohne `test_`-Präfix (dazu zählt auch der `notset`-Default eines frischen Addons) gilt als Produktivumgebung und trifft `https://shyft-power.com/api/1.1/wf/create_user_addon` – vorher lief der Aufruf immer gegen `.../version-test/...`.
