@@ -780,9 +780,15 @@ def readDashboardChartData():
             output_rows = []
 
     # Base-Case-Reihen (aus dem Dashboard-Cache, dort von _write_dashboard_cache abgelegt) - an den
-    # input_csv-Zeilen ausgerichtet, also wie pv_generation zu slicen.
+    # input_csv-Zeilen ausgerichtet, also wie pv_generation zu slicen. netProfitBaseList hat die
+    # Endwert-Korrektur bereits in der letzten Stunde (siehe base_case.py).
     base_cost = cache.get("netProfitBaseList") or []
     base_usage = cache.get("PowerUsageBaseList") or []
+
+    # Legenden-Summen fuer die Beta-Vergleichscharts: gesamt + heute/morgen (lokale Addon-Zeitzone),
+    # ueber den GESAMTEN Optimierungszeitraum (vor dem "ab jetzt"-Slicing weiter unten).
+    cost_summary = {"opt": _series_day_split(opt_cost, start), "base": _series_day_split(base_cost, start)}
+    usage_summary = {"opt": _series_day_split(opt_usage, start), "base": _series_day_split(base_usage, start)}
 
     einsatzplan = _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, start)
 
@@ -820,6 +826,8 @@ def readDashboardChartData():
         "base_usage": base_usage,
         "opt_cost": opt_cost,
         "opt_usage": opt_usage,
+        "cost_summary": cost_summary,
+        "usage_summary": usage_summary,
         "einsatzplan": einsatzplan,
         "optimizer_running": _optimizer_result_pending(creation_date_ms),
     })
@@ -835,6 +843,23 @@ def _local_day_offset(hour_start_utc):
     today_local = datetime.now().astimezone().date()
     hour_local_date = hour_start_utc.astimezone().date()
     return (hour_local_date - today_local).days
+
+
+def _series_day_split(values, start):
+    """Summe gesamt / heute / morgen einer stuendlichen Reihe ab 'start' (Stunde i -> start + i h),
+    in der lokalen Addon-Zeitzone. 'total' deckt den gesamten Zeitraum ab (auch Stunden jenseits
+    von morgen), heute/morgen nur die jeweiligen Kalendertage - wie bei der PV-Prognose-Zusammen-
+    fassung im Chart."""
+    total = today = tomorrow = 0.0
+    for i, v in enumerate(values):
+        fv = _safe_float(v)
+        total += fv
+        off = _local_day_offset(start + timedelta(hours=i))
+        if off == 0:
+            today += fv
+        elif off == 1:
+            tomorrow += fv
+    return {"total": round(total, 4), "today": round(today, 4), "tomorrow": round(tomorrow, 4)}
 
 
 def _compute_einsatzplan_kpis(rows, pv_values):

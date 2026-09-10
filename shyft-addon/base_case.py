@@ -23,8 +23,10 @@ Abweichungen Richtung aktuellem Julia-Modell (so mit dem Product Owner abgestimm
 * EV-Wirkungsgrad 0.93 / Verlust 0.00004 / Fixverlust 0.2 kWh je Ladestunde (Julia).
 
 Rueckgabe (Excel-Referenzen in Klammern):
-  netProfitBase48HoursSum : float   - Gesamtkosten Base Case inkl. Restwerte (O106)
-  netProfitBaseList        : [float] - Netto-Netzkosten je Stunde, + = Kosten (O58:O105)
+  netProfitBase48HoursSum : float   - Gesamtkosten Base Case inkl. Restwerte (O106);
+                                      == sum(netProfitBaseList)
+  netProfitBaseList        : [float] - Netto-Netzkosten je Stunde, + = Kosten (O58:O105);
+                                      die Endwert-Korrektur steckt komplett in der letzten Stunde
   PowerUsageBaseList       : [float] - Brutto-Stromverbrauch je Stunde inkl. EV- und
                                        Batterieladung (P58:P105, neu definiert)
 """
@@ -280,10 +282,15 @@ def _compute_base_case(input_csv):
     if heating_hours and fh_size > 0:
         term_i = (t_i_end - t_i_0) / (C_STORE * fh_size) * last_p_buy
 
-    total = sum(net_cost_list) - term_battery - term_ev + term_hw - term_i
+    # Endwert-Korrektur (Excel BasePrice3!O106: -AR8 + S108 - T109 - S110) wird komplett auf die
+    # LETZTE Stunde des Optimierungszeitraums aufgeschlagen - so ist sum(netProfitBaseList) exakt
+    # gleich netProfitBase48HoursSum und der Chart zeigt sie als Ausschlag am rechten Rand.
+    residual = term_hw - term_battery - term_ev - term_i
+    if net_cost_list:
+        net_cost_list[-1] += residual
 
     return {
-        "netProfitBase48HoursSum": round(total, 6),
+        "netProfitBase48HoursSum": round(sum(net_cost_list), 6),
         "netProfitBaseList": [round(v, 6) for v in net_cost_list],
         "PowerUsageBaseList": [round(v, 6) for v in power_usage_list],
     }

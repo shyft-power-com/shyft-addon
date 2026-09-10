@@ -5701,7 +5701,7 @@ function buildPvForecastActualChart(labels, forecast, actual) {
 // base_case.py / /dashboard/chart-data: opt_cost/opt_usage vs. base_cost/base_usage) auf
 // gemeinsamer Stundenachse. Bewusst eigene Funktion (wie buildPvForecastActualChart): zwei Reihen
 // ohne Luecken, Summen in der Legende, "(Beta)" im Titel.
-function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2} = {}) {
+function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null} = {}) {
     const width = 600, height = 220;
     const paddingLeft = 45, paddingRight = 15, paddingTop = 15, paddingBottom = 26;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -5716,13 +5716,22 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
 
     const fmt = n => (Number.isFinite(n) ? n : 0).toLocaleString('de-DE', {maximumFractionDigits: decimals});
     const total = arr => arr.reduce((a, v) => a + (Number.isFinite(v) ? v : 0), 0);
-    const optTotal = total(optValues), baseTotal = total(baseValues);
+    // Legenden-Summe: bevorzugt der volle Optimierungszeitraum-Wert vom Server (summary.*.total,
+    // beim Base Case inkl. Endwert-Korrektur), sonst als Fallback die Summe der gezeigten Stunden.
+    const seriesTotal = (key, values) => (summary && summary[key] && Number.isFinite(summary[key].total))
+        ? summary[key].total : total(values);
+    // "(heute X | morgen Y)" wie bei der PV-Prognose - nur wenn der Server die Aufschluesselung mitschickt.
+    const dayPart = key => {
+        const s = summary && summary[key];
+        if (!s || (!Number.isFinite(s.today) && !Number.isFinite(s.tomorrow))) return '';
+        return ` (heute ${fmt(s.today || 0)} ${unit} | morgen ${fmt(s.tomorrow || 0)} ${unit})`;
+    };
 
     const legend = document.createElement('div');
     legend.className = 'dashboardChartLegend';
-    for (const [color, text] of [
-        ['var(--color-text)', `Shyft-Plan (${fmt(optTotal)} ${unit})`],
-        ['var(--color-text-secondary)', `Ohne Steuerung (${fmt(baseTotal)} ${unit})`],
+    for (const [color, label, key, values] of [
+        ['var(--color-text)', 'Shyft-Plan', 'opt', optValues],
+        ['var(--color-text-secondary)', 'Ohne Steuerung', 'base', baseValues],
     ]) {
         const item = document.createElement('span');
         item.className = 'dashboardChartLegendItem';
@@ -5730,7 +5739,7 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
         dot.className = 'dashboardChartLegendDot';
         dot.style.background = color;
         item.appendChild(dot);
-        item.appendChild(document.createTextNode(text));
+        item.appendChild(document.createTextNode(`${label} (${fmt(seriesTotal(key, values))} ${unit})${dayPart(key)}`));
         legend.appendChild(item);
     }
     wrapper.appendChild(legend);
@@ -7052,9 +7061,11 @@ async function loadDashboard() {
         // unter allen bestehenden Charts.
         if ((data.base_cost && data.base_cost.length) || (data.opt_cost && data.opt_cost.length)) {
             updateOrAppendDashboardWidget(container, 'kostenVergleich', buildComparisonChart(
-                'Deine Stromkosten / -erträge', '€', data.labels, data.opt_cost || [], data.base_cost || [], {decimals: 2}));
+                'Deine Stromkosten / -erträge', '€', data.labels, data.opt_cost || [], data.base_cost || [],
+                {decimals: 2, summary: data.cost_summary}));
             updateOrAppendDashboardWidget(container, 'verbrauchVergleich', buildComparisonChart(
-                'Dein Stromverbrauch', 'kWh', data.labels, data.opt_usage || [], data.base_usage || [], {decimals: 1}));
+                'Dein Stromverbrauch', 'kWh', data.labels, data.opt_usage || [], data.base_usage || [],
+                {decimals: 1, summary: data.usage_summary}));
         }
     } catch (err) {
         console.log(err);

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.66
+
+* **Beta-Vergleichscharts: Legende zeigt jetzt den vollen Optimierungszeitraum-Wert plus `(heute | morgen)`.** Die Endwert-Korrektur des Base Case (Rest­ladung Batterie/E-Auto, Tank-Abkühlung, Innentemp – Excel `O106`: `−AR8 + S108 − T109 − S110`) wird komplett auf die **letzte Stunde** des Optimierungszeitraums aufgeschlagen, sowohl in der Chart-Linie (Ausschlag am rechten Rand) als auch in der Summe. Dadurch ist `sum(netProfitBaseList) == netProfitBase48HoursSum`. `/dashboard/chart-data` liefert neu `cost_summary` / `usage_summary` mit `total` / `today` / `tomorrow` je Reihe (lokale Zeitzone, wie die PV-Prognose-Zusammenfassung – `total` deckt auch Stunden jenseits von morgen ab).
+
 ## 0.0.45.65
 
 * **Dashboard: zwei neue Vergleichs-Charts ganz unten (Beta).** „Deine Stromkosten / -erträge (Beta)" und „Dein Stromverbrauch (Beta)" stellen den optimierten Lauf („Shyft-Plan", aus `output_csv`: `profits_net_opt` bzw. `X_sum + B_sum_in_45`) dem Base Case gegenüber („Ohne Steuerung", aus `netProfitBaseList` / `PowerUsageBaseList`, siehe `base_case.py`). Die Legende zeigt je Reihe die Summe über den gezeigten Zeitraum. `/dashboard/chart-data` liefert dafür `base_cost` / `base_usage` / `opt_cost` / `opt_usage`.
