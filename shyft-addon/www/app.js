@@ -5697,6 +5697,157 @@ function buildPvForecastActualChart(labels, forecast, actual) {
     return wrapper;
 }
 
+// Beta-Vergleichschart "Shyft-Plan" (optimierter Lauf) vs. "Ohne Steuerung" (Base Case, siehe
+// base_case.py / /dashboard/chart-data: opt_cost/opt_usage vs. base_cost/base_usage) auf
+// gemeinsamer Stundenachse. Bewusst eigene Funktion (wie buildPvForecastActualChart): zwei Reihen
+// ohne Luecken, Summen in der Legende, "(Beta)" im Titel.
+function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2} = {}) {
+    const width = 600, height = 220;
+    const paddingLeft = 45, paddingRight = 15, paddingTop = 15, paddingBottom = 26;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'dashboardChart dashboardChartHalf';
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dashboardChartTitle';
+    titleEl.textContent = `${title} (Beta)`;
+    wrapper.appendChild(titleEl);
+
+    const fmt = n => (Number.isFinite(n) ? n : 0).toLocaleString('de-DE', {maximumFractionDigits: decimals});
+    const total = arr => arr.reduce((a, v) => a + (Number.isFinite(v) ? v : 0), 0);
+    const optTotal = total(optValues), baseTotal = total(baseValues);
+
+    const legend = document.createElement('div');
+    legend.className = 'dashboardChartLegend';
+    for (const [color, text] of [
+        ['var(--color-text)', `Shyft-Plan (${fmt(optTotal)} ${unit})`],
+        ['var(--color-text-secondary)', `Ohne Steuerung (${fmt(baseTotal)} ${unit})`],
+    ]) {
+        const item = document.createElement('span');
+        item.className = 'dashboardChartLegendItem';
+        const dot = document.createElement('span');
+        dot.className = 'dashboardChartLegendDot';
+        dot.style.background = color;
+        item.appendChild(dot);
+        item.appendChild(document.createTextNode(text));
+        legend.appendChild(item);
+    }
+    wrapper.appendChild(legend);
+
+    const n = Math.min(labels.length, Math.max(optValues.length, baseValues.length));
+    const defined = [...optValues.slice(0, n), ...baseValues.slice(0, n)].filter(v => Number.isFinite(v));
+    if (n === 0 || defined.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'shyftActionsEmpty';
+        empty.textContent = 'Noch keine Vergleichsdaten verfügbar.';
+        wrapper.appendChild(empty);
+        return wrapper;
+    }
+
+    const rawMin = Math.min(...defined, 0);
+    const rawMax = Math.max(...defined, 0);
+    const range = (rawMax - rawMin) || 1;
+    const yMin = rawMin - range * 0.08;
+    const yMax = rawMax + range * 0.08;
+    const yRange = (yMax - yMin) || 1;
+    const lastIndex = n - 1 || 1;
+
+    const xFor = i => paddingLeft + (i / lastIndex) * plotWidth;
+    const yFor = v => paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight;
+    const baseline = paddingTop + plotHeight;
+
+    function seriesPath(values, color) {
+        const parts = [];
+        for (let i = 0; i < n; i++) {
+            const v = values[i];
+            if (!Number.isFinite(v)) { parts.length = 0; continue; }
+            parts.push(`${parts.length ? 'L' : 'M'}${xFor(i).toFixed(1)},${yFor(v).toFixed(1)}`);
+        }
+        return parts.length < 2 ? '' : `<path d="${parts.join(' ')}" fill="none" stroke="${color}" stroke-width="2" />`;
+    }
+    const basePathMarkup = seriesPath(baseValues, 'var(--color-text-secondary)');
+    const optPathMarkup = seriesPath(optValues, 'var(--color-text)');
+
+    const tickCount = Math.min(6, n);
+    const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
+    const xLabels = tickIndices.map(i => {
+        const text = new Date(labels[i]).toLocaleString('de-DE', {weekday: 'short', hour: '2-digit'}).replace('.', '');
+        return `<text x="${xFor(i).toFixed(1)}" y="${height - 6}" fill="var(--color-text-secondary)" text-anchor="middle">${text}</text>`;
+    }).join('');
+
+    const yTicks = [yMax, (yMin + yMax) / 2, yMin];
+    const yDecimals = decimals === 0 ? 0 : 1;
+    const yLabels = yTicks.map(v => `<text x="${paddingLeft - 8}" y="${(yFor(v) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="end">${v.toFixed(yDecimals)}</text>`).join('');
+
+    let zeroLine = '';
+    if (0 > yMin && 0 < yMax) {
+        const zy = yFor(0).toFixed(1);
+        zeroLine = `<line x1="${paddingLeft}" y1="${zy}" x2="${width - paddingRight}" y2="${zy}" stroke="var(--color-border)" stroke-dasharray="2,3" />`;
+    }
+
+    let dayBoundaryMarkup = '';
+    for (let i = 1; i < n; i++) {
+        const prev = new Date(labels[i - 1]), cur = new Date(labels[i]);
+        if (cur.getDate() !== prev.getDate()) {
+            const x = xFor(i).toFixed(1);
+            dayBoundaryMarkup += `<line x1="${x}" y1="${paddingTop}" x2="${x}" y2="${baseline.toFixed(1)}" stroke="var(--color-text-secondary)" stroke-width="1.5" stroke-dasharray="4,3" />`;
+            dayBoundaryMarkup += `<text x="${x}" y="${paddingTop - 4}" fill="var(--color-text)" font-weight="700" text-anchor="middle">${cur.toLocaleDateString('de-DE', {day: '2-digit', month: '2-digit'})}</text>`;
+        }
+    }
+
+    const chartContainer = document.createElement('div');
+    chartContainer.className = 'dashboardChartContainer';
+    chartContainer.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" class="dashboardChartSvg">
+            <line x1="${paddingLeft}" y1="${paddingTop}" x2="${paddingLeft}" y2="${baseline.toFixed(1)}" stroke="var(--color-border)" />
+            <line x1="${paddingLeft}" y1="${baseline.toFixed(1)}" x2="${width - paddingRight}" y2="${baseline.toFixed(1)}" stroke="var(--color-border)" />
+            ${zeroLine}
+            ${basePathMarkup}
+            ${optPathMarkup}
+            ${dayBoundaryMarkup}
+            ${yLabels}
+            ${xLabels}
+            <circle class="dashboardChartMarker" r="4.5" cx="0" cy="0" visibility="hidden" />
+        </svg>`;
+    wrapper.appendChild(chartContainer);
+
+    const tooltip = document.createElement('div');
+    tooltip.className = 'dashboardChartTooltip';
+    tooltip.hidden = true;
+    chartContainer.appendChild(tooltip);
+    const svgEl = chartContainer.querySelector('svg');
+    const marker = chartContainer.querySelector('.dashboardChartMarker');
+
+    function showTooltip(clientX) {
+        const rect = svgEl.getBoundingClientRect();
+        if (rect.width === 0) return;
+        const scale = rect.width / width;
+        const idx = Math.max(0, Math.min(lastIndex, Math.round(((clientX - rect.left) / scale - paddingLeft) / plotWidth * lastIndex)));
+        const dateText = new Date(labels[idx]).toLocaleString('de-DE', {weekday: 'short', hour: '2-digit', minute: '2-digit'}).replace('.', '');
+        const o = optValues[idx], b = baseValues[idx];
+        const parts = [];
+        if (Number.isFinite(o)) parts.push(`Shyft ${fmt(o)} ${unit}`);
+        if (Number.isFinite(b)) parts.push(`ohne ${fmt(b)} ${unit}`);
+        tooltip.textContent = `${dateText}: ${parts.join(' / ') || '–'}`;
+        const my = yFor(Number.isFinite(o) ? o : (Number.isFinite(b) ? b : yMin));
+        tooltip.style.left = (xFor(idx) * scale).toFixed(1) + 'px';
+        tooltip.style.top = (my * scale).toFixed(1) + 'px';
+        tooltip.hidden = false;
+        marker.setAttribute('cx', xFor(idx).toFixed(1));
+        marker.setAttribute('cy', my.toFixed(1));
+        marker.setAttribute('visibility', 'visible');
+    }
+    function hideTooltip() { tooltip.hidden = true; marker.setAttribute('visibility', 'hidden'); }
+    svgEl.addEventListener('mousemove', e => showTooltip(e.clientX));
+    svgEl.addEventListener('mouseleave', hideTooltip);
+    svgEl.addEventListener('touchstart', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
+    svgEl.addEventListener('touchmove', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
+    svgEl.addEventListener('touchend', hideTooltip);
+
+    return wrapper;
+}
+
 // Welcher der drei Anwesenheits-Zustaende fuer eine Stunde als "der wahrscheinlichste" gilt (reine
 // Mehrheitsentscheidung der drei Wahrscheinlichkeiten) - gemeinsam genutzt vom Anwesenheits-Balken
 // im Chart (buildLineChart) und der Verbrauchsprognose-Liste (buildCarConsumptionForecastDetails),
@@ -6896,6 +7047,15 @@ async function loadDashboard() {
                 consumptionForecast.labels, consumptionForecast.consumptionKwh, consumptionForecast.consumptionBasis, presenceForecast));
         }
         updateOrAppendDashboardWidget(container, 'ladestandAuto', ladestandAutoChart);
+
+        // Beta: optimierter Lauf vs. Base Case ("Ohne Steuerung", siehe base_case.py) - ganz unten,
+        // unter allen bestehenden Charts.
+        if ((data.base_cost && data.base_cost.length) || (data.opt_cost && data.opt_cost.length)) {
+            updateOrAppendDashboardWidget(container, 'kostenVergleich', buildComparisonChart(
+                'Deine Stromkosten / -erträge', '€', data.labels, data.opt_cost || [], data.base_cost || [], {decimals: 2}));
+            updateOrAppendDashboardWidget(container, 'verbrauchVergleich', buildComparisonChart(
+                'Dein Stromverbrauch', 'kWh', data.labels, data.opt_usage || [], data.base_usage || [], {decimals: 1}));
+        }
     } catch (err) {
         console.log(err);
         container.innerHTML = '';

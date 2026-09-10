@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.65
+
+* **Dashboard: zwei neue Vergleichs-Charts ganz unten (Beta).** „Deine Stromkosten / -erträge (Beta)" und „Dein Stromverbrauch (Beta)" stellen den optimierten Lauf („Shyft-Plan", aus `output_csv`: `profits_net_opt` bzw. `X_sum + B_sum_in_45`) dem Base Case gegenüber („Ohne Steuerung", aus `netProfitBaseList` / `PowerUsageBaseList`, siehe `base_case.py`). Die Legende zeigt je Reihe die Summe über den gezeigten Zeitraum. `/dashboard/chart-data` liefert dafür `base_cost` / `base_usage` / `opt_cost` / `opt_usage`.
+
 ## 0.0.45.64
 
 * **Fix: `SUPERVISOR_TOKEN` wird jetzt auch aus der s6-overlay-Datei gelesen.** Neuere Home-Assistant-Basis-Images exportieren die vom Supervisor injizierten Variablen nicht mehr in die Umgebung des Startbefehls (`run.sh` läuft ohne `with-contenv`) – dadurch war `os.getenv("SUPERVISOR_TOKEN")` leer und jeder HA-Core-API-Aufruf lief mit `Bearer None` auf `401` (leere Konfigurationsseite, kein Wetter/keine Live-Entitäten, Skript-Sync schlug fehl). `app.py` und `homeassistant_adapter` lesen den Token jetzt zusätzlich aus `/run/s6/container_environment/SUPERVISOR_TOKEN`; der Adapter beschafft ihn bei jedem Request frisch, statt einmal beim Import.

@@ -759,6 +759,7 @@ def readDashboardChartData():
     # output_csv isn't necessarily the same length as input_csv (the optimizer's own horizon can
     # be shorter) - it's assumed to start at the same creation_date regardless, just with fewer rows
     output_labels, t_i_target, t_hw, soc_b, soc_ev = [], [], [], [], []
+    opt_cost, opt_usage = [], []
     output_rows = []
     if output_csv:
         try:
@@ -769,9 +770,19 @@ def readDashboardChartData():
                 t_hw.append(_safe_float(row.get("T_HW")))
                 soc_b.append(_safe_float(row.get("SOC_B")))
                 soc_ev.append(_safe_float(row.get("SOC_EV")))
+                # Beta-Vergleich "mit Shyft" vs. Base Case (siehe base_case.compute_base_case):
+                # Kosten je Stunde = profits_net_opt; Brutto-Verbrauch = Geraetelast (X_sum) +
+                # Batterieladung (B_sum_in_45), gleiche Definition wie PowerUsageBaseList.
+                opt_cost.append(_safe_float(row.get("profits_net_opt")))
+                opt_usage.append(_safe_float(row.get("X_sum")) + _safe_float(row.get("B_sum_in_45")))
         except Exception as e:
             print("[Shyft] output_csv konnte nicht gelesen werden:", repr(e))
             output_rows = []
+
+    # Base-Case-Reihen (aus dem Dashboard-Cache, dort von _write_dashboard_cache abgelegt) - an den
+    # input_csv-Zeilen ausgerichtet, also wie pv_generation zu slicen.
+    base_cost = cache.get("netProfitBaseList") or []
+    base_usage = cache.get("PowerUsageBaseList") or []
 
     einsatzplan = _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, start)
 
@@ -791,6 +802,8 @@ def readDashboardChartData():
     labels, pv_generation, p_buy, temperature = labels[skip:], pv_generation[skip:], p_buy[skip:], temperature[skip:]
     output_labels, t_i_target, t_hw, soc_b, soc_ev = (
         output_labels[skip:], t_i_target[skip:], t_hw[skip:], soc_b[skip:], soc_ev[skip:])
+    base_cost, base_usage = base_cost[skip:], base_usage[skip:]
+    opt_cost, opt_usage = opt_cost[skip:], opt_usage[skip:]
 
     return jsonify({
         "status": "success",
@@ -803,6 +816,10 @@ def readDashboardChartData():
         "t_hw": t_hw,
         "soc_b": soc_b,
         "soc_ev": soc_ev,
+        "base_cost": base_cost,
+        "base_usage": base_usage,
+        "opt_cost": opt_cost,
+        "opt_usage": opt_usage,
         "einsatzplan": einsatzplan,
         "optimizer_running": _optimizer_result_pending(creation_date_ms),
     })
