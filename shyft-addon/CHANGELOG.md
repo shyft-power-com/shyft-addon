@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.73
+
+* **Fix: Nach einem fehlgeschlagenen `create_user_addon`-Versuch ließ sich die automatische Konto-Erstellung nur durch Hin- und Herschalten eines Geräts erneut auslösen.** `maybe_create_real_account` prüfte bisher nur den exakten Demo→Echt-Übergangsmoment; jetzt reicht jedes erneute Speichern, solange mindestens ein echtes Gerät konfiguriert, noch kein Account angelegt und das Addon noch im Demomodus ist.
+
 ## 0.0.45.72
 
 * **Fix: `maybe_create_real_account` konnte den Zugangsschlüssel aus einer erfolgreichen `create_user_addon`-Antwort nicht auslesen.** Die tatsächliche Bubble-Antwort verschachtelt die Werte unter `"response"` und nennt sie `has_account`/`token` statt der bisher erwarteten obersten Ebene mit `"has an account"`/`access_key` – ein erfolgreicher Aufruf wurde dadurch fälschlich als „kein Token erhalten" gewertet. Live gegen Prod verifiziert (echter `create_user_addon`-Aufruf, Token korrekt übernommen).

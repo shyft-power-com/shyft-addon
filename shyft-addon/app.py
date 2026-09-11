@@ -280,14 +280,19 @@ def _is_real_device(mapping):
     return bool(mapping) and mapping != [DEMO_INTEGRATION_ID]
 
 
-def maybe_create_real_account(old_integration_mappings, new_integration_mappings):
+def maybe_create_real_account(new_integration_mappings):
     """Legt im Hintergrund einen echten shyft-power-Account an (create_user_addon), sobald ein
-    Demo-Modus-Nutzer (siehe is_demo_mode) erstmals ein echtes Geraet fuer irgendeine
-    DEMO_CAPABLE_SECTIONS hinterlegt (also von "Demo" auf eine echte HA-Integration wechselt) - kein
-    Popup, keine E-Mail/Passwort-Abfrage, Bubble erzeugt beides selbst (siehe
-    ShyftAdapter.create_user). No-op, wenn schon ein echter Account existiert, oder wenn sich fuer
-    keine Section tatsaechlich etwas von Demo auf echt geaendert hat. Wird von writeConfig nach
-    jedem Config-Speichern aufgerufen.
+    Demo-Modus-Nutzer (siehe is_demo_mode) ein echtes Geraet fuer irgendeine DEMO_CAPABLE_SECTIONS
+    hinterlegt hat (also von "Demo" auf eine echte HA-Integration gewechselt ist) - kein Popup,
+    keine E-Mail/Passwort-Abfrage, Bubble erzeugt beides selbst (siehe ShyftAdapter.create_user).
+    No-op, wenn schon ein echter Account existiert, oder wenn in der neuen Config gar keine Section
+    ein echtes Geraet hat. Wird von writeConfig nach jedem Config-Speichern aufgerufen.
+
+    Bewusst NICHT nur beim exakten Uebergangsmoment (alt=Demo/leer, neu=echt) - sondern bei JEDEM
+    Speichern, solange mindestens eine Section ein echtes Geraet hat, is_demo_mode() noch True ist
+    UND shyftAccountCreated noch nicht gesetzt ist. Sonst waere ein fehlgeschlagener Versuch (z.B.
+    weil der Bubble-Workflow gerade kaputt war) nur durch Hin- und Herschalten eines Geraets erneut
+    ausloesbar - ein simples erneutes Speichern soll reichen.
 
     create_user_addon darf im gesamten Lebenszyklus des Addons nur EIN EINZIGES MAL erfolgreich
     aufgerufen werden - ein zweiter erfolgreicher Aufruf wuerde bei Bubble einen weiteren, komplett
@@ -305,12 +310,11 @@ def maybe_create_real_account(old_integration_mappings, new_integration_mappings
     if config.get("shyftAccountCreated"):
         print("[Shyft] shyftAccountCreated bereits gesetzt - kein erneuter create_user_addon-Aufruf (unabhaengig vom aktuellen Zugangsschluessel).")
         return
-    became_real = any(
-        not _is_real_device(old_integration_mappings.get(section, []))
-        and _is_real_device(new_integration_mappings.get(section, []))
+    has_real_device = any(
+        _is_real_device(new_integration_mappings.get(section, []))
         for section in DEMO_CAPABLE_SECTIONS
     )
-    if not became_real:
+    if not has_real_device:
         return
     try:
         result = shyft_adapter.create_user()
@@ -3823,7 +3827,6 @@ def writeConfig():
         data.get("sensorMappings", {}).get("battery_state_of_charge"),
         data.get("sensorMappings", {}).get("photovoltaic_powerflow_battery"),
     )
-    old_integration_mappings = data.get("integrationMappings", {})
     old_pv_sensor = data.get("sensorMappings", {}).get("photovoltaic_powerflow_pv", "")
     data.update(incoming)
 
@@ -3893,7 +3896,7 @@ def writeConfig():
             print("[Shyft] Batterie-Vorzeichen-Erkennung fehlgeschlagen:", repr(e))
 
     try:
-        maybe_create_real_account(old_integration_mappings, data.get("integrationMappings", {}))
+        maybe_create_real_account(data.get("integrationMappings", {}))
     except Exception as e:
         print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
 
