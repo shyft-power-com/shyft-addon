@@ -317,18 +317,26 @@ def maybe_create_real_account(old_integration_mappings, new_integration_mappings
     except Exception as e:
         print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
         return
-    has_account_raw = str(result.get("has an account", "")).strip().lower()
-    if has_account_raw in ("yes", "true", "1"):
+    # Der eigentliche Inhalt steckt unter "response" (siehe live beobachtete Antwort:
+    # {"status": "success", "response": {"has_account": bool, "token": "bus|user_id|secret", ...}}) -
+    # "token" wird 1:1 als shyft_access_key uebernommen (Format <prefix>|<user_id>|<secret>, siehe
+    # extract_shyft_user_id). Fallback auf die alten, oberste-Ebene-Feldnamen (access_key/"has an
+    # account") falls der Workflow das je wieder anders liefert.
+    payload = result.get("response") if isinstance(result.get("response"), dict) else result
+    has_account = payload.get("has_account")
+    if has_account is None:
+        has_account = str(result.get("has an account", "")).strip().lower() in ("yes", "true", "1")
+    if has_account:
         # Sollte im automatischen Ablauf eigentlich nicht vorkommen (Bubble erzeugt ja jedes Mal eine
         # neue E-Mail-Adresse) - lieber nichts uebernehmen als versehentlich falsch ueberschreiben.
         # Kein shyftAccountCreated gesetzt: Addon bleibt im Demomodus, ein spaeterer Demo->Echt-
         # Wechsel darf es erneut versuchen (siehe Docstring: "Ist der Aufruf nicht erfolgreich,
         # bleibt das Addon im Demomodus").
-        print("[Shyft] create_user_addon meldet 'has an account: yes' - unerwartet, kein Zugangstoken uebernommen.")
+        print("[Shyft] create_user_addon meldet has_account=true - unerwartet, kein Zugangstoken uebernommen.")
         return
-    new_access_key = result.get("access_key")
+    new_access_key = payload.get("token") or result.get("access_key")
     if not new_access_key:
-        print("[Shyft] create_user_addon lieferte keinen access_key:", result)
+        print("[Shyft] create_user_addon lieferte keinen Token/access_key:", result)
         return
     try:
         _persist_shyft_access_key(new_access_key)

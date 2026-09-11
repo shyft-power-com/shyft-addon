@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.72
+
+* **Fix: `maybe_create_real_account` konnte den Zugangsschlüssel aus einer erfolgreichen `create_user_addon`-Antwort nicht auslesen.** Die tatsächliche Bubble-Antwort verschachtelt die Werte unter `"response"` und nennt sie `has_account`/`token` statt der bisher erwarteten obersten Ebene mit `"has an account"`/`access_key` – ein erfolgreicher Aufruf wurde dadurch fälschlich als „kein Token erhalten" gewertet. Live gegen Prod verifiziert (echter `create_user_addon`-Aufruf, Token korrekt übernommen).
+
 ## 0.0.45.71
 
 * **Fix „Fahrt planen": frühere Rückkehr wird jetzt erkannt.** Meldet der Live-Wallbox-Sensor für die aktuelle Stunde „eingesteckt", während eine geplante Zusatzfahrt (siehe 0.0.45.70) laut ihrem Abwesenheitsfenster noch laufen sollte, wird die Fahrt sofort verworfen statt weiter eine überholte Abwesenheit zu erzwingen – ab dann zählt wieder die normale gelernte Anwesenheitsprognose. Die feste Dauer (3/10/24h) passt sich davon abgesehen nicht dynamisch an, sie läuft entweder ab oder wird so durch die Realität überholt.
