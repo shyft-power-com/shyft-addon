@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.77
+
+* **Fix: Automatisch angelegter Zugangsschlüssel ging nach erfolgreicher Konto-Erstellung wieder verloren, `shyft_access_key` blieb auf "notset".** `_persist_shyft_access_key` schickte beim Speichern über die Supervisor-API (`POST /addons/self/options`) nur `shyft_access_key` mit. Supervisor ERSETZT den kompletten Optionen-Satz bei diesem Aufruf, statt ihn zu mergen - das in `config.yaml` als Pflichtfeld deklarierte `detailed_logging` fehlte dadurch, Supervisor lehnte den gesamten Aufruf ab ("Missing option 'detailed_logging'") und der frisch von Bubble erhaltene Token wurde verworfen. Live beobachtet: ein neuer Account wurde in Bubble angelegt, der Schlüssel im Addon blieb aber unverändert "notset". Jetzt wird `detailed_logging` immer mitgeschickt.
+
 ## 0.0.45.76
 
 * **Demomodus-Hinweis auf der Konfigurationsseite nicht mehr grün mit Häkchen.** Der Status-Hinweis "Demomodus. Jetzt Geräte einrichten" sah bisher optisch identisch zu "Alle Systeme laufen" aus (grün, Häkchen) - das wirkte irreführend positiv, obwohl noch eine Aktion vom Nutzer erforderlich ist. Jetzt neutral/schwarz mit Ausrufezeichen, analog zum bereits so gestalteten Demomodus-Banner auf dem Dashboard.

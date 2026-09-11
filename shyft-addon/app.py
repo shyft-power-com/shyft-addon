@@ -261,7 +261,12 @@ def _persist_shyft_access_key(new_access_key):
         print("[Shyft] _persist_shyft_access_key mit leerem/Platzhalter-Wert aufgerufen - ignoriert, ein bestehender Schluessel wird nie geloescht.")
         return
     global SHYFT_ACCESS_KEY
-    homeassistant_adapter.post_to_supervisor("/addons/self/options", {"options": {"shyft_access_key": new_access_key}})
+    # Supervisor ERSETZT bei POST /addons/self/options den kompletten "options"-Wert, statt ihn
+    # zu mergen - fehlt hier ein in config.yaml als Pflichtfeld deklariertes Feld (detailed_logging),
+    # lehnt Supervisor den ganzen Aufruf mit "Missing option 'detailed_logging'" ab und der neue
+    # Zugangsschluessel geht verloren (live beobachtet: Konto wurde in Bubble angelegt, Schluessel
+    # blieb aber auf "notset"). Deshalb immer alle aktuell bekannten Optionen mitschicken.
+    homeassistant_adapter.post_to_supervisor("/addons/self/options", {"options": {"shyft_access_key": new_access_key, "detailed_logging": DETAILED_LOGGING}})
     SHYFT_ACCESS_KEY = new_access_key
     shyft_adapter.set_access_key(new_access_key)
 
