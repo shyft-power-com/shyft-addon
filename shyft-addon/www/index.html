@@ -235,6 +235,22 @@
             color: var(--color-text-secondary);
             font-size: 0.85em;
         }
+        /* "Passende Sensoren"/"Sonstige Sensoren (N)" - wie .integrationPickerHeader/-HeaderToggle
+           beim Geraete-Picker, nur innerhalb des Entity-Dropdown-Panels (siehe scoreSensorEntityForField
+           in app.js). Die zweite Kopfzeile ist aufklappbar, nie ausgeblendet - jeder Sensor bleibt waehlbar. */
+        .entityDropdownGroupHeader {
+            margin-top: 0.3em;
+        }
+        .entityDropdownGroupHeader:first-child {
+            margin-top: 0;
+        }
+        .entityDropdownGroupToggle {
+            cursor: pointer;
+            user-select: none;
+        }
+        .entityDropdownGroupToggle:hover {
+            color: var(--color-text);
+        }
         /* "Neue Automation erstellen"-Zeile ganz oben (siehe topAction in attachEntityDropdown) -
            farblich abgesetzt und mit Trennlinie darunter, damit klar ist, dass sie eine Aktion
            ausloest statt das Feld zu befuellen. */

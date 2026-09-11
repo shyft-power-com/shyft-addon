@@ -692,6 +692,58 @@ def readSensorIds():
     return mapToResponse(response)
 
 
+ENTITY_HISTORY_SIGNALS_DAYS = 3
+ENTITY_HISTORY_SIGNALS_MAX_ENTITIES = 20  # Kandidatenkreis ist bereits auf ein Geraet eingeschraenkt
+
+
+@app.route("/entity-history-signals", methods=["GET"])
+def entity_history_signals():
+    """Fuer die 'Passende Sensoren'-Sortierung im Wechselrichter-Sensor-Dropdown (siehe
+    scoreSensorEntityForField/populateSensorDatalist in app.js): liefert je angefragter Entity ein
+    paar aus der juengsten Historie abgeleitete Formsignale - negativ jemals? tag/nacht-Muster wie
+    PV-Erzeugung (nie negativ, nachts ~0, mittags an mind. einem Tag klar > 0)? Damit laesst sich
+    z.B. bei einer Wechselrichter-Integration mit mehreren gleich generisch benannten
+    Leistungssensoren (PV/Last/Netz/Batterie) automatisch die richtige Zuordnung vorschlagen.
+    ?entity_ids=<kommagetrennt>. Best-effort pro Entity (ein Historie-Fehler bei einer Entity darf
+    die anderen nicht verhindern) - liefert fuer nicht auswertbare Entities einfach keinen Eintrag,
+    der Aufrufer faellt dann auf die rein namens-/attributbasierte Sortierung zurueck."""
+    entity_ids = [e for e in request.args.get("entity_ids", "").split(",") if e]
+    if not entity_ids or len(entity_ids) > ENTITY_HISTORY_SIGNALS_MAX_ENTITIES:
+        return jsonify({})
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=ENTITY_HISTORY_SIGNALS_DAYS)
+    result = {}
+    for entity_id in entity_ids:
+        try:
+            events = homeassistant_adapter.load_entity_history_raw(entity_id, start, end)
+        except Exception as e:
+            print("[Shyft] entity-history-signals fehlgeschlagen fuer", entity_id, ":", repr(e))
+            continue
+        values = []
+        for last_changed, state in events:
+            try:
+                values.append((last_changed, float(state)))
+            except (TypeError, ValueError):
+                continue
+        if not values:
+            continue
+        has_negative = any(v < -0.01 for _, v in values)
+        has_positive = any(v > 0.01 for _, v in values)
+        # Solar-artig: nie negativ, nachts (0-5 Uhr lokal) ueberwiegend ~0, mittags (11-15 Uhr lokal)
+        # an mindestens einem Tag klar > 0 - genau das vom Nutzer beschriebene PV-Erzeugungsmuster.
+        night_values = [v for t, v in values if 0 <= t.astimezone().hour < 5]
+        midday_values = [v for t, v in values if 11 <= t.astimezone().hour < 15]
+        night_mostly_zero = bool(night_values) and (sum(1 for v in night_values if abs(v) < 0.05) / len(night_values)) >= 0.8
+        midday_ever_positive = any(v > 0.05 for v in midday_values)
+        is_solar_like = (not has_negative) and night_mostly_zero and midday_ever_positive
+        result[entity_id] = {
+            "hasNegative": has_negative,
+            "hasPositive": has_positive,
+            "isSolarLike": is_solar_like,
+        }
+    return jsonify(result)
+
+
 @app.route("/integrations", methods=["GET"])
 def readIntegrations():
     return jsonify(homeassistant_adapter.get_integrations_and_entities())

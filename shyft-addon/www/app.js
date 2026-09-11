@@ -189,6 +189,33 @@ const SENSOR_ENTITY_FILTERS = {
     'sonstiger_verbraucher_switch_entity': {type: 'state_on_off'},
 }
 
+// Namens-Hinweise je sensorMappings-Feld - wie SECTION_MATCH_KEYWORDS beim Geraete-Picker, nur eine
+// Ebene tiefer (einzelne Sensor-Entity statt ganze Integration). Treibt scoreSensorEntityForField.
+const SENSOR_MATCH_KEYWORDS = {
+    'photovoltaic_powerflow_pv': ['pv', 'solar', 'photovolt', 'erzeug', 'generation', 'string'],
+    'photovoltaic_powerflow_load': ['load', 'verbrauch', 'haus', 'consumption', 'hausnetz'],
+    'photovoltaic_powerflow_grid': ['grid', 'netz', 'einspeis', 'bezug'],
+    'photovoltaic_powerflow_battery': ['batter', 'akku', 'speicher', 'storage'],
+    'battery_state_of_charge': ['soc', 'ladestand', 'akkustand', 'charge_level', 'state_of_charge'],
+    'battery_storage_command_mode': ['mode', 'modus', 'betriebsart', 'command', 'storage_mode', 'operation'],
+    'battery_charge_limit_current': ['charge_limit', 'lade_limit', 'ladestrom', 'max_charge', 'charging_current'],
+    'battery_discharge_limit_current': ['discharge_limit', 'entlade_limit', 'entladestrom', 'max_discharge', 'discharging_current'],
+    'heatpump_dhw_tank_temp': ['ww', 'dhw', 'warmwasser', 'boiler', 'tank', 'hot_water'],
+    'heatpump_dhw_target_temp': ['ww_soll', 'dhw_target', 'warmwasser_soll', 'boiler_target', 'hot_water_target'],
+    'heatpump_dhw_activated': ['ww', 'dhw', 'warmwasser', 'einmalige', 'one_time', 'boost'],
+    'heatpump_dhw_on_off': ['ww', 'dhw', 'warmwasser', 'boiler'],
+    'heatpump_heating_target_temp_normal': ['soll', 'target', 'zieltemperatur', 'normaltemperatur', 'raumsoll'],
+    'heatpump_heating_activated': ['heizung', 'heating', 'heizen', 'heat'],
+    'heatpump_current_power_elect': ['leistung', 'power', 'elektrisch', 'elect'],
+    'heatpump_on_off': ['betrieb', 'on_off', 'ein_aus', 'power', 'status', 'run'],
+    'heatpump_temp_indoor_measured': ['raum', 'zimmer', 'indoor', 'room'],
+    'heatpump_supply_temp_hp': ['vorlauf', 'supply', 'flow_temp', 'vl_temp'],
+    'electronicvehicle_state_of_charge': ['soc', 'ladestand', 'akkustand', 'battery', 'charge_level'],
+    'wallbox_current_charging_power': ['ladeleist', 'charging_power', 'charge_power', 'wallbox'],
+    'wallbox_plugged': ['status', 'verbunden', 'connected', 'plugged', 'stecker', 'plug'],
+    'sonstiger_verbraucher_switch_entity': ['switch', 'schalter', 'steckdose', 'plug', 'relay'],
+}
+
 // Synthetischer integrationMappings-Eintrag (["demo"]) statt einer echten HA-Integration - siehe
 // DEMO_CAPABLE_SECTIONS/DEMO_INTEGRATION_ID in app.py, DEMO_SECTION_SENSORS in sync_service.py.
 // Zeigt plausible Beispieldaten, bis der Nutzer ein echtes Geraet hinterlegt - dieser Moment loest
@@ -299,6 +326,21 @@ async function getJson(url) {
     const result = await response.json();
 
     return result;
+}
+
+// Historie-abgeleitete Formsignale (negativ? Tag/Nacht-Muster wie PV? bidirektional wie Netz/
+// Batterie?) fuer die uebergebenen Entities - siehe /entity-history-signals in app.py und
+// scoreSensorEntityForField. Best-effort: {} bei jedem Fehler oder leerer Eingabe, der Aufrufer
+// (renderSectionBody) belaesst die Sensor-Dropdowns dann einfach bei der rein namens-/attribut-
+// basierten Sortierung.
+async function fetchEntityHistorySignals(entityIds) {
+    if (!entityIds || entityIds.length === 0) return {};
+    try {
+        return await getJson(insideHomeAssistant + '/entity-history-signals?entity_ids=' + encodeURIComponent(entityIds.join(',')));
+    } catch (err) {
+        console.log(err);
+        return {};
+    }
 }
 
 async function putJson(url, data) {
@@ -1177,6 +1219,66 @@ function entityMatchesSensorFilter(entity, filter) {
     }
     if (filter.type === 'domain') return filter.values.includes(entity.entity_id.split('.')[0]);
     return true;
+}
+
+// Wie scoreIntegrationForSection, nur eine Ebene tiefer: bewertet eine einzelne Sensor-Entity fuer
+// ein sensorMappings-Feld, treibt die "Passende Sensoren"/"Sonstige Sensoren"-Aufteilung im Entity-
+// Dropdown (siehe populateSensorDatalist/attachEntityDropdown). Ein Sensor im Status "unavailable"/
+// "unknown"/leer landet IMMER in "Sonstige" (Nutzer-Vorgabe) - dafuer reicht score<=0, hier -1, da
+// sich aus dem aktuellen Zustand ohnehin nichts Verlaessliches ueber Form/Verlauf ableiten laesst.
+// historySignal (optional, siehe /entity-history-signals) verfeinert nur die vier Wechselrichter-
+// Leistungsfelder (PV/Last/Netz/Batterie) - fuer alle anderen Felder reicht der Namens-/Attribut-
+// Abgleich, dafuer muss nicht extra Historie geladen werden.
+function scoreSensorEntityForField(entity, key, historySignal) {
+    if (isAmbiguousState(entity.state)) return -1;
+    let score = 0;
+    const filter = SENSOR_ENTITY_FILTERS[key];
+    if (filter) {
+        if (filter.type === 'device_class' && entity.device_class === filter.value) score += 4;
+        else if (filter.type === 'power_unit' && (entity.unit === 'W' || entity.unit === 'kW')) score += 4;
+        else if (filter.type === 'state_on_off' && ['on', 'off'].includes((entity.state || '').toLowerCase())) score += 4;
+    }
+    const haystack = (entity.entity_id + ' ' + entity.label).toLowerCase();
+    const keywords = SENSOR_MATCH_KEYWORDS[key] || [];
+    if (keywords.some(k => haystack.includes(k))) score += 3;
+
+    if (historySignal) {
+        if (key === 'photovoltaic_powerflow_pv') {
+            // PV-Erzeugung darf nie negativ sein; das vom Nutzer beschriebene Muster (nachts ~0,
+            // tagsueber an mind. einem Tag > 0) ist ein starkes Signal, sobald es beobachtet wurde.
+            if (historySignal.hasNegative) score -= 5;
+            else if (historySignal.isSolarLike) score += 5;
+        } else if (key === 'photovoltaic_powerflow_load') {
+            // Haushaltslast ist nie negativ (im Gegensatz zu Netz/Batterie, die die Flussrichtung wechseln).
+            if (historySignal.hasNegative) score -= 5;
+        } else if (key === 'photovoltaic_powerflow_grid' || key === 'photovoltaic_powerflow_battery') {
+            // Netzbezug/-einspeisung bzw. Laden/Entladen wechselt das Vorzeichen - PV und Last nicht.
+            if (historySignal.hasNegative && historySignal.hasPositive) score += 4;
+        }
+    }
+    return score;
+}
+
+// Baut/ersetzt die <option>-Elemente einer Sensor-Datalist, sortiert nach scoreSensorEntityForField
+// und mit data-bucket annotiert - attachEntityDropdown liest dieses Attribut beim Oeffnen des Panels
+// aus, um "Passende Sensoren"/"Sonstige Sensoren (N)" zu bilden (wie beim Geraete-Picker). Wird
+// zunaechst synchron ohne historySignals aufgerufen (renderSectionBody), fuer die vier Wechsel-
+// richter-Leistungsfelder danach ein zweites Mal, sobald /entity-history-signals geantwortet hat -
+// ersetzt die Optionen dann einfach neu sortiert/annotiert (siehe attachEntityDropdown: liest die
+// Datalist bei jedem Oeffnen live aus, kein Re-Render der Sektion noetig).
+function populateSensorDatalist(datalist, candidateEntities, key, historySignals) {
+    const filter = SENSOR_ENTITY_FILTERS[key];
+    const scored = candidateEntities
+        .filter(entity => entityMatchesSensorFilter(entity, filter))
+        .map(entity => ({entity, score: scoreSensorEntityForField(entity, key, (historySignals || {})[entity.entity_id])}))
+        .sort((a, b) => b.score - a.score);
+    datalist.innerHTML = '';
+    for (const {entity, score} of scored) {
+        const option = document.createElement('option');
+        option.value = entity.label;
+        option.dataset.bucket = score > 0 ? 'match' : 'other';
+        datalist.appendChild(option);
+    }
 }
 
 function integrationHasDeviceClass(entryId, deviceClass) {
@@ -2380,16 +2482,26 @@ function renderSectionBody(bodyDiv, section, entryIds) {
             const datalistId = 'entityOptions_' + section.key + '_' + key;
             const datalist = document.createElement('datalist');
             datalist.id = datalistId;
-            const filter = SENSOR_ENTITY_FILTERS[key];
-            for (const entity of candidateEntities) {
-                if (entityMatchesSensorFilter(entity, filter)) {
-                    const option = document.createElement('option');
-                    option.value = entity.label;
-                    datalist.appendChild(option);
-                }
-            }
+            populateSensorDatalist(datalist, candidateEntities, key, {});
             bodyDiv.appendChild(datalist);
             sensorDatalistIds[key] = datalistId;
+        }
+
+        // Die vier Wechselrichter-Leistungsfelder (PV/Last/Netz/Batterie) teilen sich denselben
+        // Filter (power_unit), also auch denselben Kandidatenkreis - eine einzige Historie-Abfrage
+        // reicht, ihr Ergebnis verfeinert danach alle vier Datalists (siehe scoreSensorEntityForField).
+        const historySignalKeys = section.sensors.filter(k => (SENSOR_ENTITY_FILTERS[k] || {}).type === 'power_unit');
+        if (historySignalKeys.length > 0) {
+            const historyCandidateIds = candidateEntities
+                .filter(e => entityMatchesSensorFilter(e, SENSOR_ENTITY_FILTERS[historySignalKeys[0]]))
+                .map(e => e.entity_id);
+            fetchEntityHistorySignals(historyCandidateIds).then(signals => {
+                if (!signals || Object.keys(signals).length === 0) return;
+                for (const key of historySignalKeys) {
+                    const datalist = document.getElementById(sensorDatalistIds[key]);
+                    if (datalist) populateSensorDatalist(datalist, candidateEntities, key, signals);
+                }
+            });
         }
 
         const sensorsHeading = document.createElement('div');
@@ -3265,6 +3377,21 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction}) {
         panel.hidden = true;
     }
 
+    function appendOptionRow(opt) {
+        const row = document.createElement('div');
+        row.className = 'entityDropdownOption';
+        row.textContent = opt.label;
+        row.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+            selectValue(opt.value);
+        });
+        panel.appendChild(row);
+    }
+
+    // Bleibt ueber mehrere renderPanel()-Aufrufe hinweg erhalten (Panel wird bei jedem Oeffnen neu
+    // gebaut, siehe unten) - wie showOtherDevices beim Geraete-Picker (buildIntegrationPicker).
+    let othersExpanded = false;
+
     function renderPanel() {
         panel.innerHTML = '';
         if (topAction) {
@@ -3288,7 +3415,7 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction}) {
 
         const datalist = document.getElementById(datalistId);
         const allOptions = datalist
-            ? Array.from(datalist.options).map(opt => ({value: opt.value, label: opt.textContent || opt.value}))
+            ? Array.from(datalist.options).map(opt => ({value: opt.value, label: opt.textContent || opt.value, bucket: opt.dataset.bucket}))
             : [];
         const filterText = input.value.trim().toLowerCase();
         const filtered = filterText ? allOptions.filter(opt => opt.label.toLowerCase().includes(filterText)) : allOptions;
@@ -3300,15 +3427,45 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction}) {
             panel.appendChild(empty);
             return;
         }
-        for (const opt of filtered) {
-            const row = document.createElement('div');
-            row.className = 'entityDropdownOption';
-            row.textContent = opt.label;
-            row.addEventListener('mousedown', (event) => {
+
+        // "Passende Sensoren"/"Sonstige Sensoren"-Aufteilung nur, wenn ueberhaupt beide Gruppen
+        // vorkommen (siehe populateSensorDatalist/scoreSensorEntityForField) - sonst (z.B. noch kein
+        // Geraet ausgewaehlt, oder alle Optionen gleichermassen unklar) eine schlichte flache Liste.
+        const matching = filtered.filter(opt => opt.bucket === 'match');
+        const others = filtered.filter(opt => opt.bucket === 'other');
+        if (matching.length === 0 || others.length === 0) {
+            for (const opt of filtered) appendOptionRow(opt);
+            return;
+        }
+
+        const matchHeader = document.createElement('div');
+        matchHeader.className = 'entityDropdownHeader entityDropdownGroupHeader';
+        matchHeader.textContent = 'Passende Sensoren';
+        panel.appendChild(matchHeader);
+        for (const opt of matching) appendOptionRow(opt);
+
+        const hasSearch = filterText.length > 0;
+        const othersOpen = othersExpanded || hasSearch;
+        const toggle = document.createElement('div');
+        toggle.className = 'entityDropdownHeader entityDropdownGroupHeader';
+        toggle.textContent = `${othersOpen ? '▾' : '▸'} Sonstige Sensoren (${others.length})`;
+        if (!hasSearch) {
+            toggle.classList.add('entityDropdownGroupToggle');
+            toggle.setAttribute('role', 'button');
+            toggle.tabIndex = 0;
+            const flip = (event) => {
                 event.preventDefault();
-                selectValue(opt.value);
+                othersExpanded = !othersExpanded;
+                renderPanel();
+            };
+            toggle.addEventListener('mousedown', flip);
+            toggle.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') flip(event);
             });
-            panel.appendChild(row);
+        }
+        panel.appendChild(toggle);
+        if (othersOpen) {
+            for (const opt of others) appendOptionRow(opt);
         }
     }
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.78
+
+* **"Passende Sensoren" / "Sonstige Sensoren" auch bei allen Sensor-Zuordnungsfeldern**, analog zum bestehenden Geräte-Picker. Sortiert Kandidaten nach Namens-/Attribut-Übereinstimmung (neue `SENSOR_MATCH_KEYWORDS`); Sensoren im Status "unavailable"/"unknown" landen immer in "Sonstige". Für die vier Wechselrichter-Leistungsfelder (PV/Haushalt/Netz/Batterie) zusätzlich ein neuer Backend-Endpunkt `/entity-history-signals`, der aus den letzten 3 Tagen Historie ableitet, ob ein Sensor je negativ war und ob er dem von PV-Erzeugung typischen Tag-/Nachtmuster (nachts ~0, mittags an mind. einem Tag > 0, nie negativ) entspricht - verfeinert die Sortierung, sobald die Antwort da ist, ohne die Sektion neu aufzubauen.
+
 ## 0.0.45.77
 
 * **Fix: Automatisch angelegter Zugangsschlüssel ging nach erfolgreicher Konto-Erstellung wieder verloren, `shyft_access_key` blieb auf "notset".** `_persist_shyft_access_key` schickte beim Speichern über die Supervisor-API (`POST /addons/self/options`) nur `shyft_access_key` mit. Supervisor ERSETZT den kompletten Optionen-Satz bei diesem Aufruf, statt ihn zu mergen - das in `config.yaml` als Pflichtfeld deklarierte `detailed_logging` fehlte dadurch, Supervisor lehnte den gesamten Aufruf ab ("Missing option 'detailed_logging'") und der frisch von Bubble erhaltene Token wurde verworfen. Live beobachtet: ein neuer Account wurde in Bubble angelegt, der Schlüssel im Addon blieb aber unverändert "notset". Jetzt wird `detailed_logging` immer mitgeschickt.
