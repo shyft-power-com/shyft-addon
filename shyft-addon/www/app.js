@@ -3981,6 +3981,22 @@ function getIntegrationDevices(integrationKey) {
     return devices;
 }
 
+// Entity-ids belonging to the currently selected integration(s) for a given section - narrower than
+// getIntegrationServiceDomains (Domaenen wie "number"/"switch" kommen in JEDER Integration vor, z.B.
+// auch bei Wallbox oder Batterie) auf genau die tatsaechlich zugeordneten Geraete. Ohne dies wurden
+// bei der Warmwasserbereitung u.a. Wallbox-/Batterie-Entitaeten als "Entity"-Kandidaten vorgeschlagen,
+// nur weil sie zufaellig dieselbe Domaene hatten (Nutzer-Feedback: "nicht wallbox_ladestrom vorschlagen").
+function getIntegrationEntityIds(integrationKey) {
+    const selectedIds = currentIntegrationSelections[integrationKey] || [];
+    const ids = new Set();
+    for (const entryId of selectedIds) {
+        for (const entityId of (integrationsData.entityMap || {})[entryId] || []) {
+            ids.add(entityId);
+        }
+    }
+    return ids;
+}
+
 // One field-set for a recipe stage's Home Assistant service: static fields (no fixed choices,
 // e.g. device_id) get a single input shared across both branches; fields with a fixed set of
 // choices (a "select" selector, e.g. easee.action_command's action_command) get one dropdown per
@@ -4106,9 +4122,16 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
                     const entityDatalistId = idPrefix + 'EntityOptions_' + stageKey + '_' + field.name;
                     const entityDatalist = document.createElement('datalist');
                     entityDatalist.id = entityDatalistId;
+                    const integrationEntityIds = integrationKey ? getIntegrationEntityIds(integrationKey) : null;
                     const candidates = allSensorIdOptions.filter(e => {
                         if (amountUnit && e.unit !== amountUnit) return false;
                         if (integrationKey && !getIntegrationServiceDomains(integrationKey).has(e.entity_id.split('.')[0])) return false;
+                        // Domaene allein reicht nicht - "number"/"switch" etc. kommen in jeder
+                        // Integration vor (siehe getIntegrationEntityIds). Nur anwenden, wenn das
+                        // ausgewaehlte Geraet ueberhaupt Entitaeten hat (integrationsData.entityMap
+                        // kann fuer manche Integrationen leer/unvollstaendig sein) - sonst lieber
+                        // die (zu breite) Domaenen-Liste zeigen als versehentlich alles auszublenden.
+                        if (integrationEntityIds && integrationEntityIds.size > 0 && !integrationEntityIds.has(e.entity_id)) return false;
                         return true;
                     });
                     if (integrationKey === 'waermepumpe') {
@@ -4131,7 +4154,9 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
                     fieldsContainer.appendChild(entityDatalist);
                     input.placeholder = amountUnit
                         ? `z.B. number.wallbox_ladestrom (gefiltert nach Einheit "${amountUnit}")`
-                        : 'z.B. number.wallbox_ladestrom';
+                        : integrationKey === 'waermepumpe'
+                            ? 'z.B. switch.warmwasser_boost'
+                            : 'z.B. number.wallbox_ladestrom';
                     inputEl = attachEntityDropdown(input, {datalistId: entityDatalistId, headerText: 'Home-Assistant-Entität'});
                 }
                 input.addEventListener('change', autoSave);

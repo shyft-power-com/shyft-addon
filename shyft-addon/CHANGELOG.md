@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.82
+
+* **Fix: Der "Entity"-Vorschlag beim Warmwasserbereitungs-Befehl zeigte auch Entitäten fremder Geräte** (z.B. `number.wallbox_ladestrom`, Batterie-Entitäten) - die Eingrenzung filterte bisher nur nach Home-Assistant-Domäne (`number`/`switch`/...), die aber in jeder Integration vorkommt. Jetzt zusätzlich auf die Entitäten der tatsächlich zugeordneten Wärmepumpen-Integration eingegrenzt. Der Platzhaltertext zeigt dafür jetzt auch ein passendes Beispiel (`switch.warmwasser_boost` statt `number.wallbox_ladestrom`).
+
 ## 0.0.45.81
 
 * **Warmwasserbereitung, Wärmepumpe:** "Temperatur Warmwassertank" (reine Messung) zeigt jetzt nur noch nicht-schreibbare Sensoren, "Warmwasser: Solltemperatur" umgekehrt nur noch settable Entitäten (`number.`/`input_number.`/`climate.`) - bisher teilten sich beide Felder denselben Filter (nur Geräteklasse Temperatur), sodass z.B. ein reiner Anzeige-Sensor auch für die Solltemperatur vorgeschlagen wurde.
