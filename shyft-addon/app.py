@@ -1630,29 +1630,47 @@ def _write_planned_car_trips(trips):
         print("[Shyft] Geplante Fahrten konnten nicht gespeichert werden:", repr(e))
 
 
-def _apply_planned_car_trips(probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, start):
+def _apply_planned_car_trips(probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, start, current_connected):
     """Ueberschreibt (ERSETZT, addiert nicht) die Anwesenheits-/Verbrauchsprognose fuer das
     Abwesenheitsfenster jeder aktiven geplanten Zusatzfahrt (siehe planCarTrip): das Auto gilt dort
     als vollstaendig abwesend/fahrend, der gesamte Fahrt-kWh-Betrag gleichmaessig auf die
     Fensterstunden verteilt. Aendert die uebergebenen Listen in-place; Stunden ausserhalb des
-    aktuellen Horizonts (start..start+len) werden ignoriert."""
-    for trip in _read_planned_car_trips():
+    aktuellen Horizonts (start..start+len) werden ignoriert.
+
+    Die feste Dauer (3/10/24h, siehe _planned_trip_duration_hours) passt sich NICHT dynamisch an -
+    sie laeuft schlicht ab. Ueberholt wird sie stattdessen von der Realitaet: meldet der Live-
+    Wallbox-Sensor fuer die AKTUELLE Stunde "eingesteckt", waehrend eine geplante Fahrt laut ihrem
+    Fenster noch laufen sollte (Nutzer ist frueher zurueck als angenommen), wird diese Fahrt SOFORT
+    verworfen (nicht nur die aktuelle Stunde uebersprungen) - ab dann zaehlt wieder die gelernte
+    Prognose statt einer ueberholten Annahme. Persistiert die Streichung in PLANNED_CAR_TRIPS_PATH,
+    damit sie nicht bei jedem Aufruf erneut geprueft/verworfen werden muss."""
+    trips = _read_planned_car_trips()
+    remaining = []
+    changed = False
+    for trip in trips:
         dep_ms = trip.get("departureMs")
         duration_h = int(trip.get("durationHours") or 0)
         kwh_total = _safe_float(trip.get("kwh"))
         if dep_ms is None or duration_h <= 0 or kwh_total <= 0:
+            changed = True
             continue
         departure = datetime.fromtimestamp(dep_ms / 1000, tz=timezone.utc)
         dep_i = int(round((departure - start).total_seconds() / 3600))
+        if current_connected and dep_i <= 0 < dep_i + duration_h:
+            changed = True  # Auto ist laut Live-Sensor jetzt eingesteckt - Fahrt vorzeitig beendet
+            continue
         idxs = [i for i in range(dep_i, dep_i + duration_h) if 0 <= i < len(consumption_kwh_forecast)]
         if not idxs:
             continue
+        remaining.append(trip)
         kwh_each = kwh_total / duration_h
         for i in idxs:
             probabilities[i] = 0.0
             standing_probabilities[i] = 0.0
             driving_probabilities[i] = 1.0
             consumption_kwh_forecast[i] = kwh_each
+    if changed:
+        _write_planned_car_trips(remaining)
 
 def _recency_weight(sample_dt, now):
     "Exponentieller Abfall nach Alter - siehe CAR_PRESENCE_RECENCY_HALF_LIFE_DAYS."
@@ -1893,7 +1911,9 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
     # Geplante Zusatzfahrten (siehe planCarTrip) ERSETZEN die gelernte Prognose fuer ihr
     # Abwesenheitsfenster - danach erst low_data_basis/Rueckgabe, damit ev_usage_h/d_ev_kwh
     # (build_ev_optimizer_fields liest dieselbe Funktion) sie automatisch mitbekommen.
-    _apply_planned_car_trips(probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, start)
+    # current_connected: falls das Auto laut Live-Sensor JETZT eingesteckt ist, obwohl eine Fahrt
+    # noch laufen sollte, wird die Realitaet bevorzugt (siehe _apply_planned_car_trips).
+    _apply_planned_car_trips(probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, start, current_connected)
 
     low_data_basis = [consumption_basis != "ok"] * hours
 

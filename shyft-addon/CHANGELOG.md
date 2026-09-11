@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.71
+
+* **Fix „Fahrt planen": frühere Rückkehr wird jetzt erkannt.** Meldet der Live-Wallbox-Sensor für die aktuelle Stunde „eingesteckt", während eine geplante Zusatzfahrt (siehe 0.0.45.70) laut ihrem Abwesenheitsfenster noch laufen sollte, wird die Fahrt sofort verworfen statt weiter eine überholte Abwesenheit zu erzwingen – ab dann zählt wieder die normale gelernte Anwesenheitsprognose. Die feste Dauer (3/10/24h) passt sich davon abgesehen nicht dynamisch an, sie läuft entweder ab oder wird so durch die Realität überholt.
+
 ## 0.0.45.70
 
 * **Neuer Button „Fahrt planen" unter „Ladestand Auto" im Dashboard.** Popup fragt Abfahrtszeit (nächste 48h) und gefahrene Kilometer (20–500 km) ab, rechnet die km über die konfigurierte Fahrzeug-Verbrauchsangabe (`carConsumptionKwhPer100km`) in kWh um und legt eine einmalige Zusatzfahrt an: 3 h Abwesenheit bis 50 km, 10 h bis 200 km, sonst 24 h. Die Fahrt **ersetzt** (statt zu addieren) die gelernte Anwesenheits-/Verbrauchsprognose für ihr Abwesenheitsfenster – Auto gilt dort als vollständig abwesend, der kWh-Betrag gleichmäßig auf die Fensterstunden verteilt – und beeinflusst das gelernte Fahrprofil danach nicht weiter (kein Log-Eintrag in der Anwesenheitshistorie). Nach dem Anlegen wird sofort dieselbe Optimierung wie über „Optimierung anstoßen" angestoßen (`POST /dashboard/plan-trip` → `sync_site_data()`).
