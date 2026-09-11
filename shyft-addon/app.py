@@ -56,6 +56,11 @@ DASHBOARD_CACHE_PATH = "/data/dashboard_cache.json"
 PV_FORECAST_SNAPSHOT_PATH = "/data/pv_forecast_snapshot.json"
 CAR_PRESENCE_LOG_PATH = "/data/car_presence_log.json"
 CAR_PRESENCE_LOG_MAX_DAYS = 180
+# "Fahrt planen"-Feature (Dashboard, siehe planCarTrip): einmalige, vom Nutzer angekuendigte
+# Zusatzfahrten, die compute_car_presence_forecast fuer ihr Abwesenheitsfenster ueberschreiben.
+# Getrennt vom gelernten CAR_PRESENCE_LOG_PATH, damit eine geplante (nicht tatsaechlich geloggte)
+# Fahrt die Historie/das Lernmodell nicht verfaelscht.
+PLANNED_CAR_TRIPS_PATH = "/data/planned_car_trips.json"
 # Ab so vielen historischen FAHRTAGEN gilt die EV-Verbrauchsprognose als belastbar (consumption_basis
 # "ok" -> Dashboard entfernt Hinweis + ~-Markierung). Darunter: "learning" (1..2 Fahrtage) bzw.
 # "default" (0). NICHT mehr die Mindest-Sample-Zahl je (Wochentag, Stunde)-Bucket - dort genuegt
@@ -1592,6 +1597,63 @@ EV_DEFAULT_KWH_PER_100KM = 18
 EV_DEFAULT_WEEKDAY_BLOCK_HOURS = [7, 17]
 EV_DEFAULT_WEEKEND_BLOCK_HOURS = [15, 16, 17]
 
+# "Fahrt planen" (Dashboard-Button unter "Ladestand Auto"): wie lange das Auto laut Nutzer-Vorgabe
+# fuer eine zusaetzliche Fahrt gegebener Distanz abwesend ist - grobe Staffelung statt einer echten
+# Reisezeit-Schaetzung (die haette Ziel/Route/Ladepausen als Unbekannte).
+def _planned_trip_duration_hours(km):
+    if km <= 50:
+        return 3
+    if km <= 200:
+        return 10
+    return 24
+
+
+def _read_planned_car_trips():
+    "Liest die geplanten Zusatzfahrten und entfernt dabei bereits abgelaufene (Abwesenheitsfenster vorbei) - kein separater Cleanup-Job noetig."
+    try:
+        with open(PLANNED_CAR_TRIPS_PATH, "r") as f:
+            trips = json.load(f)
+    except Exception:
+        trips = []
+    now_ms = time.time() * 1000
+    active = [t for t in trips if isinstance(t, dict) and (t.get("windowEndMs") or 0) > now_ms]
+    if len(active) != len(trips):
+        _write_planned_car_trips(active)
+    return active
+
+
+def _write_planned_car_trips(trips):
+    try:
+        with open(PLANNED_CAR_TRIPS_PATH, "w") as f:
+            json.dump(trips, f)
+    except Exception as e:
+        print("[Shyft] Geplante Fahrten konnten nicht gespeichert werden:", repr(e))
+
+
+def _apply_planned_car_trips(probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, start):
+    """Ueberschreibt (ERSETZT, addiert nicht) die Anwesenheits-/Verbrauchsprognose fuer das
+    Abwesenheitsfenster jeder aktiven geplanten Zusatzfahrt (siehe planCarTrip): das Auto gilt dort
+    als vollstaendig abwesend/fahrend, der gesamte Fahrt-kWh-Betrag gleichmaessig auf die
+    Fensterstunden verteilt. Aendert die uebergebenen Listen in-place; Stunden ausserhalb des
+    aktuellen Horizonts (start..start+len) werden ignoriert."""
+    for trip in _read_planned_car_trips():
+        dep_ms = trip.get("departureMs")
+        duration_h = int(trip.get("durationHours") or 0)
+        kwh_total = _safe_float(trip.get("kwh"))
+        if dep_ms is None or duration_h <= 0 or kwh_total <= 0:
+            continue
+        departure = datetime.fromtimestamp(dep_ms / 1000, tz=timezone.utc)
+        dep_i = int(round((departure - start).total_seconds() / 3600))
+        idxs = [i for i in range(dep_i, dep_i + duration_h) if 0 <= i < len(consumption_kwh_forecast)]
+        if not idxs:
+            continue
+        kwh_each = kwh_total / duration_h
+        for i in idxs:
+            probabilities[i] = 0.0
+            standing_probabilities[i] = 0.0
+            driving_probabilities[i] = 1.0
+            consumption_kwh_forecast[i] = kwh_each
+
 def _recency_weight(sample_dt, now):
     "Exponentieller Abfall nach Alter - siehe CAR_PRESENCE_RECENCY_HALF_LIFE_DAYS."
     age_days = max(0.0, (now - sample_dt).total_seconds() / 86400.0)
@@ -1828,6 +1890,11 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
         for i, w in zip(target_idxs, weights):
             consumption_kwh_forecast[i] += e_day * w / wsum
 
+    # Geplante Zusatzfahrten (siehe planCarTrip) ERSETZEN die gelernte Prognose fuer ihr
+    # Abwesenheitsfenster - danach erst low_data_basis/Rueckgabe, damit ev_usage_h/d_ev_kwh
+    # (build_ev_optimizer_fields liest dieselbe Funktion) sie automatisch mitbekommen.
+    _apply_planned_car_trips(probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, start)
+
     low_data_basis = [consumption_basis != "ok"] * hours
 
     return labels, probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, low_data_basis, consumption_basis
@@ -1979,6 +2046,47 @@ def carPresenceForecast():
         "dEvKwh": optimizer_input.get("d_ev_kwh"),
         "evUsageH": optimizer_input.get("ev_usage_h"),
     })
+
+
+@app.route("/dashboard/plan-trip", methods=["POST"])
+def planCarTrip():
+    """'Fahrt planen'-Button (Dashboard, unter 'Ladestand Auto'): legt eine einmalige geplante
+    Zusatzfahrt an (siehe _apply_planned_car_trips/compute_car_presence_forecast - ERSETZT die
+    gelernte Prognose fuer ihr Abwesenheitsfenster, statt sie zu addieren) und stoesst danach sofort
+    denselben Sync wie der 'Optimierung anstoßen'-Button an (/trigger), damit der naechste Ladeplan
+    die Fahrt beruecksichtigt."""
+    data = request.get_json(force=True, silent=True) or {}
+    departure_iso = data.get("departureIso")
+    km = _safe_float(data.get("km"))
+    if not departure_iso or km <= 0:
+        return jsonify({"status": "error", "message": "Bitte Abfahrtszeit und Kilometer angeben."}), 400
+    try:
+        departure = datetime.fromisoformat(departure_iso)
+        if departure.tzinfo is None:
+            departure = departure.replace(tzinfo=timezone.utc)
+    except Exception:
+        return jsonify({"status": "error", "message": "Ungültige Abfahrtszeit."}), 400
+    if departure < datetime.now(timezone.utc) - timedelta(minutes=5):
+        return jsonify({"status": "error", "message": "Die Abfahrtszeit liegt in der Vergangenheit."}), 400
+
+    config = _read_current_config()
+    kwh_per_100 = config.get("carConsumptionKwhPer100km") or EV_DEFAULT_KWH_PER_100KM
+    duration_hours = _planned_trip_duration_hours(km)
+    kwh = round(km * float(kwh_per_100) / 100.0, 3)
+    window_end = departure + timedelta(hours=duration_hours)
+
+    trips = _read_planned_car_trips()
+    trips.append({
+        "id": f"trip_{int(time.time() * 1000)}",
+        "departureMs": int(departure.timestamp() * 1000),
+        "durationHours": duration_hours,
+        "km": km,
+        "kwh": kwh,
+        "windowEndMs": int(window_end.timestamp() * 1000),
+    })
+    _write_planned_car_trips(trips)
+
+    return sync_site_data()
 
 
 def mapToResponse(response):

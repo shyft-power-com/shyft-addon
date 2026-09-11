@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.70
+
+* **Neuer Button „Fahrt planen" unter „Ladestand Auto" im Dashboard.** Popup fragt Abfahrtszeit (nächste 48h) und gefahrene Kilometer (20–500 km) ab, rechnet die km über die konfigurierte Fahrzeug-Verbrauchsangabe (`carConsumptionKwhPer100km`) in kWh um und legt eine einmalige Zusatzfahrt an: 3 h Abwesenheit bis 50 km, 10 h bis 200 km, sonst 24 h. Die Fahrt **ersetzt** (statt zu addieren) die gelernte Anwesenheits-/Verbrauchsprognose für ihr Abwesenheitsfenster – Auto gilt dort als vollständig abwesend, der kWh-Betrag gleichmäßig auf die Fensterstunden verteilt – und beeinflusst das gelernte Fahrprofil danach nicht weiter (kein Log-Eintrag in der Anwesenheitshistorie). Nach dem Anlegen wird sofort dieselbe Optimierung wie über „Optimierung anstoßen" angestoßen (`POST /dashboard/plan-trip` → `sync_site_data()`).
+* Neu: `_apply_planned_car_trips` (überschreibt `compute_car_presence_forecast` für aktive geplante Fahrten, wirkt automatisch auch auf `build_ev_optimizer_fields`/`ev_usage_h`/`d_ev_kwh`), `/data/planned_car_trips.json` (abgelaufene Fenster werden beim Lesen automatisch entfernt).
+
 ## 0.0.45.69
 
 * **„Wallbox verbunden?"-Gerätedropdown blendet jetzt reine Steuerelemente aus** (`switch`, `button`, `input_boolean`, `input_button`, `number`, `input_number`, `select`, `input_select`, `input_text`) – das Feld erwartet einen abgelesenen Status (`sensor.`/`binary_sensor.`), kein schaltbares Element. Ein `binary_sensor` mit on/off bleibt gültig.

@@ -5968,6 +5968,172 @@ function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionB
 }
 
 // ============================================================================
+// "Fahrt planen": Button unter "Ladestand Auto" oeffnet ein Popup, in dem der Nutzer eine
+// zusaetzliche, noch nicht in der Anwesenheitshistorie steckende Fahrt ankuendigen kann (Abfahrt +
+// gefahrene km). POST /dashboard/plan-trip rechnet das in kWh um (ueber die konfigurierte
+// Fahrzeug-Verbrauchsangabe), ERSETZT die Anwesenheits-/Verbrauchsprognose fuer das entsprechende
+// Abwesenheitsfenster (siehe _apply_planned_car_trips in app.py - einmalig, keine dauerhafte
+// Aenderung des gelernten Fahrprofils) und stoesst danach dieselbe Optimierung wie "Optimierung
+// anstoßen" an.
+// ============================================================================
+
+// Feste Kilometer-Stufen laut Vorgabe - grobe Abstufung reicht, eine exakte Kilometereingabe
+// waere Praezision, die die anschliessende Umrechnung (Pauschal-Verbrauch, Pauschal-Dauer) ohnehin
+// nicht hergibt.
+const TRIP_PLAN_KM_OPTIONS = [20, 30, 50, 75, 100, 125, 150, 175, 200, 250, 300, 400, 500];
+
+// Stuendliche Abfahrtszeiten fuer die naechsten 48h, beginnend bei der aktuellen (auf die volle
+// Stunde abgerundeten) Stunde - dieselbe "Stunde 1 = jetzt"-Konvention wie beim Optimierer-Horizont.
+function buildTripPlanDepartureOptions() {
+    const start = new Date();
+    start.setMinutes(0, 0, 0);
+    const options = [];
+    for (let i = 0; i < 48; i++) {
+        const d = new Date(start.getTime() + i * 3600000);
+        const label = d.toLocaleString('de-DE', {weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}).replace(',', '');
+        options.push({iso: d.toISOString(), label});
+    }
+    return options;
+}
+
+let openTripPlanOverlay = null;
+
+function closeTripPlanModal() {
+    if (openTripPlanOverlay) {
+        openTripPlanOverlay.remove();
+        openTripPlanOverlay = null;
+        document.removeEventListener('keydown', handleTripPlanEscape);
+    }
+}
+
+function handleTripPlanEscape(event) {
+    if (event.key === 'Escape') closeTripPlanModal();
+}
+
+function openTripPlanModal() {
+    closeTripPlanModal();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'tripPlanOverlay';
+    overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) closeTripPlanModal();
+    });
+
+    const modal = document.createElement('div');
+    modal.className = 'tripPlanModal';
+    overlay.appendChild(modal);
+
+    const heading = document.createElement('h3');
+    heading.textContent = 'Zusätzliche Fahrt einplanen';
+    modal.appendChild(heading);
+
+    const subtitle = document.createElement('p');
+    subtitle.className = 'tripPlanSubtitle';
+    subtitle.textContent = 'Shyft stellt sicher, dass dein Auto bis dahin so günstig wie möglich geladen wird.';
+    modal.appendChild(subtitle);
+
+    const departureField = document.createElement('div');
+    departureField.className = 'tripPlanField';
+    const departureLabel = document.createElement('label');
+    departureLabel.textContent = 'Abfahrt um:';
+    departureField.appendChild(departureLabel);
+    const departureSelect = document.createElement('select');
+    for (const {iso, label} of buildTripPlanDepartureOptions()) {
+        const option = document.createElement('option');
+        option.value = iso;
+        option.textContent = label;
+        departureSelect.appendChild(option);
+    }
+    departureField.appendChild(departureSelect);
+    modal.appendChild(departureField);
+
+    const kmField = document.createElement('div');
+    kmField.className = 'tripPlanField';
+    const kmLabel = document.createElement('label');
+    kmLabel.textContent = 'Gefahrene Kilometer:';
+    kmField.appendChild(kmLabel);
+    const kmSelect = document.createElement('select');
+    for (const km of TRIP_PLAN_KM_OPTIONS) {
+        const option = document.createElement('option');
+        option.value = km;
+        option.textContent = `${km} km`;
+        kmSelect.appendChild(option);
+    }
+    kmField.appendChild(kmSelect);
+    modal.appendChild(kmField);
+
+    const hint = document.createElement('p');
+    hint.className = 'tripPlanHint';
+    hint.textContent = 'Es dauert einige Minuten, bis ein neuer Ladeplan berechnet wird.';
+    modal.appendChild(hint);
+
+    const actions = document.createElement('div');
+    actions.className = 'tripPlanActions';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'tripPlanSecondaryButton';
+    cancelButton.textContent = 'Abbrechen';
+    cancelButton.addEventListener('click', closeTripPlanModal);
+    const confirmButton = document.createElement('button');
+    confirmButton.type = 'button';
+    confirmButton.className = 'tripPlanPrimaryButton';
+    confirmButton.textContent = 'Fahrt ergänzen';
+    confirmButton.addEventListener('click', async () => {
+        confirmButton.disabled = true;
+        cancelButton.disabled = true;
+        confirmButton.textContent = 'Wird übernommen...';
+        try {
+            const response = await fetch(insideHomeAssistant + '/dashboard/plan-trip', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({departureIso: departureSelect.value, km: Number(kmSelect.value)}),
+            });
+            const data = await response.json();
+            closeTripPlanModal();
+            // Dieselbe Rueckmeldungslogik wie der "Optimierung anstoßen"-Button (siehe trigger() in
+            // index.html) - identische Antwortform, da planCarTrip() intern sync_site_data() aufruft.
+            if (data['status'] === 'skipped') {
+                alert('Noch kein eigener shyft-power-Account vorhanden. Bitte zuerst ein eigenes Gerät hinterlegen.');
+            } else if (data['external_status'] === 401) {
+                alert('Aufruf nicht erlaubt. Prüfe deinen shyft_access_key in der Konfiguration des Addons oder wende dich an info@shyft-power.com.');
+            } else if (data['status'] === 'error') {
+                alert('Fehler beim Senden der Daten: ' + (data['message'] || 'unbekannter Fehler') + '. Bitte wende dich an info@shyft-power.com.');
+            } else {
+                alert('Fahrt ergänzt. Optimierung angestoßen - das Ergebnis wird in einigen Minuten importiert.');
+            }
+            // Die Anwesenheits-/Verbrauchsprognose ist addon-seitig berechnet und beruecksichtigt die
+            // neue Fahrt sofort (unabhaengig davon, wie lange der neue Optimierungslauf braucht) -
+            // deshalb das Dashboard direkt neu laden, statt auf den naechsten periodischen Refresh zu warten.
+            loadDashboard();
+        } catch (err) {
+            confirmButton.disabled = false;
+            cancelButton.disabled = false;
+            confirmButton.textContent = 'Fahrt ergänzen';
+            alert('Fehler: ' + err);
+        }
+    });
+    actions.appendChild(cancelButton);
+    actions.appendChild(confirmButton);
+    modal.appendChild(actions);
+
+    document.body.appendChild(overlay);
+    document.addEventListener('keydown', handleTripPlanEscape);
+    openTripPlanOverlay = overlay;
+}
+
+function buildTripPlanButtonRow() {
+    const row = document.createElement('div');
+    row.className = 'tripPlanButtonRow';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tripPlanButton';
+    button.textContent = 'Fahrt planen';
+    button.addEventListener('click', openTripPlanModal);
+    row.appendChild(button);
+    return row;
+}
+
+// ============================================================================
 // Energiefluss-Widget: live-animierte Haus-Grafik oben auf dem Dashboard (siehe
 // GET /dashboard/energy-flow, compute_energy_flow_data in app.py). Alle Icons sind selbst
 // gezeichnete, einfache Flat-Shapes (Pfade/Formen direkt hier im Code) statt externer Grafiken -
@@ -7084,6 +7250,10 @@ async function loadDashboard() {
             ladestandAutoChart.appendChild(buildCarConsumptionForecastDetails(
                 consumptionForecast.labels, consumptionForecast.consumptionKwh, consumptionForecast.consumptionBasis, presenceForecast));
         }
+        // Unconditional wie der Chart selbst (der auch ohne konfiguriertes Auto leer/flach
+        // gerendert wird) - kein configData-Gate noetig, das wegen des parallelen
+        // loadConfiguration()/loadDashboard()-Starts beim allerersten Seitenaufruf noch leer waere.
+        ladestandAutoChart.appendChild(buildTripPlanButtonRow());
         updateOrAppendDashboardWidget(container, 'ladestandAuto', ladestandAutoChart);
 
         // Beta: optimierter Lauf vs. Base Case ("Ohne Steuerung", siehe base_case.py) - ganz unten,
