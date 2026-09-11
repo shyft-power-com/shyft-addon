@@ -173,8 +173,10 @@ const SENSOR_ENTITY_FILTERS = {
     // muss also eine settable Entitaet (number./input_number.) mit Leistungs-Einheit sein.
     'battery_charge_limit_current': {type: 'writable_power'},
     'battery_discharge_limit_current': {type: 'writable_power'},
-    'heatpump_dhw_tank_temp': {type: 'device_class', value: 'temperature'},
-    'heatpump_dhw_target_temp': {type: 'device_class', value: 'temperature'},
+    // Temperatur Warmwassertank ist eine reine Messung (nicht schreibbar); die Solltemperatur ist
+    // genau umgekehrt - eine settable Entitaet (number./input_number./climate.), keine Anzeige.
+    'heatpump_dhw_tank_temp': {type: 'readonly_temperature'},
+    'heatpump_dhw_target_temp': {type: 'writable_temperature'},
     'heatpump_dhw_activated': {type: 'state_on_off'},
     'heatpump_dhw_on_off': {type: 'state_on_off'},
     'heatpump_heating_target_temp_normal': {type: 'device_class', value: 'temperature'},
@@ -1223,11 +1225,36 @@ function matchesWritablePower(entity) {
     return isAmbiguousState(entity.state) && !entity.unit;
 }
 
+// Fuer Solltemperatur-Felder, ueber die das Addon einen Zielwert SCHREIBT (z.B. Warmwasser-
+// Solltemperatur) - ein reiner Anzeige-Sensor waere hier nutzlos. climate.-Entitaeten werden
+// domaenenweit vertraut (ihre Solltemperatur steckt in einem Attribut, das /sensorids nicht liefert,
+// also gibt es dort nichts weiter zu pruefen); number./input_number. brauchen zusaetzlich ein
+// Temperatur-Indiz (Geraeteklasse/Einheit). Keine "unavailable"-Kulanz auf die Domaene selbst,
+// die ist immer aus der entity_id ablesbar.
+function matchesWritableTemperature(entity) {
+    const domain = entity.entity_id.split('.')[0];
+    if (domain === 'climate') return true;
+    if (domain !== 'number' && domain !== 'input_number') return false;
+    if (entity.device_class === 'temperature' || entity.unit === '°C') return true;
+    return isAmbiguousState(entity.state) && !entity.device_class && !entity.unit;
+}
+
+// Gegenstueck fuer reine Anzeige-Temperaturen (z.B. Temperatur Warmwassertank) - schliesst settable
+// Domaenen bewusst aus, auch wenn Geraeteklasse/Einheit passen wuerden: ein number./input_number./
+// climate.-Wert ist ein SOLLwert oder Steuerelement, keine reine Messung.
+function matchesReadonlyTemperature(entity) {
+    const domain = entity.entity_id.split('.')[0];
+    if (domain === 'number' || domain === 'input_number' || domain === 'climate') return false;
+    return matchesDeviceClass(entity, 'temperature');
+}
+
 function entityMatchesSensorFilter(entity, filter) {
     if (!filter || filter.type === 'none') return true;
     if (filter.type === 'device_class') return matchesDeviceClass(entity, filter.value);
     if (filter.type === 'state_on_off') return matchesOnOffState(entity);
     if (filter.type === 'writable_power') return matchesWritablePower(entity);
+    if (filter.type === 'writable_temperature') return matchesWritableTemperature(entity);
+    if (filter.type === 'readonly_temperature') return matchesReadonlyTemperature(entity);
     if (filter.type === 'power_unit') return matchesPowerUnit(entity);
     if (filter.type === 'exclude_units') {
         if (filter.values.includes(entity.unit)) return false;
@@ -1256,6 +1283,8 @@ function scoreSensorEntityForField(entity, key, historySignal) {
         else if (filter.type === 'state_on_off' && ['on', 'off'].includes((entity.state || '').toLowerCase())) score += 4;
         else if (filter.type === 'writable_power' && (entity.unit === 'W' || entity.unit === 'kW')) score += 4;
         else if (filter.type === 'domain' && filter.values.includes(entity.entity_id.split('.')[0])) score += 4;
+        else if (filter.type === 'writable_temperature' && (entity.entity_id.startsWith('climate.') || entity.device_class === 'temperature' || entity.unit === '°C')) score += 4;
+        else if (filter.type === 'readonly_temperature' && entity.device_class === 'temperature') score += 4;
     }
     const haystack = (entity.entity_id + ' ' + entity.label).toLowerCase();
     const keywords = SENSOR_MATCH_KEYWORDS[key] || [];
@@ -1295,6 +1324,44 @@ function populateSensorDatalist(datalist, candidateEntities, key, historySignals
     for (const {entity, score} of scored) {
         const option = document.createElement('option');
         option.value = entity.label;
+        option.dataset.bucket = score > 0 ? 'match' : 'other';
+        datalist.appendChild(option);
+    }
+}
+
+// Namens-Hinweise fuer die Warmwasserbereitungs-Schalt-/Relaisentitaet (siehe scoreDhwSwitchCandidate).
+const DHW_SWITCH_MATCH_KEYWORDS = ['ww', 'dhw', 'warmwasser', 'boiler', 'boost', 'heizstab', 'tauchsieder', 'hot_water', 'einmalige', 'one_time'];
+
+// Bewertet eine Entitaets-Kandidatin fuer das "Entity"-Feld eines Warmwasserbereitungs-Befehls
+// (z.B. switch.turn_on/number.set_value). Anders als bei den PV-Leistungsfeldern ist hier die
+// Historie das STAERKERE Signal (Nutzer-Vorgabe): eine Warmwasser-Boost-Schaltung ist meistens aus
+// und nur einige Male am Tag fuer wenige Minuten bis 1-2 Stunden an (siehe isIntermittentOnLike in
+// /entity-history-signals) - Namens-Konventionen variieren zu stark zwischen Herstellern, um sich
+// darauf allein zu verlassen.
+function scoreDhwSwitchCandidate(entity, historySignal) {
+    if (isAmbiguousState(entity.state)) return -1;
+    let score = 0;
+    const haystack = (entity.entity_id + ' ' + entity.label).toLowerCase();
+    if (DHW_SWITCH_MATCH_KEYWORDS.some(k => haystack.includes(k))) score += 3;
+    if (historySignal) {
+        if (historySignal.isIntermittentOnLike) score += 6;
+        else if (historySignal.isAlwaysOn) score -= 4;
+    }
+    return score;
+}
+
+// Wie populateSensorDatalist, aber fuer die Warmwasserbereitungs-Entitaetsliste (kein
+// SENSOR_ENTITY_FILTERS-Eintrag - die Kandidaten kommen hier bereits vorgefiltert von
+// buildBranchedStageFields, ueber die Service-Domaenen der Waermepumpen-Integration).
+function populateDhwSwitchDatalist(datalist, candidates, historySignals) {
+    const scored = candidates
+        .map(entity => ({entity, score: scoreDhwSwitchCandidate(entity, (historySignals || {})[entity.entity_id])}))
+        .sort((a, b) => b.score - a.score);
+    datalist.innerHTML = '';
+    for (const {entity, score} of scored) {
+        const option = document.createElement('option');
+        option.value = entity.entity_id;
+        option.textContent = entity.label;
         option.dataset.bucket = score > 0 ? 'match' : 'other';
         datalist.appendChild(option);
     }
@@ -1470,10 +1537,11 @@ function isSectionComplete(section, currentIds) {
 // Abschnitts-Checkmarkierung) gelten diese hier NICHT als Pflichtfeld fuer die Warnmeldung unten:
 // die Waermepumpen-Leistung ist rein informativ, der Raumtemperatur-Sensor hat einen eigenen
 // Auto-Simulations-Fallback (siehe dessen description oben in INTEGRATION_SECTIONS), §14a/
-// PV-Einspeisung sind seltene Zusatzfunktionen, keine Grundvoraussetzung, und "Heizung aktiviert?"
+// PV-Einspeisung sind seltene Zusatzfunktionen, keine Grundvoraussetzung, "Heizung aktiviert?"
 // blockiert ohne Zuordnung nichts (compute_heizung_actions/collect_live_values in app.py bzw.
-// sync_service.py behandeln nicht-zugeordnet wie "an", nicht wie "aus").
-const REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS = new Set(['heatpump_current_power_elect', 'heatpump_temp_indoor_measured', 'heatpump_heating_activated']);
+// sync_service.py behandeln nicht-zugeordnet wie "an", nicht wie "aus"), und die Vorlauftemperatur
+// ist rein informativ, kein Pflichtfeld (Nutzer-Vorgabe).
+const REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS = new Set(['heatpump_current_power_elect', 'heatpump_temp_indoor_measured', 'heatpump_heating_activated', 'heatpump_supply_temp_hp']);
 const REQUIRED_FIELD_OPTIONAL_ACTION_KEYS = new Set(['consumption_limit_14a', 'pv_feed_in_limit']);
 
 // Ausfuehrlichere Schwester von isSectionComplete oben: statt nur true/false liefert das hier je
@@ -3967,11 +4035,14 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
     const serviceInput = document.createElement('input');
     serviceInput.id = idPrefix + stageKey + '_service';
     serviceInput.value = stageData.service || '';
-    serviceInput.setAttribute('list', serviceDatalistId);
     serviceInput.setAttribute('class', 'sensorInput');
     serviceInput.setAttribute('autocomplete', 'off');
     serviceInput.placeholder = placeholderExample;
-    serviceValueCell.appendChild(serviceInput);
+    // Eigenes Panel statt nativem list=-Datalist-Popup (siehe attachEntityDropdown) - dessen Position
+    // wird vom Browser selbst bestimmt und erschien in der HA-Ingress-Umgebung teils NEBEN statt
+    // UNTER dem Feld (Nutzer-Feedback); mit dem eigenen Panel bestimmen wir die Position per CSS
+    // selbst, wie bei jedem anderen Entitaets-Dropdown in diesem Addon.
+    serviceValueCell.appendChild(attachEntityDropdown(serviceInput, {datalistId: serviceDatalistId, headerText: 'Befehl'}));
     serviceRow.appendChild(serviceLabelCell);
     serviceRow.appendChild(serviceValueCell);
     serviceTbody.appendChild(serviceRow);
@@ -4040,11 +4111,22 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
                         if (integrationKey && !getIntegrationServiceDomains(integrationKey).has(e.entity_id.split('.')[0])) return false;
                         return true;
                     });
-                    for (const entity of candidates) {
-                        const option = document.createElement('option');
-                        option.value = entity.entity_id;
-                        option.textContent = entity.label;
-                        entityDatalist.appendChild(option);
+                    if (integrationKey === 'waermepumpe') {
+                        // Warmwasserbereitung: typischerweise ein Schalter/Relais, das meistens aus
+                        // ist und nur einige Male am Tag fuer wenige Minuten bis 1-2 Stunden an -
+                        // per Historie erkennbar (siehe scoreDhwSwitchCandidate/isIntermittentOnLike),
+                        // ergaenzt die rein namensbasierte Vorsortierung um dieses Verhaltensmuster.
+                        populateDhwSwitchDatalist(entityDatalist, candidates, {});
+                        fetchEntityHistorySignals(candidates.map(e => e.entity_id)).then(signals => {
+                            if (signals && Object.keys(signals).length > 0) populateDhwSwitchDatalist(entityDatalist, candidates, signals);
+                        });
+                    } else {
+                        for (const entity of candidates) {
+                            const option = document.createElement('option');
+                            option.value = entity.entity_id;
+                            option.textContent = entity.label;
+                            entityDatalist.appendChild(option);
+                        }
                     }
                     fieldsContainer.appendChild(entityDatalist);
                     input.placeholder = amountUnit
@@ -4348,11 +4430,10 @@ function buildHotWaterControl() {
     wrapper.appendChild(title);
 
     const recipe = configData['hotWaterRecipe'] || {};
-    // Drei echte Zustaende statt nur zwei: '' (noch nichts gewaehlt - weder "Befehl" noch die
-    // Automations-Zeile werden angezeigt), 'direct' ("Direkte Entitäts-Steuerung"), 'ha_automation'. Vorher fiel
-    // alles, was nicht explizit "ha_automation" war, automatisch auf "direct" zurueck, wodurch das
-    // "Befehl"-Feld schon vor jeder Auswahl sichtbar war.
-    let variant = recipe.type === 'ha_automation' ? 'ha_automation' : (recipe.type === 'direct' ? 'direct' : '');
+    // "Direkte Entitäts-Steuerung" ist die haeufigere Wahl - deshalb hier vorausgewaehlt, solange
+    // der Nutzer nicht explizit "HA-Automation" gewaehlt hat (Nutzer-Vorgabe). "Befehl auswählen"
+    // bleibt als Option erreichbar, falls jemand die Auswahl bewusst wieder zuruecksetzen will.
+    let variant = recipe.type === 'ha_automation' ? 'ha_automation' : (recipe.type === '' ? '' : 'direct');
     checkmark.hidden = variant === 'ha_automation' ? !recipe.haAutomationEntityId : !recipe.service;
 
     // "Varianten" zuerst (siehe Reihenfolge weiter unten) - erst nach einer Auswahl blendet sich

@@ -696,14 +696,48 @@ ENTITY_HISTORY_SIGNALS_DAYS = 3
 ENTITY_HISTORY_SIGNALS_MAX_ENTITIES = 20  # Kandidatenkreis ist bereits auf ein Geraet eingeschraenkt
 
 
+def _intermittent_on_signal(events, window_days, window_end):
+    """Formsignal fuer Ein/Aus-Entitaeten (z.B. eine Warmwasser-Boost-Steckdose/Relais): meistens aus,
+    nur einige Male am Tag (hoechstens) fuer einige Minuten bis 1-2 Stunden an - genau das vom Nutzer
+    beschriebene typische Warmwasserbereitungs-Muster, im Unterschied zu einer dauerhaft an/aus
+    stehenden Entitaet oder einer, die staendig (z.B. minuetlich) durchschaltet. None, wenn zu wenig
+    auswertbare Zustandswechsel vorliegen. window_end schliesst als synthetischer Endpunkt die letzte
+    Phase ab - sonst waere z.B. eine Entitaet, die die gesamte Fensterdauer ununterbrochen "on" war
+    (kein einziger Wechsel in der Historie), gar nicht auswertbar (nur EIN Datenpunkt, keine Dauer)."""
+    relevant = [(t, s.strip().lower()) for t, s in events if s.strip().lower() in ("on", "off")]
+    if not relevant:
+        return None
+    if relevant[-1][0] < window_end:
+        relevant = relevant + [(window_end, relevant[-1][1])]
+    if len(relevant) < 2:
+        return None
+    on_seconds, total_seconds, on_durations_hours = 0.0, 0.0, []
+    for (t0, s0), (t1, _) in zip(relevant, relevant[1:]):
+        duration = (t1 - t0).total_seconds()
+        total_seconds += duration
+        if s0 == "on":
+            on_seconds += duration
+            on_durations_hours.append(duration / 3600.0)
+    if total_seconds <= 0:
+        return None
+    on_fraction = on_seconds / total_seconds
+    on_count_per_day = len(on_durations_hours) / max(window_days, 1)
+    durations_in_range = bool(on_durations_hours) and all(1 / 60 <= h <= 2.5 for h in on_durations_hours)
+    is_intermittent_on_like = on_fraction <= 0.3 and 0 < on_count_per_day <= 6 and durations_in_range
+    is_always_on = on_fraction >= 0.98
+    return {"isIntermittentOnLike": is_intermittent_on_like, "isAlwaysOn": is_always_on}
+
+
 @app.route("/entity-history-signals", methods=["GET"])
 def entity_history_signals():
-    """Fuer die 'Passende Sensoren'-Sortierung im Wechselrichter-Sensor-Dropdown (siehe
-    scoreSensorEntityForField/populateSensorDatalist in app.js): liefert je angefragter Entity ein
-    paar aus der juengsten Historie abgeleitete Formsignale - negativ jemals? tag/nacht-Muster wie
-    PV-Erzeugung (nie negativ, nachts ~0, mittags an mind. einem Tag klar > 0)? Damit laesst sich
-    z.B. bei einer Wechselrichter-Integration mit mehreren gleich generisch benannten
-    Leistungssensoren (PV/Last/Netz/Batterie) automatisch die richtige Zuordnung vorschlagen.
+    """Fuer die 'Passende Sensoren'-Sortierung im Wechselrichter-Sensor-Dropdown und den
+    Warmwasserbereitungs-Entitaets-Vorschlag (siehe scoreSensorEntityForField/populateSensorDatalist
+    bzw. scoreDhwSwitchCandidate in app.js): liefert je angefragter Entity ein paar aus der juengsten
+    Historie abgeleitete Formsignale - fuer numerische Sensoren negativ jemals? Tag/Nacht-Muster wie
+    PV-Erzeugung? Fuer Ein/Aus-Entitaeten meistens aus, nur kurz und selten an (siehe
+    _intermittent_on_signal)? Damit laesst sich z.B. bei einer Wechselrichter-Integration mit mehreren
+    gleich generisch benannten Leistungssensoren (PV/Last/Netz/Batterie) automatisch die richtige
+    Zuordnung vorschlagen, oder bei der Warmwasserbereitung die passende Boost-Schaltentitaet.
     ?entity_ids=<kommagetrennt>. Best-effort pro Entity (ein Historie-Fehler bei einer Entity darf
     die anderen nicht verhindern) - liefert fuer nicht auswertbare Entities einfach keinen Eintrag,
     der Aufrufer faellt dann auf die rein namens-/attributbasierte Sortierung zurueck."""
@@ -719,28 +753,29 @@ def entity_history_signals():
         except Exception as e:
             print("[Shyft] entity-history-signals fehlgeschlagen fuer", entity_id, ":", repr(e))
             continue
+        signal = {}
         values = []
         for last_changed, state in events:
             try:
                 values.append((last_changed, float(state)))
             except (TypeError, ValueError):
                 continue
-        if not values:
-            continue
-        has_negative = any(v < -0.01 for _, v in values)
-        has_positive = any(v > 0.01 for _, v in values)
-        # Solar-artig: nie negativ, nachts (0-5 Uhr lokal) ueberwiegend ~0, mittags (11-15 Uhr lokal)
-        # an mindestens einem Tag klar > 0 - genau das vom Nutzer beschriebene PV-Erzeugungsmuster.
-        night_values = [v for t, v in values if 0 <= t.astimezone().hour < 5]
-        midday_values = [v for t, v in values if 11 <= t.astimezone().hour < 15]
-        night_mostly_zero = bool(night_values) and (sum(1 for v in night_values if abs(v) < 0.05) / len(night_values)) >= 0.8
-        midday_ever_positive = any(v > 0.05 for v in midday_values)
-        is_solar_like = (not has_negative) and night_mostly_zero and midday_ever_positive
-        result[entity_id] = {
-            "hasNegative": has_negative,
-            "hasPositive": has_positive,
-            "isSolarLike": is_solar_like,
-        }
+        if values:
+            has_negative = any(v < -0.01 for _, v in values)
+            has_positive = any(v > 0.01 for _, v in values)
+            # Solar-artig: nie negativ, nachts (0-5 Uhr lokal) ueberwiegend ~0, mittags (11-15 Uhr
+            # lokal) an mindestens einem Tag klar > 0 - genau das vom Nutzer beschriebene PV-Muster.
+            night_values = [v for t, v in values if 0 <= t.astimezone().hour < 5]
+            midday_values = [v for t, v in values if 11 <= t.astimezone().hour < 15]
+            night_mostly_zero = bool(night_values) and (sum(1 for v in night_values if abs(v) < 0.05) / len(night_values)) >= 0.8
+            midday_ever_positive = any(v > 0.05 for v in midday_values)
+            is_solar_like = (not has_negative) and night_mostly_zero and midday_ever_positive
+            signal.update({"hasNegative": has_negative, "hasPositive": has_positive, "isSolarLike": is_solar_like})
+        on_off_signal = _intermittent_on_signal(events, ENTITY_HISTORY_SIGNALS_DAYS, end)
+        if on_off_signal:
+            signal.update(on_off_signal)
+        if signal:
+            result[entity_id] = signal
     return jsonify(result)
 
 

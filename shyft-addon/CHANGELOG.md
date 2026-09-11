@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.45.81
+
+* **Warmwasserbereitung, Wärmepumpe:** "Temperatur Warmwassertank" (reine Messung) zeigt jetzt nur noch nicht-schreibbare Sensoren, "Warmwasser: Solltemperatur" umgekehrt nur noch settable Entitäten (`number.`/`input_number.`/`climate.`) - bisher teilten sich beide Felder denselben Filter (nur Geräteklasse Temperatur), sodass z.B. ein reiner Anzeige-Sensor auch für die Solltemperatur vorgeschlagen wurde.
+* **"Vorlauftemperatur Wärmepumpe" ist kein Pflichtfeld mehr** - erscheint bei Fehlen nicht mehr rot umrandet und nicht mehr in der "noch nicht vollständig konfiguriert"-Warnung (rein informativ, wie die elektrische Leistungsaufnahme).
+* **"Varianten" bei der Warmwasserbereitung ist jetzt auf "Direkte Entitäts-Steuerung" vorausgewählt**, solange nicht explizit "HA-Automation" gewählt wurde - vorher startete das Feld leer ("Befehl auswählen").
+* **Fix: der "Befehl"-Vorschlag (Warmwasserbereitung/Auto-Laden) erschien teils neben statt unter dem Feld.** Nutzte als einziges verbliebenes Dropdown noch das native `list=`-Datalist-Popup, dessen Position der Browser selbst bestimmt; jetzt dasselbe selbst positionierte Panel wie jedes andere Entitäts-Dropdown im Addon.
+* **Neu: Vorschlag der passenden Schalt-/Relaisentität für die Warmwasserbereitung anhand der Historie.** Eine Boost-Schaltung ist meist aus und nur einige Male am Tag für wenige Minuten bis 1-2 Stunden an - Kandidaten, die dieses Muster in den letzten 3 Tagen zeigen, werden jetzt unter "Passende Sensoren" vorgeschlagen (neuer Endpunkt-Zusatz `isIntermittentOnLike`/`isAlwaysOn` in `/entity-history-signals`).
+
 ## 0.0.45.80
 
 * **Batterie-Steuerung: deutlich engere Entitäts-Vorschläge.** "Ladeleistung begrenzen"/"Entladeleistung begrenzen" zeigen jetzt nur noch settable Entitäten (`number.`/`input_number.`) mit Leistungs-Einheit (W/kW) - bisher genügte irgendeine Entität mit `device_class: power`, auch reine Anzeige-Sensoren. "Steuerungs-Modi" (vorher "Modus-Entität") zeigt jetzt nur noch settable Entitäten mit fester Optionsliste (`select.`/`input_select.`). Beide Felder profitieren zusätzlich von der neuen "Passende Sensoren"-Sortierung (siehe 0.0.45.78).
