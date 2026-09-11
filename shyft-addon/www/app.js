@@ -2595,7 +2595,12 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         if (isCollapsibleSteuerung) {
             steuerungToggle = document.createElement('button');
             steuerungToggle.type = 'button';
-            steuerungToggle.className = 'sectionToggleButton controlSectionToggleButton collapsed';
+            // Bewusst NUR controlSectionToggleButton (nicht zusaetzlich sectionToggleButton) - die
+            // zwei Klassen teilten sich zwar die .collapsed-Rotationsanimation, aber .sectionToggleButton
+            // erzwingt "position: absolute; top: 1em; right: 1.25em" (fuer den Haupt-Klapp-Pfeil der
+            // Kachel gedacht) - dadurch sprang dieser Button auf dieselbe Position wie der Kachel-
+            // Pfeil und liess sich nicht mehr sinnvoll anklicken (Regression aus 0.0.45.34).
+            steuerungToggle.className = 'controlSectionToggleButton collapsed';
             steuerungToggle.setAttribute('aria-label', 'Steuerung ein-/ausklappen');
             steuerungToggle.textContent = '▾';
             steuerungToggle.addEventListener('click', () => {

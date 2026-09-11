@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.79
+
+* **Fix: "Steuerung" beim Wechselrichter ließ sich nicht mehr einblenden.** Regression aus 0.0.45.34: der Auf-/Zuklapp-Button bekam neben `controlSectionToggleButton` zusätzlich die Klasse `sectionToggleButton` - die erzwingt `position: absolute` an der Stelle des Haupt-Klapp-Pfeils der Kachel, wodurch der Button dort landete statt neben der "Steuerung"-Überschrift und sich nicht mehr sinnvoll anklicken ließ. Jetzt nur noch `controlSectionToggleButton`, wie ursprünglich vorgesehen.
+
 ## 0.0.45.78
 
 * **"Passende Sensoren" / "Sonstige Sensoren" auch bei allen Sensor-Zuordnungsfeldern**, analog zum bestehenden Geräte-Picker. Sortiert Kandidaten nach Namens-/Attribut-Übereinstimmung (neue `SENSOR_MATCH_KEYWORDS`); Sensoren im Status "unavailable"/"unknown" landen immer in "Sonstige". Für die vier Wechselrichter-Leistungsfelder (PV/Haushalt/Netz/Batterie) zusätzlich ein neuer Backend-Endpunkt `/entity-history-signals`, der aus den letzten 3 Tagen Historie ableitet, ob ein Sensor je negativ war und ob er dem von PV-Erzeugung typischen Tag-/Nachtmuster (nachts ~0, mittags an mind. einem Tag > 0, nie negativ) entspricht - verfeinert die Sortierung, sobald die Antwort da ist, ohne die Sektion neu aufzubauen.
