@@ -1119,6 +1119,17 @@
             border: 1px solid var(--color-accent);
             background: rgba(46, 204, 113, 0.08);
         }
+        /* Demomodus-Hinweis: bewusst NICHT gruen/Haeckchen wie "Alle Systeme laufen" - das waere
+           irrefuehrend positiv fuer einen Zustand, der eigentlich noch eine Aktion (Geraete
+           einrichten) vom Nutzer erfordert (Nutzer-Feedback). */
+        .systemHealthCard.is-demo-mode {
+            display: flex;
+            align-items: center;
+            gap: 0.6em;
+            color: var(--color-text);
+            border: 1px solid var(--color-border);
+            background: var(--color-bg-card);
+        }
         .systemHealthCard.has-problems {
             color: var(--color-text);
             background: var(--color-bg-card);

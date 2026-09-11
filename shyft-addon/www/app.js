@@ -801,13 +801,14 @@ async function renderSystemHealth() {
     container.innerHTML = '';
     const count = problems.length + warnings.length;
     if (count === 0) {
-        container.className = 'systemHealthCard is-ok';
+        const demoMode = isFullyDemoMode();
+        container.className = demoMode ? 'systemHealthCard is-demo-mode' : 'systemHealthCard is-ok';
         const icon = document.createElement('span');
         icon.className = 'systemHealthCardIcon';
-        icon.textContent = '✓';
+        icon.textContent = demoMode ? '!' : '✓';
         container.appendChild(icon);
         const text = document.createElement('span');
-        text.textContent = isFullyDemoMode() ? 'Demomodus. Jetzt Geräte einrichten' : 'Alle Systeme laufen';
+        text.textContent = demoMode ? 'Demomodus. Jetzt Geräte einrichten' : 'Alle Systeme laufen';
         container.appendChild(text);
         applyConfigFieldErrorHighlights([]);
         renderDeviceNav([], []);

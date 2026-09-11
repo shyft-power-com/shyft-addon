@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.76
+
+* **Demomodus-Hinweis auf der Konfigurationsseite nicht mehr grün mit Häkchen.** Der Status-Hinweis "Demomodus. Jetzt Geräte einrichten" sah bisher optisch identisch zu "Alle Systeme laufen" aus (grün, Häkchen) - das wirkte irreführend positiv, obwohl noch eine Aktion vom Nutzer erforderlich ist. Jetzt neutral/schwarz mit Ausrufezeichen, analog zum bereits so gestalteten Demomodus-Banner auf dem Dashboard.
+
 ## 0.0.45.75
 
 * **Beschreibungstexte aktualisiert** (`DOCS.md` und Add-on-Store-Kurzbeschreibung in `config.yaml`) - die alte, rein auf "Sensorwerte auslesen und Geräte steuern" fokussierte Formulierung erwähnte weder PV-Prognose, Auto-Anwesenheitsprognose, Wärmepumpen-/Batteriesteuerung noch die freie Hersteller-Anbindung über Home Assistant. `DOCS.md` nennt zudem gleich zu Beginn von "Konfiguration", dass das Add-on im Demomodus startet und nach dem Hinterlegen der Geräte automatisch der erste Einsatzplan berechnet wird.
