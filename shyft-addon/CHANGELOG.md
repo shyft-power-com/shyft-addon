@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.80
+
+* **Batterie-Steuerung: deutlich engere Entitäts-Vorschläge.** "Ladeleistung begrenzen"/"Entladeleistung begrenzen" zeigen jetzt nur noch settable Entitäten (`number.`/`input_number.`) mit Leistungs-Einheit (W/kW) - bisher genügte irgendeine Entität mit `device_class: power`, auch reine Anzeige-Sensoren. "Steuerungs-Modi" (vorher "Modus-Entität") zeigt jetzt nur noch settable Entitäten mit fester Optionsliste (`select.`/`input_select.`). Beide Felder profitieren zusätzlich von der neuen "Passende Sensoren"-Sortierung (siehe 0.0.45.78).
+* **"Batterie-Aktion beenden" zeigt "Steuerungs-Modi" nicht mehr doppelt an** - dieselbe Entität ist schon bei "Batterie netzladen" gepflegt (gemeinsamer Konfigurationswert), eine erneute Auswahl war überflüssig und wirkte wie eine mögliche zweite, unabhängige Zuordnung.
+* Die "Testen"-Zeile bei Lade-/Entladeleistung zeigt den Messwert jetzt inkl. Einheit (z.B. "Limit Ladeleistung: 3200 kW").
+
 ## 0.0.45.79
 
 * **Fix: "Steuerung" beim Wechselrichter ließ sich nicht mehr einblenden.** Regression aus 0.0.45.34: der Auf-/Zuklapp-Button bekam neben `controlSectionToggleButton` zusätzlich die Klasse `sectionToggleButton` - die erzwingt `position: absolute` an der Stelle des Haupt-Klapp-Pfeils der Kachel, wodurch der Button dort landete statt neben der "Steuerung"-Überschrift und sich nicht mehr sinnvoll anklicken ließ. Jetzt nur noch `controlSectionToggleButton`, wie ursprünglich vorgesehen.

@@ -165,10 +165,14 @@ const SENSOR_ENTITY_FILTERS = {
     'photovoltaic_powerflow_load': {type: 'power_unit'},
     'photovoltaic_powerflow_grid': {type: 'power_unit'},
     'photovoltaic_powerflow_battery': {type: 'power_unit'},
-    'battery_storage_command_mode': {type: 'none'},
+    // Keine reine Anzeige-Entitaet: das Addon SCHREIBT hierueber den Steuerungsmodus, muss also eine
+    // settable Entitaet mit einer festen Optionsliste sein (select./input_select.).
+    'battery_storage_command_mode': {type: 'domain', values: ['select', 'input_select']},
     'battery_state_of_charge': {type: 'device_class', value: 'battery'},
-    'battery_charge_limit_current': {type: 'device_class', value: 'power'},
-    'battery_discharge_limit_current': {type: 'device_class', value: 'power'},
+    // Keine reinen Anzeige-Sensoren: das Addon SCHREIBT hierueber die Lade-/Entladeleistungs-Grenze,
+    // muss also eine settable Entitaet (number./input_number.) mit Leistungs-Einheit sein.
+    'battery_charge_limit_current': {type: 'writable_power'},
+    'battery_discharge_limit_current': {type: 'writable_power'},
     'heatpump_dhw_tank_temp': {type: 'device_class', value: 'temperature'},
     'heatpump_dhw_target_temp': {type: 'device_class', value: 'temperature'},
     'heatpump_dhw_activated': {type: 'state_on_off'},
@@ -1207,10 +1211,23 @@ function matchesOnOffState(entity) {
     return isAmbiguousState(entity.state);
 }
 
+// Fuer Felder, ueber die das Addon tatsaechlich einen Wert SCHREIBT (z.B. Lade-/Entladeleistung
+// begrenzen) statt ihn nur abzulesen - ein reiner Anzeige-Sensor (sensor.*) waere hier nutzlos, auch
+// wenn Geraeteklasse/Einheit passen. Die Domaene ist immer aus der entity_id ablesbar (nie vom
+// aktuellen Zustand abhaengig) - anders als device_class/unit gibt es hier bewusst KEINE
+// "unavailable -> trotzdem erlauben"-Kulanz, ein sensor. bleibt ein sensor., egal in welchem Status.
+function matchesWritablePower(entity) {
+    const domain = entity.entity_id.split('.')[0];
+    if (domain !== 'number' && domain !== 'input_number') return false;
+    if (entity.unit === 'W' || entity.unit === 'kW') return true;
+    return isAmbiguousState(entity.state) && !entity.unit;
+}
+
 function entityMatchesSensorFilter(entity, filter) {
     if (!filter || filter.type === 'none') return true;
     if (filter.type === 'device_class') return matchesDeviceClass(entity, filter.value);
     if (filter.type === 'state_on_off') return matchesOnOffState(entity);
+    if (filter.type === 'writable_power') return matchesWritablePower(entity);
     if (filter.type === 'power_unit') return matchesPowerUnit(entity);
     if (filter.type === 'exclude_units') {
         if (filter.values.includes(entity.unit)) return false;
@@ -1237,6 +1254,8 @@ function scoreSensorEntityForField(entity, key, historySignal) {
         if (filter.type === 'device_class' && entity.device_class === filter.value) score += 4;
         else if (filter.type === 'power_unit' && (entity.unit === 'W' || entity.unit === 'kW')) score += 4;
         else if (filter.type === 'state_on_off' && ['on', 'off'].includes((entity.state || '').toLowerCase())) score += 4;
+        else if (filter.type === 'writable_power' && (entity.unit === 'W' || entity.unit === 'kW')) score += 4;
+        else if (filter.type === 'domain' && filter.values.includes(entity.entity_id.split('.')[0])) score += 4;
     }
     const haystack = (entity.entity_id + ' ' + entity.label).toLowerCase();
     const keywords = SENSOR_MATCH_KEYWORDS[key] || [];
@@ -4625,8 +4644,11 @@ function buildBatteryDirectTestRow(actionKey) {
     statusIcon.hidden = true;
 
     function renderValues(values) {
+        // Die einzigen Felder, die hier je auftauchen (Timeout/Modus sind bewusst ausgeschlossen,
+        // siehe BATTERY_DIRECT_TEST_FIELDS in app.py), sind Limit Ladeleistung/Entladeleistung -
+        // beide immer in kW (siehe EXPECTED_UNITS in sync_service.py) - deshalb hier fest ergaenzt.
         valuesDisplay.textContent = (values || [])
-            .map(v => `${v.label}: ${(v.value === null || v.value === undefined) ? '–' : v.value}`)
+            .map(v => `${v.label}: ${(v.value === null || v.value === undefined) ? '–' : v.value + ' kW'}`)
             .join(' | ');
     }
 
@@ -4752,24 +4774,33 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
         refresh();
     };
 
-    // Eine gemeinsame Datalist fuer alle Batterie-Steuerungs-Entitaeten (Modus/Lade-/Entladelimit/
-    // Timeout) - dieselben Kandidaten wie fuer die normalen Sensoren dieser Sektion, ungefiltert
-    // nach device_class (die Entitaets-Typen variieren zu stark je Wechselrichter-Integration).
+    // Datalist fuer die Modus-Entitaet (battery_storage_command_mode) - muss settable sein und eine
+    // feste Optionsliste haben (select./input_select., siehe SENSOR_ENTITY_FILTERS). Lade-/
+    // Entladelimit bekommen unten je eine eigene, ebenso enge Datalist (settable, Leistungs-Einheit -
+    // siehe matchesWritablePower).
     const datalistId = 'entityOptions_batterie_steuerung';
     const datalist = document.createElement('datalist');
     datalist.id = datalistId;
-    for (const entity of candidateEntities) {
-        const option = document.createElement('option');
-        option.value = entity.label;
-        datalist.appendChild(option);
-    }
+    populateSensorDatalist(datalist, candidateEntities, 'battery_storage_command_mode', {});
     container.appendChild(datalist);
+
+    const chargeLimitDatalistId = 'entityOptions_batterie_steuerung_charge_limit';
+    const chargeLimitDatalist = document.createElement('datalist');
+    chargeLimitDatalist.id = chargeLimitDatalistId;
+    populateSensorDatalist(chargeLimitDatalist, candidateEntities, 'battery_charge_limit_current', {});
+    container.appendChild(chargeLimitDatalist);
+
+    const dischargeLimitDatalistId = 'entityOptions_batterie_steuerung_discharge_limit';
+    const dischargeLimitDatalist = document.createElement('datalist');
+    dischargeLimitDatalist.id = dischargeLimitDatalistId;
+    populateSensorDatalist(dischargeLimitDatalist, candidateEntities, 'battery_discharge_limit_current', {});
+    container.appendChild(dischargeLimitDatalist);
 
     container.appendChild(buildBatteryControlBlock('battery_charge_shift_pv_surplus', 'Batterie-Laden verschieben (PV-Überschuss)',
         'Verhindert gezieltes Laden aus PV-Überschuss, wenn sich das aktuell nicht lohnt.', () => {
             const wrap = document.createElement('div');
             wrap.appendChild(buildLabeledRow('Ladeleistung begrenzen', 'Entität, über die das Addon die Ladeleistung der Batterie begrenzt (Zahlenwert in kW).',
-                buildBatteryCoupledEntityField('battery_charge_limit_current', datalistId, refresh)));
+                buildBatteryCoupledEntityField('battery_charge_limit_current', chargeLimitDatalistId, refresh)));
             return wrap;
         }));
 
@@ -4777,35 +4808,37 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
         'Hält die Batterie diese Stunde bewusst vom Entladen ab.', () => {
             const wrap = document.createElement('div');
             wrap.appendChild(buildLabeledRow('Entladeleistung begrenzen', 'Entität, über die das Addon die Entladeleistung der Batterie begrenzt (Zahlenwert in kW).',
-                buildBatteryCoupledEntityField('battery_discharge_limit_current', datalistId, refresh)));
+                buildBatteryCoupledEntityField('battery_discharge_limit_current', dischargeLimitDatalistId, refresh)));
             return wrap;
         }));
 
     container.appendChild(buildBatteryControlBlock('battery_grid_charge', 'Batterie netzladen',
         'Lädt die Batterie gezielt aus dem Netz, wenn sich das laut Optimierung lohnt.', () => {
             const wrap = document.createElement('div');
-            wrap.appendChild(buildLabeledRow('Modus-Entität', 'Die "Steuerungsmodus"-Entität deiner Batterie (meist ein select), deren Modus das Addon umstellt. Dieselbe Entität wie bei "Batterie-Aktion beenden".',
+            wrap.appendChild(buildLabeledRow('Steuerungs-Modi', 'Die "Steuerungsmodus"-Entität deiner Batterie (meist ein select), deren Modus das Addon umstellt.',
                 buildBatteryCoupledEntityField('battery_storage_command_mode', datalistId, reloadModeOptions)));
             const modeOptions = batteryModeOptionsCache || [];
             const modeSelect = buildBatteryModeValueSelect('battery_mode_netzladen_value', configData['batteryModeNetzladenValue'], modeOptions);
             wrap.appendChild(buildLabeledRow('Modus "Netzladen"', 'Welcher Rohwert der Batterie-Modus-Entität bedeutet "aus dem Netz laden" (z.B. "Charge from Solar Power and Grid").', modeSelect));
             wrap.appendChild(buildLabeledRow('Ladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie-Laden verschieben" - dort bereits ausgefüllt, falls du das schon gemacht hast.',
-                buildBatteryCoupledEntityField('battery_charge_limit_current', datalistId, refresh)));
+                buildBatteryCoupledEntityField('battery_charge_limit_current', chargeLimitDatalistId, refresh)));
             return wrap;
         }));
 
     container.appendChild(buildBatteryControlBlock('battery_action_stop', 'Batterie-Aktion beenden',
         'Setzt den Modus zurück und hebt die Lade-/Entladelimits wieder auf - wird ausgelöst, sobald eine der drei Aktionen oben endet.', () => {
             const wrap = document.createElement('div');
-            wrap.appendChild(buildLabeledRow('Modus-Entität', 'Die "Steuerungsmodus"-Entität deiner Batterie (meist ein select), deren Modus das Addon umstellt. Dieselbe Entität wie bei "Batterie netzladen".',
-                buildBatteryCoupledEntityField('battery_storage_command_mode', datalistId, reloadModeOptions)));
+            // Steuerungs-Modi wird bewusst NICHT nochmal angezeigt (Nutzer-Feedback) - dieselbe
+            // Entitaet ist schon bei "Batterie netzladen" gepflegt (gemeinsamer sensorMappings-
+            // Schluessel, siehe buildBatteryCoupledEntityField), eine erneute Auswahl hier waere
+            // ueberfluessig und wuerde nur suggerieren, es koennte eine andere sein.
             const modeOptions = batteryModeOptionsCache || [];
             const modeSelect = buildBatteryModeValueSelect('battery_mode_self_consumption_value', configData['batteryModeSelfConsumptionValue'], modeOptions);
             wrap.appendChild(buildLabeledRow('Modus zurückstellen auf "Eigenverbrauchsmaximierung"', 'Welcher Rohwert der Batterie-Modus-Entität den Normalbetrieb bedeutet (z.B. "Maximize Self Consumption").', modeSelect));
             wrap.appendChild(buildLabeledRow('Ladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie-Laden verschieben"/"Batterie netzladen".',
-                buildBatteryCoupledEntityField('battery_charge_limit_current', datalistId, refresh)));
+                buildBatteryCoupledEntityField('battery_charge_limit_current', chargeLimitDatalistId, refresh)));
             wrap.appendChild(buildLabeledRow('Entladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie-Entladen verschieben".',
-                buildBatteryCoupledEntityField('battery_discharge_limit_current', datalistId, refresh)));
+                buildBatteryCoupledEntityField('battery_discharge_limit_current', dischargeLimitDatalistId, refresh)));
             return wrap;
         }));
 
