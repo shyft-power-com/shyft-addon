@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.75
+
+* **Beschreibungstexte aktualisiert** (`DOCS.md` und Add-on-Store-Kurzbeschreibung in `config.yaml`) - die alte, rein auf "Sensorwerte auslesen und Geräte steuern" fokussierte Formulierung erwähnte weder PV-Prognose, Auto-Anwesenheitsprognose, Wärmepumpen-/Batteriesteuerung noch die freie Hersteller-Anbindung über Home Assistant. `DOCS.md` nennt zudem gleich zu Beginn von "Konfiguration", dass das Add-on im Demomodus startet und nach dem Hinterlegen der Geräte automatisch der erste Einsatzplan berechnet wird.
+
 ## 0.0.45.74
 
 * **Neuer Stromtarif "Dynamischer Tarif + variable Netzentgelte" (§14a, Modul 3).** Zusätzlich zum automatisch abgerufenen EPEX-Börsenpreis lässt sich jetzt ein zeitvariables Netzentgelt hinterlegen (Hochtarif/Niedertarif, inkl. Abgaben/Steuer/Lieferantenmarge), das nur in ausgewählten Kalenderquartalen gilt - außerhalb davon greift durchgehend ein Standardtarif. Die Hochtarif-Zeitfenster (Wochentag + Stunden) werden mit demselben Editor gepflegt wie beim bestehenden "Hoch-/Niedertarif". Der bisherige "Dynamischer Tarif" heißt jetzt "Dynamischer Tarif + fixe Netzentgelte", um beide Varianten zu unterscheiden.

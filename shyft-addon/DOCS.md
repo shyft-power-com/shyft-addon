@@ -1,9 +1,10 @@
 # shyft-power HEMS
 
-Energy Management System für Home Assistant. Das Add-on liest die Sensorwerte deiner
-Geräte (PV, Batterie, Wärmepumpe, Wallbox, Auto, sonstige Verbraucher) aus Home
-Assistant aus, lässt sie von shyft-power optimieren und steuert deine Geräte so, dass
-deine Stromkosten sinken.
+Home-Energy-Management-System für Home Assistant. Mit dem du deine großen
+Stromverbraucher optimal steuern und so Stromkosten minimieren kannst. Inkl.
+PV-Prognose, Auto-Anwesenheitsprognose, Wärmepumpensteuerung über die Vorlauftemperatur
+und Batteriesteuerung. Dank der Integration in Home Assistant können quasi alle
+Hersteller angebunden werden. Die Steuerungen können zudem individualisiert werden.
 
 ## Installation
 
@@ -15,6 +16,9 @@ deine Stromkosten sinken.
    zuordnen und konfigurieren.
 
 ## Konfiguration
+
+Das Add-on startet im Demomodus. Hinterlege auf dem Reiter "Konfiguration" deine
+Geräte, nach wenigen Minuten wird der erste optimale Einsatzplan berechnet.
 
 | Option | Beschreibung |
 | --- | --- |
