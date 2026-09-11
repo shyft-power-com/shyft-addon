@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.74
+
+* **Neuer Stromtarif "Dynamischer Tarif + variable Netzentgelte" (§14a, Modul 3).** Zusätzlich zum automatisch abgerufenen EPEX-Börsenpreis lässt sich jetzt ein zeitvariables Netzentgelt hinterlegen (Hochtarif/Niedertarif, inkl. Abgaben/Steuer/Lieferantenmarge), das nur in ausgewählten Kalenderquartalen gilt - außerhalb davon greift durchgehend ein Standardtarif. Die Hochtarif-Zeitfenster (Wochentag + Stunden) werden mit demselben Editor gepflegt wie beim bestehenden "Hoch-/Niedertarif". Der bisherige "Dynamischer Tarif" heißt jetzt "Dynamischer Tarif + fixe Netzentgelte", um beide Varianten zu unterscheiden.
+
 ## 0.0.45.73
 
 * **Fix: Nach einem fehlgeschlagenen `create_user_addon`-Versuch ließ sich die automatische Konto-Erstellung nur durch Hin- und Herschalten eines Geräts erneut auslösen.** `maybe_create_real_account` prüfte bisher nur den exakten Demo→Echt-Übergangsmoment; jetzt reicht jedes erneute Speichern, solange mindestens ein echtes Gerät konfiguriert, noch kein Account angelegt und das Addon noch im Demomodus ist.

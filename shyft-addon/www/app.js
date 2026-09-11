@@ -651,6 +651,11 @@ async function saveConfigurationNow() {
         "electricityNtCent": configData["electricityNtCent"] ?? null,
         "electricityHtWindows": configData["electricityHtWindows"] ?? [],
         "electricityDynamicSurchargeCent": configData["electricityDynamicSurchargeCent"] ?? null,
+        "electricityNetzentgeltHtCent": configData["electricityNetzentgeltHtCent"] ?? null,
+        "electricityNetzentgeltNtCent": configData["electricityNetzentgeltNtCent"] ?? null,
+        "electricityNetzentgeltStandardCent": configData["electricityNetzentgeltStandardCent"] ?? null,
+        "electricityNetzentgeltWindows": configData["electricityNetzentgeltWindows"] ?? [],
+        "electricityNetzentgeltQuarters": configData["electricityNetzentgeltQuarters"] ?? [],
         "electricitySellCent": configData["electricitySellCent"] ?? null,
         // Konfig-Keys, die der Nutzer bewusst geaendert/bestaetigt hat (siehe markConfigFieldTouched) -
         // steuert den roten Rahmen um unbestaetigte Default-Felder und das Aufklappen der Kachel.
@@ -1476,6 +1481,7 @@ function isElectricityConfigComplete() {
     if (mode === 'fixed') tariffOk = has('electricityFixedCent');
     else if (mode === 'ht_nt') tariffOk = has('electricityHtCent') && has('electricityNtCent');
     else if (mode === 'dynamic') tariffOk = has('electricityDynamicSurchargeCent');
+    else if (mode === 'dynamic_variable') tariffOk = has('electricityNetzentgeltHtCent') && has('electricityNetzentgeltNtCent') && has('electricityNetzentgeltStandardCent');
     return tariffOk && has('electricitySellCent');
 }
 
@@ -1584,7 +1590,8 @@ function buildElectricityTariffControl() {
     wrap.appendChild(buildSegmentedControl([
         ['fixed', 'Fixer Tarif'],
         ['ht_nt', 'Hoch-/Niedertarif'],
-        ['dynamic', 'Dynamischer Tarif'],
+        ['dynamic', 'Dynamischer Tarif + fixe Netzentgelte'],
+        ['dynamic_variable', 'Dynamischer Tarif + variable Netzentgelte (Modul 3)'],
     ], mode, (val) => {
         configData['electricityTariffMode'] = val;
         renderPanels(val);
@@ -1616,10 +1623,28 @@ function buildElectricityTariffControl() {
             panels.appendChild(centField('Kosten Hochtarif (brutto)',
                 'Arbeitspreis in den Hochtarif-Zeitfenstern.',
                 'electricity_ht_cent', 'electricityHtCent', 'z.B. 35'));
-            panels.appendChild(buildHtWindowEditor());
+            panels.appendChild(buildHtWindowEditor('electricityHtWindows',
+                'Noch keine Hochtarif-Zeitfenster - ohne Fenster gilt durchgehend der Niedertarif.'));
             panels.appendChild(centField('Niedertarif (brutto)',
                 'Arbeitspreis zu allen übrigen Zeiten.',
                 'electricity_nt_cent', 'electricityNtCent', 'z.B. 25'));
+        } else if (m === 'dynamic_variable') {
+            const note = document.createElement('p');
+            note.className = 'electricityHint';
+            note.textContent = 'Die Börsenpreise (Brutto, EPEX Day-Ahead) werden automatisch von der Strombörse abgerufen. Das Netzentgelt (deckt zugleich Abgaben, Steuer und Lieferantenmarge mit ab) ist zeitvariabel (§14a, Modul 3): in den unten gewählten Quartalen gilt zu den definierten Zeitfenstern der Hochtarif, sonst der Niedertarif - außerhalb der gewählten Quartale durchgehend der Standardtarif.';
+            panels.appendChild(note);
+            panels.appendChild(centField('Netzentgelte, Hochtarif (brutto)',
+                'Netzentgelt (inkl. Abgaben/Steuer/Marge) in den unten definierten Zeitfenstern, in den gewählten Quartalen.',
+                'electricity_netzentgelt_ht_cent', 'electricityNetzentgeltHtCent', 'z.B. 18'));
+            panels.appendChild(buildHtWindowEditor('electricityNetzentgeltWindows',
+                'Noch keine Hochtarif-Zeitfenster - ohne Fenster gilt in den gewählten Quartalen durchgehend der Niedertarif.'));
+            panels.appendChild(centField('Netzentgelte, Niedertarif (brutto)',
+                'Netzentgelt (inkl. Abgaben/Steuer/Marge) außerhalb der Hochtarif-Zeitfenster, in den gewählten Quartalen.',
+                'electricity_netzentgelt_nt_cent', 'electricityNetzentgeltNtCent', 'z.B. 7'));
+            panels.appendChild(centField('Standardtarif (brutto)',
+                'Netzentgelt (inkl. Abgaben/Steuer/Marge) außerhalb der gewählten Quartale, ganztägig.',
+                'electricity_netzentgelt_standard_cent', 'electricityNetzentgeltStandardCent', 'z.B. 14'));
+            panels.appendChild(buildNetzentgeltQuarterField());
         } else {
             const note = document.createElement('p');
             note.className = 'electricityHint';
@@ -1649,7 +1674,10 @@ function buildElectricityTariffControl() {
     return wrap;
 }
 
-function buildHtWindowEditor() {
+// Wochentag/Stundenfenster-Editor fuer Hochtarif-Zeitfenster - von 'ht_nt' und 'dynamic_variable'
+// geteilt (je eigener configKey: electricityHtWindows bzw. electricityNetzentgeltWindows), da beide
+// Tarifarten eigene, unabhaengige Zeitfenster brauchen koennen (unterschiedliche Vertraege).
+function buildHtWindowEditor(configKey, emptyHint) {
     const wrap = document.createElement('div');
     wrap.className = 'htWindowEditor';
 
@@ -1699,11 +1727,11 @@ function buildHtWindowEditor() {
 
     function render() {
         list.innerHTML = '';
-        const windows = configData['electricityHtWindows'] || [];
+        const windows = configData[configKey] || [];
         if (!windows.length) {
             const empty = document.createElement('p');
             empty.className = 'electricityHint';
-            empty.textContent = 'Noch keine Hochtarif-Zeitfenster - ohne Fenster gilt durchgehend der Niedertarif.';
+            empty.textContent = emptyHint;
             list.appendChild(empty);
             return;
         }
@@ -1718,7 +1746,7 @@ function buildHtWindowEditor() {
             del.title = 'Zeitfenster entfernen';
             del.textContent = '🗑';
             del.addEventListener('click', () => {
-                configData['electricityHtWindows'].splice(idx, 1);
+                configData[configKey].splice(idx, 1);
                 render();
                 autoSave();
             });
@@ -1730,13 +1758,46 @@ function buildHtWindowEditor() {
     addBtn.addEventListener('click', () => {
         const w = {weekday: parseInt(wdSel.value, 10), from: parseInt(fromSel.value, 10), to: parseInt(toSel.value, 10)};
         if (w.to === w.from) return;
-        configData['electricityHtWindows'] = configData['electricityHtWindows'] || [];
-        configData['electricityHtWindows'].push(w);
+        configData[configKey] = configData[configKey] || [];
+        configData[configKey].push(w);
         render();
         autoSave();
     });
 
     render();
+    return wrap;
+}
+
+// Quartals-Checkboxen fuer 'dynamic_variable' (§14a Modul 3) - in welchen Kalenderquartalen das
+// variable Netzentgelt gilt (sonst durchgehend der Standardtarif). Kalenderquartale, LOKALE Zeit
+// (siehe compute_price_buy_array in app.py: quarter = (month - 1) // 3 + 1).
+function buildNetzentgeltQuarterField() {
+    const wrap = document.createElement('div');
+
+    const hint = document.createElement('p');
+    hint.className = 'electricityHint';
+    hint.textContent = 'In diesen Quartalen gilt das variable Netzentgelt (Hoch-/Niedertarif); in den übrigen Quartalen gilt durchgehend der Standardtarif.';
+    wrap.appendChild(hint);
+
+    const list = document.createElement('div');
+    list.className = 'quarterCheckboxRow';
+    const quarters = configData['electricityNetzentgeltQuarters'] || [];
+    for (let q = 1; q <= 4; q++) {
+        const label = document.createElement('label');
+        label.className = 'quarterCheckboxItem';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = quarters.includes(q);
+        cb.addEventListener('change', () => {
+            const current = new Set(configData['electricityNetzentgeltQuarters'] || []);
+            if (cb.checked) current.add(q); else current.delete(q);
+            configData['electricityNetzentgeltQuarters'] = Array.from(current).sort((a, b) => a - b);
+            autoSave();
+        });
+        label.append(cb, document.createTextNode(q + '. Quartal'));
+        list.appendChild(label);
+    }
+    wrap.appendChild(list);
     return wrap;
 }
 

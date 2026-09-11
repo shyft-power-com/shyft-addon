@@ -367,16 +367,23 @@ _last_site_data_submit = {"at": None}
 
 
 # ============================================================================
-# Stromtarif -> stuendlicher Einkaufspreis (EUR/kWh) fuer die optimizer-input.csv. Drei Modi
+# Stromtarif -> stuendlicher Einkaufspreis (EUR/kWh) fuer die optimizer-input.csv. Vier Modi
 # (electricityTariffMode, siehe Konfigurationsseite "Strom"):
-#   - "fixed":   ein fester Arbeitspreis (electricityFixedCent) fuer jede Stunde
-#   - "ht_nt":   Hoch-/Niedertarif - electricityHtCent in den electricityHtWindows-Zeitfenstern
-#                (Wochentag + Stundenfenster, LOKALE Zeit), sonst electricityNtCent
-#   - "dynamic": EPEX-Day-Ahead-Boersenpreis (Awattar-API, brutto) + fester Aufschlag
-#                (electricityDynamicSurchargeCent)
+#   - "fixed":            ein fester Arbeitspreis (electricityFixedCent) fuer jede Stunde
+#   - "ht_nt":            Hoch-/Niedertarif - electricityHtCent in den electricityHtWindows-
+#                         Zeitfenstern (Wochentag + Stundenfenster, LOKALE Zeit), sonst electricityNtCent
+#   - "dynamic":          EPEX-Day-Ahead-Boersenpreis (Awattar-API, brutto) + fester Aufschlag
+#                         (electricityDynamicSurchargeCent) - deckt Netzentgelt/Abgaben/Steuer/Marge
+#                         zusammen als ein Wert ab ("Dynamischer Tarif + fixe Netzentgelte")
+#   - "dynamic_variable": §14a-Modul-3 ("Dynamischer Tarif + variable Netzentgelte") - EPEX-
+#                         Boersenpreis + zeitvariables Netzentgelt (deckt ebenfalls Abgaben/Steuer/
+#                         Marge mit ab): electricityNetzentgeltHtCent in den
+#                         electricityNetzentgeltWindows-Zeitfenstern, sonst electricityNetzentgeltNtCent
+#                         - beides nur in den per electricityNetzentgeltQuarters gewaehlten
+#                         Kalenderquartalen (1=Jan-Mrz, 2=Apr-Jun, 3=Jul-Sep, 4=Okt-Dez, LOKALE Zeit),
+#                         ausserhalb davon durchgehend electricityNetzentgeltStandardCent
 # Ergebnis geht als NEUES Feld "p_buy_addon" (";"-joined) in liveValues - der bestehende
 # staticConfig-Wert "Electricity Price Buy" bleibt unangetastet, bis der Server umgestellt ist.
-# §14a-Modul-3 (variable Netzentgelte) ist bewusst noch nicht abgebildet.
 # ============================================================================
 
 AWATTAR_URL = "https://api.awattar.de/v1/marketdata"
@@ -493,6 +500,40 @@ def compute_price_buy_array(config, base_time_utc, hours):
                 fallback = by_hour.get(h - timedelta(days=1)) or by_hour.get(h - timedelta(days=2))
                 price = fallback if fallback is not None else (out[-1] - surcharge if out else 0.0)
             out.append(round(price + surcharge, 5))
+        return out
+
+    if mode == "dynamic_variable":
+        ht, nt = _cent("electricityNetzentgeltHtCent"), _cent("electricityNetzentgeltNtCent")
+        standard = _cent("electricityNetzentgeltStandardCent")
+        if ht is None or nt is None or standard is None:
+            return None
+        windows = config.get("electricityNetzentgeltWindows") or []
+        quarters = set(config.get("electricityNetzentgeltQuarters") or [])
+        spot = _fetch_awattar_prices()  # {epoch_ms: EUR/kWh brutto}
+        if not spot:
+            return None
+        by_hour = {}
+        for ts_ms, price in spot.items():
+            by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
+        out = []
+        prev_raw_price = None
+        for i in range(hours):
+            h = (base_time_utc + timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
+            raw_price = by_hour.get(h)
+            if raw_price is None:
+                # Randstunden jenseits des Awattar-Fensters ueber das Tagesprofil des letzten
+                # abgedeckten Tages fortschreiben, sonst den letzten bekannten Roh-Boersenpreis halten.
+                raw_price = by_hour.get(h - timedelta(days=1)) or by_hour.get(h - timedelta(days=2))
+            if raw_price is None:
+                raw_price = prev_raw_price if prev_raw_price is not None else 0.0
+            local_dt = h.astimezone()
+            quarter = (local_dt.month - 1) // 3 + 1
+            if quarter in quarters:
+                netzentgelt = ht if _hour_in_ht_windows(local_dt, windows) else nt
+            else:
+                netzentgelt = standard
+            out.append(round(raw_price + netzentgelt, 5))
+            prev_raw_price = raw_price
         return out
 
     return None

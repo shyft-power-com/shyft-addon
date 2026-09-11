@@ -641,6 +641,23 @@
             cursor: pointer;
             padding: 0.1em 0.2em;
         }
+        .quarterCheckboxRow {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.9em;
+            margin: 0.2em 0 0.8em;
+        }
+        .quarterCheckboxItem {
+            display: flex;
+            align-items: center;
+            gap: 0.4em;
+            font-size: 0.9em;
+            color: var(--color-text);
+            cursor: pointer;
+        }
+        .quarterCheckboxItem input {
+            margin: 0;
+        }
         /* Prüfzeile im dynamischen Stromtarif (siehe buildElectricityPricePreview) - nur der
            Gesamtpreis (Börse + fixer Anteil) der aktuellen Stunde. */
         .electricityPricePreview {
