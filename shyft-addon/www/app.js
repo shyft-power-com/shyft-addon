@@ -7421,7 +7421,16 @@ function buildEnergyFlowSvgMobile(data) {
     measureHost.style.cssText = 'position:absolute;visibility:hidden;width:0;height:0;overflow:hidden;';
     document.body.appendChild(measureHost);
     measureHost.appendChild(svg);
+    // Die animierten Fluss-Punkte (buildFlowDots, <animateMotion>) wandern kontinuierlich entlang
+    // ihrer Leitung - ihre Position IN DIESEM MOMENT ist zufaellig (der zweite Punkt je Leitung
+    // startet per negativem "begin" sogar schon in der Mitte seines Laufs) und darf die Zuschnitt-
+    // Berechnung nicht verzerren, sonst haengt der Rand vom Animationsstand statt vom tatsaechlichen
+    // Inhalt ab (Nutzer-Feedback: sehr grosser, wechselnder Rand auf einer Seite). Fuer die Messung
+    // kurz ausblenden (getBBox() ignoriert display:none), danach sofort wieder sichtbar machen.
+    const dots = svg.querySelectorAll('.energyFlowDot');
+    for (const dot of dots) dot.style.display = 'none';
     const contentBox = svg.getBBox();
+    for (const dot of dots) dot.style.display = '';
     document.body.removeChild(measureHost);
     const cropMargin = 24;
     // Symmetrisch um houseCx zuschneiden (nicht einfach die engste Huelle um den ganzen Inhalt) -

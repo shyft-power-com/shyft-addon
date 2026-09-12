@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.87
+
+* **Fix: Energiefluss-Widget (Mobil) hatte teils einen viel zu breiten Rand auf einer Seite.** Der neue Zuschnitt (0.0.45.86) maß versehentlich auch die Position der animierten Stromfluss-Punkte mit - deren Position ist durch die laufende Animation zufällig (der zweite Punkt je Leitung startet sogar schon mitten im Umlauf) und ließ den Rand mal größer, mal kleiner wirken, je nachdem wo die Punkte gerade standen. Die Punkte werden für die Zuschnitt-Berechnung jetzt ausgeblendet, direkt danach wieder eingeblendet.
+
 ## 0.0.45.86
 
 * **Energiefluss-Widget (Mobil): Haus/Leitungen/Auto/Sonne jetzt exakt mittig, gleich großer Rand links und rechts.** Der Zuschnitt orientierte sich bisher an der engsten Hülle um den gesamten Inhalt - ragte z.B. der Netzmast samt Preis-Beschriftung links weiter heraus als die Verbraucher-Spalten rechts, wirkte der linke Rand größer. Jetzt wird symmetrisch um die Haus-Mitte zugeschnitten.
