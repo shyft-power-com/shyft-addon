@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.85
+
+* **Fix: Nach dem Tausch eines Sensors (z.B. Innenraumtemperatur) blieb die "hat sich seit X Stunden nicht aktualisiert"-Meldung für den ALTEN Sensor stehen**, obwohl er in keinem Feld mehr zugeordnet war. Der bestehende Abgleich beim Speichern gab bisher nur ein offenes "sensor_unavailable"-Problem für die alte Entität frei, nicht das ebenso pro Entität geführte "sensor_stale". Zusätzlich prüft das Addon das jetzt auch einmalig beim Start (Self-Heal) - deckt auch einen Sensor-Tausch ab, der schon vor diesem Fix passiert ist und dessen Meldung sonst dauerhaft hängen geblieben wäre.
+
 ## 0.0.45.84
 
 * **Energiefluss-Widget im Mobil-Layout deutlich größer und besser lesbar.** Die Grafik wird jetzt horizontal auf den tatsächlich gezeichneten Inhalt zugeschnitten (statt eines festen, oft halb leeren Rahmens) und die Schrift ist größer - zusammen wirkt die gesamte Übersichtsgrafik proportional größer, mit nur noch normalem Rand statt breiten leeren Seitenstreifen.

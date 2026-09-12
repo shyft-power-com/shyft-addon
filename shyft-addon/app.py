@@ -2753,6 +2753,27 @@ def _last_output_csv_ti_raw_equivalent(t_min):
     return t_min + (ti - t_min) * 10.0
 
 
+def _reconcile_orphaned_sensor_problems():
+    """Self-Heal beim Addon-Start: gibt 'sensor_unavailable:<entity_id>'/'sensor_stale:<entity_id>'-
+    Probleme frei, deren entity_id in KEINEM aktuellen sensorMappings-Wert mehr vorkommt. Der
+    Abgleich in writeConfig (siehe old_health_entity_ids) faengt das nur ab, wenn die Aenderung IN
+    DEM Moment des Speicherns erkannt wird - ein Sensor-Tausch, der schon VOR diesem Fix (bzw. vor
+    einem Addon-Neustart waehrend eine solche Meldung schon offen war) passierte, bliebe sonst
+    dauerhaft haengen (kein automatisches Verfallsdatum, siehe problem_registry). Live beobachtet:
+    nach einem Sensor-Tausch blieb "hat sich seit X Stunden nicht aktualisiert" fuer den ALTEN
+    Sensor stehen, obwohl er in keinem Feld mehr zugeordnet war."""
+    config = _read_current_config()
+    current_entity_ids = set((config.get("sensorMappings") or {}).values())
+    for problem in problem_registry.active_problems():
+        problem_id = problem.get("id", "")
+        for prefix in ("sensor_unavailable:", "sensor_stale:"):
+            if problem_id.startswith(prefix):
+                entity_id = problem_id[len(prefix):]
+                if entity_id and entity_id not in current_entity_ids:
+                    problem_registry.clear(problem_id)
+                break
+
+
 def _note_indoor_temp_staleness(entity_id, age_seconds):
     """Registriert/loescht das Problem 'sensor_stale:<entity_id>' fuer den Innentemperatur-Sensor
     auf der Fehler-/Statuskarte. age_seconds=None -> HA liefert keinen Zeitstempel bzw. der Sensor
@@ -3989,13 +4010,17 @@ def writeConfig():
 
     _write_current_config(data)
 
-    # Ein neu zugeordneter/entfernter Sensor macht ein evtl. noch offenes "sensor_unavailable"-
-    # Problem fuer die alte Entity gegenstandslos - aktiv freigeben, statt auf ein Timeout zu warten
-    # (das es bewusst nicht gibt, siehe problem_registry).
+    # Ein neu zugeordneter/entfernter Sensor macht ein evtl. noch offenes "sensor_unavailable"- bzw.
+    # "sensor_stale"-Problem fuer die alte Entity gegenstandslos - aktiv freigeben, statt auf ein
+    # Timeout zu warten (das es bewusst nicht gibt, siehe problem_registry). Live beobachtet: nach
+    # dem Tausch des Innenraumtemperatur-Sensors blieb die "hat sich seit X Stunden nicht
+    # aktualisiert"-Meldung fuer den ALTEN Sensor stehen, weil nur sensor_unavailable freigegeben
+    # wurde, nicht sensor_stale (beide sind ebenso wie hier pro Entity-ID registriert).
     for key, old_entity_id in old_health_entity_ids.items():
         new_entity_id = data.get("sensorMappings", {}).get(key, "")
         if old_entity_id and old_entity_id != new_entity_id:
             problem_registry.clear(f"sensor_unavailable:{old_entity_id}")
+            problem_registry.clear(f"sensor_stale:{old_entity_id}")
 
     new_wallbox_mapping = data.get("wallboxConnectionStatusMapping", {})
     if new_wallbox_mapping and new_wallbox_mapping != old_wallbox_mapping:
@@ -6717,6 +6742,11 @@ if __name__ == "__main__":
         run_hourly_action_transition()
     except Exception as e:
         print("Failed to reconcile shyft actions at startup:", repr(e))
+
+    try:
+        _reconcile_orphaned_sensor_problems()
+    except Exception as e:
+        print("Failed to reconcile orphaned sensor problems at startup:", repr(e))
 
     live_entity_watcher.start()
 
