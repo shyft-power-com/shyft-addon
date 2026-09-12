@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.86
+
+* **Energiefluss-Widget (Mobil): Haus/Leitungen/Auto/Sonne jetzt exakt mittig, gleich großer Rand links und rechts.** Der Zuschnitt orientierte sich bisher an der engsten Hülle um den gesamten Inhalt - ragte z.B. der Netzmast samt Preis-Beschriftung links weiter heraus als die Verbraucher-Spalten rechts, wirkte der linke Rand größer. Jetzt wird symmetrisch um die Haus-Mitte zugeschnitten.
+* **Schrift im Mobil-Layout nochmal größer** (21px → 25px) - dafür mussten einige der längsten Detailzeilen (Warmwasserspeicher-Temperatur, Heizungsstatus+Vorlauftemperatur, "Sonstiges Gerät" gekürzt zu "Sonstiges") auf zwei Zeilen bzw. kürzer gefasst werden, sonst liefen sie bei der größeren Schrift in die Nachbarspalte - macht die Grafik dafür etwas länger, wie vorgeschlagen.
+
 ## 0.0.45.85
 
 * **Fix: Nach dem Tausch eines Sensors (z.B. Innenraumtemperatur) blieb die "hat sich seit X Stunden nicht aktualisiert"-Meldung für den ALTEN Sensor stehen**, obwohl er in keinem Feld mehr zugeordnet war. Der bestehende Abgleich beim Speichern gab bisher nur ein offenes "sensor_unavailable"-Problem für die alte Entität frei, nicht das ebenso pro Entität geführte "sensor_stale". Zusätzlich prüft das Addon das jetzt auch einmalig beim Start (Self-Heal) - deckt auch einen Sensor-Tausch ab, der schon vor diesem Fix passiert ist und dessen Meldung sonst dauerhaft hängen geblieben wäre.

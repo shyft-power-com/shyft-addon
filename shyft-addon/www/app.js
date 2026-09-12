@@ -6819,9 +6819,9 @@ function renderDrawnSunOrMoon(cx, cy, isDaytime) {
 const FLOW_LABEL_LINE_HEIGHT = 14;
 // Der tatsaechliche Zeilenabstand ist 1.2em (siehe dy weiter unten) - 14 passt zur Desktop-Schrift
 // (13px * 1.2 = 15.6, gerundet 14 als Kompromiss). Das Mobil-Layout hat eine deutlich groessere
-// Schrift (21px, siehe .energyFlowLabel-Media-Query in index.html) und braucht deshalb ihren
-// eigenen, groesseren Wert (21 * 1.2 = 25.2, gerundet 25) - siehe buildEnergyFlowSvgMobile.
-const MOBILE_FLOW_LABEL_LINE_HEIGHT = 25;
+// Schrift (25px, siehe .energyFlowLabel-Media-Query in index.html) und braucht deshalb ihren
+// eigenen, groesseren Wert (25 * 1.2 = 30) - siehe buildEnergyFlowSvgMobile.
+const MOBILE_FLOW_LABEL_LINE_HEIGHT = 30;
 const FLOW_LABEL_BASELINE_ADJUST = 4;
 // Gemeinsamer Abstand ueber der jeweiligen (horizontalen) Stromleitung fuer Grid- und
 // Eigenverbrauchs-Beschriftung - beide Leitungen liegen auf derselben Hoehe (pylonCy === houseCy),
@@ -7314,10 +7314,17 @@ function buildEnergyFlowSvgMobile(data) {
                     `Wärmepumpe: ${withStaleness(data.heatpump.on === null ? '–' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES)}`,
                     data.heatpump.targetTempC !== null ? `Soll: ${formatTemp(data.heatpump.targetTempC)}` : null,
                     data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
-                    data.heatpump.dhwTankTempC !== null ? `WW-Speicher: ${formatTemp(data.heatpump.dhwTankTempC)}` : null,
-                    (data.heatpump.heatingOn !== null || data.heatpump.supplyTempC !== null)
-                        ? `Heizung: ${data.heatpump.heatingOn ? 'An' : 'Aus'}` + (data.heatpump.supplyTempC !== null ? ` (${formatTemp(data.heatpump.supplyTempC)})` : '')
-                        : null,
+                    // Label und Wert auf zwei Zeilen statt einer zu langen - "WW-Speicher: 36,5 °C"
+                    // war bei der groesseren Mobil-Schrift die tatsaechlich breiteste Zeile im ganzen
+                    // Block (breiter als "Wärmepumpe: An"), lief also trotz der Heizung-Aufteilung
+                    // unten weiterhin in die Nachbarspalte.
+                    data.heatpump.dhwTankTempC !== null ? 'WW-Speicher:' : null,
+                    data.heatpump.dhwTankTempC !== null ? formatTemp(data.heatpump.dhwTankTempC) : null,
+                    // Heizungsstatus und Vorlauftemperatur auf zwei Zeilen statt einer zu langen -
+                    // "Heizung: An (45,2 °C)" lief bei der groesseren Mobil-Schrift leicht in die
+                    // Nachbarspalte (dasselbe Problem wie zuvor bei Ladestand/Reichweite des Autos).
+                    data.heatpump.heatingOn !== null ? `Heizung: ${data.heatpump.heatingOn ? 'An' : 'Aus'}` : null,
+                    data.heatpump.supplyTempC !== null ? `(${formatTemp(data.heatpump.supplyTempC)})` : null,
                 ].filter(Boolean)});
             } else if (type === 'car') {
                 const iconHalfH = 38;
@@ -7344,7 +7351,10 @@ function buildEnergyFlowSvgMobile(data) {
                 const drop = buildFlowLineFromPath(`M ${colX},${busY} V ${rowY - iconHalfH}`, flows.sonstigerFlowKw);
                 if (drop) svg.appendChild(drop);
                 svg.appendChild(buildPlugIcon(colX, rowY, flows.sonstigerOn, plugScale));
-                deviceDetailBlocks.push({colX, type, lines: [`Sonstiges Gerät: ${flows.sonstigerOn ? 'An' : 'Aus'}`]});
+                // "Sonstiges" statt "Sonstiges Gerät" - im Mobil-Layout etwas kuerzer, damit die
+                // Zeile bei der groesseren Schrift nicht in die Nachbarspalte (Auto) laeuft; der
+                // Geraetename selbst steht ohnehin schon im Konfigurations-/Ueberschriftenkontext.
+                deviceDetailBlocks.push({colX, type, lines: [`Sonstiges: ${flows.sonstigerOn ? 'An' : 'Aus'}`]});
             } else if (type === 'household') {
                 const iconHalfH = 16;
                 const drop = buildFlowLineFromPath(`M ${colX},${busY} V ${rowY - iconHalfH}`, flows.householdFlowKw);
@@ -7414,8 +7424,14 @@ function buildEnergyFlowSvgMobile(data) {
     const contentBox = svg.getBBox();
     document.body.removeChild(measureHost);
     const cropMargin = 24;
-    const cropLeft = Math.max(0, contentBox.x - cropMargin);
-    const cropRight = Math.min(VIEW_W, contentBox.x + contentBox.width + cropMargin);
+    // Symmetrisch um houseCx zuschneiden (nicht einfach die engste Huelle um den ganzen Inhalt) -
+    // sonst waeren Haus/senkrechte Leitungen/Auto/Sonne nicht mittig, sobald z.B. der Mast samt
+    // Preis-Beschriftung links weiter herausragt als die rechte Verbraucher-Spalte (Nutzer-Feedback:
+    // linker Rand deutlich groesser als rechter). Der groessere der beiden Abstaende bestimmt die
+    // halbe Breite - auf der kuerzeren Seite bleibt dafuer etwas mehr Luft als unbedingt noetig.
+    const halfSpan = Math.max(houseCx - contentBox.x, (contentBox.x + contentBox.width) - houseCx) + cropMargin;
+    const cropLeft = houseCx - halfSpan;
+    const cropRight = houseCx + halfSpan;
 
     // Hoehe (anders als beim Desktop-Layout mit fester VIEW_H) dynamisch anhand des tatsaechlich
     // gezeichneten Inhalts - die Verbraucher-Labels unten sind unterschiedlich lang (bis zu 5 Zeilen
