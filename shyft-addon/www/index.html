@@ -1361,7 +1361,15 @@
                 display: block;
             }
             .energyFlowLabel {
-                font-size: 18px;
+                font-size: 21px;
+            }
+            /* "Fahrt planen" sitzt im Mobil-Layout bereits direkt im Energiefluss-Widget, unter dem
+               Auto-Icon (siehe buildEnergyFlowSvgMobile) - der alte Button weiter unten beim
+               "Ladestand Auto"-Chart waere hier nur eine verwirrende Dopplung. Auf dem Desktop-
+               Layout (kein Platz fuer den Button direkt am Auto-Icon) bleibt er dort unveraendert.
+               .tripPlanButtonRow wird ausschliesslich fuer diesen einen, alten Button verwendet. */
+            .tripPlanButtonRow {
+                display: none;
             }
         }
         /* Die Leitung selbst ist immer sichtbar (grau, statisch) - siehe buildFlowConduit. Fliesst

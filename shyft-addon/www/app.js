@@ -6819,9 +6819,9 @@ function renderDrawnSunOrMoon(cx, cy, isDaytime) {
 const FLOW_LABEL_LINE_HEIGHT = 14;
 // Der tatsaechliche Zeilenabstand ist 1.2em (siehe dy weiter unten) - 14 passt zur Desktop-Schrift
 // (13px * 1.2 = 15.6, gerundet 14 als Kompromiss). Das Mobil-Layout hat eine deutlich groessere
-// Schrift (18px, siehe .energyFlowLabel-Media-Query in index.html) und braucht deshalb ihren
-// eigenen, groesseren Wert (18 * 1.2 = 21.6) - siehe buildEnergyFlowSvgMobile.
-const MOBILE_FLOW_LABEL_LINE_HEIGHT = 22;
+// Schrift (21px, siehe .energyFlowLabel-Media-Query in index.html) und braucht deshalb ihren
+// eigenen, groesseren Wert (21 * 1.2 = 25.2, gerundet 25) - siehe buildEnergyFlowSvgMobile.
+const MOBILE_FLOW_LABEL_LINE_HEIGHT = 25;
 const FLOW_LABEL_BASELINE_ADJUST = 4;
 // Gemeinsamer Abstand ueber der jeweiligen (horizontalen) Stromleitung fuer Grid- und
 // Eigenverbrauchs-Beschriftung - beide Leitungen liegen auf derselben Hoehe (pylonCy === houseCy),
@@ -7310,7 +7310,7 @@ function buildEnergyFlowSvgMobile(data) {
                 const hp = buildFlowImage('assets/heatpump.jpg', colX, rowY, 499, 492, 70);
                 if (data.heatpump.on) hp.setAttribute('class', 'energyFlowPulse');
                 svg.appendChild(hp);
-                deviceDetailBlocks.push({colX, lines: [
+                deviceDetailBlocks.push({colX, type, lines: [
                     `Wärmepumpe: ${withStaleness(data.heatpump.on === null ? '–' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES)}`,
                     data.heatpump.targetTempC !== null ? `Soll: ${formatTemp(data.heatpump.targetTempC)}` : null,
                     data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
@@ -7327,25 +7327,30 @@ function buildEnergyFlowSvgMobile(data) {
                 const carImg = isAway ? {href: 'assets/ev-away.jpg', w: 356, h: 239} : {href: 'assets/ev-connected.jpg', w: 464, h: 229};
                 svg.appendChild(buildFlowImage(carImg.href, colX, rowY, carImg.w, carImg.h, 100));
                 const carLines = [];
-                if (data.car.soc !== null) carLines.push(withStaleness(`Auto: Ladestand ${Math.round(data.car.soc)} %` + (data.car.rangeKm !== null ? ` (${data.car.rangeKm} km)` : ''), data.car.updatedAt, OTHER_STALE_MINUTES));
-                else carLines.push('Auto');
+                // Ladestand und Reichweite auf zwei Zeilen statt einer langen - bei der ohnehin
+                // schmalen Pro-Spalte-Breite im Mobil-Layout (bis zu 4 Geraete nebeneinander) lief
+                // eine einzelne Zeile "Auto: Ladestand 55 % (183 km)" leicht in die Nachbarspalte.
+                if (data.car.soc !== null) {
+                    carLines.push(withStaleness(`Auto: Ladestand ${Math.round(data.car.soc)} %`, data.car.updatedAt, OTHER_STALE_MINUTES));
+                    if (data.car.rangeKm !== null) carLines.push(`(${data.car.rangeKm} km)`);
+                } else carLines.push('Auto');
                 if (data.car.state === 'away') carLines.push('abwesend');
                 else if (data.car.state === 'charging') carLines.push(data.car.chargingKw != null ? `Lädt (${formatKwValue(data.car.chargingKw)})` : 'lädt');
                 else if (data.car.state === 'connected') carLines.push('eingesteckt');
-                deviceDetailBlocks.push({colX, lines: carLines});
+                deviceDetailBlocks.push({colX, type, lines: carLines});
             } else if (type === 'sonstiger') {
                 const iconHalfH = 34;
                 const plugScale = 1.9;
                 const drop = buildFlowLineFromPath(`M ${colX},${busY} V ${rowY - iconHalfH}`, flows.sonstigerFlowKw);
                 if (drop) svg.appendChild(drop);
                 svg.appendChild(buildPlugIcon(colX, rowY, flows.sonstigerOn, plugScale));
-                deviceDetailBlocks.push({colX, lines: [`Sonstiges Gerät: ${flows.sonstigerOn ? 'An' : 'Aus'}`]});
+                deviceDetailBlocks.push({colX, type, lines: [`Sonstiges Gerät: ${flows.sonstigerOn ? 'An' : 'Aus'}`]});
             } else if (type === 'household') {
                 const iconHalfH = 16;
                 const drop = buildFlowLineFromPath(`M ${colX},${busY} V ${rowY - iconHalfH}`, flows.householdFlowKw);
                 if (drop) svg.appendChild(drop);
                 svg.appendChild(buildLightningIcon(colX, rowY));
-                deviceDetailBlocks.push({colX, lines: ['Haushaltsstrom']});
+                deviceDetailBlocks.push({colX, type, lines: ['Haushaltsstrom']});
             }
         });
 
@@ -7357,18 +7362,66 @@ function buildEnergyFlowSvgMobile(data) {
         // brauchte. Kollisionsgefahr besteht trotzdem nicht: die Bloecke stehen ja bereits an
         // unterschiedlichem x (siehe oben).
         const detailBlocksTopY = rowY + 60;
-        for (const {colX, lines} of deviceDetailBlocks) {
+        let carBlock = null;
+        for (const {colX, type, lines} of deviceDetailBlocks) {
             const placed = placeLabelBelow(colX, detailBlocksTopY, lines, {anchor: 'middle', lineHeight: MOBILE_FLOW_LABEL_LINE_HEIGHT});
             svg.appendChild(placed.el);
             contentBottomY = Math.max(contentBottomY, placed.bottomY + 16);
+            if (type === 'car') carBlock = {colX, bottomY: placed.bottomY};
+        }
+
+        // "Fahrt planen" direkt unter dem Auto-Icon/der Beschriftung statt weiter unten beim
+        // "Ladestand Auto"-Chart (Nutzer-Feedback: dort war der Zusammenhang mit dem Auto nicht
+        // sofort ersichtlich). foreignObject statt eines separaten HTML-Elements ausserhalb des SVG,
+        // damit der Button automatisch an derselben X-Position wie das Auto-Icon bleibt, auch wenn
+        // sich colX durch mehr/weniger konfigurierte Geraete verschiebt. Eigene, deutlich groessere
+        // Schrift/Polsterung statt der normalen .tripPlanButton-Klasse: Inhalt eines foreignObject
+        // wird vom selben viewBox->Viewport-Massstab wie der Rest des SVG herunterskaliert (bei
+        // ca. 900 Einheiten Breite auf ca. 330 echte Pixel etwa Faktor 0,35) - normale 16px-Schrift
+        // waere danach nur noch ca. 5-6 echte Pixel gross.
+        if (carBlock) {
+            const buttonW = 380, buttonH = 90;
+            const fo = svgEl('foreignObject', {
+                x: carBlock.colX - buttonW / 2, y: carBlock.bottomY + 16, width: buttonW, height: buttonH,
+            });
+            const foDiv = document.createElement('div');
+            foDiv.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+            foDiv.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;';
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = 'Fahrt planen';
+            button.style.cssText = 'font-family:var(--font-body);background:var(--color-input-bg);' +
+                'color:var(--color-text);border:2px solid var(--color-input-border);border-radius:12px;' +
+                'padding:12px 24px;font-size:34px;font-weight:600;cursor:pointer;';
+            button.addEventListener('click', openTripPlanModal);
+            foDiv.appendChild(button);
+            fo.appendChild(foDiv);
+            svg.appendChild(fo);
+            contentBottomY = Math.max(contentBottomY, carBlock.bottomY + 16 + buttonH + 10);
         }
     }
+
+    // Horizontal auf den tatsaechlich gezeichneten Inhalt zuschneiden (wie viewCropLeft im Desktop-
+    // Layout, hier zusaetzlich auch rechts) - VIEW_W=1150 ist bewusst grosszuegig bemessen (siehe
+    // Kommentar oben), aber je nach konfigurierten Geraeten bleibt links und/oder rechts ungenutzter
+    // Rand. Ungenutzt liess das Widget auf schmalen Bildschirmen kleiner wirken, als der verfuegbare
+    // Platz hergibt (Nutzer-Feedback). getBBox() braucht ein angehaengtes Element - kurz unsichtbar
+    // ins DOM haengen, um die reale gezeichnete Breite zu messen, dann wieder entfernen.
+    const measureHost = document.createElement('div');
+    measureHost.style.cssText = 'position:absolute;visibility:hidden;width:0;height:0;overflow:hidden;';
+    document.body.appendChild(measureHost);
+    measureHost.appendChild(svg);
+    const contentBox = svg.getBBox();
+    document.body.removeChild(measureHost);
+    const cropMargin = 24;
+    const cropLeft = Math.max(0, contentBox.x - cropMargin);
+    const cropRight = Math.min(VIEW_W, contentBox.x + contentBox.width + cropMargin);
 
     // Hoehe (anders als beim Desktop-Layout mit fester VIEW_H) dynamisch anhand des tatsaechlich
     // gezeichneten Inhalts - die Verbraucher-Labels unten sind unterschiedlich lang (bis zu 5 Zeilen
     // bei der Waermepumpe), eine feste Hoehe wuerde entweder abschneiden oder unnoetig viel Leerraum
     // lassen.
-    svg.setAttribute('viewBox', `0 0 ${VIEW_W} ${contentBottomY}`);
+    svg.setAttribute('viewBox', `${cropLeft} 0 ${cropRight - cropLeft} ${contentBottomY}`);
     return svg;
 }
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.84
+
+* **Energiefluss-Widget im Mobil-Layout deutlich größer und besser lesbar.** Die Grafik wird jetzt horizontal auf den tatsächlich gezeichneten Inhalt zugeschnitten (statt eines festen, oft halb leeren Rahmens) und die Schrift ist größer - zusammen wirkt die gesamte Übersichtsgrafik proportional größer, mit nur noch normalem Rand statt breiten leeren Seitenstreifen.
+* **"Fahrt planen" sitzt im Mobil-Layout jetzt direkt unter dem Auto-Icon** im Energiefluss-Widget, statt weiter unten beim "Ladestand Auto"-Chart - der Zusammenhang mit dem Auto war dort vorher nicht auf den ersten Blick klar. Das Desktop-Layout hat dafür (noch) nicht genug Platz und behält den Button an der bisherigen Stelle.
+
 ## 0.0.45.83
 
 * **Dashboard/Gerätesteuerung aktualisieren sich jetzt sofort beim Zurückkehren zur Seite**, statt bis zu 30s auf den nächsten planmäßigen Hintergrund-Refresh zu warten - sowohl beim Wechsel zwischen den In-App-Tabs als auch beim Zurückkehren zum Browser-Tab/Fenster (z.B. nach längerer Inaktivität, Bildschirmsperre, Standby). Der periodische Refresh selbst pausiert weiterhin korrekt, während die Seite nicht sichtbar ist.
