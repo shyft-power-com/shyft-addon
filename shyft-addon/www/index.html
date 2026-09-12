@@ -1651,6 +1651,16 @@
             border-radius: 50%;
             flex-shrink: 0;
         }
+        /* Base-Case-Referenzlinie im Beta-Vergleichschart (buildComparisonChart) - Swatch als kurze
+           gestrichelte Linie statt Punkt, passend zur gestrichelten Chartlinie selbst. */
+        .dashboardChartLegendDotDashed {
+            width: 1em;
+            height: 0;
+            border-radius: 0;
+            background: none !important;
+            border-top: 2px dashed var(--color-text-secondary);
+            align-self: center;
+        }
         .dashboardChartContainer {
             position: relative;
         }

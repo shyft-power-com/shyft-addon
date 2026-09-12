@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.83
+
+* **Dashboard/Gerätesteuerung aktualisieren sich jetzt sofort beim Zurückkehren zur Seite**, statt bis zu 30s auf den nächsten planmäßigen Hintergrund-Refresh zu warten - sowohl beim Wechsel zwischen den In-App-Tabs als auch beim Zurückkehren zum Browser-Tab/Fenster (z.B. nach längerer Inaktivität, Bildschirmsperre, Standby). Der periodische Refresh selbst pausiert weiterhin korrekt, während die Seite nicht sichtbar ist.
+* **Beta-Vergleichscharts ("Deine Stromkosten/-erträge", "Dein Stromverbrauch") jetzt besser unterscheidbar:** Shyft-Plan grün (durchgezogen), "Ohne Steuerung" grau und gestrichelt - vorher beide in sehr ähnlichen Grautönen.
+
 ## 0.0.45.82
 
 * **Fix: Der "Entity"-Vorschlag beim Warmwasserbereitungs-Befehl zeigte auch Entitäten fremder Geräte** (z.B. `number.wallbox_ladestrom`, Batterie-Entitäten) - die Eingrenzung filterte bisher nur nach Home-Assistant-Domäne (`number`/`switch`/...), die aber in jeder Integration vorkommt. Jetzt zusätzlich auf die Entitäten der tatsächlich zugeordneten Wärmepumpen-Integration eingegrenzt. Der Platzhaltertext zeigt dafür jetzt auch ein passendes Beispiel (`switch.warmwasser_boost` statt `number.wallbox_ladestrom`).

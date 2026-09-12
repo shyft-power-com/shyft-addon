@@ -6119,16 +6119,19 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
         return ` (heute ${fmt(s.today || 0)} ${unit} | morgen ${fmt(s.tomorrow || 0)} ${unit})`;
     };
 
+    // Shyft-Plan gruen (Erfolg/aktiv, wie ueberall sonst im Addon), Base Case grau+gestrichelt (klar
+    // als Vergleichs-/Referenzlinie erkennbar) - Nutzer-Feedback: beide Linien waren bisher farblich
+    // zu aehnlich (Text-/Text-Secondary-Grauton), schwer auseinanderzuhalten.
     const legend = document.createElement('div');
     legend.className = 'dashboardChartLegend';
-    for (const [color, label, key, values] of [
-        ['var(--color-text)', 'Shyft-Plan', 'opt', optValues],
-        ['var(--color-text-secondary)', 'Ohne Steuerung', 'base', baseValues],
+    for (const [color, dashed, label, key, values] of [
+        ['var(--color-accent)', false, 'Shyft-Plan', 'opt', optValues],
+        ['var(--color-text-secondary)', true, 'Ohne Steuerung', 'base', baseValues],
     ]) {
         const item = document.createElement('span');
         item.className = 'dashboardChartLegendItem';
         const dot = document.createElement('span');
-        dot.className = 'dashboardChartLegendDot';
+        dot.className = 'dashboardChartLegendDot' + (dashed ? ' dashboardChartLegendDotDashed' : '');
         dot.style.background = color;
         item.appendChild(dot);
         item.appendChild(document.createTextNode(`${label} (${fmt(seriesTotal(key, values))} ${unit})${dayPart(key)}`));
@@ -6158,17 +6161,21 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
     const yFor = v => paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight;
     const baseline = paddingTop + plotHeight;
 
-    function seriesPath(values, color) {
+    function seriesPath(values, color, dashed = false) {
         const parts = [];
         for (let i = 0; i < n; i++) {
             const v = values[i];
             if (!Number.isFinite(v)) { parts.length = 0; continue; }
             parts.push(`${parts.length ? 'L' : 'M'}${xFor(i).toFixed(1)},${yFor(v).toFixed(1)}`);
         }
-        return parts.length < 2 ? '' : `<path d="${parts.join(' ')}" fill="none" stroke="${color}" stroke-width="2" />`;
+        const dashAttr = dashed ? ' stroke-dasharray="6,4"' : '';
+        return parts.length < 2 ? '' : `<path d="${parts.join(' ')}" fill="none" stroke="${color}" stroke-width="2"${dashAttr} />`;
     }
-    const basePathMarkup = seriesPath(baseValues, 'var(--color-text-secondary)');
-    const optPathMarkup = seriesPath(optValues, 'var(--color-text)');
+    // Shyft-Plan gruen und durchgezogen (der tatsaechlich gefahrene/geplante Verlauf), Base Case grau
+    // und gestrichelt (Referenz-/Vergleichslinie "was ohne Steuerung passiert waere") - Nutzer-
+    // Feedback: beide Linien waren farblich zu aehnlich und schwer auseinanderzuhalten.
+    const basePathMarkup = seriesPath(baseValues, 'var(--color-text-secondary)', true);
+    const optPathMarkup = seriesPath(optValues, 'var(--color-accent)');
 
     const tickCount = Math.min(6, n);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
@@ -7673,6 +7680,20 @@ async function refreshDashboard() {
 }
 setInterval(refreshDashboard, ENERGY_FLOW_REFRESH_INTERVAL_MS);
 
+// Aktualisiert den GERADE aktiven Tab sofort (Dashboard/Geraetesteuerung), statt auf den naechsten
+// planmaessigen 30s-Tick von refreshDashboard/refreshShyftActions zu warten - deren visibilityState-
+// Check haette den ausstehenden Tick sonst ohnehin uebersprungen, waehrend der Tab/die Seite nicht
+// sichtbar war (Nutzer-Feedback: Werte nach laengerer Inaktivitaet erst nach bis zu 30s aktuell).
+function refreshActiveTabNow() {
+    const activeButton = document.querySelector('.tabButton.active');
+    const tab = activeButton ? activeButton.dataset.tab : null;
+    if (tab === 'dashboard') {
+        loadDashboard();
+    } else if (tab === 'geraetesteuerung') {
+        loadShyftActions();
+    }
+}
+
 function setupTabs() {
     const buttons = document.querySelectorAll('.tabButton');
     for (const button of buttons) {
@@ -7688,8 +7709,20 @@ function setupTabs() {
             if (button.dataset.tab === 'geraetesteuerung') {
                 requestShyftActionsAutoScroll();
             }
+            refreshActiveTabNow();
         });
     }
+    // Ebenso beim Zurueckkehren zur Seite selbst (z.B. Browser-Tab-Wechsel, Bildschirm entsperrt,
+    // Laptop aus dem Standby) - visibilityState war waehrenddessen 'hidden', der periodische Refresh
+    // lief also die ganze Zeit nicht mit (siehe refreshDashboard/refreshShyftActions/
+    // refreshLiveSensorValues), ohne dies koennten seit der letzten Sichtbarkeit Stunden vergangen sein.
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            refreshActiveTabNow();
+            refreshLiveSensorValues();
+            renderSystemHealth();
+        }
+    });
 }
 
 // Setzt --topbar-height (siehe .topBar-Kommentar in index.html) auf die tatsaechliche Hoehe der
