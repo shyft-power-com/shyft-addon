@@ -3691,6 +3691,11 @@ def _start_dhw_target_temp_boost(action, config):
     target_value = action.get("Target Value")
     if target_value is None:
         return
+    # Die Waermepumpen-Solltemperatur-Entitaet nimmt nur ganze Grad an (z.B. step=1) - der vom
+    # Optimierer berechnete Target Value ist aber ein Fliesskommawert (z.B. 45.87 °C). Ungerundet
+    # lehnt die Entitaet den Schreibversuch ab, was nach Ablauf der Verifikations-Frist als
+    # Fehlschlag gemeldet wurde (Nutzer-Feedback).
+    target_value = round(target_value)
     previous_value = _read_mapped_numeric(config, DHW_TARGET_TEMP_SENSOR_FIELD)
     if not _write_and_verify_dhw_target_temp(entity_id, target_value, DHW_TARGET_TEMP_RETRY_TIMEOUT_SECONDS):
         raise Exception(f"Solltemperatur konnte nicht auf {target_value} °C gesetzt werden")
@@ -3713,6 +3718,7 @@ def _end_dhw_target_temp_restore(action, config):
     restore_value = hw_soc_min if hw_soc_min is not None else action.get("_dhwTargetTempRestoreValue")
     if restore_value is None:
         return
+    restore_value = round(restore_value)  # siehe Rundungs-Kommentar in _start_dhw_target_temp_boost
     if not _write_and_verify_dhw_target_temp(entity_id, restore_value, DHW_TARGET_TEMP_RETRY_TIMEOUT_SECONDS):
         raise Exception(f"Solltemperatur konnte nicht auf {restore_value} °C zurueckgesetzt werden")
 

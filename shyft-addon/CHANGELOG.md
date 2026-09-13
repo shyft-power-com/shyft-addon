@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.109
+
+* **Fix: Aktion "Warmwasser" konnte fehlschlagen ("Solltemperatur konnte nicht auf 45.87 °C gesetzt werden"), weil die Wärmepumpen-Solltemperatur-Entität nur ganze Grad annimmt, der vom Optimierer berechnete Zielwert aber eine Nachkommastelle hatte.** Sowohl das Setzen beim Start als auch das Zurücksetzen beim Beenden runden den Wert jetzt auf ganze Grad.
+
 ## 0.0.45.108
 
 * **Test "Heizung Soll-Temperatur" (+1°C) setzt die Temperatur jetzt am Ende automatisch auf den ursprünglichen Wert zurück**, statt dauerhaft erhöht zu bleiben. Der Test wartet dafür serverseitig bis zu 90s auf eine Bestätigung durch den zugeordneten Sensor und stellt danach immer (auch ohne Bestätigung) den Ausgangswert wieder her.
