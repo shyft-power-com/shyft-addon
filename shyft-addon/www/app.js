@@ -5487,6 +5487,38 @@ function renderShyftActionsFilter(actions) {
     }
 }
 
+// Fasst mehrere lueckenlos aufeinanderfolgende Aktionen desselben Typs mit IDENTISCHEM Inhalt zu
+// einer einzigen Karte mit kombinierter Start-/Endzeit zusammen - rein fuer die Anzeige. Der Store
+// dahinter bleibt stundenweise (jede Stunde bleibt ein eigener Datensatz, der einzeln neu berechnet
+// und ausgetauscht wird, sobald ein frischer Optimierungslauf eintrifft - siehe compute_heizung_
+// actions & co. in app.py) - hier wird nichts zusammengelegt oder geloescht, nur anders gruppiert
+// dargestellt. Zwei Aktionen gelten als identisch, wenn Action Name/Status/Execution Status/
+// Subtitle/Target Value uebereinstimmen, keine der beiden ein Log oder eine Fehlermeldung traegt
+// (eine Karte mit Log/Fehler bleibt immer einzeln sichtbar) und ihre Zeitfenster nahtlos aneinander
+// anschliessen (Date End der einen == Date Start der naechsten).
+function coalesceConsecutiveShyftActions(actions) {
+    const chronological = [...actions].sort((a, b) => (a['Date Start'] || 0) - (b['Date Start'] || 0));
+    const merged = [];
+    for (const action of chronological) {
+        const last = merged[merged.length - 1];
+        if (last
+            && last['Action Name'] === action['Action Name']
+            && last['Status'] === action['Status']
+            && last['Execution Status'] === action['Execution Status']
+            && last['Subtitle'] === action['Subtitle']
+            && last['Target Value'] === action['Target Value']
+            && !last['Log'] && !action['Log']
+            && !last['Error Message'] && !action['Error Message']
+            && last['Date End'] === action['Date Start']) {
+            last['Date End'] = action['Date End'];
+            continue;
+        }
+        merged.push({...action});
+    }
+    // Wieder absteigend nach Date End, wie der Rest der Liste (siehe renderShyftActions).
+    return merged.sort((a, b) => (b['Date End'] || 0) - (a['Date End'] || 0));
+}
+
 function renderShyftActions(container, actions, displayMaxDays = 3) {
     // Aufgeklappt-Zustand der Logs behalten, aber nicht mehr vorhandene Aktionen aus dem Set werfen.
     const validLogKeys = new Set(actions.map(actionLogKey));
@@ -5555,7 +5587,9 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
 
         dayDiv.appendChild(heading);
 
-        for (const action of groupActions) {
+        // savingsSum oben bleibt bewusst auf groupActions (ungemergt) - jede Stunde zaehlt einzeln
+        // zur Tagessumme, unabhaengig davon, wie viele Karten daraus visuell werden.
+        for (const action of coalesceConsecutiveShyftActions(groupActions)) {
             dayDiv.appendChild(buildShyftActionCard(action));
         }
 

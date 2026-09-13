@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.107
+
+* **Gerätesteuerung: lückenlos aufeinanderfolgende, inhaltsgleiche Aktionen werden zu einer Karte zusammengefasst** (z. B. sieben Stunden "Heizung Soll-Temperatur, 19 °C" als eine Karte 00:00–07:00 statt sieben Einzelkarten). Rein optisch – der Store bleibt weiter stundenweise, jede Stunde wird unverändert einzeln neu berechnet/ersetzt. Zusammengefasst wird nur, wenn Action Name, Status, Execution Status, Subtitle und Target Value exakt übereinstimmen, keine der beteiligten Stunden ein Log/eine Fehlermeldung trägt und die Zeitfenster nahtlos aneinander anschließen; die Tagessumme der Ersparnis zählt weiterhin jede Stunde einzeln.
+
 ## 0.0.45.106
 
 * **Geräteverhalten-Abweichungsmeldungen zeigen jetzt den konkret gemessenen Wert an**, statt nur "gemessen wird ein anderer Wert" bzw. gar keinen Ist-Wert zu nennen (betrifft Batterie-Lade-/Entladeleistungslimit, Batterie-Modus, "Sonstiger Verbraucher", Heizungs- und Warmwasser-Solltemperatur).
