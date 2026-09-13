@@ -7058,7 +7058,7 @@ def _on_grid_power_live_update(entity_id, old_state, new_state):
 
 
 def _on_wallbox_state_live_update(entity_id, old_state, new_state):
-    "Reagiert sofort auf einen geaenderten Wallbox-Verbindungsstatus: loggt ihn fuer die Anwesenheitsprognose (die aktuelle Stunde spiegelt beim naechsten Abruf ohnehin den Live-Status, aber ein sofortiger Log-Eintrag verbessert die Verweildauer-Genauigkeit fuer die Sicherheitsheuristik) und wertet die PV-Ueberschuss-Regelung neu aus (z.B. sofortiger Stopp statt bis zu 5 Minuten Verzoegerung, wenn das Auto gerade abgesteckt wurde)."
+    "Reagiert sofort auf einen geaenderten Wallbox-Verbindungsstatus: loggt ihn fuer die Anwesenheitsprognose (die aktuelle Stunde spiegelt beim naechsten Abruf ohnehin den Live-Status, aber ein sofortiger Log-Eintrag verbessert die Verweildauer-Genauigkeit fuer die Sicherheitsheuristik), wertet die PV-Ueberschuss-Regelung neu aus (z.B. sofortiger Stopp statt bis zu 5 Minuten Verzoegerung, wenn das Auto gerade abgesteckt wurde) und stoesst bei 'Auto kann jetzt laden' (Uebergang False/None -> True, siehe classify_wallbox_connection_state) eine volle Neu-Optimierung an (derselbe Sync wie der 'Optimierung anstoßen'-Button, siehe sync_site_data) - der Optimierer bekommt so sofort den neuen Auto-Status samt aktualisierter Anwesenheitsprognose, statt bis zu einer Stunde auf den naechsten stuendlichen Sync zu warten."
     with app.app_context():
         try:
             sync_car_presence_log()
@@ -7068,6 +7068,15 @@ def _on_wallbox_state_live_update(entity_id, old_state, new_state):
             run_pv_surplus_charging_tick()
         except Exception as e:
             print("[Shyft] Live-getriggerter PV-Ueberschuss-Tick (Wallbox-Aenderung) fehlgeschlagen:", repr(e))
+        try:
+            config = _read_current_config()
+            was_chargeable = classify_wallbox_connection_state((old_state or {}).get("state"), config)
+            is_chargeable = classify_wallbox_connection_state((new_state or {}).get("state"), config)
+            if is_chargeable is True and was_chargeable is not True:
+                print("[Shyft] Wallbox: 'Auto kann jetzt laden' - stosse Neu-Optimierung an.")
+                sync_site_data()
+        except Exception as e:
+            print("[Shyft] Live-getriggerte Neu-Optimierung (Auto kann jetzt laden) fehlgeschlagen:", repr(e))
 
 
 live_entity_watcher.register("photovoltaic_powerflow_grid", _on_grid_power_live_update)
