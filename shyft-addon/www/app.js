@@ -4480,93 +4480,85 @@ function buildCarChargeControl() {
         wallboxStatusDisplay.textContent = 'Wallbox-Status: ' + (match ? match.state : '–');
     }
 
-    // 2,3 kW and 6,9 kW deliberately picked so the resulting Amperezahl has no decimals (10 A in
-    // both cases - 2,3 kW at 1 Phase, 6,9 kW at 3 Phasen), covering both branches of
-    // compute_charging_phases_and_amps with a single click each.
-    const testButtons = [];
-    for (const targetKw of [2.3, 6.9]) {
-        const testButton = document.createElement('button');
-        testButton.type = 'button';
-        testButton.textContent = `Test: mit ${targetKw.toFixed(1).replace('.', ',')} kW laden`;
-        testButton.addEventListener('click', async () => {
-            for (const b of testButtons) b.disabled = true;
-            testStopButton.disabled = true;
-            // three sequential HA calls with a 10s pause between each (see CHARGING_STAGE_DELAY_SECONDS
-            // in app.py) add up to a noticeable wait - let the user know it's not stuck
-            status.textContent = 'Teste (ca. 30s...)';
-            status.className = 'autoActionStatus';
-            wallboxStatusDisplay.className = 'autoActionValue testing';
-            try {
+    // Nach jedem erfolgreichen Schritt eine kurze Pause, bevor der naechste startet - genug Zeit,
+    // damit der Wallbox-Status-Sensor (siehe refreshWallboxStatus) den neuen Zustand einigermassen
+    // widerspiegelt, ohne fuer eine harte Bestaetigung auf den Sensor selbst zu warten (Nutzer-
+    // Vorgabe: "sobald das (ungefähr) bestätigt ist").
+    const WALLBOX_TEST_STEP_PAUSE_MS = 4000;
+
+    // Ein einziger Testlauf statt separater Buttons je Schritt (Nutzer-Vorgabe): 2,3 kW laden (1
+    // Phase), dann 6,9 kW laden (3 Phasen - beide Werte decken je einen Zweig von
+    // compute_charging_phases_and_amps ab), dann Laden beenden. Nur wenn alle drei Schritte
+    // erfolgreich waren, gilt der Test als bestanden.
+    const testButton = document.createElement('button');
+    testButton.type = 'button';
+    testButton.textContent = 'Test: Laden starten und beenden';
+    testButton.addEventListener('click', async () => {
+        testButton.disabled = true;
+        wallboxStatusDisplay.className = 'autoActionValue testing';
+        let startedCharging = false;
+        let ok = true;
+        let failMessage = '';
+        try {
+            for (const targetKw of [2.3, 6.9]) {
+                const kwLabel = targetKw.toFixed(1).replace('.', ',');
+                // three sequential HA calls with a 10s pause between each (see
+                // CHARGING_STAGE_DELAY_SECONDS in app.py) add up to a noticeable wait - let the
+                // user know it's not stuck
+                status.textContent = `Teste: mit ${kwLabel} kW laden (ca. 30s...)`;
+                status.className = 'autoActionStatus';
                 const response = await fetch(insideHomeAssistant + '/actions/car_charge_start/test', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({targetKw})
                 });
                 const result = await response.json();
-                markActionTested('car_charge_start', !!result.success);
-                if (result.success) {
-                    status.textContent = result.phaseCount !== undefined
-                        ? `Gesendet: ${result.phaseCount} Phase(n), Laden gestartet.`
-                        : 'Gesendet: Laden gestartet.';
-                    status.className = 'autoActionStatus status-ok';
-                    wallboxStatusDisplay.className = 'autoActionValue testSuccess';
-                    setTimeout(refreshWallboxStatus, 4000);
-                } else {
-                    status.textContent = 'Fehler: ' + (result.message || 'unbekannt');
-                    status.className = 'autoActionStatus status-error';
-                    wallboxStatusDisplay.className = 'autoActionValue';
+                if (!result.success) {
+                    ok = false;
+                    failMessage = `Fehler bei ${kwLabel} kW: ` + (result.message || 'unbekannt');
+                    break;
                 }
-                applyTestGate('car_charge_start', checkmark, carChargeHint, true);
-            } catch (err) {
-                console.log(err);
-                status.textContent = 'Fehler beim Testen';
-                status.className = 'autoActionStatus status-error';
-                wallboxStatusDisplay.className = 'autoActionValue';
-            } finally {
-                for (const b of testButtons) b.disabled = false;
-                testStopButton.disabled = false;
+                startedCharging = true;
+                refreshWallboxStatus();
+                await new Promise(resolve => setTimeout(resolve, WALLBOX_TEST_STEP_PAUSE_MS));
             }
-        });
-        testButtons.push(testButton);
-    }
-
-    const testStopButton = document.createElement('button');
-    testStopButton.type = 'button';
-    testStopButton.textContent = 'Test: Laden beenden';
-    testStopButton.addEventListener('click', async () => {
-        for (const b of testButtons) b.disabled = true;
-        testStopButton.disabled = true;
-        status.textContent = 'Teste...';
-        status.className = 'autoActionStatus';
-        wallboxStatusDisplay.className = 'autoActionValue testing';
-        try {
-            const response = await fetch(insideHomeAssistant + '/actions/car_charge_stop/test', {method: 'POST'});
-            const result = await response.json();
-            markActionTested('car_charge_start', !!result.success);
-            if (result.success) {
-                status.textContent = 'Gesendet: Laden beendet.';
+            // Laden auch nach einem fehlgeschlagenen Zwischenschritt beenden, wenn tatsaechlich
+            // gestartet wurde - die Wallbox soll nach einem Testlauf nie einfach weiterladen.
+            if (startedCharging) {
+                status.textContent = 'Teste: Laden beenden...';
+                status.className = 'autoActionStatus';
+                const stopResponse = await fetch(insideHomeAssistant + '/actions/car_charge_stop/test', {method: 'POST'});
+                const stopResult = await stopResponse.json();
+                if (!stopResult.success) {
+                    ok = false;
+                    failMessage = failMessage || ('Fehler beim Beenden: ' + (stopResult.message || 'unbekannt'));
+                }
+            }
+            markActionTested('car_charge_start', ok);
+            applyTestGate('car_charge_start', checkmark, carChargeHint, true);
+            if (ok) {
+                status.textContent = 'Erfolgreich: 2,3 kW → 6,9 kW → Laden beendet.';
                 status.className = 'autoActionStatus status-ok';
                 wallboxStatusDisplay.className = 'autoActionValue testSuccess';
-                setTimeout(refreshWallboxStatus, 4000);
             } else {
-                status.textContent = 'Fehler: ' + (result.message || 'unbekannt');
+                status.textContent = failMessage || 'Fehler beim Testen';
                 status.className = 'autoActionStatus status-error';
                 wallboxStatusDisplay.className = 'autoActionValue';
             }
-            applyTestGate('car_charge_start', checkmark, carChargeHint, true);
         } catch (err) {
             console.log(err);
             status.textContent = 'Fehler beim Testen';
             status.className = 'autoActionStatus status-error';
             wallboxStatusDisplay.className = 'autoActionValue';
+            markActionTested('car_charge_start', false);
+            applyTestGate('car_charge_start', checkmark, carChargeHint, true);
         } finally {
-            for (const b of testButtons) b.disabled = false;
-            testStopButton.disabled = false;
+            testButton.disabled = false;
+            setTimeout(refreshWallboxStatus, 4000);
         }
     });
 
-    for (const b of testButtons) controlsRow.appendChild(b);
-    controlsRow.appendChild(testStopButton);
+    controlsRow.appendChild(testButton);
     controlsRow.appendChild(wallboxStatusDisplay);
     wrapper.appendChild(controlsRow);
 

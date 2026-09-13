@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.99
+
+* **"Geräteverhalten abweichend von Shyft-Steuerung" ist jetzt implementiert** (war bisher ein reiner Platzhalter ohne Vergleichslogik - der Toggle existierte, hat aber nie etwas ausgelöst). Prüft bei jedem 15-Minuten-Poll für alle direkt gesteuerten Aktionstypen sowohl den aktiven Zustand (z.B. lädt die Wallbox während "Auto laden" wirklich?) als auch den Ruhezustand (z.B. steht die Batterie-Entladeleistung wieder auf dem Normalwert, wenn "Batterie-Entladen verschieben" nicht läuft? - genau der ursprünglich gemeldete Fall). Abgedeckt: Batterie (Lade-/Entladeleistungslimit, Modus), Sonstiger Verbraucher (Schalter), Heizung Soll-Temperatur, Warmwasser-Solltemperatur-Boost, Auto laden (Ladeleistung). Nur für "direkt" gesteuerte Aktionstypen möglich - bei per HA-Automation gesteuerten weiß das Add-on nicht, welchen Wert die Automation gesetzt hat. Jede Abweichung erscheint dauerhaft im Dashboard-Problemhinweis; eine Push-Benachrichtigung kommt nur einmalig beim Auftreten, nicht bei jedem weiteren Poll.
+
 ## 0.0.45.97
 
 * **Konfiguration, Test "Heizung Soll-Temperatur": nur noch der +1°C-Test wird angeboten**, der bisherige zusätzliche -1°C-Test entfällt (kein zusätzlicher Erkenntnisgewinn gegenüber dem Erhöhungstest).

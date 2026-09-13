@@ -4756,15 +4756,263 @@ def notify_action_event(config, action, verb, is_error=False):
         print(f"[Shyft] Benachrichtigung fehlgeschlagen: {e!r}")
 
 
-def check_device_status_deviation(action, config):
-    """Placeholder - comparing the actual Home Assistant device state against what shyft-power
-    currently commands for a running action requires the same per-action logic as the concrete
-    start/end behaviour (see handle_shyft_action_start/end), which is defined in a later step.
-    Wired into the 15-min poll now so the notification only needs enabling once that lands.
-    """
+# ============================================================================
+# Geraeteverhalten abweichend von Shyft-Steuerung: vergleicht bei jedem 15-Minuten-Poll (siehe
+# process_shyft_actions) die tatsaechlichen Home-Assistant-Werte gegen das, was Shyft gerade
+# befiehlt (eine aktive Aktion) bzw. befehlen wuerde, wenn KEINE Aktion des jeweiligen Typs laeuft
+# (Ruhezustand) - deckt beide Faelle ab:
+#   1. Eine Aktion IST aktiv, aber das Geraet zeigt nicht den befohlenen Wert (z.B. Wallbox laedt
+#      trotz "Auto laden" nicht).
+#   2. KEINE Aktion ist aktiv, aber das Geraet steht trotzdem in einem Zustand, den nur eine Aktion
+#      haette setzen duerfen (z.B. Entladeleistung auf 0, obwohl "Batterie-Entladen verschieben"
+#      nicht laeuft - der urspruengliche Nutzer-Bugreport fuer dieses Feature).
+# Nur fuer "direct"-gesteuerte Aktionstypen moeglich - bei der "ha_automation"-Variante schreibt eine
+# externe Automation die Entitaet, das Addon kennt deren Zielwert nicht und kann nichts vergleichen.
+# Jeder gepruefte Wert bekommt eine eigene, stabile problem_registry-ID (dashboard-sichtbar,
+# unabhaengig von den Benachrichtigungs-Einstellungen - wie bei Aktionsfehlern); eine Push-
+# Benachrichtigung geht nur beim UEBERGANG "kein Problem" -> "Problem" raus, nicht bei jedem
+# erneuten Poll waehrend die Abweichung bestehen bleibt.
+# ============================================================================
+
+# Wie lange eine Aktion schon aktiv sein bzw. eine vorherige Aktion schon beendet sein muss, bevor
+# ihr Zielwert/Ruhezustand ueberhaupt verglichen wird - frisch gestartete/beendete Aktionen werden
+# zwar schon beim Start/Ende write-verifiziert (siehe _write_and_verify_battery_entity), aber nicht
+# jeder Aktionstyp hat diese Absicherung (z.B. Wallbox-Ladeleistung baut sich erst ueber mehrere
+# Minuten auf) - ohne Karenzzeit koennte der allererste Poll nach Start/Ende faelschlich anschlagen.
+DEVICE_DEVIATION_GRACE_MINUTES = 20
+BATTERY_DEVIATION_TOLERANCE_KW = 0.15
+HEATING_TARGET_TEMP_DEVIATION_TOLERANCE_C = 1.0
+DHW_TARGET_TEMP_DEVIATION_TOLERANCE_C = 1.5
+
+
+def _device_deviation_problem_id(key):
+    return f"device_deviation:{key}"
+
+
+def _notify_device_deviation(key, message, config):
+    "Registriert ein Geraeteverhalten-Abweichungs-Problem (Dashboard-Problemliste, immer, unabhaengig von Benachrichtigungs-Einstellungen) - schickt zusaetzlich eine Push-Benachrichtigung, aber nur beim Uebergang von 'kein Problem' zu 'Problem' (kein Spam bei jedem 15-Minuten-Poll, solange die Abweichung bestehen bleibt)."
+    problem_id = _device_deviation_problem_id(key)
+    was_active = problem_registry.is_active(problem_id)
+    problem_registry.register(problem_id, message)
+    if was_active:
+        return
     if not config.get("notificationsEnabled", {}).get("device_status_deviation", True):
         return
-    # no per-action comparison logic yet - nothing to detect or notify about
+    target = config.get("notificationTargets", {}).get("phone", "")
+    if not target:
+        return
+    try:
+        homeassistant_adapter.send_notification(target, message)
+    except Exception as e:
+        print("[Shyft] Benachrichtigung (Geraeteverhalten abweichend) fehlgeschlagen:", repr(e))
+
+
+def _clear_device_deviation(key):
+    problem_registry.clear(_device_deviation_problem_id(key))
+
+
+def _active_computed_action(computed_actions, action_name):
+    "Die aktuell 'aktiv' laufende Aktion mit diesem Action Name, sonst None (es kann nie mehr als eine gleichzeitig aktiv geben)."
+    for a in computed_actions:
+        if a.get("Action Name") == action_name and (a.get("Status") or "").lower() == "aktiv":
+            return a
+    return None
+
+
+def _most_recent_action_end_ms(computed_actions, action_names):
+    "Das juengste 'Date End' unter allen (jeden Status) Aktionen mit einem dieser Action Names - Anker fuer die Ruhezustand-Karenzzeit, damit der Ruhezustand-Vergleich nicht direkt nach einem Ende anschlaegt, waehrend der Reset noch propagiert."
+    ends = [a.get("Date End") for a in computed_actions if a.get("Action Name") in action_names and a.get("Date End") is not None]
+    return max(ends) if ends else None
+
+
+def _check_numeric_deviation(key, expected, live, tolerance, message, config):
+    "Gemeinsame Vergleichslogik fuer alle numerischen Geraeteverhalten-Checks - expected/live None (nicht ermittelbar) loescht nur, ohne ein neues Problem anzulegen."
+    if expected is None or live is None:
+        _clear_device_deviation(key)
+        return
+    if abs(live - expected) > tolerance:
+        _notify_device_deviation(key, message, config)
+    else:
+        _clear_device_deviation(key)
+
+
+def _check_raw_state_deviation(key, expected, live, message, config):
+    if expected is None or live is None:
+        _clear_device_deviation(key)
+        return
+    if live != expected:
+        _notify_device_deviation(key, message, config)
+    else:
+        _clear_device_deviation(key)
+
+
+def check_device_status_deviation(config):
+    """Vergleicht bei jedem 15-Minuten-Poll (siehe process_shyft_actions) die tatsaechlichen
+    Home-Assistant-Werte gegen das, was Shyft gerade befiehlt bzw. befehlen wuerde, wenn keine
+    Aktion laeuft - siehe Modul-Kommentar oben fuer die Details. Deckt ab: Batterie (Ladeleistungs-
+    limit, Entladeleistungslimit, Modus - je "direct"-gesteuert), Sonstiger Verbraucher (Schalter,
+    "direct"), Heizung Soll-Temperatur (nur waehrend aktiv, "direct"), Warmwasser-Solltemperatur-
+    Boost (nur waehrend "Warmwasser" aktiv, sofern eine Solltemperatur-Entitaet zugeordnet ist) und
+    Auto laden (nur waehrend aktiv: fliesst ueberhaupt Ladestrom, unabhaengig vom exakten Zielwert -
+    die PV-Ueberschuss-Korrektur macht einen exakten Soll/Ist-Vergleich sonst unzuverlaessig)."""
+    now_ms = time.time() * 1000
+    grace_ms = DEVICE_DEVIATION_GRACE_MINUTES * 60000
+    computed_actions = _read_computed_actions()
+    integration_mappings = config.get("integrationMappings", {}) or {}
+
+    def configured(section_key):
+        return bool(integration_mappings.get(section_key))
+
+    def past_grace(action):
+        start = action.get("Date Start")
+        return start is not None and (now_ms - start) >= grace_ms
+
+    def baseline_ok(action_names):
+        "True, wenn KEINE dieser Aktionsarten gerade aktiv ist UND keine von ihnen innerhalb der Karenzzeit geendet hat."
+        if any(_active_computed_action(computed_actions, name) is not None for name in action_names):
+            return False
+        recent_end = _most_recent_action_end_ms(computed_actions, action_names)
+        return recent_end is None or (now_ms - recent_end) >= grace_ms
+
+    # --- Batterie: Ladeleistungslimit, Entladeleistungslimit, Modus (nur "direct"-gesteuert) ---
+    if configured("batterie"):
+        grid_charge = _active_computed_action(computed_actions, BATTERY_GRID_CHARGE_ACTION_NAME)
+        charge_shift = _active_computed_action(computed_actions, BATTERY_CHARGE_SHIFT_ACTION_NAME)
+        discharge_shift = _active_computed_action(computed_actions, BATTERY_DISCHARGE_SHIFT_ACTION_NAME)
+        grid_charge_direct = _battery_control_variant(config, "battery_grid_charge") == "direct"
+        charge_shift_direct = _battery_control_variant(config, "battery_charge_shift_pv_surplus") == "direct"
+        discharge_shift_direct = _battery_control_variant(config, "battery_discharge_shift") == "direct"
+        max_charge_kw = config.get("batteryMaxChargeKw")
+        try:
+            max_charge_kw = float(max_charge_kw) if max_charge_kw not in (None, "") else None
+        except (TypeError, ValueError):
+            max_charge_kw = None
+
+        # Ladeleistungslimit: von "Batterie netzladen" ODER "Batterie-Laden verschieben
+        # (PV-Ueberschuss)" auf deren Target Value gesetzt, sonst (Ruhezustand) auf batteryMaxChargeKw.
+        expected_charge_kw = None
+        if grid_charge is not None and grid_charge_direct:
+            if past_grace(grid_charge):
+                expected_charge_kw = grid_charge.get("Target Value")
+        elif charge_shift is not None and charge_shift_direct:
+            if past_grace(charge_shift):
+                expected_charge_kw = charge_shift.get("Target Value")
+        elif grid_charge_direct and charge_shift_direct and max_charge_kw is not None \
+                and baseline_ok((BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_CHARGE_SHIFT_ACTION_NAME)):
+            expected_charge_kw = max_charge_kw
+        _check_numeric_deviation(
+            "battery_charge_limit", expected_charge_kw, _read_mapped_numeric(config, "battery_charge_limit_current"),
+            BATTERY_DEVIATION_TOLERANCE_KW,
+            f"Batterie-Ladeleistungslimit weicht ab: Shyft erwartet {expected_charge_kw} kW, gemessen wird ein anderer Wert.",
+            config,
+        )
+
+        # Entladeleistungslimit: von "Batterie-Entladen verschieben" auf 0 gesetzt, sonst
+        # (Ruhezustand) auf batteryMaxChargeKw.
+        expected_discharge_kw = None
+        if discharge_shift is not None and discharge_shift_direct:
+            if past_grace(discharge_shift):
+                expected_discharge_kw = 0.0
+        elif discharge_shift_direct and max_charge_kw is not None and baseline_ok((BATTERY_DISCHARGE_SHIFT_ACTION_NAME,)):
+            expected_discharge_kw = max_charge_kw
+        _check_numeric_deviation(
+            "battery_discharge_limit", expected_discharge_kw, _read_mapped_numeric(config, "battery_discharge_limit_current"),
+            BATTERY_DEVIATION_TOLERANCE_KW,
+            f"Batterie-Entladeleistungslimit weicht ab: Shyft erwartet {expected_discharge_kw} kW, gemessen wird ein anderer Wert.",
+            config,
+        )
+
+        # Modus: "Netzladen" waehrend "Batterie netzladen" aktiv, "Eigenverbrauch" waehrend
+        # "Batterie-Laden verschieben (PV-Ueberschuss)" aktiv ODER im Ruhezustand (auch
+        # "Batterie-Aktion beenden" setzt denselben Eigenverbrauchs-Modus, siehe execute_battery_direct
+        # - deckungsgleich mit dem Ruhezustand, daher keine eigene Fallunterscheidung dafuer noetig).
+        netzladen_mode = config.get("batteryModeNetzladenValue")
+        self_consumption_mode = config.get("batteryModeSelfConsumptionValue")
+        expected_mode = None
+        if grid_charge is not None and grid_charge_direct and netzladen_mode:
+            if past_grace(grid_charge):
+                expected_mode = netzladen_mode
+        elif charge_shift is not None and charge_shift_direct and self_consumption_mode:
+            if past_grace(charge_shift):
+                expected_mode = self_consumption_mode
+        elif grid_charge_direct and self_consumption_mode and baseline_ok(
+                (BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_CHARGE_SHIFT_ACTION_NAME, BATTERY_DISCHARGE_SHIFT_ACTION_NAME)):
+            expected_mode = self_consumption_mode
+        _check_raw_state_deviation(
+            "battery_mode", expected_mode, _read_mapped_raw_state(config, "battery_storage_command_mode"),
+            f"Batterie-Modus weicht ab: Shyft erwartet '{expected_mode}'.",
+            config,
+        )
+    else:
+        for key in ("battery_charge_limit", "battery_discharge_limit", "battery_mode"):
+            _clear_device_deviation(key)
+
+    # --- Sonstiger Verbraucher: Schalter an/aus (nur "direct"-gesteuert) ---
+    if configured("sonstiger_verbraucher") and resolve_control_variant("consumer_on_off", config) == "direct":
+        od_action = _active_computed_action(computed_actions, OD_ACTION_NAME)
+        expected_switch_state = None
+        if od_action is not None:
+            if past_grace(od_action):
+                expected_switch_state = "on"
+        elif baseline_ok((OD_ACTION_NAME,)):
+            expected_switch_state = "off"
+        live_switch_state = _read_mapped_raw_state(config, "sonstiger_verbraucher_switch_entity")
+        live_switch_state = live_switch_state.lower() if live_switch_state is not None else None
+        _check_raw_state_deviation(
+            "sonstiger_verbraucher", expected_switch_state, live_switch_state,
+            f"'Sonstiger Verbraucher' weicht ab: Shyft erwartet '{expected_switch_state}'.",
+            config,
+        )
+    else:
+        _clear_device_deviation("sonstiger_verbraucher")
+
+    # --- Heizung Soll-Temperatur: nur waehrend aktiv (kein sinnvoller Ruhezustand-Wert bekannt) ---
+    if configured("waermepumpe") and resolve_control_variant("heating_target_temp", config) == "direct":
+        heizung_action = _active_computed_action(computed_actions, HEIZUNG_ACTION_NAME)
+        expected_temp = heizung_action.get("Target Value") if heizung_action is not None and past_grace(heizung_action) else None
+        _check_numeric_deviation(
+            "heizung_soll_temp", expected_temp, _read_mapped_numeric(config, "heatpump_heating_target_temp_normal"),
+            HEATING_TARGET_TEMP_DEVIATION_TOLERANCE_C,
+            f"Heizungs-Solltemperatur weicht ab: Shyft erwartet {expected_temp} °C.",
+            config,
+        )
+    else:
+        _clear_device_deviation("heizung_soll_temp")
+
+    # --- Warmwasser-Solltemperatur-Boost: nur waehrend "Warmwasser" aktiv, nur wenn eine
+    # Solltemperatur-Entitaet zugeordnet ist (siehe _start_dhw_target_temp_boost) ---
+    if configured("waermepumpe") and _dhw_target_temp_entity(config):
+        dhw_action = _active_computed_action(computed_actions, DHW_ACTION_NAME)
+        expected_dhw_temp = dhw_action.get("Target Value") if dhw_action is not None and past_grace(dhw_action) else None
+        _check_numeric_deviation(
+            "warmwasser_soll_temp", expected_dhw_temp, _read_mapped_numeric(config, DHW_TARGET_TEMP_SENSOR_FIELD),
+            DHW_TARGET_TEMP_DEVIATION_TOLERANCE_C,
+            f"Warmwasser-Solltemperatur weicht ab: Shyft erwartet {expected_dhw_temp} °C.",
+            config,
+        )
+    else:
+        _clear_device_deviation("warmwasser_soll_temp")
+
+    # --- Auto laden: nur waehrend aktiv - fliesst ueberhaupt Ladestrom? Kein exakter Soll/Ist-
+    # Vergleich (die PV-Ueberschuss-Korrektur passt den tatsaechlichen Zielwert erst beim Start an,
+    # siehe _apply_ev_pv_surplus_start_correction - ein Vergleich gegen den urspruenglichen
+    # Optimierungswert waere dadurch unzuverlaessig). ---
+    if configured("auto") and configured("wallbox"):
+        ev_action = _active_computed_action(computed_actions, EV_CHARGE_ACTION_NAME)
+        if ev_action is not None and past_grace(ev_action):
+            live_charging_kw = _read_mapped_numeric(config, "wallbox_current_charging_power")
+            if live_charging_kw is not None and live_charging_kw <= EV_SUM_TRIGGER_KW:
+                _notify_device_deviation(
+                    "auto_laden",
+                    f"'Auto laden' ist aktiv, aber die Wallbox meldet nur {live_charging_kw:.1f} kW Ladeleistung.",
+                    config,
+                )
+            elif live_charging_kw is not None:
+                _clear_device_deviation("auto_laden")
+        else:
+            _clear_device_deviation("auto_laden")
+    else:
+        _clear_device_deviation("auto_laden")
 
 
 def _action_problem_id(label):
@@ -6091,14 +6339,18 @@ def process_shyft_actions():
             if action.get("Execution Status") != "yes, not finished":
                 ended_ids.add(action_id)
 
-        currently_running = is_active and date_start is not None and date_start <= now_ms and not (date_end is not None and date_end <= now_ms)
-        if currently_running:
-            check_device_status_deviation(action, config)
-
     # only keep ids that could still turn up in a future poll, so these don't grow forever
     config["startedShyftActionIds"] = sorted(started_ids & seen_ids)
     config["endedShyftActionIds"] = sorted(ended_ids & seen_ids)
     _write_current_config(config)
+
+    # Einmal pro Poll statt pro Aktion - deckt AUCH den Ruhezustand ab (keine Aktion aktiv, siehe
+    # Modul-Kommentar bei check_device_status_deviation), nicht nur laufende Aktionen. Nutzt die
+    # frischen Start/Ende-Uebergaenge von oben (frisch _read_computed_actions()).
+    try:
+        check_device_status_deviation(config)
+    except Exception as e:
+        print("[Shyft] check_device_status_deviation fehlgeschlagen:", repr(e))
 
 
 def apply_action_type_toggle_changes(old_map, new_map, config):
