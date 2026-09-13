@@ -11,12 +11,17 @@ const shyftActionsUri = insideHomeAssistant + "/shyft/actions";
 const notificationTargetsUri = insideHomeAssistant + "/notification-targets";
 const servicesUri = insideHomeAssistant + "/services";
 const systemHealthUri = insideHomeAssistant + "/system-health";
+const actionTestStatusUri = insideHomeAssistant + "/actions/test-status";
 let configData = {}
 let integrationsData = {integrations: [], entityMap: {}};
 let integrationDomainHints = {};
 let allSensorIdOptions = [];
 let allServiceOptions = [];
 let notificationTargetOptions = [];
+// ready_key -> true/false, vom Server (siehe /actions/test-status): true nur, wenn der letzte Test
+// dieses Aktionstyps noch zur aktuellen Konfiguration passt (Fingerprint-Vergleich serverseitig,
+// siehe _action_type_fingerprint) - Grundlage fuer den dauerhaften gruenen Haken der Testen-Zeilen.
+let actionTestStatusMap = {};
 
 const helpinformation = {
     'photovoltaic_powerflow_load': {
@@ -1162,6 +1167,12 @@ const loadConfiguration = async (event) => {
         } catch (err) {
             console.log(err);
             allServiceOptions = [];
+        }
+        try {
+            actionTestStatusMap = await getJson(actionTestStatusUri);
+        } catch (err) {
+            console.log(err);
+            actionTestStatusMap = {};
         }
 
         const allEntityOptionsElement = document.getElementById('allEntityOptions');
@@ -3414,6 +3425,38 @@ function buildAutoActionTitle(control, toggleKey) {
     return {title, checkmark};
 }
 
+// Roter Hinweis, dass eine Steuerung noch nicht erfolgreich getestet wurde und ihre Aktionen deshalb
+// von der Bereitschaftspruefung blockiert werden (siehe _action_type_ready in app.py) - eingeblendet
+// von applyTestGate() fuer jeden gegateten Aktionstyp (siehe _READY_KEY_TO_LABEL_SECTION).
+function buildTestGateHint() {
+    const hint = document.createElement('div');
+    hint.className = 'autoActionStatus status-missing';
+    hint.textContent = 'Bitte Gerätesteuerung testen';
+    hint.hidden = true;
+    return hint;
+}
+
+// Persistenter Gruen-Haken + roter Testhinweis, einheitlich fuer alle Testen-Zeilen: der Haken kommt
+// vom Server (actionTestStatusMap, siehe /actions/test-status) statt nur "ist konfiguriert" zu
+// pruefen - er bleibt deshalb ueber einen Seiten-Reload hinweg bestehen, bis sich etwas an der
+// Steuerung/Zuordnung dieses Aktionstyps aendert. readyKey === null bedeutet "nicht gegatet" (z.B.
+// PV-Einspeisung/§14a-Verbrauchsbegrenzung/Batterie-Aktion beenden) - dort bleibt hint immer
+// versteckt und der Aufrufer setzt checkmark.hidden selbst (alte "ist konfiguriert"-Logik).
+function applyTestGate(readyKey, checkmark, hint, configured) {
+    if (readyKey === null) return;
+    const passed = !!actionTestStatusMap[readyKey];
+    checkmark.hidden = !passed;
+    hint.hidden = !configured || passed;
+}
+
+// Nach einem abgeschlossenen Testklick: lokalen Cache sofort aktualisieren (kein erneuter Fetch
+// noetig, der Server hat actionTestPassed/actionTestFailed synchron im selben Request aktualisiert,
+// siehe _records_action_test).
+function markActionTested(readyKey, passed) {
+    if (readyKey === null) return;
+    actionTestStatusMap[readyKey] = passed;
+}
+
 // "Direkt steuern" vs "HA-Automation" dropdown, shared by every AUTO_MANAGED_CONTROLS entry that
 // has hasAutomationVariant set - selecting a value here just toggles which of the two sibling
 // wrappers (direct-entity UI vs. automation-entity field(s)) is visible, see callers.
@@ -3634,6 +3677,10 @@ function buildAutoManagedNumberControl(control) {
     const {title, checkmark} = buildAutoActionTitle(control, control.actionKeys[0]);
     wrapper.appendChild(title);
 
+    // automationOnly-Steuerungen (PV-Einspeisung/§14a) sind nicht gegatet (siehe _action_ready_key
+    // in app.py) - der Haken folgt dort weiter der alten "ist konfiguriert"-Logik statt eines Tests.
+    const readyKey = control.automationOnly ? null : control.key;
+
     // automationOnly controls (kein sensorField, keine "Direkt steuern"-Option) sind immer
     // ha_automation - kein Dropdown noetig, es gibt ja nur die eine Variante.
     let variant = control.automationOnly ? 'ha_automation'
@@ -3671,6 +3718,9 @@ function buildAutoManagedNumberControl(control) {
     status.textContent = 'Lade Status...';
     wrapper.appendChild(status);
 
+    const hint = buildTestGateHint();
+    wrapper.appendChild(hint);
+
     const controls = document.createElement('div');
     controls.className = 'autoActionButtons';
 
@@ -3696,36 +3746,40 @@ function buildAutoManagedNumberControl(control) {
                     : 'Befülle den Sensor "' + control.titleLabel + '"';
                 status.className = 'autoActionStatus status-missing';
                 checkmark.hidden = true;
+                hint.hidden = true;
                 minusButton.disabled = true;
                 plusButton.disabled = true;
                 valueDisplay.textContent = 'Aktueller Wert: –';
+                valueDisplay.className = 'autoActionValue';
                 return;
             }
             minusButton.disabled = false;
             plusButton.disabled = false;
+            if (readyKey) applyTestGate(readyKey, checkmark, hint, true); else checkmark.hidden = false;
             if (variant === 'ha_automation') {
                 status.textContent = '';
                 status.className = 'autoActionStatus status-ok';
-                checkmark.hidden = false;
                 return;
             }
             if (result.error) {
                 status.textContent = 'Eingerichtet, aktueller Wert aber nicht lesbar: ' + result.error;
                 status.className = 'autoActionStatus status-error';
-                checkmark.hidden = true;
                 valueDisplay.textContent = 'Aktueller Wert: –';
+                valueDisplay.className = 'autoActionValue';
             } else {
                 status.textContent = '';
                 status.className = 'autoActionStatus status-ok';
-                checkmark.hidden = false;
                 valueDisplay.textContent = 'Aktueller Wert: ' + result.value + unitSuffix;
+                valueDisplay.className = 'autoActionValue';
             }
         } catch (err) {
             console.log(err);
             status.textContent = 'Status konnte nicht geladen werden.';
             status.className = 'autoActionStatus status-error';
             checkmark.hidden = true;
+            hint.hidden = true;
             valueDisplay.textContent = 'Aktueller Wert: –';
+            valueDisplay.className = 'autoActionValue';
         }
     }
 
@@ -3733,6 +3787,7 @@ function buildAutoManagedNumberControl(control) {
         minusButton.disabled = true;
         plusButton.disabled = true;
         valueDisplay.textContent = 'Teste...';
+        valueDisplay.className = 'autoActionValue testing';
         try {
             const response = await fetch(insideHomeAssistant + '/actions/' + control.key + '/test', {
                 method: 'POST',
@@ -3740,6 +3795,7 @@ function buildAutoManagedNumberControl(control) {
                 body: JSON.stringify({delta})
             });
             const result = await response.json();
+            if (readyKey) markActionTested(readyKey, !!result.success);
             if (result.success) {
                 if (variant === 'ha_automation') {
                     // fire-and-forget - there's no entity to poll back and confirm, unlike the
@@ -3751,12 +3807,16 @@ function buildAutoManagedNumberControl(control) {
                     valueDisplay.textContent = 'Gesendet: ' + result.value + unitSuffix + ' (wird geprüft...)';
                     setTimeout(refreshStatus, 4000);
                 }
+                valueDisplay.className = 'autoActionValue testSuccess';
             } else {
                 valueDisplay.textContent = 'Fehler: ' + (result.message || 'unbekannt');
+                valueDisplay.className = 'autoActionValue';
             }
+            if (readyKey) applyTestGate(readyKey, checkmark, hint, true);
         } catch (err) {
             console.log(err);
             valueDisplay.textContent = 'Fehler beim Testen';
+            valueDisplay.className = 'autoActionValue';
         } finally {
             minusButton.disabled = false;
             plusButton.disabled = false;
@@ -3766,9 +3826,9 @@ function buildAutoManagedNumberControl(control) {
     minusButton.addEventListener('click', () => runTest(-control.step));
     plusButton.addEventListener('click', () => runTest(control.step));
 
-    controls.appendChild(valueDisplay);
     controls.appendChild(minusButton);
     controls.appendChild(plusButton);
+    controls.appendChild(valueDisplay);
     wrapper.appendChild(controls);
 
     if (variantSelect) {
@@ -3794,6 +3854,7 @@ function buildAutoManagedSwitchControl(control) {
     const {title, checkmark} = buildAutoActionTitle(control, control.actionKeys[0]);
     wrapper.appendChild(title);
 
+    const readyKey = control.key;
     let variant = control.hasAutomationVariant ? ((configData['controlVariant'] || {})[control.key] || 'direct') : 'direct';
 
     let variantSelect = null;
@@ -3831,6 +3892,9 @@ function buildAutoManagedSwitchControl(control) {
     status.textContent = 'Lade Status...';
     wrapper.appendChild(status);
 
+    const hint = buildTestGateHint();
+    wrapper.appendChild(hint);
+
     const controlsRow = document.createElement('div');
     controlsRow.className = 'autoActionButtons';
 
@@ -3855,28 +3919,30 @@ function buildAutoManagedSwitchControl(control) {
                     : 'Befülle den Sensor "' + control.titleLabel + '"';
                 status.className = 'autoActionStatus status-missing';
                 checkmark.hidden = true;
+                hint.hidden = true;
                 testButton.disabled = true;
                 valueDisplay.textContent = 'Aktueller Status: –';
+                valueDisplay.className = 'autoActionValue';
                 return;
             }
             testButton.disabled = false;
+            applyTestGate(readyKey, checkmark, hint, true);
             if (variant === 'ha_automation') {
                 status.textContent = '';
                 status.className = 'autoActionStatus status-ok';
-                checkmark.hidden = false;
                 return;
             }
             if (result.error) {
                 status.textContent = 'Eingerichtet, aktueller Status aber nicht lesbar: ' + result.error;
                 status.className = 'autoActionStatus status-error';
-                checkmark.hidden = true;
                 valueDisplay.textContent = 'Aktueller Status: –';
+                valueDisplay.className = 'autoActionValue';
             } else {
                 status.textContent = '';
                 status.className = 'autoActionStatus status-ok';
-                checkmark.hidden = false;
                 const isOn = result.value === 'on';
                 valueDisplay.textContent = 'Aktueller Status: ' + (isOn ? 'An' : 'Aus');
+                valueDisplay.className = 'autoActionValue';
                 // next click should do the opposite of whatever the entity actually reports
                 nextPhase = isOn ? 'stop' : 'start';
                 testButton.textContent = nextPhase === 'start' ? 'Test: Start' : 'Test: Ende';
@@ -3886,7 +3952,9 @@ function buildAutoManagedSwitchControl(control) {
             status.textContent = 'Status konnte nicht geladen werden.';
             status.className = 'autoActionStatus status-error';
             checkmark.hidden = true;
+            hint.hidden = true;
             valueDisplay.textContent = 'Aktueller Status: –';
+            valueDisplay.className = 'autoActionValue';
         }
     }
 
@@ -3894,6 +3962,7 @@ function buildAutoManagedSwitchControl(control) {
         const phase = nextPhase;
         testButton.disabled = true;
         valueDisplay.textContent = 'Teste...';
+        valueDisplay.className = 'autoActionValue testing';
         try {
             const response = await fetch(insideHomeAssistant + '/actions/' + control.key + '/test', {
                 method: 'POST',
@@ -3901,6 +3970,7 @@ function buildAutoManagedSwitchControl(control) {
                 body: JSON.stringify({phase})
             });
             const result = await response.json();
+            markActionTested(readyKey, !!result.success);
             if (result.success) {
                 const phaseLabel = phase === 'start' ? 'Start' : 'Ende';
                 if (variant === 'ha_automation') {
@@ -3912,19 +3982,23 @@ function buildAutoManagedSwitchControl(control) {
                     valueDisplay.textContent = 'Gesendet: ' + phaseLabel + ' (wird geprüft...)';
                     setTimeout(refreshStatus, 4000);
                 }
+                valueDisplay.className = 'autoActionValue testSuccess';
             } else {
                 valueDisplay.textContent = 'Fehler: ' + (result.message || 'unbekannt');
+                valueDisplay.className = 'autoActionValue';
             }
+            applyTestGate(readyKey, checkmark, hint, true);
         } catch (err) {
             console.log(err);
             valueDisplay.textContent = 'Fehler beim Testen';
+            valueDisplay.className = 'autoActionValue';
         } finally {
             testButton.disabled = false;
         }
     });
 
-    controlsRow.appendChild(valueDisplay);
     controlsRow.appendChild(testButton);
+    controlsRow.appendChild(valueDisplay);
     wrapper.appendChild(controlsRow);
 
     if (variantSelect) {
@@ -4231,7 +4305,9 @@ function buildCarChargeControl() {
     const isThreeStageComplete = recipe.type === 'three_stage' && phaseCountStage.service
         && amperageStage.service && (amperageStage.amountFields || []).length > 0 && controlStage.service;
     const isHaAutomationComplete = recipe.type === 'ha_automation' && !!recipe.haAutomationEntityId;
-    checkmark.hidden = !(isThreeStageComplete || isHaAutomationComplete);
+    const carChargeConfigured = isThreeStageComplete || isHaAutomationComplete;
+    const carChargeHint = buildTestGateHint();
+    applyTestGate('car_charge_start', checkmark, carChargeHint, carChargeConfigured);
 
     const candidateServices = allServiceOptions.filter(s => getIntegrationServiceDomains('wallbox').has(s.service.split('.')[0]));
 
@@ -4344,6 +4420,8 @@ function buildCarChargeControl() {
     status.className = 'autoActionStatus';
     wrapper.appendChild(status);
 
+    wrapper.appendChild(carChargeHint);
+
     const controlsRow = document.createElement('div');
     controlsRow.className = 'autoActionButtons';
 
@@ -4351,6 +4429,7 @@ function buildCarChargeControl() {
     wallboxStatusDisplay.className = 'autoActionValue';
 
     function refreshWallboxStatus() {
+        wallboxStatusDisplay.className = 'autoActionValue';
         const wallboxEntity = (configData['sensorMappings'] || {})['wallbox_plugged'] || '';
         if (!wallboxEntity) {
             wallboxStatusDisplay.textContent = 'Wallbox-Status: – (kein Sensor zugeordnet)';
@@ -4375,6 +4454,7 @@ function buildCarChargeControl() {
             // in app.py) add up to a noticeable wait - let the user know it's not stuck
             status.textContent = 'Teste (ca. 30s...)';
             status.className = 'autoActionStatus';
+            wallboxStatusDisplay.className = 'autoActionValue testing';
             try {
                 const response = await fetch(insideHomeAssistant + '/actions/car_charge_start/test', {
                     method: 'POST',
@@ -4382,20 +4462,25 @@ function buildCarChargeControl() {
                     body: JSON.stringify({targetKw})
                 });
                 const result = await response.json();
+                markActionTested('car_charge_start', !!result.success);
                 if (result.success) {
                     status.textContent = result.phaseCount !== undefined
                         ? `Gesendet: ${result.phaseCount} Phase(n), Laden gestartet.`
                         : 'Gesendet: Laden gestartet.';
                     status.className = 'autoActionStatus status-ok';
+                    wallboxStatusDisplay.className = 'autoActionValue testSuccess';
                     setTimeout(refreshWallboxStatus, 4000);
                 } else {
                     status.textContent = 'Fehler: ' + (result.message || 'unbekannt');
                     status.className = 'autoActionStatus status-error';
+                    wallboxStatusDisplay.className = 'autoActionValue';
                 }
+                applyTestGate('car_charge_start', checkmark, carChargeHint, true);
             } catch (err) {
                 console.log(err);
                 status.textContent = 'Fehler beim Testen';
                 status.className = 'autoActionStatus status-error';
+                wallboxStatusDisplay.className = 'autoActionValue';
             } finally {
                 for (const b of testButtons) b.disabled = false;
                 testStopButton.disabled = false;
@@ -4412,30 +4497,36 @@ function buildCarChargeControl() {
         testStopButton.disabled = true;
         status.textContent = 'Teste...';
         status.className = 'autoActionStatus';
+        wallboxStatusDisplay.className = 'autoActionValue testing';
         try {
             const response = await fetch(insideHomeAssistant + '/actions/car_charge_stop/test', {method: 'POST'});
             const result = await response.json();
+            markActionTested('car_charge_start', !!result.success);
             if (result.success) {
                 status.textContent = 'Gesendet: Laden beendet.';
                 status.className = 'autoActionStatus status-ok';
+                wallboxStatusDisplay.className = 'autoActionValue testSuccess';
                 setTimeout(refreshWallboxStatus, 4000);
             } else {
                 status.textContent = 'Fehler: ' + (result.message || 'unbekannt');
                 status.className = 'autoActionStatus status-error';
+                wallboxStatusDisplay.className = 'autoActionValue';
             }
+            applyTestGate('car_charge_start', checkmark, carChargeHint, true);
         } catch (err) {
             console.log(err);
             status.textContent = 'Fehler beim Testen';
             status.className = 'autoActionStatus status-error';
+            wallboxStatusDisplay.className = 'autoActionValue';
         } finally {
             for (const b of testButtons) b.disabled = false;
             testStopButton.disabled = false;
         }
     });
 
-    controlsRow.appendChild(wallboxStatusDisplay);
     for (const b of testButtons) controlsRow.appendChild(b);
     controlsRow.appendChild(testStopButton);
+    controlsRow.appendChild(wallboxStatusDisplay);
     wrapper.appendChild(controlsRow);
 
     wrapper.__refresh = refreshWallboxStatus;
@@ -4459,7 +4550,9 @@ function buildHotWaterControl() {
     // der Nutzer nicht explizit "HA-Automation" gewaehlt hat (Nutzer-Vorgabe). "Befehl auswählen"
     // bleibt als Option erreichbar, falls jemand die Auswahl bewusst wieder zuruecksetzen will.
     let variant = recipe.type === 'ha_automation' ? 'ha_automation' : (recipe.type === '' ? '' : 'direct');
-    checkmark.hidden = variant === 'ha_automation' ? !recipe.haAutomationEntityId : !recipe.service;
+    const hotWaterHint = buildTestGateHint();
+    applyTestGate('hot_water', checkmark, hotWaterHint,
+        variant === 'ha_automation' ? !!recipe.haAutomationEntityId : !!recipe.service);
 
     // "Varianten" zuerst (siehe Reihenfolge weiter unten) - erst nach einer Auswahl blendet sich
     // das passende Eingabefeld darunter ein, statt beide gleichzeitig zu zeigen.
@@ -4502,14 +4595,16 @@ function buildHotWaterControl() {
 
     const automationInput = automationRow.querySelector('input');
     function refreshCheckmark() {
+        let configured;
         if (variant === 'ha_automation') {
-            checkmark.hidden = !automationInput.value;
+            configured = !!automationInput.value;
         } else if (variant === 'direct') {
             const serviceInput = document.getElementById('hot_water_hotWater_service');
-            checkmark.hidden = !(serviceInput && serviceInput.value);
+            configured = !!(serviceInput && serviceInput.value);
         } else {
-            checkmark.hidden = true;
+            configured = false;
         }
+        applyTestGate('hot_water', checkmark, hotWaterHint, configured);
     }
     automationInput.addEventListener('change', refreshCheckmark);
     const hotWaterServiceInput = document.getElementById('hot_water_hotWater_service');
@@ -4527,6 +4622,8 @@ function buildHotWaterControl() {
     status.className = 'autoActionStatus';
     wrapper.appendChild(status);
 
+    wrapper.appendChild(hotWaterHint);
+
     const controlsRow = document.createElement('div');
     controlsRow.className = 'autoActionButtons';
 
@@ -4538,6 +4635,7 @@ function buildHotWaterControl() {
     // Sensors (heatpump_dhw_activated, der nur meldet OB die Funktion an der Waermepumpe generell
     // aktiviert ist, nicht ob gerade tatsaechlich erwaermt wird).
     function refreshHotWaterStatus() {
+        statusDisplay.className = 'autoActionValue';
         const entity = (configData['sensorMappings'] || {})['heatpump_dhw_on_off'] || '';
         if (!entity) {
             statusDisplay.textContent = 'Warmwasser gerade erwärmt? Aktueller Status: – (kein Sensor zugeordnet)';
@@ -4564,16 +4662,21 @@ function buildHotWaterControl() {
         testButton.disabled = true;
         status.textContent = 'Teste... (kann bis zu 90s dauern)';
         status.className = 'autoActionStatus';
+        statusDisplay.className = 'autoActionValue testing';
+        let success = false;
         try {
             const response = await fetch(insideHomeAssistant + '/actions/hot_water_target_temp/test', {method: 'POST'});
             const result = await response.json();
-            if (result.success) {
+            success = !!result.success;
+            markActionTested('hot_water', success);
+            if (success) {
                 status.textContent = `Erfolgreich: Solltemperatur ${result.originalValue} °C → ${result.boostedValue} °C → zurückgesetzt, "Warmwasser gerade erwärmt?" ist auf An gesprungen.`;
                 status.className = 'autoActionStatus status-ok';
             } else {
                 status.textContent = 'Fehler: ' + (result.message || 'unbekannt');
                 status.className = 'autoActionStatus status-error';
             }
+            applyTestGate('hot_water', checkmark, hotWaterHint, true);
         } catch (err) {
             console.log(err);
             status.textContent = 'Fehler beim Testen';
@@ -4581,11 +4684,15 @@ function buildHotWaterControl() {
         } finally {
             testButton.disabled = false;
             refreshHotWaterStatus();
+            // refreshHotWaterStatus() setzt statusDisplay wieder auf Grau zurueck (Default) - bei
+            // erfolgreichem Test erst DANACH auf Gruen ueberschreiben, siehe Anforderung "geänderten
+            // Wert in grün anzeigen".
+            if (success) statusDisplay.className = 'autoActionValue testSuccess';
         }
     });
 
-    controlsRow.appendChild(statusDisplay);
     controlsRow.appendChild(testButton);
+    controlsRow.appendChild(statusDisplay);
     wrapper.appendChild(controlsRow);
 
     wrapper.__refresh = refreshHotWaterStatus;
@@ -4733,7 +4840,10 @@ function buildBatteryCoupledEntityField(sensorKey, datalistId, onChange) {
 // zuvor gemeldete "Aktion konnte nicht ... werden"-Fehlermeldung wieder frei (siehe
 // renderSystemHealth/_note_action_outcome) - ohne diesen Button blieb die sonst stehen, bis der
 // Aktionstyp naechste zufaellig durch den Optimierer erneut UND dabei erfolgreich ausgeloest wurde.
-function buildBatteryDirectTestRow(actionKey) {
+// checkmark/hint: vom Aufrufer (buildBatteryControlBlock) uebergebene Elemente aus dessen
+// Ueberschrift, nur fuer gegatete Aktionstypen gesetzt (siehe dort) - null bei "Batterie-Aktion
+// beenden", die kein Bereitschafts-Gating hat.
+function buildBatteryDirectTestRow(actionKey, checkmark, hint) {
     const wrapper = document.createElement('div');
     wrapper.className = 'autoActionControl';
 
@@ -4759,6 +4869,7 @@ function buildBatteryDirectTestRow(actionKey) {
     }
 
     async function refreshValues() {
+        valuesDisplay.className = 'autoActionValue';
         try {
             const result = await getJson(insideHomeAssistant + '/actions/battery/' + actionKey + '/status');
             renderValues(result.values);
@@ -4772,6 +4883,7 @@ function buildBatteryDirectTestRow(actionKey) {
         button.disabled = true;
         statusIcon.hidden = true;
         valuesDisplay.textContent = 'Teste...';
+        valuesDisplay.className = 'autoActionValue testing';
         try {
             const response = await fetch(insideHomeAssistant + '/actions/battery/' + actionKey + '/test', {method: 'POST'});
             const result = await response.json();
@@ -4780,6 +4892,11 @@ function buildBatteryDirectTestRow(actionKey) {
             statusIcon.className = 'batteryTestStatusIcon ' + (result.success ? 'status-ok' : 'status-error');
             statusIcon.title = result.success ? '' : (result.message || 'Test fehlgeschlagen');
             statusIcon.hidden = false;
+            valuesDisplay.className = 'autoActionValue' + (result.success ? ' testSuccess' : '');
+            if (checkmark) {
+                markActionTested(actionKey, !!result.success);
+                applyTestGate(actionKey, checkmark, hint, true);
+            }
         } catch (err) {
             console.log(err);
             statusIcon.textContent = '!';
@@ -4787,6 +4904,7 @@ function buildBatteryDirectTestRow(actionKey) {
             statusIcon.title = 'Test fehlgeschlagen';
             statusIcon.hidden = false;
             valuesDisplay.textContent = 'Fehler beim Testen';
+            valuesDisplay.className = 'autoActionValue';
         } finally {
             button.disabled = false;
             // Der Testausgang ist serverseitig in actionTestFailed/actionTestPassed hinterlegt -
@@ -4819,6 +4937,15 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields) 
     title.textContent = label;
     if (tooltip) title.appendChild(buildTooltip(tooltip));
     headingRow.appendChild(title);
+    // Nur Aktionstypen mit eigenem Bereitschafts-Gating (siehe _READY_KEY_TO_LABEL_SECTION in
+    // app.py) bekommen einen Haken - "Batterie-Aktion beenden" ist nicht gegatet, siehe
+    // buildBatteryDirectTestRow.
+    const gated = actionKey in actionTestStatusMap;
+    const checkmark = document.createElement('span');
+    checkmark.className = 'autoActionCheckmark';
+    checkmark.textContent = ' ✓';
+    checkmark.hidden = true;
+    if (gated) headingRow.appendChild(checkmark);
     const actionTypeEnabled = configData['actionTypeEnabled'] || {};
     const toggle = buildToggleSwitch(actionKey + ACTION_TOGGLE_POSTFIX, actionTypeEnabled[actionKey] !== false);
     // margin-left:auto statt eines generischen Gaps auf .integrationHeadingRow (das wird auch fuer
@@ -4828,6 +4955,11 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields) 
     toggle.style.marginLeft = 'auto';
     headingRow.appendChild(toggle);
     wrapper.appendChild(headingRow);
+    const hint = buildTestGateHint();
+    if (gated) {
+        wrapper.appendChild(hint);
+        applyTestGate(actionKey, checkmark, hint, true);
+    }
 
     const variant = (configData['controlVariant'] || {})[actionKey] || 'direct';
     const variantSelect = buildVariantSelect(actionKey + '_variant', variant, 'Direkte Entitäts-Steuerung');
@@ -4836,7 +4968,7 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields) 
     const directFields = document.createElement('div');
     directFields.style.display = variant === 'direct' ? '' : 'none';
     directFields.appendChild(buildDirectFields());
-    directFields.appendChild(buildBatteryDirectTestRow(actionKey));
+    directFields.appendChild(buildBatteryDirectTestRow(actionKey, gated ? checkmark : null, gated ? hint : null));
     wrapper.appendChild(directFields);
 
     const automationRow = buildAutomationEntityRow('HA-Automation auswählen',

@@ -4178,6 +4178,22 @@ def writeConfig():
     return jsonify(response_data)
 
 
+@app.route("/actions/test-status", methods=["GET"])
+def actionTestStatusOverview():
+    """Je gegatetem Aktionstyp (siehe _READY_KEY_TO_LABEL_SECTION), ob der letzte Test in der
+    aktuellen Konfiguration noch als erfolgreich gilt (config['actionTestPassed'][ready_key] ==
+    aktueller Fingerprint) - Grundlage fuer den dauerhaften gruenen Haken bei den Testen-Zeilen der
+    Konfigurationsseite. Bleibt bestehen, bis sich etwas an der Steuerung/Zuordnung dieses
+    Aktionstyps aendert (der Fingerprint-Vergleich invalidiert das automatisch, siehe
+    _action_type_fingerprint)."""
+    config = _read_current_config()
+    passed = config.get("actionTestPassed", {}) or {}
+    return jsonify({
+        ready_key: passed.get(ready_key) == _action_type_fingerprint(config, ready_key)
+        for ready_key in _READY_KEY_TO_LABEL_SECTION
+    })
+
+
 @app.route("/actions/<control_key>/status", methods=["GET"])
 def statusAutoManagedControl(control_key):
     control = AUTO_MANAGED_CONTROLS.get(control_key)

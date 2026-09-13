@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.92
+
+* **Konfiguration: Alle "Testen"-Zeilen (Warmwasserbereitung, Heizung Soll-Temperatur, Sonstiger Verbraucher, Auto laden, Batterie-Steuerung) einheitlich überarbeitet.** Die Statusanzeige ist jetzt standardmäßig grau in normaler Schrift statt fett, färbt sich während eines laufenden Tests schwarz und zeigt nach erfolgreichem Test den geänderten Wert grün an. Button steht jetzt vor der Statusanzeige (nicht mehr dahinter). Der grüne Haken neben dem Aktionsnamen ist jetzt daran gekoppelt, ob der letzte Test in der aktuellen Konfiguration noch als erfolgreich gilt (serverseitig über `actionTestPassed` mit Fingerprint-Vergleich hinterlegt, siehe `/actions/test-status`) statt nur "ist konfiguriert" - er bleibt deshalb über einen Seiten-Reload hinweg bestehen, bis sich etwas an der Steuerung/Zuordnung dieses Aktionstyps ändert. Neu: ein roter Hinweis "Bitte Gerätesteuerung testen" erscheint, solange eine eingerichtete Steuerung noch nicht erfolgreich getestet wurde - genau die Fälle, in denen die Bereitschaftsprüfung reale Aktionen blockiert (siehe `_action_type_ready`).
+
 ## 0.0.45.91
 
 * **Strompreisprognose nutzt jetzt zusätzlich Bubbles eigene, mehrtägige Strompreisprognose als Fallback.** Der `provide_input_output_csv`-Endpunkt liefert jetzt zusätzlich einen reinen (netto) Börsenstrompreis für ca. 4-5 Tage im Voraus (Feld „price_prediction"). Für Stunden, die noch nicht im echten, tagesaktuellen Awattar-Fenster liegen, wird dieser jetzt zuerst verwendet (netto → brutto umgerechnet, danach wie gehabt mit Aufschlag/Netzentgelt versehen) statt eines wiederverwendeten älteren Tagesprofils - eine echte, tagesspezifische Prognose statt einer Näherung. Die 0.0.45.88-Rückfallkette (älterer Tag, zuletzt eingefrorener Wert) bleibt als letzter Rückfall bestehen, falls auch Bubbles Prognose fehlt.

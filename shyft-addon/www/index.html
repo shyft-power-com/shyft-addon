@@ -484,8 +484,15 @@
             cursor: not-allowed;
         }
         .autoActionValue {
-            font-weight: 600;
+            font-weight: 400;
+            color: var(--color-text-secondary);
             min-width: 5em;
+        }
+        .autoActionValue.testing {
+            color: var(--color-text);
+        }
+        .autoActionValue.testSuccess {
+            color: var(--color-accent);
         }
         .batteryTestStatusIcon {
             font-weight: 700;
