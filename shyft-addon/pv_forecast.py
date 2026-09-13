@@ -65,8 +65,6 @@ CALIBRATION_ALPHA = 0.25
 # Nur Stunden mit belastbarer Einstrahlung fliessen in die m2-Anpassung ein (sonst ist
 # gemessen / (irr * eta) numerisch instabil).
 CALIBRATION_MIN_IRRADIANCE_WM2 = 50
-# Messfenster um die volle Stunde (+/- Minuten), aus dem der Stundenwert gemittelt wird.
-CALIBRATION_HOUR_WINDOW_MIN = 30
 CALIBRATION_SETUP_DAYS = 7
 
 # Grobes Startprofil, bevor kalibriert wurde: ~50 m^2 in den Tagesstunden, 0 nachts. Zusammen mit
@@ -336,12 +334,15 @@ def dashboard_weather(pv_sensor_configured=True):
 # ---------------------------------------------------------------------------
 
 def _hourly_measured_kw(history_pairs, day_local, hour):
-    """Mittelwert der gemessenen Leistung (kW) im Fenster [hour:00 +/- CALIBRATION_HOUR_WINDOW_MIN]
-    an day_local. history_pairs: Liste (aware_datetime, kw). None, wenn keine Messpunkte im Fenster."""
-    center = day_local.replace(hour=hour, minute=0, second=0, microsecond=0)
-    lo = center - timedelta(minutes=CALIBRATION_HOUR_WINDOW_MIN)
-    hi = center + timedelta(minutes=CALIBRATION_HOUR_WINDOW_MIN)
-    vals = [kw for (ts, kw) in history_pairs if lo <= ts <= hi]
+    """Mittelwert der gemessenen Leistung (kW) im VORWAERTS gerichteten Fenster [hour:00, hour:00+1h)
+    an day_local - dieselbe Stunden-Konvention wie _irr_avg_at (Bestrahlung fuer [hour:00, hour:00+1h))
+    und wie ueberall sonst im Addon (Aktionen, ev_usage_h/hw_usage_h, readPvForecastVsActual): eine
+    "Stunde H" ist H:00 bis (H+1):00, nicht auf H:00 zentriert. War frueher ein zentriertes +/-30-Min-
+    Fenster (H-0:30 bis H+0:30) - das lag gegenueber der Bestrahlungsprognose um 30 Minuten daneben.
+    history_pairs: Liste (aware_datetime, kw). None, wenn keine Messpunkte im Fenster."""
+    start = day_local.replace(hour=hour, minute=0, second=0, microsecond=0)
+    end = start + timedelta(hours=1)
+    vals = [kw for (ts, kw) in history_pairs if start <= ts < end]
     if not vals:
         return None
     return sum(vals) / len(vals)
