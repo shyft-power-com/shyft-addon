@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.106
+
+* **Geräteverhalten-Abweichungsmeldungen zeigen jetzt den konkret gemessenen Wert an**, statt nur "gemessen wird ein anderer Wert" bzw. gar keinen Ist-Wert zu nennen (betrifft Batterie-Lade-/Entladeleistungslimit, Batterie-Modus, "Sonstiger Verbraucher", Heizungs- und Warmwasser-Solltemperatur).
+
 ## 0.0.45.105
 
 * **Fix: Der Problem-Hinweis oben auf dem Dashboard konnte veraltet bleiben, während die Statuskarte auf der Konfigurationsseite (die schon regelmäßig auffrischte) längst wieder leer war.** `renderDashboardProblemBanner()` wurde bisher nur einmal beim initialen Laden der Seite gerendert und danach nie wieder - ein zwischenzeitlich behobenes Problem verschwand dort deshalb erst nach einem manuellen Neuladen. Läuft jetzt wie die Konfigurationsseiten-Statuskarte alle 30s mit (und beim Zurückkehren zur Seite, z.B. nach Bildschirmsperre/Tab-Wechsel).

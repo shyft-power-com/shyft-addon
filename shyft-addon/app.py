@@ -4911,10 +4911,11 @@ def check_device_status_deviation(config):
         elif grid_charge_direct and charge_shift_direct and max_charge_kw is not None \
                 and baseline_ok((BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_CHARGE_SHIFT_ACTION_NAME)):
             expected_charge_kw = max_charge_kw
+        live_charge_kw = _read_mapped_numeric(config, "battery_charge_limit_current")
         _check_numeric_deviation(
-            "battery_charge_limit", expected_charge_kw, _read_mapped_numeric(config, "battery_charge_limit_current"),
+            "battery_charge_limit", expected_charge_kw, live_charge_kw,
             BATTERY_DEVIATION_TOLERANCE_KW,
-            f"Batterie-Ladeleistungslimit weicht ab: Shyft erwartet {expected_charge_kw} kW, gemessen wird ein anderer Wert.",
+            f"Batterie-Ladeleistungslimit weicht ab: Shyft erwartet {expected_charge_kw} kW, gemessen werden {live_charge_kw} kW.",
             config,
         )
 
@@ -4926,10 +4927,11 @@ def check_device_status_deviation(config):
                 expected_discharge_kw = 0.0
         elif discharge_shift_direct and max_charge_kw is not None and baseline_ok((BATTERY_DISCHARGE_SHIFT_ACTION_NAME,)):
             expected_discharge_kw = max_charge_kw
+        live_discharge_kw = _read_mapped_numeric(config, "battery_discharge_limit_current")
         _check_numeric_deviation(
-            "battery_discharge_limit", expected_discharge_kw, _read_mapped_numeric(config, "battery_discharge_limit_current"),
+            "battery_discharge_limit", expected_discharge_kw, live_discharge_kw,
             BATTERY_DEVIATION_TOLERANCE_KW,
-            f"Batterie-Entladeleistungslimit weicht ab: Shyft erwartet {expected_discharge_kw} kW, gemessen wird ein anderer Wert.",
+            f"Batterie-Entladeleistungslimit weicht ab: Shyft erwartet {expected_discharge_kw} kW, gemessen werden {live_discharge_kw} kW.",
             config,
         )
 
@@ -4949,9 +4951,10 @@ def check_device_status_deviation(config):
         elif grid_charge_direct and self_consumption_mode and baseline_ok(
                 (BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_CHARGE_SHIFT_ACTION_NAME, BATTERY_DISCHARGE_SHIFT_ACTION_NAME)):
             expected_mode = self_consumption_mode
+        live_mode = _read_mapped_raw_state(config, "battery_storage_command_mode")
         _check_raw_state_deviation(
-            "battery_mode", expected_mode, _read_mapped_raw_state(config, "battery_storage_command_mode"),
-            f"Batterie-Modus weicht ab: Shyft erwartet '{expected_mode}'.",
+            "battery_mode", expected_mode, live_mode,
+            f"Batterie-Modus weicht ab: Shyft erwartet '{expected_mode}', gemessen wird '{live_mode}'.",
             config,
         )
     else:
@@ -4971,7 +4974,7 @@ def check_device_status_deviation(config):
         live_switch_state = live_switch_state.lower() if live_switch_state is not None else None
         _check_raw_state_deviation(
             "sonstiger_verbraucher", expected_switch_state, live_switch_state,
-            f"'Sonstiger Verbraucher' weicht ab: Shyft erwartet '{expected_switch_state}'.",
+            f"'Sonstiger Verbraucher' weicht ab: Shyft erwartet '{expected_switch_state}', gemessen wird '{live_switch_state}'.",
             config,
         )
     else:
@@ -4981,10 +4984,11 @@ def check_device_status_deviation(config):
     if configured("waermepumpe") and resolve_control_variant("heating_target_temp", config) == "direct":
         heizung_action = _active_computed_action(computed_actions, HEIZUNG_ACTION_NAME)
         expected_temp = heizung_action.get("Target Value") if heizung_action is not None and past_grace(heizung_action) else None
+        live_heizung_temp = _read_mapped_numeric(config, "heatpump_heating_target_temp_normal")
         _check_numeric_deviation(
-            "heizung_soll_temp", expected_temp, _read_mapped_numeric(config, "heatpump_heating_target_temp_normal"),
+            "heizung_soll_temp", expected_temp, live_heizung_temp,
             HEATING_TARGET_TEMP_DEVIATION_TOLERANCE_C,
-            f"Heizungs-Solltemperatur weicht ab: Shyft erwartet {expected_temp} °C.",
+            f"Heizungs-Solltemperatur weicht ab: Shyft erwartet {expected_temp} °C, gemessen werden {live_heizung_temp} °C.",
             config,
         )
     else:
@@ -4995,10 +4999,11 @@ def check_device_status_deviation(config):
     if configured("waermepumpe") and _dhw_target_temp_entity(config):
         dhw_action = _active_computed_action(computed_actions, DHW_ACTION_NAME)
         expected_dhw_temp = dhw_action.get("Target Value") if dhw_action is not None and past_grace(dhw_action) else None
+        live_dhw_temp = _read_mapped_numeric(config, DHW_TARGET_TEMP_SENSOR_FIELD)
         _check_numeric_deviation(
-            "warmwasser_soll_temp", expected_dhw_temp, _read_mapped_numeric(config, DHW_TARGET_TEMP_SENSOR_FIELD),
+            "warmwasser_soll_temp", expected_dhw_temp, live_dhw_temp,
             DHW_TARGET_TEMP_DEVIATION_TOLERANCE_C,
-            f"Warmwasser-Solltemperatur weicht ab: Shyft erwartet {expected_dhw_temp} °C.",
+            f"Warmwasser-Solltemperatur weicht ab: Shyft erwartet {expected_dhw_temp} °C, gemessen werden {live_dhw_temp} °C.",
             config,
         )
     else:
