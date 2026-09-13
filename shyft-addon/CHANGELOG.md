@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.105
+
+* **Fix: Der Problem-Hinweis oben auf dem Dashboard konnte veraltet bleiben, während die Statuskarte auf der Konfigurationsseite (die schon regelmäßig auffrischte) längst wieder leer war.** `renderDashboardProblemBanner()` wurde bisher nur einmal beim initialen Laden der Seite gerendert und danach nie wieder - ein zwischenzeitlich behobenes Problem verschwand dort deshalb erst nach einem manuellen Neuladen. Läuft jetzt wie die Konfigurationsseiten-Statuskarte alle 30s mit (und beim Zurückkehren zur Seite, z.B. nach Bildschirmsperre/Tab-Wechsel).
+
 ## 0.0.45.104
 
 * **Strompreis-Chart: neue Farbe (Purpur) für Stunden über 80 Cent/kWh**, zusätzlich zum bisherigen "teuer"-Rot (>35 Cent) - hebt extrem teure Stunden nochmal deutlicher ab.

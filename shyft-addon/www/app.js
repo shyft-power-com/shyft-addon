@@ -7979,6 +7979,7 @@ function setupTabs() {
             refreshActiveTabNow();
             refreshLiveSensorValues();
             renderSystemHealth();
+            renderDashboardProblemBanner();
         }
     });
 }
@@ -8012,12 +8013,17 @@ if (document.readyState === 'complete') {
 
 setInterval(refreshLiveSensorValues, LIVE_VALUE_REFRESH_INTERVAL_MS);
 
-// Statuskarte oben auf der Konfigurationsseite regelmaessig auffrischen (wie das Dashboard seine
-// Live-Werte), damit ein zwischenzeitlich behobenes/neu aufgetretenes Problem sichtbar wird, ohne
-// dass der Nutzer die Seite neu laden muss.
+// Statuskarte oben auf der Konfigurationsseite UND der Problem-Hinweis oben auf dem Dashboard
+// regelmaessig auffrischen (wie das Dashboard seine Live-Werte), damit ein zwischenzeitlich
+// behobenes/neu aufgetretenes Problem auf beiden sichtbar wird, ohne dass der Nutzer die Seite neu
+// laden muss. renderDashboardProblemBanner() fehlte hier bisher - der Banner wurde nur einmal beim
+// initialen Laden gerendert und blieb danach auf dem Stand von damals stehen, selbst wenn sich das
+// gemeldete Problem laengst erledigt hatte (Nutzer-Feedback: Dashboard zeigte "Ein Problem...",
+// die Konfigurationsseite (die dank dieses Intervalls schon aktuell war) aber keinen Hinweis mehr).
 const SYSTEM_HEALTH_REFRESH_INTERVAL_MS = 30000;
 setInterval(() => {
     if (document.visibilityState === 'visible') {
         renderSystemHealth();
+        renderDashboardProblemBanner();
     }
 }, SYSTEM_HEALTH_REFRESH_INTERVAL_MS);
