@@ -1254,6 +1254,13 @@
             color: var(--color-text);
             cursor: pointer;
         }
+        /* Das eigene "display: flex" oben ueberschreibt sonst den Browser-Default fuer das
+           [hidden]-Attribut (Autoren-CSS gewinnt gegen das User-Agent-Stylesheet, auch bei
+           gleicher Spezifitaet) - ohne diese Regel blieb der Banner als leere Box sichtbar,
+           sobald renderDashboardProblemBanner ihn per banner.hidden=true ausblenden wollte. */
+        .dashboardProblemBanner[hidden] {
+            display: none;
+        }
         .dashboardProblemBanner:hover {
             background: var(--color-input-bg);
         }

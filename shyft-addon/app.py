@@ -1243,9 +1243,12 @@ def readPvForecastVsActual():
     z.B. nach einem Neustart), wird sie aus dem aktuellen Wetter-Cache rekonstruiert (siehe
     pv_forecast.compute_site_weather_fields - open-meteo liefert bei jedem Abruf auch rueckwirkende
     Tage, der Cache deckt fruehe Stunden von heute also i.d.R. schon ab, auch wenn der Snapshot es
-    (noch) nicht tut). 'actual' sind die stundenweise gemittelten tatsaechlichen Messwerte von 0 Uhr
-    bis jetzt, nur fuer heute (keine Ist-Werte fuer die Zukunft). Fehlende Werte je Stunde sind
-    null, nicht ausgelassen - hält beide Reihen synchron zur selben labels-Achse, wie es das
+    (noch) nicht tut). 'actual' sind die stundenweise gemittelten tatsaechlichen Messwerte fuer
+    JEDE BEREITS VOLLSTAENDIG VERGANGENE Stunde von heute (keine Ist-Werte fuer die Zukunft UND
+    keiner fuer die gerade laufende Stunde - deren Mittel wuerde aus nur 1-2 der ueblichen ~4
+    Viertelstunden-Messpunkte bestehen und waere gegen die Voll-Stunden-Prognose nicht vergleichbar,
+    ausserdem besonders anfaellig fuer einzelne Ausreisser des PV-Sensors). Fehlende Werte je Stunde
+    sind null, nicht ausgelassen - hält beide Reihen synchron zur selben labels-Achse, wie es das
     Frontend zum Zeichnen zweier Linien braucht."""
     config = _read_current_config()
     entity_id = config.get("sensorMappings", {}).get("photovoltaic_powerflow_pv", "")
@@ -1266,6 +1269,10 @@ def readPvForecastVsActual():
     if entity_id:
         now_local = datetime.now().astimezone()
         midnight_local = _hour_floor(now_local.replace(hour=0))
+        # Die gerade laufende Stunde bekommt bewusst NIE einen "Ist"-Wert (weder aus Messpunkten
+        # noch aus dem Nacht-Fallback unten) - siehe Docstring: ihr Mittel waere aus zu wenigen
+        # Messpunkten gebildet und mit der Voll-Stunden-Prognose nicht vergleichbar.
+        current_hour_key = _hour_floor(now_local)
         try:
             events = homeassistant_adapter.load_entity_history(entity_id, midnight_local, now_local)
             sums, counts = {}, {}
@@ -1277,7 +1284,7 @@ def readPvForecastVsActual():
                 hour_local = _hour_floor(event.last_changed.astimezone())
                 sums[hour_local] = sums.get(hour_local, 0) + value
                 counts[hour_local] = counts.get(hour_local, 0) + 1
-            actual_by_hour = {hour: sums[hour] / counts[hour] for hour in sums}
+            actual_by_hour = {hour: sums[hour] / counts[hour] for hour in sums if hour < current_hour_key}
         except Exception as e:
             print("[Shyft] PV-Ist-Werte konnten nicht geladen werden:", repr(e))
 
@@ -1288,10 +1295,11 @@ def readPvForecastVsActual():
         # (siehe _forward_fill_hourly - das waere fuer einen Zustand wie Wallbox-Status/SOC richtig,
         # der sich zwischen Events tatsaechlich nicht aendert, fuer eine Leistungsmessung aber Unsinn:
         # "keine neuen Events mehr" heisst hier "Anlage produziert nichts mehr", nicht "Leistung
-        # eingefroren bei ihrem letzten Wert"). Jede bereits vergangene Stunde ohne echten Messwert
-        # wird deshalb direkt auf 0 gesetzt statt auf den letzten bekannten Zustand.
+        # eingefroren bei ihrem letzten Wert"). Jede bereits VOLLSTAENDIG vergangene Stunde ohne
+        # echten Messwert wird deshalb direkt auf 0 gesetzt statt auf den letzten bekannten Zustand -
+        # die laufende Stunde (hour_cursor < current_hour_key stoppt davor) bleibt aussen vor.
         hour_cursor = midnight_local
-        while hour_cursor <= now_local:
+        while hour_cursor < current_hour_key:
             hour_key = _hour_floor(hour_cursor)
             actual_by_hour.setdefault(hour_key, 0.0)
             hour_cursor += timedelta(hours=1)
@@ -5848,23 +5856,44 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
 
 # Wie nah am Ende der aktuellen Stunde eine neu berechnete "laufende" Aktion (Stunde 0, Date Start =
 # jetzt) noch angelegt werden darf - siehe _suppress_near_boundary_singleton.
-NEAR_HOUR_BOUNDARY_MINUTES = 10
+NEAR_HOUR_BOUNDARY_MINUTES = 5
+# Toleranz (kW) fuer den "1:1 fortgesetzt"-Vergleich in _suppress_near_boundary_singleton - die
+# Zielwerte sind bereits auf eine Nachkommastelle gerundet, eine kleine Toleranz faengt trotzdem
+# Rundungs-/Gleitkommaunschaerfen ab, ohne echte Unterschiede (z.B. 3.0 vs. 5.5 kW) durchzulassen.
+NEAR_HOUR_BOUNDARY_CONTINUATION_TOLERANCE_KW = 0.05
 
 
 def _suppress_near_boundary_singleton(result, start):
-    """Verhindert ein Ergebnis wie "8:59 - 9:00": laeuft der Optimierungslauf (bzw. das Warten auf
+    """Verhindert ein Ergebnis wie "13:59 - 14:00": laeuft der Optimierungslauf (bzw. das Warten auf
     dessen Ergebnis, siehe schedule_optimizer_result_wait) so spaet ab, dass "jetzt" schon in den
     letzten NEAR_HOUR_BOUNDARY_MINUTES Minuten der Stunde liegt, waere das fuer Stunde 0 berechnete
     Aktionsfenster (Date Start = jetzt, Date End = Stundenende) nur noch wenige Minuten breit - ein
-    Geraet fuer 1-10 Minuten anzusteuern ist selten sinnvoll. Nur unterdrueckt, wenn dieselbe Aktion
-    NICHT auch fuer die unmittelbar folgende Stunde vorgesehen ist (result[1] fehlt): wuerde sie sich
-    verlaengern, wird das kurze Startfenster ohnehin gleich beim naechsten stuendlichen Uebergang
+    Geraet fuer 1-5 Minuten anzusteuern ist selten sinnvoll.
+
+    Nur unterdrueckt, wenn NICHT sichergestellt ist, dass dieselbe Aktion 1:1 (derselbe Target-Wert,
+    Toleranz siehe NEAR_HOUR_BOUNDARY_CONTINUATION_TOLERANCE_KW) auch fuer die unmittelbar folgende
+    Stunde vorgesehen ist - eine reine "existiert ueberhaupt irgendeine Aktion dieses Typs in
+    Stunde 1"-Pruefung reicht NICHT (fruehere Fassung dieser Funktion): die Prognose fuer Stunde 1
+    kann sich bis zum tatsaechlichen Stundenwechsel wieder aendern, z.B. weil ein frischer
+    Optimierungslauf mit aktuelleren Live-Daten eintrifft, bevor die alte Stunde-1-Prognose zur
+    neuen Stunde 0 wird - beobachtet als eine "Batterie netzladen"-Aktion, die um 13:59 startete und
+    bereits um 14:00 wieder endete, obwohl zum Berechnungszeitpunkt ebenfalls eine (letztlich nicht
+    eingetretene) Aktion fuer die Folgestunde vorlag. Bei tatsaechlicher 1:1-Fortsetzung wird das
+    kurze Startfenster ohnehin gleich beim naechsten stuendlichen Uebergang
     (run_hourly_action_transition) auf eine volle Stunde ausgedehnt und ist unproblematisch."""
     if 0 not in result:
         return result
     hour_end = start + timedelta(hours=1)
     now = datetime.now(timezone.utc)
-    if now >= hour_end - timedelta(minutes=NEAR_HOUR_BOUNDARY_MINUTES) and 1 not in result:
+    if now < hour_end - timedelta(minutes=NEAR_HOUR_BOUNDARY_MINUTES):
+        return result
+    next_hour_action = result.get(1)
+    continues_1to1 = (
+        next_hour_action is not None
+        and abs(_safe_float(next_hour_action.get("Target Value")) - _safe_float(result[0].get("Target Value")))
+        < NEAR_HOUR_BOUNDARY_CONTINUATION_TOLERANCE_KW
+    )
+    if not continues_1to1:
         del result[0]
     return result
 

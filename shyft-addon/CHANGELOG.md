@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.93
+
+* **Fix: kurzlebige Aktionen (z.B. "Batterie netzladen" von 13:59 bis 14:00) konnten trotz bestehender Absicherung entstehen.** Die bisherige Regel ließ eine neu berechnete, laufende Aktion in den letzten 10 Minuten der Stunde stehen, sobald irgendeine Aktion desselben Typs auch für die Folgestunde vorgesehen war - diese Prognose für die Folgestunde kann sich aber bis zum tatsächlichen Stundenwechsel wieder ändern. Die Regel prüft jetzt zusätzlich, ob es sich um dieselbe Aktion (gleicher Zielwert) handelt ("1:1 fortgesetzt"), sonst wird die Aktion unterdrückt; das Zeitfenster wurde von 10 auf 5 Minuten verkürzt.
+* **Fix: Der "X Probleme erfordern deine Aufmerksamkeit"-Hinweis auf dem Dashboard blieb als leere Box sichtbar, obwohl keine Probleme mehr vorlagen.** Ursache: das eigene `display: flex` der Banner-Klasse überschrieb den Browser-Standard für das `hidden`-Attribut. Eine explizite `[hidden]`-Regel stellt das korrekte Aus-/Einblenden wieder her.
+
 ## 0.0.45.92
 
 * **Konfiguration: Alle "Testen"-Zeilen (Warmwasserbereitung, Heizung Soll-Temperatur, Sonstiger Verbraucher, Auto laden, Batterie-Steuerung) einheitlich überarbeitet.** Die Statusanzeige ist jetzt standardmäßig grau in normaler Schrift statt fett, färbt sich während eines laufenden Tests schwarz und zeigt nach erfolgreichem Test den geänderten Wert grün an. Button steht jetzt vor der Statusanzeige (nicht mehr dahinter). Der grüne Haken neben dem Aktionsnamen ist jetzt daran gekoppelt, ob der letzte Test in der aktuellen Konfiguration noch als erfolgreich gilt (serverseitig über `actionTestPassed` mit Fingerprint-Vergleich hinterlegt, siehe `/actions/test-status`) statt nur "ist konfiguriert" - er bleibt deshalb über einen Seiten-Reload hinweg bestehen, bis sich etwas an der Steuerung/Zuordnung dieses Aktionstyps ändert. Neu: ein roter Hinweis "Bitte Gerätesteuerung testen" erscheint, solange eine eingerichtete Steuerung noch nicht erfolgreich getestet wurde - genau die Fälle, in denen die Bereitschaftsprüfung reale Aktionen blockiert (siehe `_action_type_ready`).
