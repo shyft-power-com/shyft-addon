@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.104
+
+* **Strompreis-Chart: neue Farbe (Purpur) für Stunden über 80 Cent/kWh**, zusätzlich zum bisherigen "teuer"-Rot (>35 Cent) - hebt extrem teure Stunden nochmal deutlicher ab.
+
 ## 0.0.45.103
 
 * **Test "Batterie netzladen" zeigt jetzt zusätzlich zum Ladeleistungslimit auch den Batterie-Steuerungsmodus an.** Der Modus schaltet beim Netzladen tatsächlich um und ist damit ein aussagekräftigeres Signal als das Limit allein, dessen Schreiben bei manchen Wechselrichter-Integrationen unzuverlässig sein kann.

@@ -5786,9 +5786,12 @@ function computePvEnergySummary(labels, values) {
 //                 genuinely change once per hour (e.g. an hourly electricity price) rather than
 //                 drifting smoothly, a straight line between points would misleadingly imply
 //                 a gradual transition
-//   colorBands  - {highThreshold, highColor, lowThreshold, lowColor, midColor} - colors each
-//                 stepped segment by which band its (already valueScale-applied) value falls
-//                 into, instead of a single accent color. Only meaningful together with stepped.
+//   colorBands  - {highThreshold, highColor, lowThreshold, lowColor, midColor,
+//                 extremeThreshold, extremeColor} - colors each stepped segment by which band its
+//                 (already valueScale-applied) value falls into, instead of a single accent color.
+//                 extremeThreshold/extremeColor are optional - an additional band strictly above
+//                 highThreshold (e.g. eye-catchingly expensive electricity prices). Only meaningful
+//                 together with stepped.
 //   valueScale  - multiplier applied to every value before anything else (e.g. 100 to show a
 //                 €/kWh price as Cent/kWh)
 //   minY        - clamps the auto-computed lower axis bound (never shown lower than this) - e.g.
@@ -5871,6 +5874,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 
     function colorForValue(v) {
         if (!colorBands) return 'var(--color-accent)';
+        if (colorBands.extremeThreshold !== undefined && v >= colorBands.extremeThreshold) return colorBands.extremeColor;
         if (v >= colorBands.highThreshold) return colorBands.highColor;
         if (v <= colorBands.lowThreshold) return colorBands.lowColor;
         return colorBands.midColor;
@@ -5894,7 +5898,9 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     // instead of taking on a single (misleading) color for its whole length.
     function splitJumpByBands(v0, v1, y0, y1) {
         if (!colorBands || v0 === v1) return [{y0, y1, color: colorForValue(v1)}];
-        const thresholds = [colorBands.lowThreshold, colorBands.highThreshold]
+        const candidateThresholds = [colorBands.lowThreshold, colorBands.highThreshold];
+        if (colorBands.extremeThreshold !== undefined) candidateThresholds.push(colorBands.extremeThreshold);
+        const thresholds = candidateThresholds
             .filter(t => t > Math.min(v0, v1) && t < Math.max(v0, v1))
             .sort((a, b) => (v0 < v1 ? a - b : b - a));
         const stops = [{v: v0, y: y0}, ...thresholds.map(t => ({v: t, y: y0 + (t - v0) / (v1 - v0) * (y1 - y0)})), {v: v1, y: y1}];
@@ -7777,7 +7783,9 @@ async function loadDashboard() {
             stepped: true,
             valueScale: 100,
             decimals: 0,
-            colorBands: {highThreshold: 35, highColor: 'var(--color-error)', lowThreshold: 25, lowColor: 'var(--color-accent)', midColor: 'var(--color-text-secondary)'},
+            // extremeThreshold/-Color: Nutzer-Vorgabe, sehr teure Stunden (>80 Cent) zusaetzlich
+            // zum normalen "teuer"-Rot (>35 Cent) farblich abheben, statt gleich auszusehen.
+            colorBands: {extremeThreshold: 80, extremeColor: '#8e24aa', highThreshold: 35, highColor: 'var(--color-error)', lowThreshold: 25, lowColor: 'var(--color-accent)', midColor: 'var(--color-text-secondary)'},
         }));
         updateOrAppendDashboardWidget(container, 'aussentemperatur', buildLineChart('Außentemperatur', '°C', data.labels, data.temperature));
         // Ersetzt die reine Prognose-Ansicht: gemeinsame Stundenachse ab 0 Uhr heute, aufgezeichnete
