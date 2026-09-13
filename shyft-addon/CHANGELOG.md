@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.91
+
+* **Strompreisprognose nutzt jetzt zusätzlich Bubbles eigene, mehrtägige Strompreisprognose als Fallback.** Der `provide_input_output_csv`-Endpunkt liefert jetzt zusätzlich einen reinen (netto) Börsenstrompreis für ca. 4-5 Tage im Voraus (Feld „price_prediction"). Für Stunden, die noch nicht im echten, tagesaktuellen Awattar-Fenster liegen, wird dieser jetzt zuerst verwendet (netto → brutto umgerechnet, danach wie gehabt mit Aufschlag/Netzentgelt versehen) statt eines wiederverwendeten älteren Tagesprofils - eine echte, tagesspezifische Prognose statt einer Näherung. Die 0.0.45.88-Rückfallkette (älterer Tag, zuletzt eingefrorener Wert) bleibt als letzter Rückfall bestehen, falls auch Bubbles Prognose fehlt.
+
 ## 0.0.45.90
 
 * **„Wärmepumpe an/aus": jeder Zustand außer „off" zählt jetzt als „an"** (z.B. Betriebsmodi wie „auto", „heat", „eco" statt eines reinen on/off-Schalters). Betrifft das Energiefluss-Widget (`heatpump.on`); die bisherige strikte „on"/„off"-Auswertung ist als Default für andere Sensoren (Heizung aktiviert, Warmwasser an/aus, Sonstiger Verbraucher) unverändert erhalten.

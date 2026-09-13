@@ -450,6 +450,72 @@ def _fetch_awattar_prices():
     return prices
 
 
+BUBBLE_PRICE_PREDICTION_CACHE_PATH = "/data/bubble_price_prediction_cache.json"
+BUBBLE_PRICE_PREDICTION_CACHE_TTL_SECONDS = 1800  # gleiche Kadenz wie AWATTAR_CACHE_TTL_SECONDS
+
+
+def _fetch_bubble_price_prediction():
+    """{hour_start_epoch_ms: EUR/kWh netto} aus Bubbles eigener Strompreisprognose (Antwortfeld
+    "price_prediction" von provide_input_output_csv - "Datetime Array" (Unix-ms, stuendlich) +
+    "Price (text)", komma-dezimal ';'-getrennt, reiner Boersenpreis netto). Deckt laut Test einen
+    mehrtaegigen Horizont ab (~4-5 Tage), im Gegensatz zu Awattars eigenem Fenster (i.d.R. nur
+    heute+morgen) - dient compute_price_buy_array als besserer Fallback fuer Stunden, die (noch)
+    nicht im echten Awattar-Fenster liegen, statt ein aelteres Tagesprofil wiederzuverwenden.
+
+    Gleiches Datei-Cache-Muster wie _fetch_awattar_prices (return {} bei Fehler/leer, faellt bei
+    einem fehlgeschlagenen Abruf auf den letzten Cache-Stand zurueck) - sonst wuerde jeder
+    sync_site_data-Lauf einen vollen provide_input_output_csv-Request (inkl. Optimizer-CSV) ausloesen,
+    nur um den Preis-Teil der Antwort zu nutzen."""
+    try:
+        with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "r") as f:
+            cached = json.load(f)
+    except Exception:
+        cached = None
+    if cached and time.time() - cached.get("fetched_at", 0) < BUBBLE_PRICE_PREDICTION_CACHE_TTL_SECONDS and cached.get("prices"):
+        return {int(k): v for k, v in cached["prices"].items()}
+    user_id = extract_shyft_user_id(shyft_adapter.bubble_token)
+    if not user_id:
+        return {}
+    try:
+        result = shyft_adapter.get_input_output_csv(user_id)
+        prediction = (result.get("response") or {}).get("price_prediction") or {}
+        datetimes_ms = prediction.get("Datetime Array") or []
+        price_text = prediction.get("Price (text)") or ""
+        price_values = [float(p.replace(",", ".")) for p in price_text.split(";") if p != ""]
+        prices = {}
+        for ts_ms, price in zip(datetimes_ms, price_values):
+            hour = datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+            prices[int(hour.timestamp() * 1000)] = price
+    except Exception as e:
+        print("[Shyft] Bubble-Strompreisprognose konnte nicht geladen werden:", repr(e))
+        if cached and cached.get("prices"):
+            return {int(k): v for k, v in cached["prices"].items()}
+        return {}
+    if prices:
+        try:
+            with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "w") as f:
+                json.dump({"fetched_at": time.time(), "prices": {str(k): v for k, v in prices.items()}}, f)
+        except Exception as e:
+            print("[Shyft] Bubble-Preisprognose-Cache konnte nicht geschrieben werden:", repr(e))
+    return prices
+
+
+def _resolve_fallback_price(h, by_hour, bubble_by_hour):
+    """Brutto-Preis (EUR/kWh) fuer eine Stunde jenseits des echten Awattar-Fensters: zuerst Bubbles
+    eigene Strompreisprognose (_fetch_bubble_price_prediction, netto -> brutto konvertiert - deckt
+    i.d.R. den gesamten Optimierungszeitraum ab), sonst als letzter Rueckfall ein echter
+    Awattar-Preis derselben Uhrzeit bis zu PRICE_FALLBACK_MAX_DAYS_BACK Tage zurueck. None, wenn
+    beides fehlschlaegt - der Aufrufer faellt dann selbst auf den zuletzt aufgeloesten Wert zurueck."""
+    bubble_price = bubble_by_hour.get(h)
+    if bubble_price is not None:
+        return round(bubble_price * AWATTAR_VAT_FACTOR, 5)
+    for days_back in range(1, PRICE_FALLBACK_MAX_DAYS_BACK + 1):
+        price = by_hour.get(h - timedelta(days=days_back))
+        if price is not None:
+            return price
+    return None
+
+
 def _hour_in_ht_windows(local_dt, windows):
     "True, wenn local_dt (lokale Zeit) in einem der HT-Zeitfenster liegt. Fenster: {weekday 0=Mo, from 0-23, to 1-24}; to<=from = ueber Mitternacht."
     wd, hour = local_dt.weekday(), local_dt.hour
@@ -507,22 +573,20 @@ def compute_price_buy_array(config, base_time_utc, hours):
         by_hour = {}
         for ts_ms, price in spot.items():
             by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
-        # Fehlende Randstunden (jenseits des veroeffentlichten Awattar-Fensters) auf den letzten Tag
-        # mit ECHTEN Marktdaten fuer dieselbe Uhrzeit zurueckfuehren - bis zu PRICE_FALLBACK_MAX_DAYS_BACK
-        # Tage rueckwaerts, nicht nur 1-2 Tage. Bei nur 1-2 Tagen konnte der 72h-Standardhorizont
-        # (optimizer_period 48 + 24) in einen eingefrorenen Einzelwert "kippen", sobald auch der
-        # Fallback-Tag noch nicht abgedeckt war (siehe naechster Zweig unten fuer den Grund, warum das
-        # als flacher Preisverlauf sichtbar wurde, der beim naechsten Awattar-Update hart auf den
-        # echten Kurs "abstuerzte").
+        bubble_by_hour = {}
+        for ts_ms, price in _fetch_bubble_price_prediction().items():
+            bubble_by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
+        # Fehlende Randstunden (jenseits des veroeffentlichten Awattar-Fensters): zuerst Bubbles
+        # eigene, mehrtaegige Strompreisprognose verwenden (siehe _resolve_fallback_price) - eine
+        # echte, tagesspezifische Prognose statt eines wiederverwendeten aelteren Tagesprofils. Nur
+        # wenn die ebenfalls fehlt, auf den letzten Tag mit echten Awattar-Daten zurueckfallen (bis
+        # zu PRICE_FALLBACK_MAX_DAYS_BACK Tage), zuletzt auf den vorherigen Wert.
         out = []
         for i in range(hours):
             h = (base_time_utc + timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
             price = by_hour.get(h)
             if price is None:
-                for days_back in range(1, PRICE_FALLBACK_MAX_DAYS_BACK + 1):
-                    price = by_hour.get(h - timedelta(days=days_back))
-                    if price is not None:
-                        break
+                price = _resolve_fallback_price(h, by_hour, bubble_by_hour)
             if price is None:
                 price = out[-1] - surcharge if out else 0.0
             out.append(round(price + surcharge, 5))
@@ -541,25 +605,20 @@ def compute_price_buy_array(config, base_time_utc, hours):
         by_hour = {}
         for ts_ms, price in spot.items():
             by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
+        bubble_by_hour = {}
+        for ts_ms, price in _fetch_bubble_price_prediction().items():
+            bubble_by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
         out = []
         prev_raw_price = None
         for i in range(hours):
             h = (base_time_utc + timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
             raw_price = by_hour.get(h)
             if raw_price is None:
-                # Randstunden jenseits des Awattar-Fensters auf den letzten Tag mit ECHTEN
-                # Marktdaten fuer dieselbe Uhrzeit zurueckfuehren (bis zu PRICE_FALLBACK_MAX_DAYS_BACK
-                # Tage rueckwaerts) - NICHT nur 1-2 Tage: bei nur 1-2 Tagen griff fuer weiter in der
-                # Zukunft liegende Stunden (z.B. uebermorgen, solange morgen selbst noch nicht
-                # veroeffentlicht ist) sofort der prev_raw_price-Notnagel darunter, und der blieb dann
-                # ueber den GESAMTEN Rest des Horizonts eingefroren - genau das erzeugte den vom
-                # Nutzer beobachteten flachen Preisverlauf, der beim naechsten Awattar-Update (naechster
-                # Tag wird veroeffentlicht, typischerweise gegen Mittag) hart auf den echten,
-                # meist mittags einbrechenden Kurs "abstuerzte".
-                for days_back in range(1, PRICE_FALLBACK_MAX_DAYS_BACK + 1):
-                    raw_price = by_hour.get(h - timedelta(days=days_back))
-                    if raw_price is not None:
-                        break
+                # Siehe "dynamic"-Zweig oben: erst Bubbles eigene mehrtaegige Preisprognose, dann ein
+                # echter Awattar-Preis eines frueheren Tages, zuletzt der vorherige Wert (Notnagel -
+                # erzeugte ohne den Bubble-Fallback einen eingefrorenen Preisverlauf, siehe
+                # CHANGELOG 0.0.45.88).
+                raw_price = _resolve_fallback_price(h, by_hour, bubble_by_hour)
             if raw_price is None:
                 raw_price = prev_raw_price if prev_raw_price is not None else 0.0
             local_dt = h.astimezone()
