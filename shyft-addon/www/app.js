@@ -81,7 +81,7 @@ const helpinformation = {
     },
     'heatpump_on_off': {
         label: 'Wärmepumpe an/aus',
-        description: ' An/Aus, je nachdem ob deine Wärmepumpe gerade läuft oder aus ist.'
+        description: ' An/Aus, je nachdem ob deine Wärmepumpe gerade läuft oder aus ist. Jeder Zustand außer "off" zählt als "an" (z.B. auch Betriebsmodi wie "auto").'
     },
     'heatpump_temp_indoor_measured': {
         label: 'Innenraumtemperatur gemessen',

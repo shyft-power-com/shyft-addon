@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.90
+
+* **„Wärmepumpe an/aus": jeder Zustand außer „off" zählt jetzt als „an"** (z.B. Betriebsmodi wie „auto", „heat", „eco" statt eines reinen on/off-Schalters). Betrifft das Energiefluss-Widget (`heatpump.on`); die bisherige strikte „on"/„off"-Auswertung ist als Default für andere Sensoren (Heizung aktiviert, Warmwasser an/aus, Sonstiger Verbraucher) unverändert erhalten.
+
 ## 0.0.45.89
 
 * **Fix (Ursache statt nur Symptom): ev_usage_h (die an den Java-Optimierer gesendete Liste der Abwesenheits-Stunden) schloss bisher nur vorhergesagte Fahrstunden ein, nicht vorhergesagte "steht"-Stunden (abwesend, aber nicht fahrend, z.B. Auto beim Arbeitgeber geparkt).** Für den Optimierer sah eine solche Stunde dadurch wie eine ganz normale Zuhause-Stunde aus - er konnte trotz vorhergesagter Abwesenheit eine Ladung einplanen. ev_usage_h umfasst jetzt beide Abwesenheits-Zustände; d_ev_kwh (der tatsächliche Fahrstromverbrauch) bleibt für "steht"-Stunden weiterhin 0. Die in 0.0.45.88 ergänzte Prüfung in der addon-eigenen Ladeplanung bleibt zusätzlich bestehen - sie reagiert schneller auf Änderungen als ein voller Optimierer-Zyklus (bis zu einer Stunde).

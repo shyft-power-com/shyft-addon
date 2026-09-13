@@ -2886,11 +2886,17 @@ def compute_ti0_field(config):
     return round(ti0, 3)
 
 
-def _read_mapped_bool_on(config, sensor_key):
-    "Interpretiert einen zugeordneten binary_sensor/switch als An/Aus (HA's uebliche 'on'/'off'-Zustaende) - None, wenn nicht zugeordnet/nicht lesbar."
+def _read_mapped_bool_on(config, sensor_key, anything_but_off=False):
+    """Interpretiert einen zugeordneten binary_sensor/switch als An/Aus - None, wenn nicht
+    zugeordnet/nicht lesbar. Default: HA's uebliche 'on'/'off'-Zustaende (raw == 'on').
+    anything_but_off=True: jeder Zustand ausser 'off' zaehlt als an - fuer Sensoren, die statt eines
+    reinen on/off-Schalters Betriebsmodi wie 'auto'/'heat'/'eco' liefern (z.B. Waermepumpe an/aus,
+    siehe Nutzer-Feedback: 'auto' sollte dort als 'an' gelten)."""
     raw = _read_mapped_raw_state(config, sensor_key)
     if raw is None:
         return None
+    if anything_but_off:
+        return raw.lower() != "off"
     return raw.lower() == "on"
 
 
@@ -3147,7 +3153,7 @@ def compute_energy_flow_data():
     heatpump_configured = configured("waermepumpe")
     result["heatpump"] = {
         "configured": heatpump_configured,
-        "on": _read_mapped_bool_on(config, "heatpump_on_off") if heatpump_configured else None,
+        "on": _read_mapped_bool_on(config, "heatpump_on_off", anything_but_off=True) if heatpump_configured else None,
         "heatingOn": _read_mapped_bool_on(config, "heatpump_heating_activated") if heatpump_configured else None,
         "supplyTempC": _read_mapped_numeric(config, "heatpump_supply_temp_hp") if heatpump_configured else None,
         "dhwTankTempC": _read_mapped_numeric(config, "heatpump_dhw_tank_temp") if heatpump_configured else None,
