@@ -396,7 +396,9 @@ const ACTION_TOGGLE_POSTFIX = "_toggle";
 // Actions the addon controls directly (writes the entity itself), no user-side automation needed -
 // mirrors the Home Assistant entity domains handled in AUTO_MANAGED_CONTROLS in app.py.
 const AUTO_MANAGED_CONTROLS = [
-    {key: 'heating_target_temp', type: 'number', sensorField: 'heatpump_heating_target_temp_normal', actionKeys: ['heating_target_temp'], titleLabel: 'Heizung Soll-Temperatur (aktuell)', unit: '°C', step: 1},
+    // onlyIncrement: nur der +1°C-Test wird angeboten (Nutzer-Vorgabe: ein Absenktest bringt keinen
+    // zusaetzlichen Erkenntnisgewinn gegenueber dem Erhoehungstest).
+    {key: 'heating_target_temp', type: 'number', sensorField: 'heatpump_heating_target_temp_normal', actionKeys: ['heating_target_temp'], titleLabel: 'Heizung Soll-Temperatur (aktuell)', unit: '°C', step: 1, onlyIncrement: true},
     // Reine Steuerungen ohne Sensor-Gegenstueck (kein sensorField, keine "Direkt steuern"-Option) -
     // siehe automationOnly in buildAutoManagedNumberControl.
     {key: 'pv_feed_in_limit', type: 'number', actionKeys: ['pv_feed_in_limit'], titleLabel: 'PV: Einspeisung begrenzen', unit: '', step: 1, automationOnly: true,
@@ -3762,9 +3764,11 @@ function buildAutoManagedNumberControl(control) {
     controls.className = 'autoActionButtons';
 
     const unitSuffix = control.unit ? ' ' + control.unit : '';
-    const minusButton = document.createElement('button');
-    minusButton.type = 'button';
-    minusButton.textContent = `Test: -${control.step}${unitSuffix}`;
+    const minusButton = control.onlyIncrement ? null : document.createElement('button');
+    if (minusButton) {
+        minusButton.type = 'button';
+        minusButton.textContent = `Test: -${control.step}${unitSuffix}`;
+    }
 
     const plusButton = document.createElement('button');
     plusButton.type = 'button';
@@ -3784,13 +3788,13 @@ function buildAutoManagedNumberControl(control) {
                 status.className = 'autoActionStatus status-missing';
                 checkmark.hidden = true;
                 hint.hidden = true;
-                minusButton.disabled = true;
+                if (minusButton) minusButton.disabled = true;
                 plusButton.disabled = true;
                 valueDisplay.textContent = 'Aktueller Wert: –';
                 valueDisplay.className = 'autoActionValue';
                 return;
             }
-            minusButton.disabled = false;
+            if (minusButton) minusButton.disabled = false;
             plusButton.disabled = false;
             if (readyKey) applyTestGate(readyKey, checkmark, hint, true); else checkmark.hidden = false;
             if (variant === 'ha_automation') {
@@ -3821,7 +3825,7 @@ function buildAutoManagedNumberControl(control) {
     }
 
     async function runTest(delta) {
-        minusButton.disabled = true;
+        if (minusButton) minusButton.disabled = true;
         plusButton.disabled = true;
         valueDisplay.textContent = 'Teste...';
         valueDisplay.className = 'autoActionValue testing';
@@ -3855,15 +3859,15 @@ function buildAutoManagedNumberControl(control) {
             valueDisplay.textContent = 'Fehler beim Testen';
             valueDisplay.className = 'autoActionValue';
         } finally {
-            minusButton.disabled = false;
+            if (minusButton) minusButton.disabled = false;
             plusButton.disabled = false;
         }
     }
 
-    minusButton.addEventListener('click', () => runTest(-control.step));
+    if (minusButton) minusButton.addEventListener('click', () => runTest(-control.step));
     plusButton.addEventListener('click', () => runTest(control.step));
 
-    controls.appendChild(minusButton);
+    if (minusButton) controls.appendChild(minusButton);
     controls.appendChild(plusButton);
     controls.appendChild(valueDisplay);
     wrapper.appendChild(controls);

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.45.97
+
+* **Konfiguration, Test "Heizung Soll-Temperatur": nur noch der +1°C-Test wird angeboten**, der bisherige zusätzliche -1°C-Test entfällt (kein zusätzlicher Erkenntnisgewinn gegenüber dem Erhöhungstest).
+
+## 0.0.45.96
+
+* **Fix: PV-Kalibrierung verglich Messwerte aus dem falschen Zeitfenster.** `_hourly_measured_kw` (nächtliche m²-Kalibrierung, `calibrate_pv_forecast`) mittelte die gemessene Leistung bisher in einem auf die volle Stunde **zentrierten** ±30-Minuten-Fenster (für "Stunde 13" also 12:30–13:30), während die zugehörige Bestrahlungsprognose (`_irr_avg_at`) wie überall sonst im Addon (Aktionen, `ev_usage_h`/`hw_usage_h`, `readPvForecastVsActual`) das **vorwärts gerichtete** Fenster 13:00–14:00 verwendet. Beide Fenster liefen um 30 Minuten auseinander, was den m²-Faktor besonders an Tagen mit wechselhafter Bewölkung verzerrte. Jetzt vorwärts gerichtet, konsistent mit dem Rest des Addons.
+
 ## 0.0.45.95
 
 * **Benachrichtigungen "Aktionen starten / beenden" in "alle" und "nur bei Fehlern" aufgeteilt** - zwei Toggles, die sich in der Konfiguration gegenseitig ausschließen (Aktivieren des einen schaltet automatisch das andere aus). "Nur bei Fehlern" schickt ausschließlich Push-Benachrichtigungen für tatsächlich fehlgeschlagene Aktionen, nicht für normale Starts/Enden. Bestehende Installationen bleiben unverändert bei "alle" (Standard).
