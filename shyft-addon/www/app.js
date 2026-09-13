@@ -1497,6 +1497,14 @@ function isSectionComplete(section, currentIds) {
 
     for (const control of AUTO_MANAGED_CONTROLS) {
         if (!control.actionKeys.some(k => section.actions.includes(k))) continue;
+        // Seltene Zusatzfunktionen ohne "Direkt steuern"-Modus (automationOnly, kein sensorField) -
+        // gelten wie in computeMissingRequiredFieldsWarnings als optional, keine Voraussetzung fuer
+        // "vollstaendig konfiguriert". Ohne diesen Ausschluss fiel die Variante hier mangels
+        // hasAutomationVariant immer auf 'direct' zurueck und prüfte ein gar nicht existierendes
+        // sensorField - das Geraet galt dadurch NIE als vollstaendig, auch wenn alle echten Sensoren
+        // gesetzt waren (siehe CHANGELOG: Wechselrichter blieb trotz vollstaendiger Konfiguration
+        // immer aufgeklappt).
+        if (control.actionKeys.every(k => REQUIRED_FIELD_OPTIONAL_ACTION_KEYS.has(k))) continue;
         const variant = control.hasAutomationVariant ? ((configData['controlVariant'] || {})[control.key] || 'direct') : 'direct';
         if (variant === 'ha_automation') {
             if (control.type === 'number') {
@@ -7222,7 +7230,7 @@ function buildEnergyFlowSvgDesktop(data) {
         svg.appendChild(hp);
         const statusLines = [
             withStaleness(data.heatpump.on === null ? 'Wärmepumpe' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES),
-            data.heatpump.targetTempC !== null ? `Soll: ${formatTemp(data.heatpump.targetTempC)}` : null,
+            data.heatpump.targetTempC !== null ? `Soll (aktuell): ${formatTemp(data.heatpump.targetTempC)}` : null,
             data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
             data.heatpump.dhwTankTempC !== null ? `WW-Speicher: ${formatTemp(data.heatpump.dhwTankTempC)}` : null,
             (data.heatpump.heatingOn !== null || data.heatpump.supplyTempC !== null)
@@ -7231,7 +7239,10 @@ function buildEnergyFlowSvgDesktop(data) {
         ].filter(Boolean);
         // Vertikal mittig an der Leitung/dem Icon (rowY) statt an einem festen Offset - so bleibt die
         // Beschriftung auf Leitungshoehe, egal wie viele der optionalen statusLines gerade anfallen.
-        svg.appendChild(buildEnergyFlowLabel(columnX + 46, rowY, statusLines));
+        // noWrap: true - im Desktop-Layout ist neben dem Wert genug Platz, der Zeitstempel (z.B. bei
+        // "Ist: 22,4 °C (19:43)") soll in derselben Zeile stehen statt darunter (siehe noWrap-Kommentar
+        // bei buildEnergyFlowLabel).
+        svg.appendChild(buildEnergyFlowLabel(columnX + 46, rowY, statusLines, {noWrap: true}));
     }
 
     if (data.car && data.car.configured) {
@@ -7444,7 +7455,7 @@ function buildEnergyFlowSvgMobile(data) {
                 svg.appendChild(hp);
                 deviceDetailBlocks.push({colX, type, lines: [
                     `Wärmepumpe: ${withStaleness(data.heatpump.on === null ? '–' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES)}`,
-                    data.heatpump.targetTempC !== null ? `Soll: ${formatTemp(data.heatpump.targetTempC)}` : null,
+                    data.heatpump.targetTempC !== null ? `Soll (aktuell): ${formatTemp(data.heatpump.targetTempC)}` : null,
                     data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
                     // Label und Wert auf zwei Zeilen statt einer zu langen - "WW-Speicher: 36,5 °C"
                     // war bei der groesseren Mobil-Schrift die tatsaechlich breiteste Zeile im ganzen

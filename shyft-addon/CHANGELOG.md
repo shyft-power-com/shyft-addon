@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.94
+
+* **Fix: Wechselrichter-Kachel in der Konfiguration blieb trotz vollständiger Sensor-Zuordnung immer aufgeklappt.** Die (optionalen) Zusatzfunktionen "PV: Einspeisung begrenzen" (§9 EEG) und "Verbrauch begrenzen §14a" haben keinen "Direkt steuern"-Modus - die Vollständigkeitsprüfung für Ein-/Ausklappen prüfte für sie trotzdem ein gar nicht existierendes Sensorfeld und schlug dadurch immer fehl. Beide gelten jetzt wie schon in der Warnliste als optional.
+* **Fix: "Heizung aktiviert?" (`heatpump_heating_activated`) wurde als "Aus" behandelt, obwohl der Sensor einen Betriebsmodus wie "auto" meldete.** Betraf sowohl die Dashboard-Anzeige (Energiefluss-Widget, "Heizung deaktiviert"-Hinweis am Raumtemperatur-Chart) als auch `compute_heizung_actions`, das dadurch gar keine Heizungs-Aktionen mehr plante. Zählt jetzt wie `heatpump_on_off` (0.0.45.90) jeden Zustand außer "off" als "an".
+* **Energiefluss-Widget (Desktop): "Soll" bei der Wärmepumpe heißt jetzt "Soll (aktuell)"** (konsistent mit dem Label in der Konfiguration), und der Zeitstempel hinter "Ist: ..." steht jetzt in derselben Zeile statt darunter - für diesen Block ist genug Platz.
+
 ## 0.0.45.93
 
 * **Fix: kurzlebige Aktionen (z.B. "Batterie netzladen" von 13:59 bis 14:00) konnten trotz bestehender Absicherung entstehen.** Die bisherige Regel ließ eine neu berechnete, laufende Aktion in den letzten 10 Minuten der Stunde stehen, sobald irgendeine Aktion desselben Typs auch für die Folgestunde vorgesehen war - diese Prognose für die Folgestunde kann sich aber bis zum tatsächlichen Stundenwechsel wieder ändern. Die Regel prüft jetzt zusätzlich, ob es sich um dieselbe Aktion (gleicher Zielwert) handelt ("1:1 fortgesetzt"), sonst wird die Aktion unterdrückt; das Zeitfenster wurde von 10 auf 5 Minuten verkürzt.

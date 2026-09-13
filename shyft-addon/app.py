@@ -3221,7 +3221,7 @@ def compute_energy_flow_data():
     result["heatpump"] = {
         "configured": heatpump_configured,
         "on": _read_mapped_bool_on(config, "heatpump_on_off", anything_but_off=True) if heatpump_configured else None,
-        "heatingOn": _read_mapped_bool_on(config, "heatpump_heating_activated") if heatpump_configured else None,
+        "heatingOn": _read_mapped_bool_on(config, "heatpump_heating_activated", anything_but_off=True) if heatpump_configured else None,
         "supplyTempC": _read_mapped_numeric(config, "heatpump_supply_temp_hp") if heatpump_configured else None,
         "dhwTankTempC": _read_mapped_numeric(config, "heatpump_dhw_tank_temp") if heatpump_configured else None,
         "targetTempC": _read_mapped_numeric(config, "heatpump_heating_target_temp_normal") if heatpump_configured else None,
@@ -5379,11 +5379,13 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
     lesbaren aktuellen Sollwert wird nichts erzeugt (keine sinnvolle Abweichung feststellbar).
     Steht "heatpump_heating_activated" explizit auf Aus, werden gar keine Heizungs-Aktionen erzeugt
     (Warmwasser/compute_dhw_actions ist davon unberuehrt) - nicht zugeordnet/nicht lesbar (None)
-    blockiert nichts, um bestehende Installationen ohne diesen Sensor nicht stillzulegen."""
+    blockiert nichts, um bestehende Installationen ohne diesen Sensor nicht stillzulegen. Wie bei
+    "heatpump_on_off" (siehe compute_energy_flow_data) zaehlt jeder Zustand ausser 'off' als an -
+    Sensoren liefern hier oft Betriebsmodi wie 'auto'/'heat'/'eco' statt eines reinen Schalters."""
     result = {}
     if not _is_heatpump_configured(config):
         return result
-    if _read_mapped_bool_on(config, "heatpump_heating_activated") is False:
+    if _read_mapped_bool_on(config, "heatpump_heating_activated", anything_but_off=True) is False:
         return result
 
     current_target = _read_mapped_numeric(config, "heatpump_heating_target_temp_normal")
