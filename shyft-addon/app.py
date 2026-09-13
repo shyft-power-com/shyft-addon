@@ -1456,24 +1456,26 @@ _READY_KEY_TO_LABEL_SECTION = {
 
 
 def _action_not_ready_warnings(config):
-    """Je Aktionstyp, dessen letzter Test in der Konfiguration fehlgeschlagen ist (siehe
-    _record_action_test_result / config['actionTestFailed']) und dessen Konfiguration sich seither
-    nicht geaendert hat: eine Warnung mit sectionKey. Dadurch zeigt die Geraete-Navigation ein
-    Fehler-"!" statt des gruenen Hakens und der Zaehler im Problem-Banner stimmt."""
-    failed = config.get("actionTestFailed", {}) or {}
+    """Je vollstaendig eingerichtetem Aktionstyp, der aktuell NICHT als erfolgreich getestet gilt
+    (egal ob noch nie getestet oder der letzte Test fehlgeschlagen ist - dieselbe Bedingung wie in
+    _action_type_ready, die auch die reale Ausfuehrung blockiert): eine Warnung mit sectionKey.
+    Dadurch zeigt die Geraete-Navigation ein Fehler-"!" statt des gruenen Hakens und der Zaehler im
+    Problem-Banner stimmt. Vorher wurde nur ein EXPLIZIT fehlgeschlagener Test gemeldet (ueber
+    config['actionTestFailed']) - ein noch nie getesteter, aber vollstaendig konfigurierter
+    Aktionstyp fiel komplett durch, obwohl die Bereitschaftspruefung ihn genauso blockierte
+    (Nutzer-Feedback: die "Alle Systeme laufen"-Karte stimmte nicht, es waren noch Tests ausstehend)."""
     out = []
-    for ready_key, fp in failed.items():
-        meta = _READY_KEY_TO_LABEL_SECTION.get(ready_key)
-        if not meta:
-            continue
-        if fp != _action_type_fingerprint(config, ready_key):
-            continue  # Konfig seit dem fehlgeschlagenen Test geaendert -> Marker veraltet
-        label, section_key = meta
+    passed = config.get("actionTestPassed", {}) or {}
+    for ready_key, (label, section_key) in _READY_KEY_TO_LABEL_SECTION.items():
+        state = _action_type_config_state(config, ready_key)
+        if not all(state["flags"].values()):
+            continue  # noch nicht vollstaendig eingerichtet - dafuer gibt es die Pflichtfeld-Warnung
+        if passed.get(ready_key) == _action_type_fingerprint(config, ready_key):
+            continue  # aktuell erfolgreich getestet
         out.append({
             "key": f"action_test_failed:{ready_key}",
             "sectionKey": section_key,
-            "message": f"„{label}“: Der letzte Test in der Konfiguration ist fehlgeschlagen – "
-                       f"bitte das Gerät prüfen und erneut testen.",
+            "message": f"„{label}“: Noch nicht erfolgreich getestet – bitte in der Konfiguration testen.",
         })
     return out
 

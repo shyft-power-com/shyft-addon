@@ -866,13 +866,22 @@ async function renderSystemHealth() {
     const count = problems.length + warnings.length;
     if (count === 0) {
         const demoMode = isFullyDemoMode();
-        container.className = demoMode ? 'systemHealthCard is-demo-mode' : 'systemHealthCard is-ok';
+        if (!demoMode) {
+            // "Alle Systeme laufen" bringt keinen Mehrwert, wenn es stimmt - Karte bleibt einfach
+            // leer (siehe #systemHealthCard:empty in index.html), statt einen eigenen Hinweis dafuer
+            // zu zeigen (Nutzer-Feedback).
+            container.className = 'systemHealthCard';
+            applyConfigFieldErrorHighlights([]);
+            renderDeviceNav([], []);
+            return;
+        }
+        container.className = 'systemHealthCard is-demo-mode';
         const icon = document.createElement('span');
         icon.className = 'systemHealthCardIcon';
-        icon.textContent = demoMode ? '!' : '✓';
+        icon.textContent = '!';
         container.appendChild(icon);
         const text = document.createElement('span');
-        text.textContent = demoMode ? 'Demomodus. Jetzt Geräte einrichten' : 'Alle Systeme laufen';
+        text.textContent = 'Demomodus. Jetzt Geräte einrichten';
         container.appendChild(text);
         applyConfigFieldErrorHighlights([]);
         renderDeviceNav([], []);

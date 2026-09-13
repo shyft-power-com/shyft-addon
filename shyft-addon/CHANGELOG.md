@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.101
+
+* **"Alle Systeme laufen" wird nicht mehr angezeigt, wenn alles läuft** - die Karte bleibt dann einfach leer statt eines eigenen Hinweises dafür.
+* **Fix: Die Karte zeigte "Alle Systeme laufen", obwohl vollständig konfigurierte Aktionstypen noch nie erfolgreich getestet worden waren.** `_action_not_ready_warnings` meldete bisher nur einen explizit fehlgeschlagenen Test (`actionTestFailed`) - ein noch nie getesteter, aber sonst vollständig eingerichteter Aktionstyp fiel komplett durch, obwohl die Bereitschaftsprüfung ihn genauso von echten Aktionen ausschloss. Jetzt wird jeder vollständig konfigurierte, aber aktuell nicht erfolgreich getestete Aktionstyp gemeldet (gleiche Bedingung wie `_action_type_ready`) - konsistent mit dem roten "Bitte Gerätesteuerung testen"-Hinweis in der Konfiguration (siehe 0.0.45.92).
+
 ## 0.0.45.100
 
 * **Fix: Bei "Auto laden" (Dreistufig) waren die grünen Punkte der Schritt-Linie ("1.", "2.", "3.") weiterhin nicht auf Höhe der jeweiligen Beschriftung, und der grüne Strich reichte über "Ladevorgang beenden" hinaus.** Ursache: die Punktposition wurde per JavaScript einmalig nach dem Erstellen gemessen (`offsetTop`/`offsetHeight`) - stand die Geräte-Kachel dabei noch eingeklappt (`display:none`), lieferte das 0 und die Messung wurde beim späteren Aufklappen nicht wiederholt. Jetzt rein per CSS zentriert (der Punkt sitzt als Kind der Beschriftungszelle selbst, `top: 50%`) - unabhängig vom Kachel-Zustand beim Rendern immer korrekt, keine Messung mehr nötig. Der Strich selbst endete strukturell bereits korrekt bei "Ladevorgang beenden"; das falsch positionierte "3."-Symbol ließ es nur länger wirken.
