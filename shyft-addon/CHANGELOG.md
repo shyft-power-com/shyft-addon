@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.95
+
+* **Benachrichtigungen "Aktionen starten / beenden" in "alle" und "nur bei Fehlern" aufgeteilt** - zwei Toggles, die sich in der Konfiguration gegenseitig ausschließen (Aktivieren des einen schaltet automatisch das andere aus). "Nur bei Fehlern" schickt ausschließlich Push-Benachrichtigungen für tatsächlich fehlgeschlagene Aktionen, nicht für normale Starts/Enden. Bestehende Installationen bleiben unverändert bei "alle" (Standard).
+
 ## 0.0.45.94
 
 * **Fix: Wechselrichter-Kachel in der Konfiguration blieb trotz vollständiger Sensor-Zuordnung immer aufgeklappt.** Die (optionalen) Zusatzfunktionen "PV: Einspeisung begrenzen" (§9 EEG) und "Verbrauch begrenzen §14a" haben keinen "Direkt steuern"-Modus - die Vollständigkeitsprüfung für Ein-/Ausklappen prüfte für sie trotzdem ein gar nicht existierendes Sensorfeld und schlug dadurch immer fehl. Beide gelten jetzt wie schon in der Warnliste als optional.

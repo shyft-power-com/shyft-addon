@@ -3854,7 +3854,7 @@ def _fail_action(action, config, exec_status, msg, prev_exec, verb):
     action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
     _update_computed_action(action)
     if prev_exec != exec_status:
-        notify_action_event(config, action, f"Fehler beim {verb}")
+        notify_action_event(config, action, f"Fehler beim {verb}", is_error=True)
 
 
 @app.route("/actions/hot_water_target_temp/test", methods=["POST"])
@@ -4642,9 +4642,14 @@ def testBatteryDirectControl(action_key):
 
 
 # Notification types the user can toggle in the "Benachrichtigungen" config section - extend this
-# dict as new types are added, the frontend renders one toggle row per entry.
+# dict as new types are added, the frontend renders one toggle row per entry. Rein dokumentarisch -
+# das Frontend (www/app.js, NOTIFICATION_TYPES) haelt seine eigene Kopie, beide muessen synchron
+# gehalten werden. "action_start_end" und "action_start_end_errors_only" schliessen sich in der UI
+# gegenseitig aus (siehe NOTIFICATION_TYPE_EXCLUSIVE_PAIRS in app.js) - siehe notify_action_event
+# fuer die Backend-Seite dieser Unterscheidung.
 NOTIFICATION_TYPES = {
-    "action_start_end": "Aktionen starten / beenden",
+    "action_start_end": "Aktionen starten / beenden (alle)",
+    "action_start_end_errors_only": "Aktionen starten / beenden (nur bei Fehlern)",
     "device_status_deviation": "Geräteverhalten abweichend von Shyft-Steuerung",
 }
 
@@ -4730,9 +4735,16 @@ def is_action_type_enabled(config, action_name):
     return config.get("actionTypeEnabled", {}).get(actor_key, True)
 
 
-def notify_action_event(config, action, verb):
-    "Sends an optional push notification (e.g. 'gestartet'/'beendet') if the user configured a phone target and hasn't disabled this notification type."
-    if not config.get("notificationsEnabled", {}).get("action_start_end", True):
+def notify_action_event(config, action, verb, is_error=False):
+    """Sends an optional push notification (e.g. 'gestartet'/'beendet'/'Fehler beim ...') if the
+    user configured a phone target. Two mutually exclusive (UI-enforced) toggles decide whether
+    it's actually sent: "action_start_end" ('alle', default an - jedes Start/Ende, Fehler
+    eingeschlossen) und "action_start_end_errors_only" ('nur bei Fehlern', default aus - nur
+    Fehlschlaege). is_error=True nur fuer echte Fehlschlaege setzen (siehe _fail_action)."""
+    notifications_enabled = config.get("notificationsEnabled", {})
+    send_all = notifications_enabled.get("action_start_end", True)
+    send_errors_only = notifications_enabled.get("action_start_end_errors_only", False)
+    if not (send_all or (is_error and send_errors_only)):
         return
     target = config.get("notificationTargets", {}).get("phone", "")
     if not target:

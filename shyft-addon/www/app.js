@@ -451,8 +451,17 @@ const ACTION_TYPE_TOGGLE_KEYS = new Set([
 ]);
 
 const NOTIFICATION_TYPES = {
-    'action_start_end': 'Aktionen starten / beenden',
+    'action_start_end': 'Aktionen starten / beenden (alle)',
+    'action_start_end_errors_only': 'Aktionen starten / beenden (nur bei Fehlern)',
     'device_status_deviation': 'Geräteverhalten abweichend von Shyft-Steuerung'
+};
+
+// "Alle" und "nur bei Fehlern" schliessen sich gegenseitig aus (Nutzer-Vorgabe: entweder/oder) -
+// schaltet der Nutzer eines ein, wird das jeweils andere automatisch ausgeschaltet (siehe
+// renderGeneralConfigSection). Bidirektional, damit dieselbe Logik fuer beide Richtungen greift.
+const NOTIFICATION_TYPE_EXCLUSIVE_PAIRS = {
+    action_start_end: 'action_start_end_errors_only',
+    action_start_end_errors_only: 'action_start_end',
 };
 
 // Which device section (see INTEGRATION_SECTIONS) each shyft-power "Action Name" belongs to -
@@ -2298,7 +2307,27 @@ function renderNotificationSection() {
         keyCell.textContent = label;
         const toggleCell = document.createElement('td');
         toggleCell.className = 'toggleCell';
-        toggleCell.appendChild(buildToggleSwitch('notification_' + key + ACTION_TOGGLE_POSTFIX, notificationsEnabled[key] !== false));
+        const toggleId = 'notification_' + key + ACTION_TOGGLE_POSTFIX;
+        const pairedKey = NOTIFICATION_TYPE_EXCLUSIVE_PAIRS[key];
+        // "nur bei Fehlern" ist neu und faellt ohne explizite Zustimmung standardmaessig aus (anders
+        // als die generische "!== false"-Standardregel unten) - sonst wuerden bestehende Nutzer nach
+        // diesem Update ploetzlich BEIDE Toggles an dieser Stelle als aktiv sehen.
+        const checked = key === 'action_start_end_errors_only' ? notificationsEnabled[key] === true : notificationsEnabled[key] !== false;
+        if (pairedKey) {
+            const bareToggle = buildBareToggleSwitch(checked);
+            const input = bareToggle.querySelector('input');
+            input.id = toggleId;
+            input.addEventListener('change', () => {
+                if (input.checked) {
+                    const pairedInput = document.getElementById('notification_' + pairedKey + ACTION_TOGGLE_POSTFIX);
+                    if (pairedInput) pairedInput.checked = false;
+                }
+                autoSave();
+            });
+            toggleCell.appendChild(bareToggle);
+        } else {
+            toggleCell.appendChild(buildToggleSwitch(toggleId, checked));
+        }
         row.appendChild(keyCell);
         row.appendChild(toggleCell);
         notifyTbody.appendChild(row);
