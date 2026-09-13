@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.103
+
+* **Test "Batterie netzladen" zeigt jetzt zusätzlich zum Ladeleistungslimit auch den Batterie-Steuerungsmodus an.** Der Modus schaltet beim Netzladen tatsächlich um und ist damit ein aussagekräftigeres Signal als das Limit allein, dessen Schreiben bei manchen Wechselrichter-Integrationen unzuverlässig sein kann.
+
 ## 0.0.45.102
 
 * **Fix: Wechselte der Wallbox-Status von "Auto kann nicht laden" zu "Auto kann laden / lädt", wurde keine neue Optimierung angestoßen.** Der Live-Websocket-Handler für Wallbox-Statusänderungen (`_on_wallbox_state_live_update`) loggte den neuen Status zwar sofort fürs Anwesenheits-Log und wertete die PV-Überschuss-Regelung neu aus, schickte aber keine aktualisierten Inputdaten (insb. Auto-Status und neue Anwesenheitsprognose) an Bubble - das passierte bisher frühestens beim nächsten stündlichen Sync. Bei einem Wechsel von "kann nicht laden" (oder unbekannt) zu "kann laden" (siehe `classify_wallbox_connection_state`) wird jetzt sofort derselbe volle Sync wie beim "Optimierung anstoßen"-Button ausgelöst (`sync_site_data`).

@@ -4539,6 +4539,14 @@ BATTERY_DIRECT_TEST_FIELDS = {
                  if sensor_key not in ("battery_command_timeout", "battery_storage_command_mode")]
     for action_key, fields in BATTERY_DIRECT_WRITTEN_SENSOR_KEYS.items()
 }
+# Ausnahme "Batterie netzladen": hier zusaetzlich zum Ladeleistungslimit auch den Modus anzeigen -
+# der Modus stellt tatsaechlich um (Nutzer-Feedback), waehrend die Limit-Entitaet bei manchen
+# Wechselrichter-Integrationen unzuverlaessig ist (siehe z.B. den 500er von solaredge_modbus_multi
+# beim Schreiben von battery_charge_limit_current).
+BATTERY_DIRECT_TEST_FIELDS["battery_grid_charge"] = [
+    (sensor_key, label) for sensor_key, label in BATTERY_DIRECT_WRITTEN_SENSOR_KEYS["battery_grid_charge"]
+    if sensor_key != "battery_command_timeout"
+]
 
 
 def _battery_direct_field_values(config, action_key):
@@ -4546,14 +4554,15 @@ def _battery_direct_field_values(config, action_key):
     result = []
     for sensor_key, label in BATTERY_DIRECT_TEST_FIELDS.get(action_key, []):
         entity_id = (config.get("sensorMappings", {}) or {}).get(sensor_key)
+        is_mode = sensor_key == "battery_storage_command_mode"
         if not entity_id:
-            result.append({"label": label, "value": None})
+            result.append({"label": label, "value": None, "unit": "" if is_mode else "kW"})
             continue
-        if sensor_key == "battery_storage_command_mode":
+        if is_mode:
             value = _read_mapped_raw_state(config, sensor_key)
         else:
             value = _read_mapped_numeric(config, sensor_key)
-        result.append({"label": label, "value": value})
+        result.append({"label": label, "value": value, "unit": "" if is_mode else "kW"})
     return result
 
 

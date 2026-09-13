@@ -4897,11 +4897,11 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint) {
     statusIcon.hidden = true;
 
     function renderValues(values) {
-        // Die einzigen Felder, die hier je auftauchen (Timeout/Modus sind bewusst ausgeschlossen,
-        // siehe BATTERY_DIRECT_TEST_FIELDS in app.py), sind Limit Ladeleistung/Entladeleistung -
-        // beide immer in kW (siehe EXPECTED_UNITS in sync_service.py) - deshalb hier fest ergaenzt.
+        // unit kommt jetzt vom Server (siehe _battery_direct_field_values in app.py) statt hier
+        // fest "kW" anzunehmen - bei "Batterie netzladen" steht seit Nutzer-Feedback zusaetzlich
+        // der Modus (Rohzustand, keine Einheit) neben dem Ladeleistungslimit.
         valuesDisplay.textContent = (values || [])
-            .map(v => `${v.label}: ${(v.value === null || v.value === undefined) ? '–' : v.value + ' kW'}`)
+            .map(v => `${v.label}: ${(v.value === null || v.value === undefined) ? '–' : v.value + (v.unit ? ' ' + v.unit : '')}`)
             .join(' | ');
     }
 
