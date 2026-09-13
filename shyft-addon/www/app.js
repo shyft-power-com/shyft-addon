@@ -3836,8 +3836,12 @@ function buildAutoManagedNumberControl(control) {
     async function runTest(delta) {
         if (minusButton) minusButton.disabled = true;
         plusButton.disabled = true;
-        valueDisplay.textContent = 'Teste...';
         valueDisplay.className = 'autoActionValue testing';
+        // control.onlyIncrement (bisher nur "Heizung Soll-Temperatur"): eigener Endpoint, der
+        // serverseitig synchron erhoeht, auf Bestaetigung wartet UND danach IMMER zurueckstellt
+        // (siehe /actions/heating_target_temp/test) - kann daher spuerbar laenger dauern als der
+        // generische Delta-Test.
+        valueDisplay.textContent = control.onlyIncrement ? 'Teste... (kann bis zu 2:30 min dauern)' : 'Teste...';
         try {
             const response = await fetch(insideHomeAssistant + '/actions/' + control.key + '/test', {
                 method: 'POST',
@@ -3846,7 +3850,19 @@ function buildAutoManagedNumberControl(control) {
             });
             const result = await response.json();
             if (readyKey) markActionTested(readyKey, !!result.success);
-            if (result.success) {
+            if (control.onlyIncrement) {
+                if (result.success) {
+                    valueDisplay.textContent = `Erfolgreich: ${result.originalValue}${unitSuffix} → ${result.boostedValue}${unitSuffix} → zurückgesetzt.`;
+                    valueDisplay.className = 'autoActionValue testSuccess';
+                } else {
+                    valueDisplay.textContent = 'Fehler: ' + (result.message || 'unbekannt');
+                    valueDisplay.className = 'autoActionValue';
+                }
+                // Backend hat das Zuruecksetzen schon synchron abgewartet - kein sofortiges
+                // refreshStatus() (das wuerde die obige Meldung direkt wieder ueberschreiben),
+                // sondern wie ueberall sonst erst nach einer kurzen Anzeigedauer.
+                setTimeout(refreshStatus, 4000);
+            } else if (result.success) {
                 if (variant === 'ha_automation') {
                     // fire-and-forget - there's no entity to poll back and confirm, unlike the
                     // direct variant's cloud-device round-trip

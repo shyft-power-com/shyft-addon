@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.108
+
+* **Test "Heizung Soll-Temperatur" (+1°C) setzt die Temperatur jetzt am Ende automatisch auf den ursprünglichen Wert zurück**, statt dauerhaft erhöht zu bleiben. Der Test wartet dafür serverseitig bis zu 90s auf eine Bestätigung durch den zugeordneten Sensor und stellt danach immer (auch ohne Bestätigung) den Ausgangswert wieder her.
+* **Fix: Der bisherige Test (und die echte Aktion) meldete "erfolgreich", sobald der zugrunde liegende Home-Assistant-Skript-Aufruf akzeptiert wurde - unabhängig davon, ob die Wärmepumpe den Wert tatsächlich übernahm.** Bei einer Nutzer-Rückfrage stellte sich heraus, dass eine echte Aktion vom Addon als erfolgreich geloggt wurde, die Wärmepumpe (Viessmann/ViCare) den Zielwert aber real erst rund 18 Minuten später übernahm - ganz ohne Verifikation. Der Test prüft jetzt aktiv per Live-Status nach, statt dem fire-and-forget-Skriptaufruf blind zu vertrauen.
+
 ## 0.0.45.107
 
 * **Gerätesteuerung: lückenlos aufeinanderfolgende, inhaltsgleiche Aktionen werden zu einer Karte zusammengefasst** (z. B. sieben Stunden "Heizung Soll-Temperatur, 19 °C" als eine Karte 00:00–07:00 statt sieben Einzelkarten). Rein optisch – der Store bleibt weiter stundenweise, jede Stunde wird unverändert einzeln neu berechnet/ersetzt. Zusammengefasst wird nur, wenn Action Name, Status, Execution Status, Subtitle und Target Value exakt übereinstimmen, keine der beteiligten Stunden ein Log/eine Fehlermeldung trägt und die Zeitfenster nahtlos aneinander anschließen; die Tagessumme der Ersparnis zählt weiterhin jede Stunde einzeln.

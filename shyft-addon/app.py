@@ -4252,6 +4252,82 @@ def statusAutoManagedControl(control_key):
             return jsonify({"configured": True, "entity_id": entity_id, "value": None, "error": str(e)})
 
 
+# "Heizung Soll-Temperatur" schreibt (anders als Batterie/Warmwasser) ueber ein HA-Skript statt
+# direkt eine number/climate-Entitaet (siehe execute_auto_managed_action) - das Skript ist
+# fire-and-forget und kann je nach Waermepumpen-Cloud-Anbindung (z.B. Viessmann/ViCare) deutlich
+# laenger brauchen, bis der Zielwert tatsaechlich ankommt (Nutzer-Nachfrage: eine echte Aktion wurde
+# vom Addon als erfolgreich geloggt, obwohl die Waermepumpe den Wert real erst ~18 Minuten spaeter
+# uebernahm). Ein manueller Testklick kann nicht so lange warten - deshalb hier ein bewusst
+# grosszuegiges, aber begrenztes Poll-Fenster statt der frueheren komplett unverifizierten
+# fire-and-forget-Variante (die faelschlich immer "Erfolg" meldete), und IMMER ein Rueckstell-
+# Versuch danach, egal ob die Erhoehung bestaetigt werden konnte.
+HEATING_TARGET_TEMP_TEST_STEP_C = 1
+HEATING_TARGET_TEMP_TEST_POLL_INTERVAL_SECONDS = 10
+HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS = 90
+HEATING_TARGET_TEMP_TEST_REVERT_TIMEOUT_SECONDS = 60
+
+
+def _write_and_verify_auto_managed_number(control_key, entity_id, target_value, poll_timeout_seconds,
+                                           poll_interval_seconds=HEATING_TARGET_TEMP_TEST_POLL_INTERVAL_SECONDS):
+    "Ruft das fuer control_key hinterlegte HA-Skript mit target_value auf und prueft per Live-Status (Poll), ob der zugeordnete Sensor ihn wirklich uebernommen hat. True bei Erfolg innerhalb der Frist."
+    control = AUTO_MANAGED_CONTROLS[control_key]
+    try:
+        homeassistant_adapter.call_service("script", control["script_id"], {"target_value": target_value})
+    except Exception as e:
+        print(f"[Shyft] '{control_key}': Skript-Aufruf fehlgeschlagen:", repr(e))
+        return False
+    deadline = time.time() + poll_timeout_seconds
+    while True:
+        try:
+            current = homeassistant_adapter.read_entity_numeric_value(entity_id)
+            if current is not None and abs(current - target_value) < 1e-6:
+                return True
+        except Exception as e:
+            print(f"[Shyft] '{control_key}': Status von '{entity_id}' nicht lesbar:", repr(e))
+        if time.time() >= deadline:
+            return False
+        time.sleep(poll_interval_seconds)
+
+
+@app.route("/actions/heating_target_temp/test", methods=["POST"])
+@_records_action_test("heating_target_temp")
+def testHeatingTargetTempBoost():
+    """Einziger Test fuer 'Heizung Soll-Temperatur' (ersetzt den frueheren, komplett unverifizierten
+    +/-Delta-Test ueber testAutoManagedControl): erhoeht den aktuellen Sollwert testweise um
+    HEATING_TARGET_TEMP_TEST_STEP_C, wartet bis zu HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS auf
+    Bestaetigung durch den zugeordneten Sensor und setzt DANACH IMMER (auch ohne Bestaetigung) den
+    urspruenglichen Wert zurueck."""
+    control_key = "heating_target_temp"
+    control = AUTO_MANAGED_CONTROLS[control_key]
+    config = _read_current_config()
+    if resolve_control_variant(control_key, config) != "direct":
+        return jsonify({"success": False, "message": "Nur für 'Direkt steuern' verfügbar"}), 400
+    entity_id = config.get("sensorMappings", {}).get(control["sensor_field"], "")
+    if not entity_id:
+        return jsonify({"success": False, "message": "Keine Entity zugeordnet"}), 400
+
+    original_value = _read_mapped_numeric(config, control["sensor_field"])
+    if original_value is None:
+        return jsonify({"success": False, "message": "Aktueller Wert nicht lesbar"}), 500
+
+    boosted_value = original_value + HEATING_TARGET_TEMP_TEST_STEP_C
+    confirmed = _write_and_verify_auto_managed_number(
+        control_key, entity_id, boosted_value, HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS)
+    revert_ok = _write_and_verify_auto_managed_number(
+        control_key, entity_id, original_value, HEATING_TARGET_TEMP_TEST_REVERT_TIMEOUT_SECONDS)
+
+    if confirmed and revert_ok:
+        return jsonify({"success": True, "originalValue": original_value, "boostedValue": boosted_value})
+
+    if not confirmed:
+        message = f"Erhöhung auf {boosted_value}°C nicht innerhalb von {HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS}s bestätigt - die Wärmepumpe kann trotzdem noch verzögert reagieren"
+    else:
+        message = "Zurücksetzen auf den ursprünglichen Wert nicht bestätigt"
+    if not revert_ok:
+        message += " - bitte in der Wärmepumpen-App prüfen, ob wieder der ursprüngliche Wert eingestellt ist"
+    return jsonify({"success": False, "message": message, "originalValue": original_value, "boostedValue": boosted_value}), 500
+
+
 @app.route("/actions/<control_key>/test", methods=["POST"])
 @_records_action_test()
 def testAutoManagedControl(control_key):
