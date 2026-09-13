@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.100
+
+* **Fix: Bei "Auto laden" (Dreistufig) waren die grünen Punkte der Schritt-Linie ("1.", "2.", "3.") weiterhin nicht auf Höhe der jeweiligen Beschriftung, und der grüne Strich reichte über "Ladevorgang beenden" hinaus.** Ursache: die Punktposition wurde per JavaScript einmalig nach dem Erstellen gemessen (`offsetTop`/`offsetHeight`) - stand die Geräte-Kachel dabei noch eingeklappt (`display:none`), lieferte das 0 und die Messung wurde beim späteren Aufklappen nicht wiederholt. Jetzt rein per CSS zentriert (der Punkt sitzt als Kind der Beschriftungszelle selbst, `top: 50%`) - unabhängig vom Kachel-Zustand beim Rendern immer korrekt, keine Messung mehr nötig. Der Strich selbst endete strukturell bereits korrekt bei "Ladevorgang beenden"; das falsch positionierte "3."-Symbol ließ es nur länger wirken.
+
 ## 0.0.45.99
 
 * **"Geräteverhalten abweichend von Shyft-Steuerung" ist jetzt implementiert** (war bisher ein reiner Platzhalter ohne Vergleichslogik - der Toggle existierte, hat aber nie etwas ausgelöst). Prüft bei jedem 15-Minuten-Poll für alle direkt gesteuerten Aktionstypen sowohl den aktiven Zustand (z.B. lädt die Wallbox während "Auto laden" wirklich?) als auch den Ruhezustand (z.B. steht die Batterie-Entladeleistung wieder auf dem Normalwert, wenn "Batterie-Entladen verschieben" nicht läuft? - genau der ursprünglich gemeldete Fall). Abgedeckt: Batterie (Lade-/Entladeleistungslimit, Modus), Sonstiger Verbraucher (Schalter), Heizung Soll-Temperatur, Warmwasser-Solltemperatur-Boost, Auto laden (Ladeleistung). Nur für "direkt" gesteuerte Aktionstypen möglich - bei per HA-Automation gesteuerten weiß das Add-on nicht, welchen Wert die Automation gesetzt hat. Jede Abweichung erscheint dauerhaft im Dashboard-Problemhinweis; eine Push-Benachrichtigung kommt nur einmalig beim Auftreten, nicht bei jedem weiteren Poll.

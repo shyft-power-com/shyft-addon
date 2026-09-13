@@ -4126,11 +4126,13 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
     // marks this step on the continuous vertical line running down .carChargeStages (see CSS).
     // Single-stage recipes (e.g. "Warmwasserbereitung") aren't wrapped in .carChargeStages and
     // skip this - a lone dot with no line to sit on would misleadingly suggest a multi-step process.
+    // Appended into the label cell itself further down (not here) and centered on it purely via CSS
+    // (top:50% relative to that cell) - a fixed top:Xem guess never quite matched the real row
+    // height, and a one-time JS offsetTop/offsetHeight measurement (tried before this) came out
+    // wrong whenever the row wasn't actually laid out yet at measurement time (e.g. inside a still-
+    // collapsed Geraete-Kachel) and never got recomputed after expanding it.
     const stageDot = showDot ? document.createElement('span') : null;
-    if (stageDot) {
-        stageDot.className = 'carChargeStageDot';
-        wrapper.appendChild(stageDot);
-    }
+    if (stageDot) stageDot.className = 'carChargeStageDot';
 
     const serviceDatalistId = idPrefix + 'ServiceOptions_' + stageKey;
     const serviceDatalist = document.createElement('datalist');
@@ -4160,8 +4162,10 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
     const serviceTbody = document.createElement('tbody');
     const serviceRow = document.createElement('tr');
     const serviceLabelCell = document.createElement('td');
+    serviceLabelCell.className = 'carChargeStageLabelCell';
     serviceLabelCell.textContent = label;
     serviceLabelCell.appendChild(buildTooltip(tooltip));
+    if (stageDot) serviceLabelCell.appendChild(stageDot);
     const serviceValueCell = document.createElement('td');
     const serviceInput = document.createElement('input');
     serviceInput.id = idPrefix + stageKey + '_service';
@@ -4179,15 +4183,6 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
     serviceTbody.appendChild(serviceRow);
     serviceTable.appendChild(serviceTbody);
     wrapper.appendChild(serviceTable);
-
-    if (stageDot) {
-        // Exact vertical center of the "1./2./3. ..." label cell, measured after the tree is
-        // actually connected to the document (offsetTop/offsetHeight are 0 otherwise) - replaces a
-        // previous fixed top:0.65em guess that didn't quite line up with the real text baseline.
-        requestAnimationFrame(() => {
-            stageDot.style.top = (serviceLabelCell.offsetTop + serviceLabelCell.offsetHeight / 2) + 'px';
-        });
-    }
 
     const fieldsContainer = document.createElement('div');
     wrapper.appendChild(fieldsContainer);
