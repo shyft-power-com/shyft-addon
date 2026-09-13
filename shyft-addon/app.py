@@ -85,7 +85,7 @@ CAR_PRESENCE_AWAY_CEILING_FLOOR = 0.02
 # +15% relativ zur gelernten Rate - bewusst schwach, da eine niedrige Reichweite unterwegs genauso
 # gut "fährt zum Schnelllader" bedeuten kann wie "fährt bald nach Hause".
 CAR_PRESENCE_SOC_INFLUENCE = 0.15
-# Feste Grenze (nicht gelernt) zwischen "steht nur" (Vampire Drain) und "unterwegs" - ein SOC-
+# Feste Grenze (nicht gelernt) zwischen "steht nur" (Vampire Drain) und "fährt" - ein SOC-
 # Rückgang pro Stunde unterhalb dieser Schwelle zählt als Standzeit, darüber als Fahrt. Der
 # tatsächliche kWh-Verbrauchswert unterscheidet sich dadurch NICHT (ein kleiner Fahrt-Verbrauch
 # sieht rechnerisch genauso aus wie Vampire Drain) - die Schwelle dient nur der Einfärbung.
@@ -1517,7 +1517,7 @@ def sync_car_presence_log():
 
 
 def _classify_away_state_and_consumption(prev_entry, hour_dt, current_soc, battery_capacity_kwh):
-    """Leitet aus dem SOC-Verlauf ab, ob eine abwesende Stunde "steht" oder "unterwegs" war, und
+    """Leitet aus dem SOC-Verlauf ab, ob eine abwesende Stunde "steht" oder "fährt" war, und
     den dabei verbrauchten Strom (kWh) - dieselbe Zahl unabhängig von der Einfärbung (siehe
     CAR_VAMPIRE_DRAIN_THRESHOLD_PCT_PER_HOUR). Ein SOC-ANSTIEG während der Abwesenheit ist eine
     Fremdladung (Schnelllader o.ä., nicht die eigene Wallbox) - wird komplett ausgeklammert statt
@@ -1542,7 +1542,7 @@ def _classify_away_state_and_consumption(prev_entry, hour_dt, current_soc, batte
         return None, None  # Fremdladung waehrend der Abwesenheit - ausklammern
 
     drop_pct = -delta_pct
-    state = "unterwegs" if drop_pct >= CAR_VAMPIRE_DRAIN_THRESHOLD_PCT_PER_HOUR else "steht"
+    state = "fährt" if drop_pct >= CAR_VAMPIRE_DRAIN_THRESHOLD_PCT_PER_HOUR else "steht"
     consumption_kwh = round(drop_pct / 100 * battery_capacity_kwh, 3) if battery_capacity_kwh else None
     return state, consumption_kwh
 
@@ -1880,11 +1880,13 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
        Kalendertag eine Tagesfahrleistung E_day bestimmt - recency-gewichteter historischer
        Tagesdurchschnitt (kWh) JE WOCHENTAG (Mo..So einzeln, siehe e_day_for_weekday), inkl.
        fahrtloser Tage als 0 - und VOLLSTAENDIG auf die Stunden verteilt, deren prognostizierter
-       Zustand "unterwegs" ist
-       (groesster der drei exklusiven Zustaende eingesteckt/steht/unterwegs), gewichtet nach
-       P(unterwegs). eingesteckt/steht-Stunden bekommen immer 0. Damit gilt per Konstruktion:
+       Zustand "fährt" ist
+       (groesster der drei exklusiven Zustaende eingesteckt/steht/fährt), gewichtet nach
+       P(fährt). eingesteckt/steht-Stunden bekommen immer 0. Damit gilt per Konstruktion:
        Summe(consumption_kwh_forecast ueber den Tag) == E_day, und ein Wert > 0 steht genau in den
-       Fahrstunden - deckungsgleich mit ev_usage_h (siehe build_ev_optimizer_fields). Sieht das
+       Fahrstunden. ev_usage_h (siehe build_ev_optimizer_fields) ist eine Obermenge davon - es
+       umfasst zusaetzlich "steht"-Stunden (abwesend, aber nicht fahrend), da das Auto auch dann
+       nicht an der Wallbox laden kann. Sieht das
        Modell fuer einen Tag keine Fahrstunde, wandert dessen E_day auf die letzte Stunde des
        Optimierungszeitraums (Notnagel). Ohne jeden Fahrtag greift ein festes Default-Profil
        (EV_DEFAULT_*).
@@ -1912,8 +1914,8 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
     transitions_by_state = {}    # (weekday, hour, from_connected) -> [(ts, 1.0 wenn Folgestunde eingesteckt)]
     marginal = {}               # (weekday, hour) -> [(ts, 1.0 wenn eingesteckt)]
     overall = []                # roh/ungewichtet - nur fuer den Stationaer-Prior im transition-Fallback
-    away_driving_by_bucket = {}  # (weekday, hour) -> [(ts, 1.0 wenn "unterwegs", 0.0 wenn "steht")]
-    daily_total_kwh = {}         # lokales Kalenderdatum -> Summe kWh "unterwegs" (0.0 fuer Tage ohne Fahrt)
+    away_driving_by_bucket = {}  # (weekday, hour) -> [(ts, 1.0 wenn "fährt", 0.0 wenn "steht")]
+    daily_total_kwh = {}         # lokales Kalenderdatum -> Summe kWh "fährt" (0.0 fuer Tage ohne Fahrt)
 
     for ts, connected, item in entries:
         overall.append(1.0 if connected else 0.0)
@@ -1927,11 +1929,16 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
         daily_total_kwh.setdefault(local_date, 0.0)
 
         away_state = item.get("state")
-        if not connected and away_state in ("steht", "unterwegs"):
+        # "unterwegs" war der Name des Fahr-Zustands vor der Umbenennung in "fährt" - bereits
+        # geloggte Eintraege (CAR_PRESENCE_LOG_PATH) behalten den alten Wert dauerhaft, daher hier
+        # als Synonym mitbehandeln, sonst wuerde die Lernbasis beim Update schlagartig einen Teil
+        # ihrer Historie verlieren.
+        is_driving_state = away_state in ("fährt", "unterwegs")
+        if not connected and (away_state == "steht" or is_driving_state):
             away_driving_by_bucket.setdefault((ts.weekday(), ts.hour), []).append(
-                (ts, 1.0 if away_state == "unterwegs" else 0.0))
+                (ts, 1.0 if is_driving_state else 0.0))
             consumption_kwh = item.get("consumption_kwh")
-            if away_state == "unterwegs" and consumption_kwh is not None:
+            if is_driving_state and consumption_kwh is not None:
                 daily_total_kwh[local_date] += consumption_kwh
 
     overall_rate = (sum(overall) / len(overall)) if overall else 0.5
@@ -2035,11 +2042,11 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
 
     p_away_list = [1.0 - p for p in probabilities]
 
-    # Drei EXKLUSIVE Zustaende je Stunde: eingesteckt / steht / unterwegs. eingesteckt = P(connected),
+    # Drei EXKLUSIVE Zustaende je Stunde: eingesteckt / steht / fährt. eingesteckt = P(connected),
     # der Rest wird ueber den historischen Fahranteil dieses (Wochentag, Stunde)-Buckets in steht vs.
-    # unterwegs aufgeteilt. Der prognostizierte Zustand einer Stunde ist der groesste der drei -
+    # fährt aufgeteilt. Der prognostizierte Zustand einer Stunde ist der groesste der drei -
     # dieselbe Klassifikation, die auch der Chart-Balken und die Verbrauchsliste zeigen. Verbrauch
-    # wird NUR auf Stunden mit prognostiziertem Zustand "unterwegs" verteilt (siehe unten): ein
+    # wird NUR auf Stunden mit prognostiziertem Zustand "fährt" verteilt (siehe unten): ein
     # eingestecktes oder stehendes Auto kann definitionsgemaess keinen Fahrstrom verbrauchen.
     standing_probabilities = []
     driving_probabilities = []
@@ -2050,10 +2057,10 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
         standing_probabilities.append(p_away_list[i] * (1.0 - frac_driving))
 
     def _is_predicted_driving(i):
-        "True, wenn der wahrscheinlichste der drei Zustaende 'unterwegs' ist (Gleichstand mit eingesteckt zaehlt als unterwegs, damit E_day nicht verloren geht)."
+        "True, wenn der wahrscheinlichste der drei Zustaende 'fährt' ist (Gleichstand mit eingesteckt zaehlt als fährt, damit E_day nicht verloren geht)."
         return driving_probabilities[i] > standing_probabilities[i] and driving_probabilities[i] >= probabilities[i]
 
-    # E_day je Kalendertag VOLLSTAENDIG auf dessen als "unterwegs" prognostizierte Stunden verteilen
+    # E_day je Kalendertag VOLLSTAENDIG auf dessen als "fährt" prognostizierte Stunden verteilen
     # (bzw. im Cold-Start auf die festen Default-Bloecke der Gruppe - die SIND die simulierte Fahrt).
     consumption_kwh_forecast = [0.0] * hours
     day_indices = {}
@@ -2107,10 +2114,14 @@ def build_ev_optimizer_fields(config, optimizer_period=48):
 
     Otherwise returns:
       - "ev_usage_h": compact ";"-joined list of 1-based hour indices where the car is predicted
-        to be away (= exactly the hours where d_ev_kwh has a value > 0), mirroring
-        EVDemandList.getValue(lineNumber) in the original shyft, where ev_usage_h was literally
-        "the lines with demandInKwh > 0". compute_car_presence_forecast allocates the whole daily
-        driving energy onto those hours, so the two vectors are consistent by construction.
+        to be AWAY from the wallbox - both "fährt" (driving, d_ev_kwh > 0) AND "steht" (away but
+        not driving, e.g. parked at work, d_ev_kwh stays 0 for these) count as away here. Nur
+        "eingesteckt" (predicted the most likely of the three exclusive states) bleibt draussen.
+        Ohne die "steht"-Stunden mit einzuschliessen saehe der Optimierer eine solche Stunde wie
+        eine ganz normale Zuhause-Stunde und koennte faelschlich eine Ladung einplanen, obwohl das
+        Auto gar nicht an der Wallbox ist (siehe CHANGELOG). Frueher (vor diesem Fix) war
+        ev_usage_h exakt "die Stunden mit d_ev_kwh > 0", 1:1 EVDemandList.getValue(lineNumber) im
+        urspruenglichen shyft ("the lines with demandInKwh > 0") - jetzt eine echte Obermenge davon.
       - "d_ev_kwh": ";"-joined per-hour expected consumption (kWh), one value per hour, exactly 0
         outside predicted trips; the per-day sum equals E_day. 1:1 dieselben Werte wie
         consumptionKwh im Dashboard (/dashboard/car-presence-forecast).
@@ -2131,9 +2142,17 @@ def build_ev_optimizer_fields(config, optimizer_period=48):
         return {}
 
     hours = optimizer_period + 1
-    labels, probabilities, _, _, consumption_kwh_forecast, _, _ = compute_car_presence_forecast(hours=hours, buffer_hours=1)
+    labels, probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, _, _ = \
+        compute_car_presence_forecast(hours=hours, buffer_hours=1)
 
-    usage_hours_zero_based = [i for i in range(hours) if consumption_kwh_forecast[i] > 0]
+    # "Away" = die vorhergesagt wahrscheinlichste der drei exklusiven Zustaende ist NICHT
+    # "eingesteckt" - deckt sowohl "faehrt" (consumption_kwh_forecast > 0) als auch "steht" ab
+    # (siehe Docstring oben).
+    usage_hours_zero_based = [
+        i for i in range(hours)
+        if consumption_kwh_forecast[i] > 0
+        or not (probabilities[i] >= standing_probabilities[i] and probabilities[i] >= driving_probabilities[i])
+    ]
 
     # Fallback only looks within optimizer_period (not the buffer hour) - see docstring.
     if not any(i < optimizer_period for i in usage_hours_zero_based):
@@ -2217,7 +2236,7 @@ def carPresenceForecast():
     def _state(i):
         c, s, d = probabilities[i], standing_probabilities[i], driving_probabilities[i]
         if d >= c and d >= s:
-            return "unterwegs"
+            return "fährt"
         return "eingesteckt" if c >= s else "steht"
 
     # Die an den Optimierer gehenden Felder (build_ev_optimizer_fields) MIT ausgeben, damit die
@@ -4940,15 +4959,17 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
 
     row_count = min(EV_CHARGE_HOUR_WINDOW, len(output_rows))
 
-    # Praesenzprognose fuer die "geplant"-Stunden (i > 0): ev_usage_h/d_ev_kwh (siehe
-    # build_ev_optimizer_fields) teilen dem Optimierer NUR die vorhergesagten FAHR-Stunden mit
-    # ("unterwegs") - eine vorhergesagte "steht"-Stunde (abwesend, aber nicht fahrend, z.B. Auto
-    # steht beim Arbeitgeber) sieht fuer den Optimierer wie eine ganz normale Zuhause-Stunde aus,
-    # da dafuer kein d_ev_kwh > 0 gesetzt wird. Der Optimierer kann dafuer also faelschlich eine
-    # Ladung einplanen, obwohl das Auto laut Dashboard-Prognose gar nicht am Wallbox-Anschluss ist.
-    # Fuer Stunde 0 bleibt der LIVE-Wallbox-Status (is_car_ready_to_charge) massgeblich - der ist
-    # fuer "jetzt" verlaesslicher als eine Wahrscheinlichkeit; per ISO-Label statt Index gemappt,
-    # falls start (Optimierungslauf-Erstellzeit) und "jetzt" nicht exakt dieselbe volle Stunde sind.
+    # Praesenzprognose fuer die "geplant"-Stunden (i > 0) - zusaetzliche Absicherung NEBEN dem Fix
+    # in build_ev_optimizer_fields (ev_usage_h schliesst jetzt auch "steht"-Stunden mit ein, nicht
+    # nur "faehrt"): der Optimierer bekommt die korrekte Praesenz zum SENDEZEITPUNKT (stuendlicher
+    # sync_site_data-Sync), aber ein einmal berechneter "geplant"-Aktionseintrag bleibt bis zum
+    # NAECHSTEN Optimierungslauf bestehen - das kann bis zu einer Stunde dauern. Diese Pruefung hier
+    # nutzt eine bei JEDEM Optimierungslauf FRISCH berechnete Prognose und reagiert damit schneller
+    # auf zwischenzeitliche Aenderungen (z.B. eine neue Live-Beobachtung), ohne auf den naechsten
+    # vollen Optimierer-Zyklus warten zu muessen. Fuer Stunde 0 bleibt der LIVE-Wallbox-Status
+    # (is_car_ready_to_charge) massgeblich - der ist fuer "jetzt" verlaesslicher als eine
+    # Wahrscheinlichkeit; per ISO-Label statt Index gemappt, falls start (Optimierungslauf-
+    # Erstellzeit) und "jetzt" nicht exakt dieselbe volle Stunde sind.
     presence_connected_by_hour = {}
     if row_count > 1:
         try:

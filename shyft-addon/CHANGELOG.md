@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.89
+
+* **Fix (Ursache statt nur Symptom): ev_usage_h (die an den Java-Optimierer gesendete Liste der Abwesenheits-Stunden) schloss bisher nur vorhergesagte Fahrstunden ein, nicht vorhergesagte "steht"-Stunden (abwesend, aber nicht fahrend, z.B. Auto beim Arbeitgeber geparkt).** Für den Optimierer sah eine solche Stunde dadurch wie eine ganz normale Zuhause-Stunde aus - er konnte trotz vorhergesagter Abwesenheit eine Ladung einplanen. ev_usage_h umfasst jetzt beide Abwesenheits-Zustände; d_ev_kwh (der tatsächliche Fahrstromverbrauch) bleibt für "steht"-Stunden weiterhin 0. Die in 0.0.45.88 ergänzte Prüfung in der addon-eigenen Ladeplanung bleibt zusätzlich bestehen - sie reagiert schneller auf Änderungen als ein voller Optimierer-Zyklus (bis zu einer Stunde).
+* **Umbenennung: Der Anwesenheits-Zustand "unterwegs" heißt jetzt "fährt"** (Dashboard-Anzeige, Legende, interne Bezeichnung) - bereits geloggte Verlaufsdaten mit dem alten Namen werden weiterhin korrekt als Fahrstunde erkannt.
+
 ## 0.0.45.88
 
 * **Fix: Strompreisprognose zeigte für weiter in der Zukunft liegende Stunden (z.B. übermorgen) teils einen eingefrorenen, konstanten Preis, der dann schlagartig auf den echten Kurs "abstürzte".** Der Preis-Fallback für Stunden jenseits des von Awattar veröffentlichten Fensters suchte bisher nur exakt 1 bzw. 2 Tage rückwärts nach einem echten Börsenpreis zur gleichen Uhrzeit - beim vollen 72h-Standardhorizont (Optimierungsperiode 48h + 24h) schlugen beide Versuche für die am weitesten in der Zukunft liegenden Stunden regelmäßig fehl, wodurch der Fallback auf einen einzigen eingefrorenen Wert zurückfiel und diesen für den gesamten Rest des Horizonts beibehielt. Die Suche geht jetzt bis zu 8 Tage rückwärts, sodass immer ein echtes (variierendes) Tagesprofil verwendet wird statt eines flachen Platzhalterwerts.

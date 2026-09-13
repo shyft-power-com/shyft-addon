@@ -5660,7 +5660,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         for (const [color, label] of [
             ['var(--color-accent)', 'eingesteckt'],
             ['var(--color-text-secondary)', 'steht'],
-            ['var(--color-error)', 'unterwegs'],
+            ['var(--color-error)', 'fährt'],
         ]) {
             const item = document.createElement('span');
             item.className = 'dashboardChartLegendItem';
@@ -5813,7 +5813,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     // forecast's own 48-point grid) - looked up by exact ISO-hour label match - so it stays
     // pixel-aligned with the SOC line above it instead of drawing a second, slightly-offset axis.
     // Cells with no matching forecast hour (out of the 48h window) are simply left blank. Each
-    // cell shows the single MOST LIKELY of the three Zustände (eingesteckt/steht/unterwegs) in its
+    // cell shows the single MOST LIKELY of the three Zustände (eingesteckt/steht/fährt) in its
     // own color, opacity = that state's own probability - a proportional 3-way stacked bar would
     // be unreadable at this strip height (10px).
     let presenceMarkup = '';
@@ -6264,16 +6264,16 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
 const PRESENCE_STATE_COLORS = {
     eingesteckt: 'var(--color-accent)',
     steht: 'var(--color-text-secondary)',
-    unterwegs: 'var(--color-error)',
+    fährt: 'var(--color-error)',
 };
 function mostLikelyPresenceState(entry) {
     if (!entry) return null;
-    // Reihenfolge unterwegs -> steht -> eingesteckt und ">=" statt ">": bei Gleichstand gewinnt
-    // "unterwegs". Genau dieselbe Bruch-Entscheidung nutzt die Verbrauchszuteilung in app.py
+    // Reihenfolge fährt -> steht -> eingesteckt und ">=" statt ">": bei Gleichstand gewinnt
+    // "fährt". Genau dieselbe Bruch-Entscheidung nutzt die Verbrauchszuteilung in app.py
     // (_is_predicted_driving), damit eine Stunde mit kWh > 0 in der Liste nie "eingesteckt"/"steht"
     // heissen kann.
     const states = [
-        {label: 'unterwegs', p: entry.driving},
+        {label: 'fährt', p: entry.driving},
         {label: 'steht', p: entry.standing},
         {label: 'eingesteckt', p: entry.connected},
     ];
