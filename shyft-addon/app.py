@@ -394,6 +394,11 @@ _last_site_data_submit = {"at": None}
 AWATTAR_URL = "https://api.awattar.de/v1/marketdata"
 AWATTAR_CACHE_PATH = "/data/awattar_cache.json"
 AWATTAR_CACHE_TTL_SECONDS = 1800  # halbstuendlich frisch holen reicht (Day-Ahead aendert sich nur 1x/Tag)
+# Wie viele Kalendertage rueckwaerts nach einem echten Awattar-Preis fuer dieselbe Uhrzeit gesucht
+# wird, wenn eine Stunde jenseits des veroeffentlichten Fensters liegt (siehe compute_price_buy_array,
+# Modi "dynamic"/"dynamic_variable"). Deckt den vollen 72h-Standardhorizont (optimizer_period=48 + 24)
+# ab, selbst wenn der naechste Tag noch nicht veroeffentlicht ist.
+PRICE_FALLBACK_MAX_DAYS_BACK = 8
 # Awattar liefert den Marktpreis netto (EUR/MWh) - dieselbe 19%-Aufschlagsrechnung, mit der
 # _fetch_awattar_prices daraus einen Brutto-Preis (EUR/kWh) macht, braucht electricity_price_preview
 # umgekehrt (Brutto -> Netto), um beide Werte in der Pruefzeile anzuzeigen (siehe Nutzer-Vorgabe:
@@ -411,16 +416,23 @@ def _fetch_awattar_prices():
     try:
         with open(AWATTAR_CACHE_PATH, "r") as f:
             cached = json.load(f)
-        if time.time() - cached.get("fetched_at", 0) < AWATTAR_CACHE_TTL_SECONDS and cached.get("prices"):
-            return {int(k): v for k, v in cached["prices"].items()}
     except Exception:
-        pass
+        cached = None
+    if cached and time.time() - cached.get("fetched_at", 0) < AWATTAR_CACHE_TTL_SECONDS and cached.get("prices"):
+        return {int(k): v for k, v in cached["prices"].items()}
     try:
         resp = requests.get(AWATTAR_URL, timeout=20)
         resp.raise_for_status()
         rows = resp.json().get("data", [])
     except Exception as e:
         print("[Shyft] Awattar-Preise konnten nicht geladen werden:", repr(e))
+        # Lieber die letzten echten (wenn auch schon etwas aelteren) Marktdaten weiterverwenden als
+        # komplett leer zurueckzugeben - sonst liefert compute_price_buy_array bei einem einzelnen
+        # verpassten Abruf sofort None, und p_buy_addon wird fuer diesen stuendlichen Sync gar nicht
+        # erst an den Server gesendet (der dort zuletzt gespeicherte Preis friert dann bis zum
+        # naechsten erfolgreichen Sync ein).
+        if cached and cached.get("prices"):
+            return {int(k): v for k, v in cached["prices"].items()}
         return {}
     prices = {}
     for row in rows:
@@ -495,15 +507,24 @@ def compute_price_buy_array(config, base_time_utc, hours):
         by_hour = {}
         for ts_ms, price in spot.items():
             by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
-        # Fehlende Randstunden (jenseits des veroeffentlichten Fensters) ueber das Tagesprofil des
-        # letzten abgedeckten Tages fortschreiben, damit der Optimizer-Horizont vollstaendig ist.
+        # Fehlende Randstunden (jenseits des veroeffentlichten Awattar-Fensters) auf den letzten Tag
+        # mit ECHTEN Marktdaten fuer dieselbe Uhrzeit zurueckfuehren - bis zu PRICE_FALLBACK_MAX_DAYS_BACK
+        # Tage rueckwaerts, nicht nur 1-2 Tage. Bei nur 1-2 Tagen konnte der 72h-Standardhorizont
+        # (optimizer_period 48 + 24) in einen eingefrorenen Einzelwert "kippen", sobald auch der
+        # Fallback-Tag noch nicht abgedeckt war (siehe naechster Zweig unten fuer den Grund, warum das
+        # als flacher Preisverlauf sichtbar wurde, der beim naechsten Awattar-Update hart auf den
+        # echten Kurs "abstuerzte").
         out = []
         for i in range(hours):
             h = (base_time_utc + timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
             price = by_hour.get(h)
             if price is None:
-                fallback = by_hour.get(h - timedelta(days=1)) or by_hour.get(h - timedelta(days=2))
-                price = fallback if fallback is not None else (out[-1] - surcharge if out else 0.0)
+                for days_back in range(1, PRICE_FALLBACK_MAX_DAYS_BACK + 1):
+                    price = by_hour.get(h - timedelta(days=days_back))
+                    if price is not None:
+                        break
+            if price is None:
+                price = out[-1] - surcharge if out else 0.0
             out.append(round(price + surcharge, 5))
         return out
 
@@ -526,9 +547,19 @@ def compute_price_buy_array(config, base_time_utc, hours):
             h = (base_time_utc + timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
             raw_price = by_hour.get(h)
             if raw_price is None:
-                # Randstunden jenseits des Awattar-Fensters ueber das Tagesprofil des letzten
-                # abgedeckten Tages fortschreiben, sonst den letzten bekannten Roh-Boersenpreis halten.
-                raw_price = by_hour.get(h - timedelta(days=1)) or by_hour.get(h - timedelta(days=2))
+                # Randstunden jenseits des Awattar-Fensters auf den letzten Tag mit ECHTEN
+                # Marktdaten fuer dieselbe Uhrzeit zurueckfuehren (bis zu PRICE_FALLBACK_MAX_DAYS_BACK
+                # Tage rueckwaerts) - NICHT nur 1-2 Tage: bei nur 1-2 Tagen griff fuer weiter in der
+                # Zukunft liegende Stunden (z.B. uebermorgen, solange morgen selbst noch nicht
+                # veroeffentlicht ist) sofort der prev_raw_price-Notnagel darunter, und der blieb dann
+                # ueber den GESAMTEN Rest des Horizonts eingefroren - genau das erzeugte den vom
+                # Nutzer beobachteten flachen Preisverlauf, der beim naechsten Awattar-Update (naechster
+                # Tag wird veroeffentlicht, typischerweise gegen Mittag) hart auf den echten,
+                # meist mittags einbrechenden Kurs "abstuerzte".
+                for days_back in range(1, PRICE_FALLBACK_MAX_DAYS_BACK + 1):
+                    raw_price = by_hour.get(h - timedelta(days=days_back))
+                    if raw_price is not None:
+                        break
             if raw_price is None:
                 raw_price = prev_raw_price if prev_raw_price is not None else 0.0
             local_dt = h.astimezone()
@@ -4908,6 +4939,29 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
         return result
 
     row_count = min(EV_CHARGE_HOUR_WINDOW, len(output_rows))
+
+    # Praesenzprognose fuer die "geplant"-Stunden (i > 0): ev_usage_h/d_ev_kwh (siehe
+    # build_ev_optimizer_fields) teilen dem Optimierer NUR die vorhergesagten FAHR-Stunden mit
+    # ("unterwegs") - eine vorhergesagte "steht"-Stunde (abwesend, aber nicht fahrend, z.B. Auto
+    # steht beim Arbeitgeber) sieht fuer den Optimierer wie eine ganz normale Zuhause-Stunde aus,
+    # da dafuer kein d_ev_kwh > 0 gesetzt wird. Der Optimierer kann dafuer also faelschlich eine
+    # Ladung einplanen, obwohl das Auto laut Dashboard-Prognose gar nicht am Wallbox-Anschluss ist.
+    # Fuer Stunde 0 bleibt der LIVE-Wallbox-Status (is_car_ready_to_charge) massgeblich - der ist
+    # fuer "jetzt" verlaesslicher als eine Wahrscheinlichkeit; per ISO-Label statt Index gemappt,
+    # falls start (Optimierungslauf-Erstellzeit) und "jetzt" nicht exakt dieselbe volle Stunde sind.
+    presence_connected_by_hour = {}
+    if row_count > 1:
+        try:
+            labels, probabilities, standing_probabilities, driving_probabilities, _, _, _ = \
+                compute_car_presence_forecast(hours=row_count)
+            for idx, label in enumerate(labels):
+                presence_connected_by_hour[label] = (
+                    probabilities[idx] >= standing_probabilities[idx]
+                    and probabilities[idx] >= driving_probabilities[idx]
+                )
+        except Exception as e:
+            print("[Shyft] Praesenzprognose fuer 'Auto laden' (geplante Stunden) konnte nicht berechnet werden:", repr(e))
+
     for i in range(row_count):
         output_row = output_rows[i]
         input_row = input_rows[i] if i < len(input_rows) else {}
@@ -4944,6 +4998,14 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
 
         if is_current_hour and not is_car_ready_to_charge(config):
             continue  # Grundvoraussetzung fuer eine (neu oder weiterhin) laufende Aktion in der aktuellen Stunde
+
+        if not is_current_hour:
+            hour_label = (start + timedelta(hours=i)).isoformat()
+            # Default True (nicht blockieren), falls die Prognose fuer dieses Label fehlt/fehlschlug -
+            # die neue Praesenzpruefung soll eine zusaetzliche Absicherung sein, kein neuer Blocker
+            # bei fehlenden Daten.
+            if not presence_connected_by_hour.get(hour_label, True):
+                continue  # Auto fuer diese Stunde nicht als eingesteckt prognostiziert - keine Ladeaktion planen
 
         hour_start = start + timedelta(hours=i)
         # Der Zielwert bleibt hier bewusst der unkorrigierte Optimierungswert (EV_sum) - die
