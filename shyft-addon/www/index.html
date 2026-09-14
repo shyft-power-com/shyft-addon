@@ -1852,6 +1852,61 @@
                 padding: 1em 1em 1.25em;
             }
         }
+
+        /* Analyse-Tab (siehe loadAnalyse in app.js) - bewusst schlicht (Tabelle statt eigenem
+           SVG-Chart wie im Dashboard), da hier primaer Zahlen ueber laengere Zeitraeume verglichen
+           werden sollen, nicht ein zeitlicher Kurvenverlauf. */
+        .analyseControls {
+            display: flex;
+            align-items: center;
+            gap: 0.6em;
+            margin-bottom: 1em;
+        }
+        .analyseSummaryCard {
+            background: var(--color-bg-card);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 0.6em 1em;
+            overflow-x: auto;
+        }
+        .analyseTable {
+            border-collapse: collapse;
+            width: 100%;
+            font-size: 0.9em;
+            white-space: nowrap;
+        }
+        .analyseTable th, .analyseTable td {
+            padding: 0.4em 0.6em;
+            text-align: right;
+            border-bottom: 1px solid var(--color-border);
+        }
+        .analyseTable th:first-child, .analyseTable td:first-child {
+            text-align: left;
+        }
+        .analyseTable tbody tr {
+            cursor: pointer;
+        }
+        .analyseTable tbody tr:hover {
+            background: rgba(46, 204, 113, 0.08);
+        }
+        .analyseSavingsPositive {
+            color: var(--color-accent);
+        }
+        .analyseSavingsNegative {
+            color: var(--color-error);
+        }
+        .analyseDayActions {
+            background: var(--color-bg-card);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 0.6em 1em;
+            margin-top: 1em;
+            font-size: 0.9em;
+        }
+        .analyseDayActions ul {
+            margin: 0.4em 0 0;
+            padding-left: 1.2em;
+        }
     </style>
     <title>shyft addon</title>
 </head>
@@ -1863,6 +1918,10 @@
     <div class="tabBar">
         <button type="button" class="tabButton active" data-tab="dashboard">Dashboard</button>
         <button type="button" class="tabButton" data-tab="geraetesteuerung">Gerätesteuerung</button>
+        <!-- Nur sichtbar mit einem test_-praefixierten shyft_access_key (siehe accountStatus.isTestEnvironment
+             in app.js) - das Energie-Archiv selbst laeuft fuer alle Nutzer, dieser Tab ist eine bewusst
+             einfache, nicht-live Testmoeglichkeit vor dem allgemeinen Rollout. -->
+        <button type="button" class="tabButton" data-tab="analyse" id="analyseTabButton" hidden>Analyse</button>
         <button type="button" class="tabButton" data-tab="konfiguration">Konfiguration</button>
     </div>
 </div>
@@ -1875,6 +1934,10 @@
 <div id="tab-geraetesteuerung" class="tabPanel">
     <div id="shyftActionsFilter" class="shyftActionsFilter"></div>
     <div id="shyftActionsBody"></div>
+</div>
+
+<div id="tab-analyse" class="tabPanel">
+    <div id="analyseBody"></div>
 </div>
 
 <div id="tab-konfiguration" class="tabPanel">

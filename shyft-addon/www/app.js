@@ -841,6 +841,21 @@ async function applyTriggerButtonDemoState() {
     }
 }
 
+// Analyse-Tab (siehe accountStatus.isTestEnvironment in app.py/account-status) - nur sichtbar mit
+// einem test_-praefixierten shyft_access_key, eine bewusst einfache/nicht-live Testmoeglichkeit vor
+// dem allgemeinen Rollout. Die Datenerfassung selbst (energy_archive) laeuft unabhaengig davon fuer
+// alle Nutzer.
+async function applyAnalyseTabVisibility() {
+    const button = document.getElementById('analyseTabButton');
+    if (!button) return;
+    try {
+        const status = await getJson(insideHomeAssistant + '/account-status');
+        button.hidden = !status.isTestEnvironment;
+    } catch (err) {
+        console.log(err);
+    }
+}
+
 async function renderSystemHealth() {
     applyTriggerButtonDemoState();
     const container = document.getElementById('systemHealthCard');
@@ -8024,6 +8039,133 @@ function refreshActiveTabNow() {
     }
 }
 
+// ============================================================================
+// Analyse-Tab: geplant-optimal/Basisfall/tatsaechlich je Zeitraum (siehe /analysis/summary), plus
+// Detail-Aufklapp der an einem Tag erfolgreich ausgefuehrten Aktionen (siehe /analysis/day-actions).
+// Bewusst als Tabelle statt eigenem SVG-Chart wie im Dashboard - hier geht es um den Vergleich
+// mehrerer Kennzahlen ueber laengere Zeitraeume, nicht um einen zeitlichen Kurvenverlauf.
+// ============================================================================
+
+const ANALYSE_GRANULARITY_LABELS = {
+    hourly: 'Stündlich', daily: 'Täglich', weekly: 'Wöchentlich', monthly: 'Monatlich', yearly: 'Jährlich',
+};
+
+function formatAnalysePeriod(period, granularity) {
+    if (granularity === 'yearly') return period;
+    if (granularity === 'monthly') {
+        const [y, m] = period.split('-');
+        return `${m}.${y}`;
+    }
+    if (granularity === 'hourly') {
+        return new Date(period + 'Z').toLocaleString('de-DE', {day: '2-digit', month: '2-digit', hour: '2-digit'}).replace('.', '') + ' Uhr';
+    }
+    // daily/weekly: period ist ein YYYY-MM-DD-Datum (bei weekly: der Montag der jeweiligen Woche)
+    const label = new Date(period + 'T00:00:00Z').toLocaleDateString('de-DE', {day: '2-digit', month: '2-digit', year: 'numeric'});
+    return granularity === 'weekly' ? `Woche ab ${label}` : label;
+}
+
+function formatEuro(value) {
+    return (Number.isFinite(value) ? value : 0).toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €';
+}
+
+function formatKwh(value) {
+    return (Number.isFinite(value) ? value : 0).toLocaleString('de-DE', {minimumFractionDigits: 1, maximumFractionDigits: 1}) + ' kWh';
+}
+
+function analyseSavingsClass(value) {
+    return Number.isFinite(value) && value < 0 ? 'analyseSavingsNegative' : 'analyseSavingsPositive';
+}
+
+async function loadAnalyseDayActions(dateStr, container) {
+    container.innerHTML = '<p class="shyftActionsEmpty">Lade Aktionen…</p>';
+    let actions = [];
+    try {
+        const result = await getJson(insideHomeAssistant + '/analysis/day-actions?date=' + encodeURIComponent(dateStr));
+        actions = result.actions || [];
+    } catch (err) {
+        console.log(err);
+    }
+    const heading = new Date(dateStr + 'T00:00:00').toLocaleDateString('de-DE', {weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric'});
+    if (actions.length === 0) {
+        container.innerHTML = `<div class="analyseDayActions">Keine erfolgreich ausgeführten Aktionen am ${heading}.</div>`;
+        return;
+    }
+    const items = actions.map(a => {
+        const from = new Date(a.date_start_ms).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'});
+        const to = a.date_end_ms ? new Date(a.date_end_ms).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}) : '?';
+        const power = Number.isFinite(a.power_kw) ? `${a.power_kw.toFixed(1)} kW` : '–';
+        const savings = Number.isFinite(a.savings_eur) ? formatEuro(a.savings_eur) : '–';
+        return `<li>${from}–${to} Uhr: <strong>${a.action_type}</strong> (${power}, Ersparnis ${savings})</li>`;
+    }).join('');
+    container.innerHTML = `<div class="analyseDayActions">Aktionen am ${heading}<ul>${items}</ul></div>`;
+}
+
+async function loadAnalyse() {
+    const body = document.getElementById('analyseBody');
+    if (!body) return;
+    const previousSelect = document.getElementById('analyseGranularity');
+    const granularity = previousSelect ? previousSelect.value : 'daily';
+
+    body.innerHTML = `
+        <div class="analyseControls">
+            <label for="analyseGranularity">Zeitraum:</label>
+            <select id="analyseGranularity">
+                ${Object.entries(ANALYSE_GRANULARITY_LABELS).map(([key, label]) =>
+                    `<option value="${key}"${key === granularity ? ' selected' : ''}>${label}</option>`).join('')}
+            </select>
+        </div>
+        <div class="analyseSummaryCard"><p class="shyftActionsEmpty">Lade Daten…</p></div>
+        <div id="analyseDayActions"></div>
+    `;
+    document.getElementById('analyseGranularity').addEventListener('change', loadAnalyse);
+
+    const summaryCard = body.querySelector('.analyseSummaryCard');
+    let rows = [];
+    try {
+        const result = await getJson(insideHomeAssistant + '/analysis/summary?granularity=' + granularity);
+        rows = result.rows || [];
+    } catch (err) {
+        console.log(err);
+    }
+    if (rows.length === 0) {
+        summaryCard.innerHTML = '<p class="shyftActionsEmpty">Noch keine Analyse-Daten vorhanden - das Archiv füllt sich stündlich, sobald ein frischer Optimierungslauf und die zugehörige abgeschlossene Stunde vorliegen.</p>';
+        return;
+    }
+
+    const clickable = granularity === 'daily';
+    const rowsHtml = rows.map(r => `
+        <tr${clickable ? ` data-date="${r.period}"` : ''}>
+            <td>${formatAnalysePeriod(r.period, granularity)}</td>
+            <td>${formatKwh(r.planned_usage_kwh)}</td>
+            <td>${formatKwh(r.base_usage_kwh)}</td>
+            <td>${formatKwh(r.actual_usage_kwh)}</td>
+            <td>${formatEuro(r.planned_cost_eur)}</td>
+            <td>${formatEuro(r.base_cost_eur)}</td>
+            <td>${formatEuro(r.actual_cost_eur)}</td>
+            <td class="${analyseSavingsClass(r.savings_vs_base_eur)}">${formatEuro(r.savings_vs_base_eur)}</td>
+            <td class="${analyseSavingsClass(r.savings_vs_planned_eur)}">${formatEuro(r.savings_vs_planned_eur)}</td>
+        </tr>`).join('');
+
+    summaryCard.innerHTML = `
+        <table class="analyseTable">
+            <thead><tr>
+                <th>Zeitraum</th>
+                <th>Verbrauch geplant</th><th>Verbrauch Basisfall</th><th>Verbrauch Ist</th>
+                <th>Kosten geplant</th><th>Kosten Basisfall</th><th>Kosten Ist</th>
+                <th>Ersparnis ggü. Basisfall</th><th>Ersparnis ggü. Planung</th>
+            </tr></thead>
+            <tbody>${rowsHtml}</tbody>
+        </table>
+    `;
+
+    if (clickable) {
+        const dayDetail = document.getElementById('analyseDayActions');
+        summaryCard.querySelectorAll('tbody tr[data-date]').forEach(tr => {
+            tr.addEventListener('click', () => loadAnalyseDayActions(tr.dataset.date, dayDetail));
+        });
+    }
+}
+
 function setupTabs() {
     const buttons = document.querySelectorAll('.tabButton');
     for (const button of buttons) {
@@ -8038,6 +8180,9 @@ function setupTabs() {
             document.getElementById('tab-' + button.dataset.tab).classList.add('active');
             if (button.dataset.tab === 'geraetesteuerung') {
                 requestShyftActionsAutoScroll();
+            }
+            if (button.dataset.tab === 'analyse') {
+                loadAnalyse();
             }
             refreshActiveTabNow();
         });
@@ -8074,12 +8219,14 @@ if (document.readyState === 'complete') {
     loadDashboard();
     setupTabs();
     syncTopBarHeightVar();
+    applyAnalyseTabVisibility();
 } else {
     window.addEventListener('load', () => {
         loadConfiguration().then(loadShyftActions);
         loadDashboard();
         setupTabs();
         syncTopBarHeightVar();
+        applyAnalyseTabVisibility();
     });
 }
 

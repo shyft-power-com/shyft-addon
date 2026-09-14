@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.45.113
+
+* **Neu (nur auf einer Test-Instanz sichtbar): Analyse-Tab mit stündlichem Energie-Archiv.** Ein neues Modul `energy_archive.py` speichert ab sofort für jede abgeschlossene Stunde Verbrauch und Kosten geplant-optimal/Basisfall/tatsächlich sowie die daraus resultierende Ersparnis dauerhaft in einer SQLite-Datenbank (`/data/energy_archive.db`) - anders als die übrigen `/data/*.json`-Dateien, weil die künftig anwachsende Stundenhistorie damit nicht mehr sinnvoll skalieren würde.
+  * **Geplant-optimal/Basisfall** kommen aus Zeile 0 des jeweils aktuellsten Optimierungslaufs (`output_csv`/`base_case.py`) - landen mehrere Läufe innerhalb derselben Stunde, wird zeitanteilig gemittelt, wie lange jeder Lauf tatsächlich "der aktuelle Plan" war.
+  * **Tatsächlicher Verbrauch** kommt aus der Grid-Sensor-Historie (Treppenfunktions-Integration über die Stunde), **tatsächliche Kosten** aus Bezug/Einspeisung mal dem zuletzt bekannten Strompreis dieser Stunde (`p_buy`/`p_sell`).
+  * Erfolgreich ausgeführte Aktionen (Aktionstyp, Ersparnis, Leistung, Datum von-bis) werden zusätzlich kompakt mitgeloggt, fürs Detail-Aufklapp eines Tages im neuen Tab.
+  * Der Tab liegt zwischen "Gerätesteuerung" und "Konfiguration", ist aber nur sichtbar, wenn der hinterlegte `shyft_access_key` ein `test_`-Präfix trägt (`/account-status` liefert jetzt zusätzlich `isTestEnvironment`) - eine bewusst einfache, nicht-live Testmöglichkeit vor dem allgemeinen Rollout. Die Datenerfassung selbst läuft unabhängig davon für alle Nutzer, damit beim späteren Rollout bereits Historie vorhanden ist.
+
 ## 0.0.45.112
 
 * **"Auto laden", "Warmwasser", "Heizung Soll-Temperatur" und "Verbraucher an" zeigen jetzt eine echte Ersparnis statt immer "-".** Bisher bekamen nur wenige Aktionstypen ein "Savings"-Feld befüllt; die vier oben genannten trugen dauerhaft `None`. Jetzt läuft für alle vier dieselbe Verbrauchsanteils-Formel (`_action_energy_savings`): Anteil der Aktion an `X_sum` über den gesamten Optimierungslauf, multipliziert mit den Gesamtkosten Basisfall bzw. Optimierer (`netProfitBase48HoursSum` bzw. der neu aufsummierten `profits_net_opt`-Spalte).

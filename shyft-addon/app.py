@@ -5,6 +5,7 @@ from live_entity_watcher import LiveEntityWatcher
 import problem_registry
 import pv_forecast
 import base_case
+import energy_archive
 
 import os
 from flask import Flask, send_from_directory, jsonify, request, Response
@@ -241,8 +242,38 @@ def is_demo_mode():
 
 @app.route("/account-status", methods=["GET"])
 def accountStatusEndpoint():
-    "Tells the frontend whether the addon is still in demo mode (no real shyft_access_key hinterlegt, siehe is_demo_mode)."
-    return jsonify({"isDemo": is_demo_mode()})
+    """Tells the frontend whether the addon is still in demo mode (no real shyft_access_key
+    hinterlegt, siehe is_demo_mode) - und ob dieser Schluessel ein test_-Praefix traegt (siehe
+    DEV_ACCESS_KEY_PREFIX/shyft_adapter.development_mode). Letzteres steuert aktuell nur die
+    Sichtbarkeit des Analyse-Tabs (siehe app.js) - eine bewusst einfache, nicht-live Moeglichkeit,
+    das Feature vorab auf einer eigenen Test-HA-Instanz zu pruefen, waehrend die Datenerfassung
+    selbst (energy_archive) unabhaengig davon fuer alle Nutzer laeuft."""
+    return jsonify({"isDemo": is_demo_mode(), "isTestEnvironment": shyft_adapter.development_mode})
+
+
+@app.route("/analysis/summary", methods=["GET"])
+def readAnalysisSummary():
+    "Aggregierte Verbrauchs-/Kosten-/Ersparnis-Werte fuer den Analyse-Tab, siehe energy_archive.query_summary. Query-Parameter: granularity (hourly/daily/weekly/monthly/yearly, Default daily), optional from/to (siehe energy_archive.hour_key-Format)."
+    granularity = request.args.get("granularity", "daily")
+    try:
+        rows = energy_archive.query_summary(granularity, request.args.get("from"), request.args.get("to"))
+        return jsonify({"status": "success", "granularity": granularity, "rows": rows})
+    except Exception as e:
+        print("[Shyft] Analyse: Zusammenfassung konnte nicht geladen werden:", repr(e))
+        return jsonify({"status": "error", "message": str(e)})
+
+
+@app.route("/analysis/day-actions", methods=["GET"])
+def readAnalysisDayActions():
+    "Kompakte Liste erfolgreich ausgefuehrter Aktionen fuer einen Kalendertag (Detail-Aufklapp im Analyse-Tab), siehe energy_archive.query_day_actions. Pflicht-Query-Parameter: date=YYYY-MM-DD."
+    date_str = request.args.get("date", "")
+    try:
+        return jsonify({"status": "success", "actions": energy_archive.query_day_actions(date_str)})
+    except ValueError:
+        return jsonify({"status": "error", "message": "Ungültiges Datum, erwartet wird YYYY-MM-DD."})
+    except Exception as e:
+        print("[Shyft] Analyse: Tages-Aktionen konnten nicht geladen werden:", repr(e))
+        return jsonify({"status": "error", "message": str(e)})
 
 
 def _persist_shyft_access_key(new_access_key):
@@ -3357,7 +3388,12 @@ def stop_pv_surplus_charging(actions, session, config, reason=None):
     session["end_ms"] = int(time.time() * 1000)
     session["stop_reason"] = reason
     _write_pv_surplus_actions(actions)
-    notify_action_event(config, _pv_surplus_session_to_action(session), "beendet")
+    ended_action = _pv_surplus_session_to_action(session)
+    try:
+        energy_archive.archive_completed_action(ended_action)
+    except Exception as e:
+        print("[Shyft] Energie-Archiv: PV-Überschussladen-Aktion konnte nicht archiviert werden:", repr(e))
+    notify_action_event(config, ended_action, "beendet")
 
 
 _pv_surplus_lock = threading.Lock()
@@ -6438,6 +6474,11 @@ def run_hourly_action_transition():
                 except Exception as e:
                     print(f"[Shyft] Stundenwechsel: Beenden von '{name}' fehlgeschlagen:", repr(e))
                 ended_ids.add(action_id)
+                if was_really_started:
+                    try:
+                        energy_archive.archive_completed_action(current)
+                    except Exception as e:
+                        print("[Shyft] Energie-Archiv: Aktion konnte nicht archiviert werden:", repr(e))
             current["Status"] = "beendet"
             changed = True
 
@@ -6748,6 +6789,88 @@ def _load_demo_dashboard_data():
     return {"input_csv": input_csv, "output_csv": output_csv, "creation_date": int(now_hour.timestamp() * 1000)}
 
 
+def _record_energy_archive_plan_contribution(input_csv, output_csv, creation_date_ms, base):
+    """Uebernimmt Zeile 0 von input_csv/output_csv (die GERADE LAUFENDE Stunde) in
+    energy_archive.record_plan_contribution - siehe dortige Modul-Docstring fuer die zeitanteilige
+    Mittelung ueber mehrere Optimierungslaeufe je Stunde (Nutzer-Vorgabe). No-op im Demo-Modus
+    (dessen Zahlen sind synthetisch, wuerden das Archiv verfaelschen) oder ohne input_csv/output_csv."""
+    if is_demo_mode() or not input_csv or not output_csv:
+        return
+    try:
+        input_rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
+        output_rows = list(csv.DictReader(io.StringIO(output_csv)))
+        if not output_rows:
+            return
+        input_row0 = input_rows[0] if input_rows else {}
+        output_row0 = output_rows[0]
+        hour_start = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+        planned_usage = _safe_float(output_row0.get("X_sum")) + _safe_float(output_row0.get("B_sum_in_45"))
+        planned_cost = _safe_float(output_row0.get("profits_net_opt"))
+        base_usage_list = (base or {}).get("PowerUsageBaseList") or []
+        base_cost_list = (base or {}).get("netProfitBaseList") or []
+        base_usage = base_usage_list[0] if base_usage_list else None
+        base_cost = base_cost_list[0] if base_cost_list else None
+        price_buy = _safe_float(input_row0.get("p_buy"), None)
+        price_sell = _safe_float(input_row0.get("p_sell"), None)
+        energy_archive.record_plan_contribution(
+            energy_archive.hour_key(hour_start), planned_usage, planned_cost, base_usage, base_cost, price_buy, price_sell)
+    except Exception as e:
+        print("[Shyft] Energie-Archiv: Plan-Beitrag konnte nicht aufgezeichnet werden:", repr(e))
+
+
+def _grid_import_export_kwh(start, end, config=None):
+    """Netzbezug/-einspeisung (kWh) im Intervall [start, end) aus der Grid-Sensor-Historie
+    (sensorMappings-Eintrag photovoltaic_powerflow_grid, kW). Treppenfunktions-Integration statt
+    linearer Trapez-Naeherung - ein HA-Sensorzustand gilt konstant bis zum naechsten Ereignis (siehe
+    load_entity_history_raw), das entspricht der tatsaechlichen Sensor-Semantik besser als eine
+    Interpolation zwischen Messpunkten. Positive Leistung = Bezug, negative = Einspeisung (wie
+    GR_sum im Optimierer). (None, None) ohne zugeordneten Grid-Sensor oder ohne Historie."""
+    config = config or _read_current_config()
+    entity_id = config.get("sensorMappings", {}).get("photovoltaic_powerflow_grid", "")
+    if not entity_id:
+        return None, None
+    try:
+        unit = homeassistant_adapter.load_entity_state(entity_id).unit
+    except Exception:
+        unit = ""
+    try:
+        raw = homeassistant_adapter.load_entity_history_raw(entity_id, start, end)
+    except Exception as e:
+        print("[Shyft] Energie-Archiv: Grid-Historie konnte nicht geladen werden:", repr(e))
+        return None, None
+    if not raw:
+        return None, None
+    import_kwh = export_kwh = 0.0
+    for i, (last_changed, state) in enumerate(raw):
+        try:
+            kw = float(convert_to_expected_unit("photovoltaic_powerflow_grid", state, unit)[0])
+        except (TypeError, ValueError):
+            continue  # "unknown"/"unavailable" etc.
+        segment_start = max(last_changed, start)
+        segment_end = min(raw[i + 1][0] if i + 1 < len(raw) else end, end)
+        hours = max(0.0, (segment_end - segment_start).total_seconds()) / 3600.0
+        if hours <= 0:
+            continue
+        if kw >= 0:
+            import_kwh += kw * hours
+        else:
+            export_kwh += -kw * hours
+    return import_kwh, export_kwh
+
+
+def finalize_completed_hour_periodically():
+    "Cron-Job (siehe Scheduler, wenige Minuten nach jedem Stundenwechsel): schliesst die GERADE ABGELAUFENE Stunde im Energie-Archiv ab - Ist-Verbrauch/-Einspeisung aus der Grid-Sensor-Historie (siehe _grid_import_export_kwh), verrechnet mit dem zuletzt bekannten Strompreis dieser Stunde (siehe energy_archive.finalize_hour)."
+    if is_demo_mode():
+        return
+    hour_end = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    hour_start = hour_end - timedelta(hours=1)
+    try:
+        import_kwh, export_kwh = _grid_import_export_kwh(hour_start, hour_end)
+        energy_archive.finalize_hour(energy_archive.hour_key(hour_start), hour_end, import_kwh, export_kwh)
+    except Exception as e:
+        print("[Shyft] Energie-Archiv: Stundenabschluss fehlgeschlagen:", repr(e))
+
+
 def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_run_id=None):
     "Shared cache-write (DASHBOARD_CACHE_PATH) - used by sync_dashboard_chart_data's hourly refresh and by _check_optimizer_result's post-/trigger wait, so both end up feeding the Dashboard-tab charts the same way. Also the single choke point that triggers the addon-side action recomputation (see recompute_actions_from_optimizer_run) whenever a fresh optimizer run arrives."
     payload = {"input_csv": input_csv, "output_csv": output_csv, "creation_date": creation_date_ms, "optimizer_run_id": optimizer_run_id}
@@ -6763,6 +6886,7 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
         print("[Shyft] Dashboard-Chart-Daten konnten nicht zwischengespeichert werden:", repr(e))
     _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms)
     recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id, base)
+    _record_energy_archive_plan_contribution(input_csv, output_csv, creation_date_ms, base)
 
 
 # Kaltstart-Fallback fuer _dashboard_sync_since, wenn noch gar kein Lauf gecacht ist - danach
@@ -7274,6 +7398,11 @@ scheduler.add_job(sync_dashboard_chart_data_periodically, 'cron', minute="0")
 scheduler.add_job(process_shyft_actions_periodically, 'cron', minute="0,15,30,45")
 # Allgemeiner Beenden/Starten/Verlaengern-Mechanismus zur vollen Stunde, siehe run_hourly_action_transition
 scheduler.add_job(run_hourly_action_transition_periodically, 'cron', minute="0")
+# Energie-Archiv (Analyse-Tab): 3 Minuten nach der Stunde, damit der frische Optimierungslauf von
+# sync_dashboard_chart_data_periodically (Minute 0) den letzten Plan-Beitrag der GERADE
+# abgelaufenen Stunde schon abgegeben hat, bevor sie hier abgeschlossen wird (siehe
+# finalize_completed_hour_periodically/energy_archive.finalize_hour).
+scheduler.add_job(finalize_completed_hour_periodically, 'cron', minute="3")
 # on the hour, alongside the other hourly syncs - one snapshot per hour is exactly the
 # resolution the Anwesenheitsprognose needs (see compute_car_presence_forecast)
 scheduler.add_job(sync_car_presence_log_periodically, 'cron', minute="0")
