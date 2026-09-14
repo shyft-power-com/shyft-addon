@@ -5400,22 +5400,12 @@ function buildShyftActionCard(action) {
     return card;
 }
 
-// Stunden, innerhalb derer eine noch nicht gestartete Aktion als "demnaechst geplant" zaehlt (siehe
-// renderShyftActions) - rein informativ fuer den Hinweistext, kein Schwellwert fuer irgendeine Logik.
-const UPCOMING_ACTION_WINDOW_HOURS = 3;
-
-// True, wenn mindestens eine Aktion gerade laeuft (Status "Aktiv...") oder innerhalb der naechsten
-// UPCOMING_ACTION_WINDOW_HOURS startet - unabhaengig vom Status-Text, allein anhand von "Date Start"
-// (robuster als auf einen bestimmten "geplant"-Wortlaut zu pruefen).
-function hasActiveOrUpcomingAction(actions) {
-    const now = Date.now();
-    const windowEnd = now + UPCOMING_ACTION_WINDOW_HOURS * 3600 * 1000;
-    return actions.some(action => {
-        const status = (action['Status'] || '').toLowerCase();
-        if (status.startsWith('aktiv')) return true;
-        const start = action['Date Start'];
-        return typeof start === 'number' && start >= now && start <= windowEnd;
-    });
+// True, wenn mindestens eine Aktion gerade laeuft (Status "Aktiv...") - unabhaengig vom
+// Status-Text, allein anhand von "Date Start" (robuster als auf einen bestimmten "geplant"-
+// Wortlaut zu pruefen). Genutzt von renderShyftActions, um zu entscheiden, ob ueberhaupt ein
+// "keine Aktionen geplant"-Hinweis noetig ist.
+function hasActiveAction(actions) {
+    return actions.some(action => (action['Status'] || '').toLowerCase().startsWith('aktiv'));
 }
 
 // --- Gerätesteuerung: Geräte-Filter (Checkbox-Zeile oben, siehe #shyftActionsFilter) ----------
@@ -5564,11 +5554,30 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
         return;
     }
 
-    if (!hasActiveOrUpcomingAction(visible)) {
+    // "Keine Aktionen in den naechsten X Stunden geplant" chronologisch einsortiert statt immer
+    // ganz oben (Nutzer-Feedback): die Liste ist absteigend nach Date End sortiert (spaeteste zuerst,
+    // siehe unten), es kann also durchaus eine oder mehrere Aktionen geben, die weiter in der
+    // Zukunft liegen (z.B. erst spaeter heute oder morgen) - die gehoeren chronologisch VOR den
+    // Hinweis, nicht danach. X ist dabei nicht mehr fest, sondern die tatsaechliche Zeit bis zur
+    // naechsten geplanten Aktion (Nutzer-Vorgabe) - eine noch nicht gestartete Aktion in 5 Stunden
+    // ergibt "...in den naechsten 5 Stunden...", keine weitere Aktion ueberhaupt "keine weiteren
+    // Aktionen geplant" ohne Stundenangabe.
+    const nowMs = Date.now();
+    const showUpcomingHint = !hasActiveAction(visible);
+    const futureStartsMs = visible.map(a => a['Date Start']).filter(s => typeof s === 'number' && s > nowMs);
+    const nextStartMs = futureStartsMs.length > 0 ? Math.min(...futureStartsMs) : null;
+    const isFutureAction = (action) => typeof action['Date Start'] === 'number' && action['Date Start'] > nowMs;
+
+    function buildUpcomingHint() {
         const hint = document.createElement('div');
         hint.className = 'shyftActionsEmpty';
-        hint.textContent = `Keine Aktionen in den nächsten ${UPCOMING_ACTION_WINDOW_HOURS} Stunden geplant.`;
-        container.appendChild(hint);
+        if (nextStartMs === null) {
+            hint.textContent = 'Keine weiteren Aktionen geplant.';
+        } else {
+            const hours = Math.max(1, Math.ceil((nextStartMs - nowMs) / 3600000));
+            hint.textContent = `Keine Aktionen in den nächsten ${hours} Stunden geplant.`;
+        }
+        return hint;
     }
 
     // sorted by Date End descending to match shyft-power's own ordering
@@ -5583,7 +5592,14 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
         groups.get(key).push(action);
     }
 
+    let hintInserted = !showUpcomingHint;
     for (const groupActions of groups.values()) {
+        // Hinweis direkt vor die erste Tagesgruppe setzen, die nicht mehr komplett in der Zukunft
+        // liegt - alles davor (weiter in der Zukunft) bleibt darueber stehen.
+        if (!hintInserted && !groupActions.every(isFutureAction)) {
+            container.appendChild(buildUpcomingHint());
+            hintInserted = true;
+        }
         const dayDiv = document.createElement('div');
         dayDiv.className = 'shyftDayGroup';
 
@@ -5610,6 +5626,12 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
         }
 
         container.appendChild(dayDiv);
+    }
+    // Fallback fuer den (seltenen) Fall, dass wirklich JEDE sichtbare Aktion noch in der Zukunft
+    // liegt (z.B. frisch eingerichtetes Addon ohne Historie) - dann kam der Hinweis oben in der
+    // Schleife nie zum Zug und gehoert ans Ende der (absteigend sortierten) Liste.
+    if (!hintInserted) {
+        container.appendChild(buildUpcomingHint());
     }
 
     maybeAutoScrollToActiveShyftActions();

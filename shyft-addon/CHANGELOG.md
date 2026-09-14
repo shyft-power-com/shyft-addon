@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.110
+
+* **Gerätesteuerung: "Keine Aktionen in den nächsten X Stunden geplant" chronologisch einsortiert statt immer ganz oben** - liegt eine Aktion weiter in der Zukunft, steht sie jetzt korrekt vor dem Hinweis statt dahinter.
+* **X ist jetzt die tatsächliche Zeit bis zur nächsten geplanten Aktion** statt einer festen Zahl (bisher immer 3 Stunden) - gibt es gar keine weitere geplante Aktion, steht dort "Keine weiteren Aktionen geplant." ohne Stundenangabe.
+
 ## 0.0.45.109
 
 * **Fix: Aktion "Warmwasser" konnte fehlschlagen ("Solltemperatur konnte nicht auf 45.87 °C gesetzt werden"), weil die Wärmepumpen-Solltemperatur-Entität nur ganze Grad annimmt, der vom Optimierer berechnete Zielwert aber eine Nachkommastelle hatte.** Sowohl das Setzen beim Start als auch das Zurücksetzen beim Beenden runden den Wert jetzt auf ganze Grad.
