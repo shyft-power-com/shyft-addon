@@ -5377,6 +5377,42 @@ def _hourly_average_price(output_row, input_row):
     return (gr_sum * p_buy + pv_used * p_sell) / x_sum
 
 
+def _hour_fraction_ms(date_start_ms, date_end_ms):
+    "Anteil einer vollen Stunde, den [Date Start, Date End) tatsaechlich abdeckt - 1.0 fuer eine volle Stunde, kleiner bei verspaetetem Start (Stunde 0: Date Start = jetzt statt Stundenbeginn). Fehlende/unplausible Werte gelten als volle Stunde."
+    if not date_start_ms or not date_end_ms or date_end_ms <= date_start_ms:
+        return 1.0
+    return (date_end_ms - date_start_ms) / 3600000.0
+
+
+def _action_energy_savings(energy_kwh, net_profit_base, net_profit_opt, x_sum_total):
+    """CostsBase/CostsOpt/Savings einer Aktion nach der Verbrauchsanteils-Formel (Nutzer-Vorgabe):
+    (Energy der Aktion / X_sum ueber den GESAMTEN Optimierungszeitraum) * netProfitBase/
+    Opt48HoursSum. X_sum (run_SHEMS.jl) umfasst nur echte Verbrauchs-Flows (Grundlast, Waermepumpe,
+    Sonstiger Verbraucher, Auto) - KEINE Batterieladung, die ist separat (siehe compute_battery_*_
+    actions/_battery_preservation_value). Liefert (None, None, None), wenn eine Eingabe fehlt (z.B.
+    Base-Case-Zahl noch nicht im Dashboard-Cache) - Aufrufer behaelt dann "Savings": None wie bisher."""
+    if net_profit_base is None or net_profit_opt is None or not x_sum_total or x_sum_total <= 0:
+        return None, None, None
+    share = energy_kwh / x_sum_total
+    costsbase = share * net_profit_base
+    costsopt = share * net_profit_opt
+    return costsbase - costsopt, costsbase, costsopt
+
+
+# Faktor fuer die "Batterieschonung"-Bewertung von "Laden verschieben"/"Entladen verschieben" -
+# beides reine Halte-den-Ladestand-Aktionen ohne eigenen Verbrauch (Energy (electr) immer 0),
+# kommen im X_sum-Modell oben also nicht vor. Bewusst eigene, vom Base/Opt-Modell unabhaengige
+# Kennzahl (Nutzer-Vorgabe): (SOC - 100) * Kapazitaet(kWh) * Faktor - je weiter der Ladestand von
+# 100% entfernt ist, desto hoeher der Wert der Schonung.
+BATTERY_PRESERVATION_FACTOR = -0.00005
+
+
+def _battery_preservation_value(soc_pct, battery_capacity_kwh):
+    if not battery_capacity_kwh:
+        return None
+    return (soc_pct - 100.0) * battery_capacity_kwh * BATTERY_PRESERVATION_FACTOR
+
+
 def _is_ev_pv_surplus(output_row):
     pv_gr = _safe_float(output_row.get("PV_GR"))
     b_ev = _safe_float(output_row.get("B_EV"))
@@ -5388,9 +5424,11 @@ def _ev_charge_action_id(hour_start):
     return f"{EV_CHARGE_ID_PREFIX}_{int(hour_start.timestamp() * 1000)}"
 
 
-def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_run_id):
+def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base=None, net_profit_opt=None, x_sum_total=None):
     """Berechnet fuer die Stunden 0..EV_CHARGE_HOUR_WINDOW-1 des aktuellsten Optimierungslaufs, ob
     eine "Auto laden"-Aktion existieren soll, und liefert die vollstaendigen Aktionsfelder dafuer.
+    net_profit_base/net_profit_opt/x_sum_total: siehe _action_energy_savings - vom Aufrufer einmal
+    pro Optimierungslauf berechnet, hier nur durchgereicht.
 
     Rueckgabe: {hour_index: action_dict} - nur fuer Stunden, in denen eine Aktion existieren SOLL;
     eine fehlende Stunde bedeutet "keine Aktion" (siehe _reconcile_computed_actions fuers Aufraeumen
@@ -5494,27 +5532,33 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
             subtitle = (f"Laden mit {ev_sum:.1f} kW (von {round(soc_now)} % "
                         f"auf {round(soc_next)} %) | Preis: {avg_price * 100:.1f} C/kWh")
 
-        avg_price_for_costs = _hourly_average_price(output_row, input_row)
+        date_start_ms = int(datetime.now(timezone.utc).timestamp() * 1000) if is_current_hour else int(hour_start.timestamp() * 1000)
+        date_end_ms = int((hour_start + timedelta(hours=1)).timestamp() * 1000)
+        # Energy (electr) ist die tatsaechlich in [Date Start, Date End) geladene Menge (kWh) - bei
+        # Stunde 0 (Date Start = jetzt statt Stundenbeginn) anteilig kleiner als die volle
+        # Stunden-Rate EV_sum (Nutzer-Vorgabe: "zeitanteilig rechnen").
+        energy = ev_sum * _hour_fraction_ms(date_start_ms, date_end_ms)
+        savings, costsbase, costsopt = _action_energy_savings(energy, net_profit_base, net_profit_opt, x_sum_total)
         action = {
             "_id": _ev_charge_action_id(hour_start),
             "Action Name": EV_CHARGE_ACTION_NAME,
             "Action Trigger Type": "Optimizer",
-            "Energy (electr)": ev_sum,
+            "Energy (electr)": energy,
             "Start Value": soc_now,
             "Status": "aktiv" if is_current_hour else "geplant",
             "Subtitle": subtitle,
             "Target Value": target_value,
-            "Savings": None,
-            "costsbase": None,
-            "costsopt": ev_sum * avg_price_for_costs,
-            "Date Start": int(datetime.now(timezone.utc).timestamp() * 1000) if is_current_hour else int(hour_start.timestamp() * 1000),
-            "Date End": int((hour_start + timedelta(hours=1)).timestamp() * 1000),
+            "Savings": savings,
+            "costsbase": costsbase,
+            "costsopt": costsopt,
+            "Date Start": date_start_ms,
+            "Date End": date_end_ms,
             "Optimizer Run": optimizer_run_id,
             "Execution Status": "yes, planned" if is_action_type_enabled(config, EV_CHARGE_ACTION_NAME) else "no, deactivated",
         }
         if pv_surplus:
             # PV Surplus/PV Sum Forecast: fuer die Zielwert-Korrektur im tatsaechlichen Startmoment
-            # (siehe _apply_ev_pv_surplus_start_correction) - EV_sum liegt bereits in "Energy (electr)".
+            # (siehe _apply_ev_pv_surplus_start_correction).
             action["PV Surplus"] = True
             action["PV Sum Forecast"] = _safe_float(output_row.get("PV_sum_44"))
             # Kein Log-Eintrag (und damit kein "Log anzeigen" im Frontend, siehe action['Log']-Check
@@ -5548,7 +5592,9 @@ def _apply_ev_pv_surplus_start_correction(action, config, context="bei Start"):
     live_pv_kw = _read_mapped_numeric(config, "photovoltaic_powerflow_pv")
     if live_pv_kw is None:
         return action.get("Target Value")
-    ev_sum = action.get("Energy (electr)") or 0
+    # Target Value (nicht "Energy (electr)"): das ist seit der Savings-Berechnung die zeitanteilige
+    # kWh-Menge, hier wird aber die volle Stunden-Rate (kW) fuer die Boost-Rechnung gebraucht.
+    ev_sum = action.get("Target Value") or 0
     pv_sum_forecast = action.get("PV Sum Forecast") or 0
     boosted = ev_sum + (live_pv_kw - pv_sum_forecast) / 2
     corrected = round(max(PV_SURPLUS_MIN_KW, min(compute_wallbox_max_kw(config), boosted)), 1)
@@ -5665,11 +5711,12 @@ def _dhw_action_id(hour_start):
     return f"{DHW_ID_PREFIX}_{int(hour_start.timestamp() * 1000)}"
 
 
-def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id):
+def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base=None, net_profit_opt=None, x_sum_total=None):
     """Berechnet fuer die Stunden 0..DHW_HOUR_WINDOW-1 des aktuellsten Optimierungslaufs, ob eine
     "Warmwasser"-Aktion existieren soll (HP_HW >= HP_HW_TRIGGER_KW) - analog zu
     compute_ev_charge_actions, siehe dort fuer die generelle Struktur (Stunde 0 = die gerade
-    laufende Stunde: Date Start = jetzt, Status = aktiv, sonst geplant mit Stundenbeginn)."""
+    laufende Stunde: Date Start = jetzt, Status = aktiv, sonst geplant mit Stundenbeginn) UND fuer
+    net_profit_base/net_profit_opt/x_sum_total (siehe _action_energy_savings)."""
     result = {}
     if not _is_heatpump_configured(config):
         return result
@@ -5677,7 +5724,6 @@ def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id
     row_count = min(DHW_HOUR_WINDOW, len(output_rows))
     for i in range(row_count):
         output_row = output_rows[i]
-        input_row = input_rows[i] if i < len(input_rows) else {}
         is_current_hour = (i == 0)
 
         hp_hw = _safe_float(output_row.get("HP_HW"))
@@ -5688,24 +5734,28 @@ def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id
         t_hw = _safe_float(output_row.get("T_HW"))
         next_row = output_rows[i + 1] if i + 1 < len(output_rows) else output_row
         target_t_hw = float(next_row.get("T_HW") or t_hw)
-        avg_price = _hourly_average_price(output_row, input_row)
+
+        date_start_ms = int(datetime.now(timezone.utc).timestamp() * 1000) if is_current_hour else int(hour_start.timestamp() * 1000)
+        date_end_ms = int((hour_start + timedelta(hours=1)).timestamp() * 1000)
+        energy = hp_hw * _hour_fraction_ms(date_start_ms, date_end_ms)
+        savings, costsbase, costsopt = _action_energy_savings(energy, net_profit_base, net_profit_opt, x_sum_total)
 
         action = {
             "_id": _dhw_action_id(hour_start),
             "Action Name": DHW_ACTION_NAME,
             "Action Trigger Type": "Optimizer",
-            "Energy (electr)": hp_hw,
+            "Energy (electr)": energy,
             "Start Value": t_hw,
             "Status": "aktiv" if is_current_hour else "geplant",
             "Target Value": target_t_hw,
-            "Savings": None,
-            "costsbase": None,
-            "costsopt": hp_hw * avg_price,
-            "Date Start": int(datetime.now(timezone.utc).timestamp() * 1000) if is_current_hour else int(hour_start.timestamp() * 1000),
-            "Date End": int((hour_start + timedelta(hours=1)).timestamp() * 1000),
+            "Savings": savings,
+            "costsbase": costsbase,
+            "costsopt": costsopt,
+            "Date Start": date_start_ms,
+            "Date End": date_end_ms,
             "Optimizer Run": optimizer_run_id,
             "Execution Status": "yes, planned" if is_action_type_enabled(config, DHW_ACTION_NAME) else "no, deactivated",
-            "Subtitle": f"Von {round(t_hw)} °C auf {round(target_t_hw)} °C erwärmen ({hp_hw:.1f} kWh elektr.)",
+            "Subtitle": f"Von {round(t_hw)} °C auf {round(target_t_hw)} °C erwärmen ({energy:.1f} kWh elektr.)",
         }
         result[i] = action
 
@@ -5728,7 +5778,7 @@ def _heizung_action_id(hour_start):
     return f"{HEIZUNG_ID_PREFIX}_{int(hour_start.timestamp() * 1000)}"
 
 
-def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_run_id):
+def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base=None, net_profit_opt=None, x_sum_total=None):
     """Berechnet fuer die Stunden 0..HEIZUNG_HOUR_WINDOW-1 des aktuellsten Optimierungslaufs, ob
     eine "Heizung Soll-Temperatur"-Aktion existieren soll - analog zu compute_dhw_actions. Trigger:
     T_i_Target (auf 0 Stellen gerundet) weicht vom aktuell aktiven Sollwert ab (Live-Wert des
@@ -5753,7 +5803,6 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
     row_count = min(HEIZUNG_HOUR_WINDOW, len(output_rows))
     for i in range(row_count):
         output_row = output_rows[i]
-        input_row = input_rows[i] if i < len(input_rows) else {}
         is_current_hour = (i == 0)
 
         t_i_target = _safe_float(output_row.get("T_i_Target"))
@@ -5763,25 +5812,29 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
         hour_start = start + timedelta(hours=i)
         t_i = _safe_float(output_row.get("T_i"))
         hp_fh = _safe_float(output_row.get("HP_FH"))
-        avg_price = _hourly_average_price(output_row, input_row)
         target_value = round(t_i_target)
+
+        date_start_ms = int(datetime.now(timezone.utc).timestamp() * 1000) if is_current_hour else int(hour_start.timestamp() * 1000)
+        date_end_ms = int((hour_start + timedelta(hours=1)).timestamp() * 1000)
+        energy = hp_fh * _hour_fraction_ms(date_start_ms, date_end_ms)
+        savings, costsbase, costsopt = _action_energy_savings(energy, net_profit_base, net_profit_opt, x_sum_total)
 
         action = {
             "_id": _heizung_action_id(hour_start),
             "Action Name": HEIZUNG_ACTION_NAME,
             "Action Trigger Type": "Optimizer",
-            "Energy (electr)": hp_fh,
+            "Energy (electr)": energy,
             "Start Value": t_i,
             "Status": "aktiv" if is_current_hour else "geplant",
             "Target Value": target_value,
-            "Savings": None,
-            "costsbase": None,
-            "costsopt": hp_fh * avg_price,
-            "Date Start": int(datetime.now(timezone.utc).timestamp() * 1000) if is_current_hour else int(hour_start.timestamp() * 1000),
-            "Date End": int((hour_start + timedelta(hours=1)).timestamp() * 1000),
+            "Savings": savings,
+            "costsbase": costsbase,
+            "costsopt": costsopt,
+            "Date Start": date_start_ms,
+            "Date End": date_end_ms,
             "Optimizer Run": optimizer_run_id,
             "Execution Status": "yes, planned" if is_action_type_enabled(config, HEIZUNG_ACTION_NAME) else "no, deactivated",
-            "Subtitle": f"Soll: {target_value} °C ({round(hp_fh)} kWh elektr.)",
+            "Subtitle": f"Soll: {target_value} °C ({energy:.1f} kWh elektr.)",
         }
         result[i] = action
 
@@ -5789,10 +5842,11 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
 
 
 # ============================================================================
-# Sonstiger Verbraucher (Other Device) - vierter Aktionstyp nach demselben Muster. Deutlich
-# schlanker als die anderen drei: keine Target Value/Start Value/costsopt/Savings/costsbase, da
-# "Verbraucher an" ein reiner Ein/Aus-Schalter ist (kein Zielwert zu verfolgen). Start/Ende sind
-# bereits generisch abgedeckt (AUTO_MANAGED_CONTROLS-Eintrag "consumer_on_off", switch-Typ - siehe
+# Sonstiger Verbraucher (Other Device) - vierter Aktionstyp nach demselben Muster. Schlanker als
+# die anderen drei: kein Target Value/Start Value, da "Verbraucher an" ein reiner Ein/Aus-Schalter
+# ist (kein Zielwert zu verfolgen) - Savings/costsbase/costsopt bekommt er trotzdem, nach derselben
+# Verbrauchsanteils-Formel wie Auto laden/Warmwasser/Heizung (siehe _action_energy_savings). Start/
+# Ende sind bereits generisch abgedeckt (AUTO_MANAGED_CONTROLS-Eintrag "consumer_on_off", switch-Typ - siehe
 # ACTION_NAME_TO_CONTROL_KEY/execute_auto_managed_action in handle_shyft_action_start/end).
 # ============================================================================
 
@@ -5813,7 +5867,7 @@ def _od_action_id(hour_start):
     return f"{OD_ID_PREFIX}_{int(hour_start.timestamp() * 1000)}"
 
 
-def compute_od_actions(config, output_rows, input_rows, start, optimizer_run_id):
+def compute_od_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base=None, net_profit_opt=None, x_sum_total=None):
     """Berechnet fuer die Stunden 0..OD_HOUR_WINDOW-1 des aktuellsten Optimierungslaufs, ob eine
     "Verbraucher an"-Aktion existieren soll - analog zu compute_dhw_actions/compute_heizung_actions,
     aber ohne Zielwert (reiner Ein/Aus-Schalter). Trigger: OD_Power liegt strikt zwischen
@@ -5833,15 +5887,22 @@ def compute_od_actions(config, output_rows, input_rows, start, optimizer_run_id)
             continue
 
         hour_start = start + timedelta(hours=i)
+        date_start_ms = int(datetime.now(timezone.utc).timestamp() * 1000) if is_current_hour else int(hour_start.timestamp() * 1000)
+        date_end_ms = int((hour_start + timedelta(hours=1)).timestamp() * 1000)
+        energy = od_power * _hour_fraction_ms(date_start_ms, date_end_ms)
+        savings, costsbase, costsopt = _action_energy_savings(energy, net_profit_base, net_profit_opt, x_sum_total)
         action = {
             "_id": _od_action_id(hour_start),
             "Action Name": OD_ACTION_NAME,
             "Action Trigger Type": "Optimizer",
-            "Energy (electr)": od_power,
+            "Energy (electr)": energy,
             "Status": "aktiv" if is_current_hour else "geplant",
             "Subtitle": f"{od_power:.1f} kW",
-            "Date Start": int(datetime.now(timezone.utc).timestamp() * 1000) if is_current_hour else int(hour_start.timestamp() * 1000),
-            "Date End": int((hour_start + timedelta(hours=1)).timestamp() * 1000),
+            "Savings": savings,
+            "costsbase": costsbase,
+            "costsopt": costsopt,
+            "Date Start": date_start_ms,
+            "Date End": date_end_ms,
             "Optimizer Run": optimizer_run_id,
             "Execution Status": "yes, planned" if is_action_type_enabled(config, OD_ACTION_NAME) else "no, deactivated",
         }
@@ -6004,13 +6065,18 @@ def compute_battery_discharge_shift_actions(config, output_rows, input_rows, sta
       - costs_opt > 0,1
     "Batterie netzladen" hat Vorrang: greift dessen Ausloese-Bedingung (GR_B > 0,2) fuer dieselbe
     Stunde, wird hier keine Aktion erzeugt (die umgekehrte Pruefung sitzt in
-    compute_battery_grid_charge_actions/_discharge_shift_reserved_for_hour)."""
+    compute_battery_grid_charge_actions/_discharge_shift_reserved_for_hour).
+
+    "Savings" kommt NICHT aus der Verbrauchsanteils-Formel (Energy (electr) ist immer 0, die Aktion
+    verbraucht selbst nichts) - stattdessen dieselbe "Batterieschonung"-Kennzahl wie "Laden
+    verschieben" (siehe _battery_preservation_value), bewusst ausserhalb des Base/Opt-Modells."""
     result = {}
     if not _is_battery_configured(config):
         return result
     if not _has_dynamic_tariff(input_rows):
         return result
 
+    battery_capacity_kwh = config.get("batteryCapacityKwh")
     row_count = min(BATTERY_HOUR_WINDOW, len(output_rows))
     for i in range(row_count):
         output_row = output_rows[i]
@@ -6051,6 +6117,7 @@ def compute_battery_discharge_shift_actions(config, output_rows, input_rows, sta
             "Status": "aktiv" if is_current_hour else "geplant",
             "Subtitle": f"Ladestand bei {round(soc_now)} %",
             "Target Value": 0,
+            "Savings": _battery_preservation_value(soc_now, battery_capacity_kwh),
             "Date Start": int(datetime.now(timezone.utc).timestamp() * 1000) if is_current_hour else int(hour_start.timestamp() * 1000),
             "Date End": int((hour_start + timedelta(hours=1)).timestamp() * 1000),
             "Optimizer Run": optimizer_run_id,
@@ -6088,11 +6155,17 @@ def compute_battery_charge_shift_actions(config, output_rows, input_rows, start,
       - Summe von PV_GR ueber dieselben 12 Stunden > 5 (kWh)
     Reicht output_csv fuer diese Stunde nicht mehr fuer die vollen 12 Stunden Vorschau, wird sie
     (und jede spaetere) uebersprungen - ohne vollstaendige Vorschau ist "SOC bleibt durchgehend
-    ueber 25%" nicht zusicherbar."""
+    ueber 25%" nicht zusicherbar.
+
+    "Savings" ist die "Batterieschonung"-Kennzahl (siehe _battery_preservation_value), nicht die
+    Verbrauchsanteils-Formel - die PV-Einspeiseverguetung ist fix, ueber reine Optimierung laesst
+    sich hier nichts sparen (Nutzer-Vorgabe); der Wert dieser Aktion liegt allein darin, die
+    Batterie zu schonen."""
     result = {}
     if not _is_battery_configured(config):
         return result
 
+    battery_capacity_kwh = config.get("batteryCapacityKwh")
     row_count = min(BATTERY_HOUR_WINDOW, len(output_rows))
     for i in range(row_count):
         window_end = i + BATTERY_CHARGE_SHIFT_LOOKAHEAD_HOURS
@@ -6125,6 +6198,7 @@ def compute_battery_charge_shift_actions(config, output_rows, input_rows, start,
             "Date End": int((hour_start + timedelta(hours=1)).timestamp() * 1000),
             "Optimizer Run": optimizer_run_id,
             "Execution Status": "yes, planned" if is_action_type_enabled(config, BATTERY_CHARGE_SHIFT_ACTION_NAME) else "no, deactivated",
+            "Savings": _battery_preservation_value(soc_now, battery_capacity_kwh),
         }
         result[i] = action
 
@@ -6258,8 +6332,15 @@ def _suppress_near_boundary_singleton(result, start):
     return result
 
 
-def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id):
-    "Wird bei jedem frischen Optimierungslauf aufgerufen (siehe _write_dashboard_cache) - berechnet und reconciled alle addon-seitigen Aktionstypen neu: 'Auto laden', 'Warmwasser', 'Heizung Soll-Temperatur', 'Verbraucher an', 'Batterie-Entladen verschieben', 'Batterie netzladen' und 'Batterie-Laden verschieben (PV-Ueberschuss)' - alle sieben bisher geplanten Aktionstypen sind damit umgesetzt."
+def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id, base=None):
+    """Wird bei jedem frischen Optimierungslauf aufgerufen (siehe _write_dashboard_cache) - berechnet und reconciled alle addon-seitigen Aktionstypen neu: 'Auto laden', 'Warmwasser', 'Heizung Soll-Temperatur', 'Verbraucher an', 'Batterie-Entladen verschieben', 'Batterie netzladen' und 'Batterie-Laden verschieben (PV-Ueberschuss)' - alle sieben bisher geplanten Aktionstypen sind damit umgesetzt.
+
+    base: Rueckgabe von base_case.compute_base_case(input_csv) (siehe _write_dashboard_cache), liefert
+    netProfitBase48HoursSum fuer die Verbrauchsanteils-Formel (_action_energy_savings) der vier
+    Verbrauchs-Aktionstypen (Auto laden/Warmwasser/Heizung/Verbraucher an). Das Optimierer-Pendant
+    (net_profit_opt) und x_sum_total werden hier direkt aus derselben output_csv aufsummiert, auf
+    demselben GESAMTEN Optimierungszeitraum wie netProfitBase48HoursSum - nur dann gilt strukturell
+    Base-Case-Kosten >= Optimierer-Kosten (siehe base_case.py)."""
     if is_demo_mode():
         return
     try:
@@ -6267,13 +6348,16 @@ def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms
         start = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
         input_rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";")) if input_csv else []
         output_rows = list(csv.DictReader(io.StringIO(output_csv))) if output_csv else []
-        ev_actions = _suppress_near_boundary_singleton(compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
+        net_profit_base = (base or {}).get("netProfitBase48HoursSum")
+        net_profit_opt = sum(_safe_float(r.get("profits_net_opt")) for r in output_rows) if output_rows else None
+        x_sum_total = sum(_safe_float(r.get("X_sum")) for r in output_rows) if output_rows else None
+        ev_actions = _suppress_near_boundary_singleton(compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
         _reconcile_computed_actions(config, EV_CHARGE_ACTION_NAME, EV_CHARGE_ID_PREFIX, ev_actions, start)
-        dhw_actions = _suppress_near_boundary_singleton(compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
+        dhw_actions = _suppress_near_boundary_singleton(compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
         _reconcile_computed_actions(config, DHW_ACTION_NAME, DHW_ID_PREFIX, dhw_actions, start)
-        heizung_actions = _suppress_near_boundary_singleton(compute_heizung_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
+        heizung_actions = _suppress_near_boundary_singleton(compute_heizung_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
         _reconcile_computed_actions(config, HEIZUNG_ACTION_NAME, HEIZUNG_ID_PREFIX, heizung_actions, start)
-        od_actions = _suppress_near_boundary_singleton(compute_od_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
+        od_actions = _suppress_near_boundary_singleton(compute_od_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
         _reconcile_computed_actions(config, OD_ACTION_NAME, OD_ID_PREFIX, od_actions, start)
         # VOR "Batterie netzladen" berechnen+reconcilen: dessen Vorrang-Check
         # (_discharge_shift_reserved_for_hour) liest den Store und braucht deshalb den frischen
@@ -6678,7 +6762,7 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
     except Exception as e:
         print("[Shyft] Dashboard-Chart-Daten konnten nicht zwischengespeichert werden:", repr(e))
     _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms)
-    recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id)
+    recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id, base)
 
 
 # Kaltstart-Fallback fuer _dashboard_sync_since, wenn noch gar kein Lauf gecacht ist - danach

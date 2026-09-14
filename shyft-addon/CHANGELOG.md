@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.112
+
+* **"Auto laden", "Warmwasser", "Heizung Soll-Temperatur" und "Verbraucher an" zeigen jetzt eine echte Ersparnis statt immer "-".** Bisher bekamen nur wenige Aktionstypen ein "Savings"-Feld befüllt; die vier oben genannten trugen dauerhaft `None`. Jetzt läuft für alle vier dieselbe Verbrauchsanteils-Formel (`_action_energy_savings`): Anteil der Aktion an `X_sum` über den gesamten Optimierungslauf, multipliziert mit den Gesamtkosten Basisfall bzw. Optimierer (`netProfitBase48HoursSum` bzw. der neu aufsummierten `profits_net_opt`-Spalte).
+* **"Batterie-Entladen verschieben" und "Batterie-Laden verschieben (PV-Überschuss)" bekommen ebenfalls eine Ersparnis-Kennzahl**, aber bewusst außerhalb der Verbrauchsanteils-Formel (beide verbrauchen selbst nichts): eine neue "Batterieschonung"-Kennzahl auf Basis von Ladestand und Kapazität - je weiter der Ladestand von 100 % entfernt ist, desto höher der Wert der Schonung.
+
 ## 0.0.45.111
 
 * **Log der Aktionen: nur noch Uhrzeit statt Datum + Uhrzeit** (die Karte trägt ihr Datum bereits in der Tagesüberschrift).
