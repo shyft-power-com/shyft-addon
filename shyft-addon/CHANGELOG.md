@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.111
+
+* **Log der Aktionen: nur noch Uhrzeit statt Datum + Uhrzeit** (die Karte trägt ihr Datum bereits in der Tagesüberschrift).
+* **"(gestartet)" beim Start des PV-Überschussladens aus der Log-Zeile entfernt** (überflüssig).
+
 ## 0.0.45.110
 
 * **Gerätesteuerung: "Keine Aktionen in den nächsten X Stunden geplant" chronologisch einsortiert statt immer ganz oben** - liegt eine Aktion weiter in der Zukunft, steht sie jetzt korrekt vor dem Hinweis statt dahinter.

@@ -910,7 +910,7 @@ def _demo_shyft_actions():
          "Warmwassertank auf 52 °C erwärmt (von 45 °C) | Preis: 17,1 C/kWh", 52.0, 0.63, None),
         ("Heizung Soll-Temperatur", "heizung_soll", 0, 1, "aktiv",
          "Vorlauf-Soll 34,0 °C (Heizkurve -1) | günstige Stunde, leicht vorheizen", 34.0, 0.21,
-         f"{now.strftime('%d.%m. %H:%M Uhr')}: gestartet, Vorlauf-Soll auf 34,0 °C gesetzt"),
+         f"{now.strftime('%H:%M Uhr')}: gestartet, Vorlauf-Soll auf 34,0 °C gesetzt"),
         ("Batterie-Laden verschieben (PV-Überschuss)", "batterie_laden_verschieben", 1, 2, "geplant",
          "Batterieladung in die PV-Mittagsspitze verschieben", 0.0, 0.0, None),
         ("Auto laden", "auto_laden", 3, 3, "geplant",
@@ -3321,7 +3321,7 @@ def _next_full_hour_ms(now_ms):
 
 def _append_pv_surplus_log(session, target_kw, note=None):
     "Vermerkt Ladeleistung und Uhrzeit im Log-Feld der Aktion, wie shyft-power es fuer seine eigenen Aktionen auch tut."
-    timestamp = datetime.now().strftime("%d.%m. %H:%M Uhr")
+    timestamp = datetime.now().strftime("%H:%M Uhr")
     line = f"{timestamp}: {target_kw:.1f} kW"
     if note:
         line += f" ({note})"
@@ -3534,7 +3534,7 @@ def _run_pv_surplus_charging_tick_impl():
         new_session = {"active": True, "target_kw": target_kw, "has_battery": has_battery,
                         "start_ms": int(now_ms), "planned_end_ms": _next_full_hour_ms(now_ms), "log": [],
                         "last_regulation_grid_kw": grid_kw}
-        _append_pv_surplus_log(new_session, target_kw, note="gestartet")
+        _append_pv_surplus_log(new_session, target_kw)
         actions.append(new_session)
         _write_pv_surplus_actions(actions)
         notify_action_event(config, _pv_surplus_session_to_action(new_session), "gestartet")
@@ -3858,7 +3858,7 @@ def _fail_action(action, config, exec_status, msg, prev_exec, verb):
     nur, wenn sich der Execution Status dadurch aendert (kein Spam bei Retry jedes Polls)."""
     action["Execution Status"] = exec_status
     action["Error Message"] = msg
-    note = f"{datetime.now().strftime('%d.%m. %H:%M Uhr')}: Fehler beim {verb} - {msg}"
+    note = f"{datetime.now().strftime('%H:%M Uhr')}: Fehler beim {verb} - {msg}"
     action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
     _update_computed_action(action)
     if prev_exec != exec_status:
@@ -5522,7 +5522,7 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
             # entstehen, sobald die Aktion tatsaechlich aktiv/gestartet ist. Fuer die gerade laufende
             # Stunde (is_current_hour) ist das hier bereits der Fall.
             if is_current_hour:
-                timestamp = datetime.now().strftime("%d.%m. %H:%M Uhr")
+                timestamp = datetime.now().strftime("%H:%M Uhr")
                 action["Log"] = f"{timestamp}: gestartet mit {target_value:.1f} kW (PV-Überschuss, Korrektur folgt beim Start)"
         result[i] = action
 
@@ -5553,7 +5553,7 @@ def _apply_ev_pv_surplus_start_correction(action, config, context="bei Start"):
     boosted = ev_sum + (live_pv_kw - pv_sum_forecast) / 2
     corrected = round(max(PV_SURPLUS_MIN_KW, min(compute_wallbox_max_kw(config), boosted)), 1)
     if corrected != action.get("Target Value"):
-        timestamp = datetime.now().strftime("%d.%m. %H:%M Uhr")
+        timestamp = datetime.now().strftime("%H:%M Uhr")
         note = f"{timestamp}: Zielwert {context} auf {corrected:.1f} kW korrigiert (PV-Überschuss, aktuell gemessen)"
         action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
         action["Target Value"] = corrected
@@ -5628,7 +5628,7 @@ def _convert_ev_charge_action_to_pv_surplus_fallback(action, config):
     eingetragen, genau wie ein "echtes" Beenden es auch taete."""
     action["Status"] = "beendet"
     action["_convertedToPvSurplusFallback"] = True
-    timestamp = datetime.now().strftime("%d.%m. %H:%M Uhr")
+    timestamp = datetime.now().strftime("%H:%M Uhr")
     note = f"{timestamp}: in PV-Überschussladen (Fallback) umgewandelt - Wallbox lädt unverändert weiter"
     action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
     _update_computed_action(action)
@@ -6181,7 +6181,7 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
         elif hour0_existing:
             new_target = computed_by_hour[0]["Target Value"]
             if hour0_existing.get("Target Value") != new_target:
-                timestamp = datetime.now().strftime("%d.%m. %H:%M Uhr")
+                timestamp = datetime.now().strftime("%H:%M Uhr")
                 note = f"{timestamp}: neuer Zielwert {new_target:.1f} kW"
                 hour0_existing["Log"] = (hour0_existing.get("Log") + "\n" + note) if hour0_existing.get("Log") else note
                 hour0_existing["Target Value"] = new_target
