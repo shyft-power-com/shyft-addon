@@ -6340,6 +6340,121 @@ def compute_battery_discharge_shift_actions(config, output_rows, input_rows, sta
     return result
 
 
+# Aufschub des tatsaechlichen Starts von "Batterie-Entladen verschieben" bei (fast) vollem Speicher
+# UND weiterhin PV-Ueberschuss (Nutzer-Feedback): der Optimierer plant die Aktion zurecht (dynamischer
+# Tarif, siehe compute_battery_discharge_shift_actions), aber solange der Speicher schon bei ~100%
+# steht und die PV weiter einspeist, gibt es nichts zu "verschieben" - waehrend die Aktion trotzdem
+# schon laeuft, koennen kleine Verbrauchsschwankungen weder aus dem (vollen) Speicher gedeckt noch
+# unvorhergesehener PV-Ueberschuss dort zwischengespeichert werden. Der tatsaechliche Geraete-Start
+# wird deshalb aufgeschoben, bis der SOC wieder unter BATTERY_DISCHARGE_SHIFT_HOLD_SOC_PCT faellt.
+BATTERY_DISCHARGE_SHIFT_HOLD_PV_KW = 0.2
+BATTERY_DISCHARGE_SHIFT_HOLD_SOC_PCT = 98
+
+
+def _battery_discharge_shift_should_defer(config):
+    "True, solange PV-Leistung > BATTERY_DISCHARGE_SHIFT_HOLD_PV_KW UND Speicher-SOC > BATTERY_DISCHARGE_SHIFT_HOLD_SOC_PCT gemessen werden (siehe _apply_battery_discharge_shift_hold). False, wenn einer der beiden Sensoren nicht zugeordnet/lesbar ist - ohne verlaessliche Messwerte lieber normal starten als grundlos aufschieben."
+    pv_kw = read_pv_power_kw(config)
+    soc = read_home_battery_soc(config)
+    if pv_kw is None or soc is None:
+        return False
+    return pv_kw > BATTERY_DISCHARGE_SHIFT_HOLD_PV_KW and soc > BATTERY_DISCHARGE_SHIFT_HOLD_SOC_PCT
+
+
+def _apply_battery_discharge_shift_hold(action, config, now_ms, enabled, already_started):
+    """Verzoegert den tatsaechlichen Start von "Batterie-Entladen verschieben", solange
+    _battery_discharge_shift_should_defer zutrifft: die Aktion bleibt dafuer "geplant" mit leerem
+    "Date Start" (aber unveraendertem, korrektem "Date End"), statt wie sonst sofort "aktiv" zu
+    werden - erst wenn der SOC wieder unter die Schwelle faellt, wird sie wie gewohnt gestartet
+    (Status "aktiv", "Date Start" = jetzt, handle_shyft_action_start). Ein Log-Eintrag markiert
+    sowohl den Aufschub als auch den spaeteren tatsaechlichen Start.
+
+    Wird sowohl aus process_shyft_actions (alle 15 Minuten) als auch live bei jeder Aenderung des
+    SOC-Sensors aufgerufen (siehe live_entity_watcher.py/_on_battery_soc_live_update), damit der
+    tatsaechliche Start zeitnah passiert statt bis zu 15 Minuten zu verzoegern.
+
+    Nur relevant, wenn die Aktion fuer die laufende Stunde ohnehin schon "aktiv" waere oder bereits
+    aufgeschoben ist (per "_dischargeShiftHeld"-Marker) - eine erst kuenftig geplante Stunde bleibt
+    unangetastet, das entscheidet weiterhin der normale Start-Pfad, sobald ihre Stunde beginnt.
+    already_started (action_id bereits in startedShyftActionIds) verhindert, dass eine schon WIRKLICH
+    laufende Aktion nachtraeglich als "aufgeschoben" umetikettiert wird, nur weil der Speicher
+    zwischenzeitlich wieder volllaeuft - das Geraet steuert in dem Fall bereits, ein Zurueckfallen auf
+    "geplant" waere irrefuehrend und wuerde spaeter einen zweiten, ueberfluessigen Start ausloesen.
+
+    Gibt True zurueck, wenn die Aktion in diesem Aufruf wirklich gestartet wurde (inkl. Aufruf von
+    handle_shyft_action_start) - der Aufrufer soll sie dann wie eine normal gestartete Aktion
+    behandeln (insbesondere in startedShyftActionIds eintragen), damit der generische Start-Pfad
+    sie nicht ein zweites Mal anfasst."""
+    held = bool(action.get("_dischargeShiftHeld"))
+    status = (action.get("Status") or "").lower()
+    is_active = status.startswith("aktiv")
+    if not is_active and not held:
+        return False
+    if already_started and not held:
+        return False
+
+    date_end = action.get("Date End")
+    if held and date_end is not None and date_end <= now_ms:
+        # Zeitfenster abgelaufen, ohne dass der Speicher je unter die Schwelle gefallen waere - sonst
+        # bliebe die Aktion als "geplant"-Karte mit laengst vergangenem Enddatum haengen (der normale
+        # Ende-Pfad in process_shyft_actions setzt "Status" nicht zurueck, wenn er auf eine nie
+        # wirklich gestartete Aktion trifft, siehe handle_shyft_action_end "nur simuliert"-Zweig).
+        action["_dischargeShiftHeld"] = False
+        action["Status"] = "beendet"
+        timestamp = datetime.now().strftime("%H:%M Uhr")
+        note = f"{timestamp}: Zeitfenster abgelaufen, ohne dass sich der Speicher entladen musste"
+        action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+        _update_computed_action(action)
+        return False
+
+    if _battery_discharge_shift_should_defer(config):
+        if not held:
+            action["_dischargeShiftHeld"] = True
+            action["Status"] = "geplant"
+            action["Date Start"] = None
+            soc = read_home_battery_soc(config)
+            soc_text = f"{soc:.0f} %" if soc is not None else "unbekanntem Ladestand"
+            timestamp = datetime.now().strftime("%H:%M Uhr")
+            note = f"{timestamp}: Start aufgeschoben - Speicher bei {soc_text}, PV-Überschuss vorhanden"
+            action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+            _update_computed_action(action)
+        return False
+
+    if held:
+        action["_dischargeShiftHeld"] = False
+        action["Status"] = "aktiv"
+        action["Date Start"] = int(now_ms)
+        timestamp = datetime.now().strftime("%H:%M Uhr")
+        note = f"{timestamp}: gestartet - Speicher unter {BATTERY_DISCHARGE_SHIFT_HOLD_SOC_PCT} % gefallen"
+        action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+        handle_shyft_action_start(action, enabled, config)
+        return True
+
+    return False
+
+
+def _recheck_battery_discharge_shift_hold():
+    "Sofortige (live-getriggerte) Pruefung aller gerade aufgeschobenen oder faelligen 'Batterie-Entladen verschieben'-Aktionen (siehe _apply_battery_discharge_shift_hold) - wird bei jeder SOC-Sensoraenderung aufgerufen (siehe live_entity_watcher.py), damit ein wirklicher Start nicht bis zum naechsten 15-Minuten-Poll von process_shyft_actions wartet."
+    config = _read_current_config()
+    actions = _read_computed_actions()
+    now_ms = time.time() * 1000
+    started_ids = set(config.get("startedShyftActionIds", []))
+    changed = False
+    for action in actions:
+        if action.get("Action Name") != BATTERY_DISCHARGE_SHIFT_ACTION_NAME:
+            continue
+        action_id = action.get("_id")
+        if not (bool(action.get("_dischargeShiftHeld")) or (action.get("Status") or "").lower().startswith("aktiv")):
+            continue
+        enabled = is_action_type_enabled(config, BATTERY_DISCHARGE_SHIFT_ACTION_NAME)
+        already_started = bool(action_id) and action_id in started_ids
+        if _apply_battery_discharge_shift_hold(action, config, now_ms, enabled, already_started) and action_id:
+            started_ids.add(action_id)
+            changed = True
+    if changed:
+        config["startedShyftActionIds"] = sorted(started_ids)
+        _write_current_config(config)
+
+
 # "Batterie-Laden verschieben (PV-Ueberschuss)" - siebter und letzter Batterie-Aktionstyp. Reine
 # "Halte-den-Ladestand"-Aktion wie "Batterie-Entladen verschieben" (Energy immer 0), verhindert
 # aber das GEZIELTE Laden aus PV-Ueberschuss (statt das Entladen) - lohnt sich nicht, wenn ohnehin
@@ -6718,11 +6833,19 @@ def process_shyft_actions():
         if action_id:
             seen_ids.add(action_id)
 
+        enabled = is_action_type_enabled(config, action.get("Action Name"))
+
+        # Kann Status/Date Start umbiegen (Aufschub bei vollem Speicher + PV-Ueberschuss, siehe
+        # _apply_battery_discharge_shift_hold) - deshalb VOR dem generischen Start-Pfad unten lesen.
+        if action.get("Action Name") == BATTERY_DISCHARGE_SHIFT_ACTION_NAME:
+            already_started = bool(action_id) and action_id in started_ids
+            if _apply_battery_discharge_shift_hold(action, config, now_ms, enabled, already_started) and action_id:
+                started_ids.add(action_id)  # schon gestartet - generischer Pfad unten soll das nicht wiederholen
+
         status = (action.get("Status") or "").lower()
         is_active = status.startswith("aktiv")
         date_start = action.get("Date Start")
         date_end = action.get("Date End")
-        enabled = is_action_type_enabled(config, action.get("Action Name"))
 
         end_passed = date_end is not None and date_end <= now_ms
         if is_active and date_start is not None and date_start <= now_ms and not end_passed and action_id and action_id not in started_ids:
@@ -7601,8 +7724,18 @@ def _on_wallbox_state_live_update(entity_id, old_state, new_state):
             print("[Shyft] Live-getriggerte Neu-Optimierung (Auto kann jetzt laden) fehlgeschlagen:", repr(e))
 
 
+def _on_battery_soc_live_update(entity_id, old_state, new_state):
+    "Reagiert sofort auf eine Aenderung des Heimspeicher-SOC-Sensors: prueft, ob eine aufgeschobene 'Batterie-Entladen verschieben'-Aktion jetzt (Speicher unter BATTERY_DISCHARGE_SHIFT_HOLD_SOC_PCT gefallen) wirklich gestartet werden soll, statt bis zum naechsten 15-Minuten-Poll von process_shyft_actions zu warten (siehe _apply_battery_discharge_shift_hold)."
+    with app.app_context():
+        try:
+            _recheck_battery_discharge_shift_hold()
+        except Exception as e:
+            print("[Shyft] Live-getriggerte Pruefung 'Batterie-Entladen verschieben' fehlgeschlagen:", repr(e))
+
+
 live_entity_watcher.register("photovoltaic_powerflow_grid", _on_grid_power_live_update)
 live_entity_watcher.register("wallbox_plugged", _on_wallbox_state_live_update)
+live_entity_watcher.register("battery_state_of_charge", _on_battery_soc_live_update)
 
 
 scheduler = BackgroundScheduler()

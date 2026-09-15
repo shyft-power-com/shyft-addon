@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.119
+
+* **"Batterie-Entladen verschieben" startet jetzt nicht mehr blind bei (fast) vollem Speicher, solange noch PV-Überschuss anliegt** (Nutzer-Feedback: die Aktion hielt den Speicher dann fest, obwohl es bei ~100 % Ladestand nichts zu "verschieben" gibt - kleine Verbrauchsschwankungen konnten weder aus dem Speicher gedeckt noch unvorhergesehener PV-Überschuss dort zwischengespeichert werden). Der tatsächliche Start wird jetzt aufgeschoben, solange PV-Leistung > 0,2 kW UND Speicher-SOC > 98 % gemessen werden: die Aktion bleibt dafür als "geplant" mit korrektem Enddatum, aber leerem Startzeitpunkt sichtbar. Ein Live-Listener auf den Speicher-SOC-Sensor startet sie sofort, sobald der Ladestand wieder unter 98 % fällt (zusätzlich zum ohnehin laufenden 15-Minuten-Poll) - mit einem Log-Eintrag sowohl beim Aufschub als auch beim tatsächlichen Start.
+
 ## 0.0.45.118
 
 * **Gerätesteuerung: "Jetzt"-Zeitpunkt jetzt korrekt platziert und optisch sichtbar abgetrennt.** Der Hinweis "Keine Aktionen in den nächsten X Stunden geplant." saß bisher teils immer noch zu weit oben, wenn ein Tag sowohl eine noch bevorstehende als auch bereits vergangene Aktionen enthielt (Nutzer-Screenshot) - die Platzierung wird jetzt pro Karte statt pro Tag entschieden. Zusätzlich trennt eine durchgehende Linie den aktuellen Zeitpunkt immer sichtbar von der Historie ab, auch während gerade eine Aktion läuft (dann ohne Hinweistext).
