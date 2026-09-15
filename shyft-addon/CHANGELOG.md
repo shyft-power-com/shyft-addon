@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.115
+
+* **Fix: Gerätesteuerung zeigte teils mehrere sich überlappende Aktionen desselben Typs gleichzeitig** (z.B. "Batterie-Entladen verschieben" als 9:59-13, 10:59-13 UND 11:59-13 Uhr nebeneinander, statt sich chronologisch anzuschließen). Die Anzeige garantiert jetzt, dass jede Stunde pro Aktionstyp höchstens einmal abgedeckt ist: eine aktive Aktion wird immer behalten, jede weitere Aktion desselben Namens, deren Zeitfenster eine bereits behaltene überschneidet, wird verworfen. Die genaue Ursache im Store ließ sich nicht abschließend nachvollziehen - das ist ein Sicherheitsnetz auf Anzeige-Ebene, kein Fix der zugrunde liegenden Berechnung.
+
 ## 0.0.45.113
 
 * **Neu (nur auf einer Test-Instanz sichtbar): Analyse-Tab mit stündlichem Energie-Archiv.** Ein neues Modul `energy_archive.py` speichert ab sofort für jede abgeschlossene Stunde Verbrauch und Kosten geplant-optimal/Basisfall/tatsächlich sowie die daraus resultierende Ersparnis dauerhaft in einer SQLite-Datenbank (`/data/energy_archive.db`) - anders als die übrigen `/data/*.json`-Dateien, weil die künftig anwachsende Stundenhistorie damit nicht mehr sinnvoll skalieren würde.

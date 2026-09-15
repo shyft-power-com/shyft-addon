@@ -5508,6 +5508,40 @@ function renderShyftActionsFilter(actions) {
     }
 }
 
+// Schutz gegen sich ueberlappende Aktionen desselben Typs (Nutzer-Feedback: "Batterie-Entladen
+// verschieben" tauchte mit 9:59-13, 10:59-13 UND 11:59-13 gleichzeitig auf - drei Karten, die
+// dieselben Stunden mehrfach beanspruchten, statt sich chronologisch anzuschliessen). Unabhaengig
+// von der Ursache im Store soll die Anzeige die Garantie "jede Stunde ist pro Aktionstyp hoechstens
+// einmal abgedeckt" einhalten: aktive Aktionen werden immer behalten, danach chronologisch nach
+// Date Start - jede weitere Aktion desselben Namens, deren Zeitfenster eine bereits behaltene
+// ueberschneidet, wird verworfen statt doppelt angezeigt.
+function dedupeOverlappingSameNameActions(actions) {
+    const byName = new Map();
+    for (const a of actions) {
+        const name = a['Action Name'] || '';
+        if (!byName.has(name)) byName.set(name, []);
+        byName.get(name).push(a);
+    }
+    const kept = [];
+    for (const group of byName.values()) {
+        const sorted = [...group].sort((a, b) => {
+            const aActive = (a['Status'] || '').toLowerCase().startsWith('aktiv') ? 0 : 1;
+            const bActive = (b['Status'] || '').toLowerCase().startsWith('aktiv') ? 0 : 1;
+            if (aActive !== bActive) return aActive - bActive;
+            return (a['Date Start'] || 0) - (b['Date Start'] || 0);
+        });
+        const coverage = [];
+        for (const action of sorted) {
+            const start = action['Date Start'] ?? 0;
+            const end = action['Date End'] ?? start;
+            if (coverage.some(([cs, ce]) => start < ce && end > cs)) continue;
+            coverage.push([start, end]);
+            kept.push(action);
+        }
+    }
+    return kept;
+}
+
 // Fasst mehrere lueckenlos aufeinanderfolgende Aktionen desselben Typs mit IDENTISCHEM Inhalt zu
 // einer einzigen Karte mit kombinierter Start-/Endzeit zusammen - rein fuer die Anzeige. Der Store
 // dahinter bleibt stundenweise (jede Stunde bleibt ein eigener Datensatz, der einzeln neu berechnet
@@ -5560,7 +5594,7 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
 
     // Geräte-Filter (siehe renderShyftActionsFilter) anwenden.
     const hidden = getHiddenShyftDevices();
-    const visible = actions.filter(a => !hidden.has(shyftActionDeviceKey(a)));
+    const visible = dedupeOverlappingSameNameActions(actions.filter(a => !hidden.has(shyftActionDeviceKey(a))));
     if (visible.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'shyftActionsEmpty';
