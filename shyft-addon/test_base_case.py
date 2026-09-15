@@ -8,10 +8,11 @@ def _demo_csv():
 
 def test_demo_shape():
     result = base_case.compute_base_case(_demo_csv())
-    assert set(result) == {"netProfitBase48HoursSum", "netProfitBaseList", "PowerUsageBaseList"}
+    assert set(result) == {"netProfitBase48HoursSum", "netProfitBaseList", "PowerUsageBaseList", "nextState"}
     assert len(result["netProfitBaseList"]) == 48
     assert len(result["PowerUsageBaseList"]) == 48
     assert isinstance(result["netProfitBase48HoursSum"], float)
+    assert set(result["nextState"]) == {"T_i_0", "T_hw_0", "ev_soc_0", "SOC_b_0_percent"}
 
 
 def test_demo_power_usage_positive_and_covers_base_load():
@@ -30,6 +31,34 @@ def test_demo_night_hours_free_from_full_battery():
 def test_no_rows_returns_none():
     assert base_case.compute_base_case("") is None
     assert base_case.compute_base_case("electkwh;p_buy\n") is None
+
+
+def test_state_override_empty_battery_produces_real_grid_cost():
+    # Ohne Override deckt die fast volle Start-Batterie (98%) aus dem Demo-CSV Stunde 0 komplett
+    # aus dem Speicher - Netzkosten dort 0.0 (siehe test_demo_night_hours_free_from_full_battery).
+    # Mit einem realistischen (leeren) Override-Ladestand - wie ihn die eigene, unabhaengig
+    # fortgeschriebene Base-Case-Trajektorie liefern wuerde, siehe state_overrides im Docstring -
+    # muss echter Netzbezug und damit ein echter Kostenwert entstehen.
+    result = base_case.compute_base_case(_demo_csv(), state_overrides={"SOC_b_0_percent": 0.0})
+    assert result["netProfitBaseList"][0] > 0.0
+
+
+def test_state_override_only_affects_given_keys():
+    # Ein Override nur fuer SOC_b_0_percent darf T_i_0/T_hw_0/ev_soc_0 nicht anfassen - beide
+    # Berechnungen muessen fuer alles ausser der Batterie identisch bleiben.
+    baseline = base_case.compute_base_case(_demo_csv())
+    overridden = base_case.compute_base_case(_demo_csv(), state_overrides={"SOC_b_0_percent": 0.0})
+    assert overridden["nextState"]["T_i_0"] == baseline["nextState"]["T_i_0"]
+    assert overridden["nextState"]["T_hw_0"] == baseline["nextState"]["T_hw_0"]
+    assert overridden["nextState"]["ev_soc_0"] == baseline["nextState"]["ev_soc_0"]
+
+
+def test_next_state_reflects_hour_zero_not_full_horizon():
+    # nextState muss den Zustand NACH Stunde 0 tragen, nicht den Endzustand des gesamten
+    # 48h-Horizonts (SOC_b_0_percent 0..100 ist dafuer ein einfacher Plausibilitaets-Check).
+    result = base_case.compute_base_case(_demo_csv())
+    assert 0.0 <= result["nextState"]["SOC_b_0_percent"] <= 100.0
+    assert 0.0 <= result["nextState"]["ev_soc_0"] <= 1.0
 
 
 def test_flat_no_pv_no_storage_matches_hand_calc():

@@ -7050,14 +7050,53 @@ def finalize_completed_hour_periodically():
         print("[Shyft] Energie-Archiv: Stundenabschluss fehlgeschlagen:", repr(e))
 
 
+BASE_CASE_RUNNING_STATE_PATH = "/data/base_case_running_state.json"
+
+
+def _round_down_to_hour_ms(creation_date_ms):
+    return int(datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0).timestamp() * 1000)
+
+
+def _read_base_case_state_overrides(creation_date_ms):
+    """Liefert die zuletzt fortgeschriebene Basisfall-Zustands-Trajektorie (siehe
+    base_case.compute_base_case/state_overrides) als Override fuer den Lauf mit creation_date_ms -
+    aber NUR, wenn sie luecklos an die unmittelbar VORHERGEHENDE Stunde anschliesst. Bei einer
+    Luecke (Neustart, uebersprungener Sync, erste Berechnung ueberhaupt) bewusst KEIN Override -
+    der Aufrufer faellt dann auf input_csv zurueck (Nutzer-Vorgabe: 'Fallback bei Initialisierung
+    oder Ausfall der Kette'), statt eine veraltete Trajektorie stillschweigend fortzuschreiben."""
+    try:
+        with open(BASE_CASE_RUNNING_STATE_PATH, "r") as f:
+            stored = json.load(f)
+        if stored.get("hour_start_ms") != _round_down_to_hour_ms(creation_date_ms) - 3600000:
+            return None
+        return stored.get("nextState")
+    except Exception:
+        return None
+
+
+def _write_base_case_state(creation_date_ms, next_state):
+    if not next_state:
+        return
+    try:
+        with open(BASE_CASE_RUNNING_STATE_PATH, "w") as f:
+            json.dump({"hour_start_ms": _round_down_to_hour_ms(creation_date_ms), "nextState": next_state}, f)
+    except Exception as e:
+        print("[Shyft] Basisfall-Zustand konnte nicht gespeichert werden:", repr(e))
+
+
 def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_run_id=None):
     "Shared cache-write (DASHBOARD_CACHE_PATH) - used by sync_dashboard_chart_data's hourly refresh and by _check_optimizer_result's post-/trigger wait, so both end up feeding the Dashboard-tab charts the same way. Also the single choke point that triggers the addon-side action recomputation (see recompute_actions_from_optimizer_run) whenever a fresh optimizer run arrives."
     payload = {"input_csv": input_csv, "output_csv": output_csv, "creation_date": creation_date_ms, "optimizer_run_id": optimizer_run_id}
     # Base Case ("was ohne Shyft-Optimierung passiert waere") aus demselben input_csv - Grundlage
     # fuer die spaetere Ersparnis-Berechnung je Aktion (siehe base_case.compute_base_case).
-    base = base_case.compute_base_case(input_csv) if input_csv else None
+    # state_overrides fuehrt die EIGENE Basisfall-Trajektorie fort (Auto-SOC, Raumtemperatur,
+    # Warmwasser-Tank, Batterie) statt jede Stunde vom echten/optimierten Zustand zu "erben" -
+    # siehe base_case.compute_base_case-Docstring fuer die Begruendung (Nutzer-Beobachtung).
+    state_overrides = _read_base_case_state_overrides(creation_date_ms) if input_csv else None
+    base = base_case.compute_base_case(input_csv, state_overrides) if input_csv else None
     if base:
         payload.update(base)
+        _write_base_case_state(creation_date_ms, base.get("nextState"))
     try:
         with open(DASHBOARD_CACHE_PATH, "w") as f:
             json.dump(payload, f)

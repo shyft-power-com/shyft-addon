@@ -116,26 +116,49 @@ def _fh_heat_pump_power(q_thermal, heatdis, t_i_min, t_out_cap, hp_max_power):
     return 0.5 * (lo + hi)
 
 
-def compute_base_case(input_csv):
+def compute_base_case(input_csv, state_overrides=None):
     """Berechnet den Base Case aus dem Optimierer-``input_csv`` (``;``-getrennt).
 
-    Gibt ein Dict mit ``netProfitBase48HoursSum`` / ``netProfitBaseList`` /
-    ``PowerUsageBaseList`` zurueck, oder ``None``, wenn das CSV nicht auswertbar ist
-    (nie eine Exception nach aussen).
+    state_overrides (optional): {"T_i_0", "T_hw_0", "ev_soc_0", "SOC_b_0_percent"} - ersetzt die
+    gleichnamigen Startwerte aus ``input_csv``, Nachfrage-/Wetter-/Preis-Reihen (_SERIES_KEYS/
+    _HOURLIST_KEYS) kommen immer unveraendert aus dem aktuellsten input_csv. Ohne Override (None,
+    oder ein einzelner Schluessel fehlt/ist None) faellt der jeweilige Startwert auf input_csv
+    zurueck - so bei der allerersten Berechnung und wenn die Fortschreibungs-Kette abreisst (siehe
+    Aufrufer in app.py, der das zurueckgegebene "nextState" fuer den naechsten Aufruf persistiert).
+
+    Grund fuer die Overrides (Nutzer-Beobachtung): ohne sie startet JEDE stuendliche Neuberechnung
+    mit dem ECHTEN, vom Optimierer bereits guenstig vorbereiteten Zustand (vorgeheiztes Haus, volle
+    Batterie, warmes Wasser) - der Base Case wuerde sich so den Erfolg der Optimierung leihen, ohne
+    je fuer eine eigene (schlechtere) Vorstunden-Entscheidung zu bezahlen. Mit den Overrides fuehrt
+    der Base Case stattdessen seine EIGENE Zustands-Trajektorie fort, komplett unabhaengig vom
+    tatsaechlichen/optimierten Zustand - dadurch wird eine einzelne Stunde weniger direkt mit dem
+    Optimierer vergleichbar, aber der Vergleich ueber laengere Zeitraeume (siehe Analyse-Tab) korrekt.
+
+    Gibt ein Dict mit ``netProfitBase48HoursSum`` / ``netProfitBaseList`` / ``PowerUsageBaseList`` /
+    ``nextState`` (Zustand NACH Stunde 0 - Basis fuer den naechsten Aufruf) zurueck, oder ``None``,
+    wenn das CSV nicht auswertbar ist (nie eine Exception nach aussen).
     """
     try:
-        return _compute_base_case(input_csv)
+        return _compute_base_case(input_csv, state_overrides)
     except Exception as exc:  # pragma: no cover - defensiv, Aufrufer soll nie brechen
         print("[Shyft] Base-Case-Berechnung fehlgeschlagen:", repr(exc))
         return None
 
 
-def _compute_base_case(input_csv):
+_STATE_OVERRIDE_KEYS = ("T_i_0", "T_hw_0", "ev_soc_0", "SOC_b_0_percent")
+
+
+def _compute_base_case(input_csv, state_overrides=None):
     rows = list(csv.DictReader(io.StringIO(input_csv or ""), delimiter=";"))
     if not rows:
         return None
 
     p = {key: _num(rows[0].get(key)) for key in _SCALAR_KEYS}
+    if state_overrides:
+        for key in _STATE_OVERRIDE_KEYS:
+            value = state_overrides.get(key)
+            if value is not None:
+                p[key] = value
     horizon = int(round(p["OptimizerPeriods"])) if p["OptimizerPeriods"] else len(rows)
     horizon = max(1, min(horizon, len(rows)))
     rows = rows[:horizon]
@@ -183,7 +206,10 @@ def _compute_base_case(input_csv):
     # --- Waermepumpe Heizung: exakt den Stundenbedarf decken, T_i auf T_i_min halten ---
     hp_heat = [0.0] * horizon
     t_i = t_i_0
+    t_i_after_hour0 = None  # Zustand NACH Stunde 0 (siehe compute_base_case/state_overrides) - erfasst zu Beginn von Iteration 1, bevor die dortige Mutation greift
     for i in range(horizon):
+        if i == 1:
+            t_i_after_hour0 = t_i
         if (i + 1) not in heating_hours or p_heat_loss <= 0.0:
             continue
         t_out_cap = min(t_out[i], t_i_min - C_P_TH * fh_size / p_heat_loss - 4.0)
@@ -201,12 +227,17 @@ def _compute_base_case(input_csv):
         hp_heat[i] = _fh_heat_pump_power(q_thermal, heatdis, t_i_min, t_out_cap, p["hp_max_power"])
         t_i = t_i_min
     t_i_end = t_i
+    if t_i_after_hour0 is None:  # horizon == 1: die einzige Iteration war bereits Stunde 0
+        t_i_after_hour0 = t_i_end
 
     # --- Warmwasser: Sofortbereitstellung; Tank kuehlt zwischen den Zapfungen weiter aus
     hp_dhw = [0.0] * horizon
     cop_hw_last = COP_MIN
+    t_hw_after_hour0 = None
     if hw_active:
         for i in range(horizon):
+            if i == 1:
+                t_hw_after_hour0 = t_hw
             t_hw_next = t_hw - (t_hw - 20.0) * HW_LOSS  # Zufuhr == Zapfung -> reine Abkuehlung (Excel-Spalte S)
             cop_hw = max(COP_MIN, 5.5 - ((t_hw + t_hw_next) / 2.0 - t_out[i]) / 20.0)
             if d_hw[i] > 0.0:
@@ -214,10 +245,13 @@ def _compute_base_case(input_csv):
             cop_hw_last = cop_hw
             t_hw = t_hw_next
     t_hw_end = t_hw
+    if t_hw_after_hour0 is None:
+        t_hw_after_hour0 = t_hw_end
 
     # --- E-Auto: sofort bis ev_soc_norm; Fahrten so spaet wie moeglich abdecken ---------
     ev_charge_gross = [0.0] * horizon
     soc_ev = soc_ev_0
+    soc_ev_after_hour0 = None
     if ev_active:
         eff_rate = max(0.0, ev_rate_max * EV_ETA - EV_FIXED_LOSS_KWH)  # Netto-SOC-Gewinn je voller Ladestunde
         required = [0.0] * (horizon + 1)  # Mindest-SOC zu Beginn jeder Stunde, um alle kuenftigen Fahrten zu decken
@@ -228,6 +262,8 @@ def _compute_base_case(input_csv):
                 required[i] = max(0.0, required[i + 1] - eff_rate)
             required[i] = min(required[i], ev_b_size)
         for i in range(horizon):
+            if i == 1:
+                soc_ev_after_hour0 = soc_ev
             plugged = (i + 1) not in ev_away_hours
             if plugged:
                 target = max(ev_soc_norm_kwh, required[i + 1])
@@ -241,11 +277,16 @@ def _compute_base_case(input_csv):
                         continue
             soc_ev = soc_ev * (1 - EV_LOSS) - d_ev[i]
     soc_ev_end = soc_ev
+    if soc_ev_after_hour0 is None:
+        soc_ev_after_hour0 = soc_ev_end
 
     # --- Batterie (Eigenverbrauch) + Netzsaldo + Kosten -------------------------------
     net_cost_list = [0.0] * horizon
     power_usage_list = [0.0] * horizon
+    soc_b_after_hour0 = None
     for i in range(horizon):
+        if i == 1:
+            soc_b_after_hour0 = soc_b
         pv_avail = g_e[i] * PV_ETA
         load = d_e[i] + hp_heat[i] + hp_dhw[i]  # E-Auto laeuft im Base Case nie ueber PV/Batterie (Excel)
         net = pv_avail - load
@@ -269,6 +310,8 @@ def _compute_base_case(input_csv):
         net_cost_list[i] = (-grid * (p_sell[i] if grid > 0 else p_buy[i])) or 0.0  # or 0.0: kein -0.0
         power_usage_list[i] = d_e[i] + hp_heat[i] + hp_dhw[i] + ev_charge_gross[i] + batt_charge_gross
     soc_b_end = soc_b
+    if soc_b_after_hour0 is None:
+        soc_b_after_hour0 = soc_b_end
 
     # --- Restwerte am Horizont-Ende (identisch spaeter auf die Optimierer-Ausgabe anwenden)
     last_p_buy = p_buy[horizon - 1]
@@ -293,4 +336,12 @@ def _compute_base_case(input_csv):
         "netProfitBase48HoursSum": round(sum(net_cost_list), 6),
         "netProfitBaseList": [round(v, 6) for v in net_cost_list],
         "PowerUsageBaseList": [round(v, 6) for v in power_usage_list],
+        # Zustand NACH Stunde 0 (nicht der Endzustand des gesamten Horizonts) - Grundlage fuer den
+        # naechsten Aufruf ueber state_overrides (siehe Docstring oben und Aufrufer in app.py).
+        "nextState": {
+            "T_i_0": round(t_i_after_hour0, 6),
+            "T_hw_0": round(t_hw_after_hour0, 6),
+            "ev_soc_0": round(soc_ev_after_hour0 / ev_b_size, 6) if ev_b_size > 0 else 0.0,
+            "SOC_b_0_percent": round(soc_b_after_hour0 / b_soc_max * 100.0, 6) if b_soc_max > 0 else 0.0,
+        },
     }
