@@ -5326,11 +5326,26 @@ function formatShyftEuro(value) {
     return arrow + ' ' + value.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €';
 }
 
+// Wie formatShyftEuro, aber ohne Richtungspfeil - fuer die Preispaar-Unterzeile einer Aktion
+// (Kosten ohne/mit Optimierung), wo "hoch/niedrig" keine Verbesserung/Verschlechterung ausdrueckt.
+function formatShyftEuroPlain(value) {
+    return value.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €';
+}
+
 // Welche "Log anzeigen"-Details der Nutzer aufgeklappt hat - ueberlebt das komplette Neu-Aufbauen
 // der Aktionsliste beim 30-Sekunden-Refresh (renderShyftActions leert den Container), damit sich
 // ein geoeffnetes Log nicht bei jedem Refresh wieder zuklappt.
 const openActionLogKeys = new Set();
 const actionLogKey = a => `${a['Action Name'] || ''}|${a['Date Start'] || ''}`;
+
+// Taegliche Haushaltsstrom-Dummy-Aktion (siehe _household_savings_action, app.py) - kein echter
+// Aktionstyp mit eigenem Geraet, deshalb hier per Namen erkannt statt ueber ACTION_NAME_TO_SECTION_KEY.
+const HOUSEHOLD_SAVINGS_ACTION_NAME = 'Ersparnis Haushaltsstrom';
+
+// Blitz (Strom)-Icon, an das mdi:lightning-bolt angelehnt (kein Icon-Font/CDN-Zugriff im Addon-Frontend
+// noetig) - fuer die Haushaltsstrom-Dummy-Aktion, die zu keiner echten Geraete-Kachel gehoert und
+// deshalb kein Marken-Icon ueber getActionIconUrl bekommen kann.
+const SHYFT_ACTION_BOLT_ICON_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66.19-.34.05-.08.07-.12C8.48 10.94 10.42 7.54 13 3h1l-1 7h3.5c.49 0 .56.33.47.51l-.07.15C12.96 17.55 11 21 11 21z"/></svg>';
 
 function buildShyftActionCard(action) {
     const status = action['Status'] || '';
@@ -5342,6 +5357,7 @@ function buildShyftActionCard(action) {
     // "yes, not finished" = Beenden fehlgeschlagen - beides rot umranden (siehe .shyftActionCard.is-error).
     const exec = (action['Execution Status'] || '').toLowerCase();
     const isError = exec === 'no, error' || exec === 'yes, not finished';
+    const isHouseholdSavings = action['Action Name'] === HOUSEHOLD_SAVINGS_ACTION_NAME;
 
     const card = document.createElement('div');
     card.className = 'shyftActionCard' + (isActive ? ' is-active' : '') + (isDeactivated ? ' is-deactivated' : '') + (isError ? ' is-error' : '');
@@ -5349,22 +5365,36 @@ function buildShyftActionCard(action) {
     const time = document.createElement('div');
     time.className = 'shyftActionTime';
     const startLine = document.createElement('div');
-    startLine.textContent = formatShyftTime(action['Date Start']);
     const endLine = document.createElement('div');
-    endLine.textContent = formatShyftTime(action['Date End']);
+    if (isHouseholdSavings) {
+        // Deckt den ganzen lokalen Kalendertag ab (siehe _household_savings_action) - bewusst "24:00"
+        // bis "00:00" statt der (identischen) tatsaechlichen Uhrzeit-Werte (Nutzer-Vorgabe).
+        startLine.textContent = '24:00';
+        endLine.textContent = '00:00';
+    } else {
+        startLine.textContent = formatShyftTime(action['Date Start']);
+        endLine.textContent = formatShyftTime(action['Date End']);
+    }
     time.appendChild(startLine);
     time.appendChild(endLine);
     card.appendChild(time);
 
-    const iconUrl = getActionIconUrl(action['Action Name']);
-    if (iconUrl) {
-        const icon = document.createElement('img');
-        icon.className = 'shyftActionIcon';
-        icon.src = iconUrl;
-        icon.alt = '';
-        icon.loading = 'lazy';
-        icon.addEventListener('error', () => { icon.style.display = 'none'; });
-        card.appendChild(icon);
+    if (isHouseholdSavings) {
+        const boltIcon = document.createElement('span');
+        boltIcon.className = 'shyftActionIcon shyftActionIconBolt';
+        boltIcon.innerHTML = SHYFT_ACTION_BOLT_ICON_SVG;
+        card.appendChild(boltIcon);
+    } else {
+        const iconUrl = getActionIconUrl(action['Action Name']);
+        if (iconUrl) {
+            const icon = document.createElement('img');
+            icon.className = 'shyftActionIcon';
+            icon.src = iconUrl;
+            icon.alt = '';
+            icon.loading = 'lazy';
+            icon.addEventListener('error', () => { icon.style.display = 'none'; });
+            card.appendChild(icon);
+        }
     }
 
     const main = document.createElement('div');
@@ -5372,12 +5402,28 @@ function buildShyftActionCard(action) {
     const nameEl = document.createElement('div');
     nameEl.className = 'shyftActionName';
     nameEl.textContent = action['Action Name'] || '–';
+    if (action['Tooltip']) nameEl.appendChild(buildTooltip(action['Tooltip']));
     main.appendChild(nameEl);
     if (action['Subtitle']) {
         const subtitleEl = document.createElement('div');
         subtitleEl.className = 'shyftActionSubtitle';
         subtitleEl.textContent = action['Subtitle'];
         main.appendChild(subtitleEl);
+    }
+    if (typeof action['Savings'] === 'number') {
+        const savingsEl = document.createElement('div');
+        savingsEl.className = 'shyftActionSavings';
+        const pill = document.createElement('span');
+        pill.className = 'shyftActionSavingsPill ' + (action['Savings'] < 0 ? 'negative' : 'positive');
+        pill.textContent = formatShyftEuro(action['Savings']);
+        savingsEl.appendChild(pill);
+        if (typeof action['costsbase'] === 'number' && typeof action['costsopt'] === 'number') {
+            const prices = document.createElement('div');
+            prices.className = 'shyftActionSavingsPrices';
+            prices.textContent = `Ohne Optimierung: ${formatShyftEuroPlain(action['costsbase'])} · Mit Optimierung: ${formatShyftEuroPlain(action['costsopt'])}`;
+            savingsEl.appendChild(prices);
+        }
+        main.appendChild(savingsEl);
     }
     const logText = action['Log'] || action['Error Message'];
     if (logText) {

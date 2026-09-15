@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.116
+
+* **Ersparnis-Anzeige an den Aktionskarten vervollständigt.** "Batterie-Laden verschieben (PV-Überschuss)" bekommt jetzt ebenfalls die "Batterieschonung"-Kennzahl (bisher nur "Batterie-Entladen verschieben"). Wird eine Aktion in die nächste Stunde hinein verlängert, addieren sich jetzt auch deren `Energy (electr)`/`costsbase`/Ersparnis auf die laufende Aktion (bisher nur `costsopt`). Neu: eine tägliche Dummy-Aktion **"Ersparnis Haushaltsstrom"** (Blitz-Icon, Zeit "24:00"–"00:00", Info-Tooltip) zeigt den rechnerischen Ersparnis-Anteil der reinen Haushalts-Grundlast, die sonst keiner Aktion zugeordnet werden kann. Das eigenständige PV-Überschussladen (die addon-interne Rückfalllogik, unabhängig vom Optimierer) bekommt jetzt ebenfalls eine Ersparnis: geladene Energiemenge mal (Preis der letzten regulären "Auto laden"-Aktion minus PV-Einspeisevergütung, Fallback auf den Strompreis der Stunde). Jede Aktionskarte zeigt ihre Ersparnis jetzt als grünes/rotes Label mit Preis ohne/mit Optimierung darunter; der Demo-Modus zeigt dafür plausible Beispielwerte statt durchgehend "-".
+
 ## 0.0.45.115
 
 * **Fix: Gerätesteuerung zeigte teils mehrere sich überlappende Aktionen desselben Typs gleichzeitig** (z.B. "Batterie-Entladen verschieben" als 9:59-13, 10:59-13 UND 11:59-13 Uhr nebeneinander, statt sich chronologisch anzuschließen). Die Anzeige garantiert jetzt, dass jede Stunde pro Aktionstyp höchstens einmal abgedeckt ist: eine aktive Aktion wird immer behalten, jede weitere Aktion desselben Namens, deren Zeitfenster eine bereits behaltene überschneidet, wird verworfen. Die genaue Ursache im Store ließ sich nicht abschließend nachvollziehen - das ist ein Sicherheitsnetz auf Anzeige-Ebene, kein Fix der zugrunde liegenden Berechnung.

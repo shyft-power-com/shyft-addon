@@ -931,27 +931,34 @@ def _demo_shyft_actions():
     def ms(hours_from_hour0):
         return int((hour0 + timedelta(hours=hours_from_hour0)).timestamp() * 1000)
 
-    # (Action Name, id-Praefix, Start-Offset h, Dauer h, Status, Subtitle, Target, costsopt, Log)
+    # (Action Name, id-Praefix, Start-Offset h, Dauer h, Status, Subtitle, Target, costsbase, costsopt, Log)
+    # costsbase=None -> Batterieschonung-Aktion (nur Savings-Pill, kein Preispaar, siehe
+    # _battery_preservation_value); sonst gilt ueberall Savings = costsbase - costsopt.
     specs = [
         ("Batterie-Entladen verschieben", "batterie_entladen_verschieben", -9, 4, "beendet",
-         "Entladen in günstigere Abendstunden verschoben (Netzpreis nachts 9,8 C/kWh)", 0.0, -0.42, None),
+         "Entladen in günstigere Abendstunden verschoben (Netzpreis nachts 9,8 C/kWh)", 0.0, None, None, None),
         ("Auto laden", "auto_laden", -6, 2, "beendet",
-         "Laden mit 6,9 kW (von 41 % auf 78 %) | Preis: 18,3 C/kWh", 6.9, 1.98, None),
+         "Laden mit 6,9 kW (von 41 % auf 78 %) | Preis: 18,3 C/kWh", 6.9, 2.75, 0.77, None),
         ("Warmwasser", "warmwasser", -3, 1, "beendet",
-         "Warmwassertank auf 52 °C erwärmt (von 45 °C) | Preis: 17,1 C/kWh", 52.0, 0.63, None),
+         "Warmwassertank auf 52 °C erwärmt (von 45 °C) | Preis: 17,1 C/kWh", 52.0, 0.98, 0.35, None),
         ("Heizung Soll-Temperatur", "heizung_soll", 0, 1, "aktiv",
-         "Vorlauf-Soll 34,0 °C (Heizkurve -1) | günstige Stunde, leicht vorheizen", 34.0, 0.21,
+         "Vorlauf-Soll 34,0 °C (Heizkurve -1) | günstige Stunde, leicht vorheizen", 34.0, 0.34, 0.13,
          f"{now.strftime('%H:%M Uhr')}: gestartet, Vorlauf-Soll auf 34,0 °C gesetzt"),
         ("Batterie-Laden verschieben (PV-Überschuss)", "batterie_laden_verschieben", 1, 2, "geplant",
-         "Batterieladung in die PV-Mittagsspitze verschieben", 0.0, 0.0, None),
+         "Batterieladung in die PV-Mittagsspitze verschieben", 0.0, None, None, None),
         ("Auto laden", "auto_laden", 3, 3, "geplant",
-         "PV-Überschussladen", 4.1, 0.0, None),
+         "PV-Überschussladen", 4.1, 0.0, 0.0, None),
         ("Verbraucher an", "verbraucher_an", 6, 2, "geplant",
-         "Gerät für 2 h einschalten | Preis: 9,1 C/kWh (unter Schwelle)", 0.75, 0.14, None),
+         "Gerät für 2 h einschalten | Preis: 9,1 C/kWh (unter Schwelle)", 0.75, 0.31, 0.17, None),
     ]
     exec_by_status = {"beendet": "yes, finished", "aktiv": "yes, started", "geplant": "yes, planned"}
     actions = []
-    for name, prefix, off, dur, status, subtitle, target, costsopt, log in specs:
+    for name, prefix, off, dur, status, subtitle, target, costsbase, costsopt, log in specs:
+        savings = None
+        if costsbase is not None and costsopt is not None:
+            savings = costsbase - costsopt
+        elif name in (BATTERY_DISCHARGE_SHIFT_ACTION_NAME, BATTERY_CHARGE_SHIFT_ACTION_NAME):
+            savings = _battery_preservation_value(72.0, 10.0)  # plausibler Demo-Wert
         action = {
             "_id": f"demo_{prefix}_{ms(off)}",
             "Action Name": name,
@@ -960,8 +967,8 @@ def _demo_shyft_actions():
             "Execution Status": exec_by_status[status],
             "Subtitle": subtitle,
             "Target Value": target,
-            "Savings": None,
-            "costsbase": None,
+            "Savings": savings,
+            "costsbase": costsbase,
             "costsopt": costsopt,
             "Date Start": int(now.timestamp() * 1000) if status == "aktiv" else ms(off),
             "Date End": ms(off + dur),
@@ -973,19 +980,94 @@ def _demo_shyft_actions():
     return actions
 
 
+HOUSEHOLD_SAVINGS_ACTION_NAME = "Ersparnis Haushaltsstrom"
+HOUSEHOLD_SAVINGS_ACTION_ID_PREFIX = "ersparnis_haushaltsstrom"
+HOUSEHOLD_SAVINGS_TOOLTIP = ("Diese Aktion fasst die Ersparnisse aus den Shyft-Aktionen zusammen, "
+                             "die den Verbrauchern nicht direkt zugeordnet werden können "
+                             "(Batterieaktionen, Ersparnisse beim Haushaltsstrom).")
+
+
+def _household_savings_action():
+    """Deckt die Luecke, die entsteht, weil die Grundlast (Spalte 'electkwh' in input.csv) selbst
+    keiner Aktion zugeordnet ist: waehrend Auto laden/Warmwasser/Heizung/Verbraucher an ihre
+    Ersparnis ueber _action_energy_savings anteilig an X_sum bekommen, wuerde der Grundlast-Anteil
+    sonst nirgends auftauchen (Nutzer-Vorschlag). Zeigt dafuer einmal pro lokalem Kalendertag eine
+    Dummy-Aktion, die nichts steuert.
+
+    Wird NICHT persistiert/reconciled wie die uebrigen Aktionstypen, sondern bei jedem Aufruf von
+    readShyftActions frisch aus dem aktuellen DASHBOARD_CACHE_PATH-Stand berechnet - es gibt kein
+    Geraet, dessen Zustand ueber einen Optimierungslauf hinweg "fortgesetzt" werden muesste.
+
+    share = Summe(electkwh) ueber denselben GESAMTEN Optimierungszeitraum wie X_sum_total (siehe
+    recompute_actions_from_optimizer_run) / X_sum_total; daily_fraction skaliert den auf den
+    gesamten (typischerweise >24h) Zeitraum bezogenen Ersparnis-Anteil auf einen einzelnen Tag
+    herunter (24 / horizon_hours, gekappt bei 1.0 fuer einen kuerzeren Optimierungslauf).
+
+    None, wenn noch kein Cache vorhanden ist oder eine der Eingaben fehlt (z.B. Base-Case-Zahl noch
+    nicht gerechnet) - readShyftActions zeigt dann einfach keine solche Karte."""
+    try:
+        with open(DASHBOARD_CACHE_PATH, "r") as f:
+            cache = json.load(f)
+    except Exception:
+        return None
+    input_csv = cache.get("input_csv")
+    output_csv = cache.get("output_csv")
+    net_profit_base = cache.get("netProfitBase48HoursSum")
+    if not input_csv or not output_csv or net_profit_base is None:
+        return None
+    try:
+        input_rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
+        output_rows = list(csv.DictReader(io.StringIO(output_csv)))
+    except Exception:
+        return None
+    horizon_hours = len(output_rows)
+    if horizon_hours <= 0:
+        return None
+    net_profit_opt = sum(_safe_float(r.get("profits_net_opt")) for r in output_rows)
+    x_sum_total = sum(_safe_float(r.get("X_sum")) for r in output_rows)
+    if not x_sum_total:
+        return None
+    household_kwh = sum(_safe_float(r.get("electkwh")) for r in input_rows[:horizon_hours])
+    share = household_kwh / x_sum_total
+    daily_fraction = min(1.0, 24 / horizon_hours)
+    costsbase = share * net_profit_base * daily_fraction
+    costsopt = share * net_profit_opt * daily_fraction
+    midnight_local = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    return {
+        "_id": f"{HOUSEHOLD_SAVINGS_ACTION_ID_PREFIX}_{midnight_local.date().isoformat()}",
+        "Action Name": HOUSEHOLD_SAVINGS_ACTION_NAME,
+        "Action Trigger Type": "Optimizer",
+        "Status": "aktiv",
+        "Subtitle": "Rechnerische Ersparnis",
+        "Tooltip": HOUSEHOLD_SAVINGS_TOOLTIP,
+        # Deckt den ganzen lokalen Kalendertag ab - das Frontend zeigt dafuer bewusst "24:00"/"00:00"
+        # statt der tatsaechlichen (identischen Uhrzeit-)Werte (siehe buildShyftActionCard).
+        "Date Start": int(midnight_local.timestamp() * 1000),
+        "Date End": int((midnight_local + timedelta(days=1)).timestamp() * 1000),
+        "Savings": costsbase - costsopt,
+        "costsbase": costsbase,
+        "costsopt": costsopt,
+    }
+
+
 @app.route("/shyft/actions", methods=["GET"])
 def readShyftActions():
     """Liefert die Aktionsliste fuer die Gerätesteuerung-Tab-Anzeige (die tatsaechliche Ausfuehrung
     gegen die Geraete passiert separat in process_shyft_actions): die vom Addon selbst berechneten
     Aktionen (siehe COMPUTED_ACTIONS_PATH/recompute_actions_from_optimizer_run - kein Bubble-Call
     mehr, siehe CHANGELOG), gemergt mit der addon-eigenen PV-Überschussladen-Rückfalllogik (siehe
-    run_pv_surplus_charging_tick), damit beide nahtlos in einer Liste erscheinen.
+    run_pv_surplus_charging_tick) und der taeglichen Haushaltsstrom-Ersparnis-Dummy-Aktion (siehe
+    _household_savings_action), damit alle drei nahtlos in einer Liste erscheinen.
     Fuer die Anzeige auf die letzten SHYFT_ACTIONS_DISPLAY_MAX_DAYS Tage (plus alle noch
     laufenden/geplanten) begrenzt - der Store selbst bleibt vollstaendig erhalten."""
     if is_demo_mode():
         return jsonify({"status": "success",
                         "response": {"actions": _demo_shyft_actions(), "display_max_days": SHYFT_ACTIONS_DISPLAY_MAX_DAYS}})
-    all_actions = _read_computed_actions() + [_pv_surplus_session_to_action(s) for s in _read_pv_surplus_actions()]
+    config = _read_current_config()
+    all_actions = _read_computed_actions() + [_pv_surplus_session_to_action(s, config) for s in _read_pv_surplus_actions()]
+    household_action = _household_savings_action()
+    if household_action:
+        all_actions.append(household_action)
     cutoff_ms = (time.time() - SHYFT_ACTIONS_DISPLAY_MAX_DAYS * 86400) * 1000
     visible = [a for a in all_actions if a.get("Date End") is None or a.get("Date End") >= cutoff_ms]
     return jsonify({"status": "success",
@@ -3360,19 +3442,108 @@ def _append_pv_surplus_log(session, target_kw, note=None):
     session["log"] = session["log"][-100:]
 
 
-def _pv_surplus_session_to_action(session):
-    "Formt eine Fallback-Ladesession in dieselbe Form wie shyft-powers eigene Aktionen, damit sie in der Aktionsliste (Gerätesteuerung-Tab) nahtlos mit auftaucht (siehe readShyftActions)."
+def _pv_surplus_session_energy_kwh(session):
+    "Flaeche unter der stufenweisen Ladeleistung ueber die Zeit (siehe 'power_history'-Stuetzstellen, angelegt bei Session-Start und bei jeder erfolgreichen Regelungs-Aktualisierung, siehe _run_pv_surplus_charging_tick_impl) - die insgesamt ueber diese Fallback-Session geladene Energiemenge. 0.0, wenn (noch) keine Stuetzstellen vorliegen (z.B. sehr alte, vor dieser Funktion angelegte Sessions)."
+    history = session.get("power_history") or []
+    if not history:
+        return 0.0
+    end_ms = session.get("end_ms") if not session.get("active") else None
+    if end_ms is None:
+        end_ms = int(time.time() * 1000)
+    energy = 0.0
+    for i, point in enumerate(history):
+        seg_start = point.get("at_ms")
+        seg_end = history[i + 1].get("at_ms") if i + 1 < len(history) else end_ms
+        if seg_start is None or seg_end is None or seg_end <= seg_start:
+            continue
+        energy += (point.get("kw") or 0) * (seg_end - seg_start) / 3600000.0
+    return energy
+
+
+def _last_regular_ev_charge_price(config):
+    "Preis (EUR/kWh) der letzten regulaeren (vom Optimierer geplanten, NICHT PV-Ueberschuss-Fallback-) 'Auto laden'-Aktion aus COMPUTED_ACTIONS_PATH: CostsBase / Energy(electr) dieser Aktion (Nutzer-Vorgabe fuer die PV-Ueberschussladen-Bewertung). None, wenn keine solche Aktion mit auswertbaren Werten gefunden wird - der Aufrufer faellt dann auf p_buy aus der input.csv zurueck (siehe _pv_surplus_session_value)."
+    candidates = [a for a in _read_computed_actions()
+                  if a.get("Action Name") == EV_CHARGE_ACTION_NAME
+                  and a.get("costsbase") is not None
+                  and (a.get("Energy (electr)") or 0) > 0
+                  and a.get("Date Start") is not None]
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda a: a["Date Start"])
+    try:
+        return latest["costsbase"] / latest["Energy (electr)"]
+    except (TypeError, ZeroDivisionError):
+        return None
+
+
+def _input_csv_value_for_hour(hour_start_utc, column):
+    "Wert einer input.csv-Spalte (z.B. 'p_buy'/'p_sell') fuer die Stunde hour_start_utc, aus dem aktuell gecachten Optimierungslauf (DASHBOARD_CACHE_PATH) - Fallback fuer _pv_surplus_session_value, wenn keine passende reguläre 'Auto laden'-Aktion als Preisreferenz gefunden wird, bzw. Quelle der PV-Einspeiseverguetung."
+    try:
+        with open(DASHBOARD_CACHE_PATH, "r") as f:
+            cache = json.load(f)
+    except Exception:
+        return None
+    input_csv = cache.get("input_csv")
+    creation_date_ms = cache.get("creation_date")
+    if not input_csv or creation_date_ms is None:
+        return None
+    start = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+    index = int((hour_start_utc - start).total_seconds() // 3600)
+    try:
+        rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
+    except Exception:
+        return None
+    if index < 0 or index >= len(rows):
+        return None
+    return _safe_float(rows[index].get(column))
+
+
+def _pv_surplus_session_value(session, config):
+    """Ersparnis der PV-Ueberschussladen-Fallback-Session (eigene, vom Optimierer unabhaengige
+    Regelschleife, siehe _run_pv_surplus_charging_tick_impl - kommt im Optimierer-Modell gar nicht
+    vor, deshalb bewusst NICHT ueber die Verbrauchsanteils-Formel/X_sum gerechnet). Nutzer-Vorgabe:
+    tatsaechlich geladene Energiemenge mal (Preis_EVStrom - Einspeiseverguetung_PVStrom):
+      CostsBase = energy_kwh * ev_price   (Preis_EVStrom = letzte reguläre 'Auto laden'-Aktion:
+                  CostsBase/Energy(electr); Fallback p_buy der Start-Stunde aus input.csv)
+      CostsOpt  = energy_kwh * feed_in    (p_sell der Start-Stunde aus input.csv)
+      Savings   = CostsBase - CostsOpt
+    (None, None, None), wenn keine Energie geladen wurde oder einer der Preise nicht ermittelbar
+    ist (z.B. noch kein Dashboard-Cache vorhanden)."""
+    energy_kwh = _pv_surplus_session_energy_kwh(session)
+    if not energy_kwh:
+        return None, None, None
+    start_ms = session.get("start_ms")
+    if start_ms is None:
+        return None, None, None
+    hour_start_utc = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+    ev_price = _last_regular_ev_charge_price(config)
+    if ev_price is None:
+        ev_price = _input_csv_value_for_hour(hour_start_utc, "p_buy")
+    feed_in = _input_csv_value_for_hour(hour_start_utc, "p_sell")
+    if ev_price is None or feed_in is None:
+        return None, None, None
+    costsbase = energy_kwh * ev_price
+    costsopt = energy_kwh * feed_in
+    return costsbase - costsopt, costsbase, costsopt
+
+
+def _pv_surplus_session_to_action(session, config):
+    "Formt eine Fallback-Ladesession in dieselbe Form wie shyft-powers eigene Aktionen, damit sie in der Aktionsliste (Gerätesteuerung-Tab) nahtlos mit auftaucht (siehe readShyftActions). 'Savings'/'costsbase'/'costsopt' kommen bewusst NICHT aus der Verbrauchsanteils-Formel, sondern aus _pv_surplus_session_value (siehe dort)."
     target_kw = session.get("target_kw", 0)
     is_active = bool(session.get("active"))
+    savings, costsbase, costsopt = _pv_surplus_session_value(session, config)
     return {
         "Action Name": "Auto laden",
         "Status": "aktiv" if is_active else "beendet",
         "Execution Status": "yes, started",
         "Target Value": target_kw,
+        "Energy (electr)": _pv_surplus_session_energy_kwh(session),
         "Subtitle": f"PV-Überschussladen ({target_kw:.1f} kW)",
         "Date Start": session.get("start_ms"),
         "Date End": session.get("end_ms") if not is_active else session.get("planned_end_ms"),
-        "Savings": None,
+        "Savings": savings,
+        "costsbase": costsbase,
+        "costsopt": costsopt,
         "Log": "\n".join(session.get("log", [])),
     }
 
@@ -3388,7 +3559,7 @@ def stop_pv_surplus_charging(actions, session, config, reason=None):
     session["end_ms"] = int(time.time() * 1000)
     session["stop_reason"] = reason
     _write_pv_surplus_actions(actions)
-    ended_action = _pv_surplus_session_to_action(session)
+    ended_action = _pv_surplus_session_to_action(session, config)
     try:
         energy_archive.archive_completed_action(ended_action)
     except Exception as e:
@@ -3521,6 +3692,10 @@ def _run_pv_surplus_charging_tick_impl():
         session["target_kw"] = new_target
         session["last_regulation_ms"] = int(now_ms)
         session["last_regulation_grid_kw"] = grid_kw
+        # Fuer die nachtraegliche Ersparnis-Berechnung der Session (siehe _pv_surplus_session_energy_kwh):
+        # jeder tatsaechlich angewendete Leistungswechsel als Stuetzstelle, NICHT bei einem
+        # fehlgeschlagenen Versuch (der aendert die Wallbox ja nicht wirklich).
+        session.setdefault("power_history", []).append({"at_ms": int(now_ms), "kw": new_target})
         _write_pv_surplus_actions(actions)
     else:
         if grid_kw is None or not car_ready:
@@ -3569,11 +3744,12 @@ def _run_pv_surplus_charging_tick_impl():
 
         new_session = {"active": True, "target_kw": target_kw, "has_battery": has_battery,
                         "start_ms": int(now_ms), "planned_end_ms": _next_full_hour_ms(now_ms), "log": [],
-                        "last_regulation_grid_kw": grid_kw}
+                        "last_regulation_grid_kw": grid_kw,
+                        "power_history": [{"at_ms": int(now_ms), "kw": target_kw}]}
         _append_pv_surplus_log(new_session, target_kw)
         actions.append(new_session)
         _write_pv_surplus_actions(actions)
-        notify_action_event(config, _pv_surplus_session_to_action(new_session), "gestartet")
+        notify_action_event(config, _pv_surplus_session_to_action(new_session, config), "gestartet")
 
 
 def execute_hot_water_activate():
@@ -6460,7 +6636,10 @@ def run_hourly_action_transition():
             next_action = _find_next_hour_action(group, current)
             if next_action is not None and next_action.get("Target Value") == current.get("Target Value"):
                 current["Date End"] = next_action.get("Date End")
+                current["Energy (electr)"] = (current.get("Energy (electr)") or 0) + (next_action.get("Energy (electr)") or 0)
                 current["costsopt"] = (current.get("costsopt") or 0) + (next_action.get("costsopt") or 0)
+                current["costsbase"] = (current.get("costsbase") or 0) + (next_action.get("costsbase") or 0)
+                current["Savings"] = (current.get("Savings") or 0) + (next_action.get("Savings") or 0)
                 to_remove_ids.add(next_action.get("_id"))
                 changed = True
                 continue
