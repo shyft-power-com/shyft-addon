@@ -1158,6 +1158,31 @@
             margin-top: 0.5em;
         }
 
+        /* Trennt den "jetzt"-Zeitpunkt sichtbar von bereits vergangenen Aktionen (siehe
+           renderShyftActions) - eine durchgehende Linie, mit optionalem Hinweistext in der Mitte
+           ("Keine Aktionen in den naechsten X Stunden geplant."), wenn gerade nichts laeuft/ansteht. */
+        .shyftNowMarker {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            margin: 0.5em 0 1.25em;
+        }
+        .shyftNowMarker::before,
+        .shyftNowMarker::after {
+            content: '';
+            flex: 1;
+            height: 2px;
+            background: var(--color-accent);
+        }
+        .shyftNowMarker.has-text {
+            gap: 0.75em;
+        }
+        .shyftNowMarkerText {
+            color: var(--color-text-secondary);
+            font-size: 0.9em;
+            white-space: nowrap;
+        }
+
         /* Nutzer-sichtbare Fehler-/Statuskarte oben auf der Konfigurationsseite (siehe
            renderSystemHealth in app.js, das /system-health + /config/warnings +
            computeMissingRequiredFieldsWarnings zu EINER Liste mit EINER Zaehlung in der Ueberschrift

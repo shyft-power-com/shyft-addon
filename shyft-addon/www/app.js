@@ -5649,30 +5649,45 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
         return;
     }
 
-    // "Keine Aktionen in den naechsten X Stunden geplant" chronologisch einsortiert statt immer
-    // ganz oben (Nutzer-Feedback): die Liste ist absteigend nach Date End sortiert (spaeteste zuerst,
-    // siehe unten), es kann also durchaus eine oder mehrere Aktionen geben, die weiter in der
-    // Zukunft liegen (z.B. erst spaeter heute oder morgen) - die gehoeren chronologisch VOR den
-    // Hinweis, nicht danach. X ist dabei nicht mehr fest, sondern die tatsaechliche Zeit bis zur
-    // naechsten geplanten Aktion (Nutzer-Vorgabe) - eine noch nicht gestartete Aktion in 5 Stunden
-    // ergibt "...in den naechsten 5 Stunden...", keine weitere Aktion ueberhaupt "keine weiteren
-    // Aktionen geplant" ohne Stundenangabe.
+    // "Jetzt"-Marker (durchgehende Linie, siehe .shyftNowMarker) chronologisch korrekt einsortiert
+    // (Nutzer-Feedback): die Liste ist absteigend nach Date End sortiert (spaeteste zuerst, siehe
+    // unten) - der Marker gehoert genau zwischen die letzte noch nicht abgeschlossene Aktion
+    // (aktiv oder noch in der Zukunft) und die erste bereits beendete. Das muss auf Ebene der
+    // EINZELNEN (bereits zusammengefassten) Karte entschieden werden, nicht pro Tag: ein Tag kann
+    // durchaus sowohl eine noch bevorstehende als auch schon vergangene Aktionen enthalten (Nutzer-
+    // Screenshot: "12:00-13:00" (noch bevorstehend) und mehrere fruehere Stunden desselben Tages).
+    // Ein Hinweistext ("Keine Aktionen in den naechsten X Stunden geplant.") erscheint nur, wenn
+    // gerade nichts aktiv laeuft - die Linie selbst steht immer, auch waehrend eine Aktion laeuft.
     const nowMs = Date.now();
     const showUpcomingHint = !hasActiveAction(visible);
     const futureStartsMs = visible.map(a => a['Date Start']).filter(s => typeof s === 'number' && s > nowMs);
     const nextStartMs = futureStartsMs.length > 0 ? Math.min(...futureStartsMs) : null;
-    const isFutureAction = (action) => typeof action['Date Start'] === 'number' && action['Date Start'] > nowMs;
+    // Eine Karte gilt erst als "vergangen", wenn sie weder aktiv ist noch ihr Date End noch aussteht -
+    // eine gerade laufende Aktion (Date Start in der Vergangenheit, aber Status "aktiv") bleibt also
+    // oberhalb des Markers, genau wie eine noch bevorstehende.
+    const isPastAction = (action) => {
+        if ((action['Status'] || '').toLowerCase().startsWith('aktiv')) return false;
+        const end = typeof action['Date End'] === 'number' ? action['Date End'] : action['Date Start'];
+        return typeof end === 'number' && end <= nowMs;
+    };
 
-    function buildUpcomingHint() {
-        const hint = document.createElement('div');
-        hint.className = 'shyftActionsEmpty';
-        if (nextStartMs === null) {
-            hint.textContent = 'Keine weiteren Aktionen geplant.';
-        } else {
-            const hours = Math.max(1, Math.ceil((nextStartMs - nowMs) / 3600000));
-            hint.textContent = `Keine Aktionen in den nächsten ${hours} Stunden geplant.`;
+    function buildNowMarker() {
+        const marker = document.createElement('div');
+        marker.id = 'shyftNowMarker';
+        marker.className = 'shyftNowMarker';
+        if (showUpcomingHint) {
+            marker.classList.add('has-text');
+            const text = document.createElement('span');
+            text.className = 'shyftNowMarkerText';
+            if (nextStartMs === null) {
+                text.textContent = 'Keine weiteren Aktionen geplant.';
+            } else {
+                const hours = Math.max(1, Math.ceil((nextStartMs - nowMs) / 3600000));
+                text.textContent = `Keine Aktionen in den nächsten ${hours} Stunden geplant.`;
+            }
+            marker.appendChild(text);
         }
-        return hint;
+        return marker;
     }
 
     // sorted by Date End descending to match shyft-power's own ordering
@@ -5687,14 +5702,8 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
         groups.get(key).push(action);
     }
 
-    let hintInserted = !showUpcomingHint;
+    let markerInserted = false;
     for (const groupActions of groups.values()) {
-        // Hinweis direkt vor die erste Tagesgruppe setzen, die nicht mehr komplett in der Zukunft
-        // liegt - alles davor (weiter in der Zukunft) bleibt darueber stehen.
-        if (!hintInserted && !groupActions.every(isFutureAction)) {
-            container.appendChild(buildUpcomingHint());
-            hintInserted = true;
-        }
         const dayDiv = document.createElement('div');
         dayDiv.className = 'shyftDayGroup';
 
@@ -5717,16 +5726,22 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
         // savingsSum oben bleibt bewusst auf groupActions (ungemergt) - jede Stunde zaehlt einzeln
         // zur Tagessumme, unabhaengig davon, wie viele Karten daraus visuell werden.
         for (const action of coalesceConsecutiveShyftActions(groupActions)) {
+            // Marker direkt vor die erste Karte setzen, die nicht mehr aktiv/zukuenftig ist - kann
+            // mitten in einem Tag liegen (siehe Kommentar oben), deshalb Pruefung pro Karte statt pro Tag.
+            if (!markerInserted && isPastAction(action)) {
+                dayDiv.appendChild(buildNowMarker());
+                markerInserted = true;
+            }
             dayDiv.appendChild(buildShyftActionCard(action));
         }
 
         container.appendChild(dayDiv);
     }
     // Fallback fuer den (seltenen) Fall, dass wirklich JEDE sichtbare Aktion noch in der Zukunft
-    // liegt (z.B. frisch eingerichtetes Addon ohne Historie) - dann kam der Hinweis oben in der
+    // liegt (z.B. frisch eingerichtetes Addon ohne Historie) - dann kam der Marker oben in der
     // Schleife nie zum Zug und gehoert ans Ende der (absteigend sortierten) Liste.
-    if (!hintInserted) {
-        container.appendChild(buildUpcomingHint());
+    if (!markerInserted) {
+        container.appendChild(buildNowMarker());
     }
 
     maybeAutoScrollToActiveShyftActions();
@@ -5735,10 +5750,11 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
 // Bei JEDEM Wechsel auf die Gerätesteuerung (nicht nur beim allerersten Seitenaufruf, siehe
 // Nutzer-Korrektur: das Addon laeuft als HA-Ingress-Panel und ein "Seitenaufruf" im Sinne von
 // document.readyState passiert praktisch nur einmal pro Browser-Tab - ein erneuter Klick auf den
-// Tab soll aber trotzdem jedes Mal zur aktuell laufenden Aktion scrollen) zur laufenden Aktion (bzw.
-// zur Gruppe gleichzeitig laufender Aktionen, siehe is-active) scrollen - zentriert deren Mitte auf
-// der Bildschirmmitte, sodass geplante Aktionen darüber und bereits beendete darunter sichtbar sind
-// (Karten sind absteigend nach "Date End" sortiert, siehe renderShyftActions).
+// Tab soll aber trotzdem jedes Mal zum "Jetzt"-Marker scrollen) zu #shyftNowMarker scrollen (siehe
+// renderShyftActions) - bei einem Drittel der Bildschirmhoehe von oben statt mittig (Nutzer-
+// Vorgabe): oben bleibt Platz fuer bereits vergangene Aktionen (1/3), darunter aktuelle/zukuenftige
+// (2/3). Der Marker existiert IMMER (auch waehrend eine Aktion aktiv laeuft, siehe dort), anders als
+// die fruehere Ziel-Auswahl ueber ".is-active"-Karten, die bei "gerade nichts aktiv" leer lief.
 //
 // shyftActionsScrollPending: "beim naechsten fertigen Render dieses Tabs einmal scrollen" - wird von
 // requestShyftActionsAutoScroll() (Tab-Klick, siehe setupTabs) gesetzt. maybeAutoScrollToActiveShyftActions
@@ -5747,7 +5763,7 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
 // daher stoert der periodische Hintergrund-Refresh die Scrollposition nicht. Das Flag wird erst
 // verbraucht, sobald die Liste tatsaechlich befuellt ist (container.children.length > 0) - vorher
 // koennte ein Klick kurz vor Abschluss des ersten Ladevorgangs sonst die einzige Scroll-Chance
-// verpassen, weil die Karten (und damit is-active) noch gar nicht im DOM stehen.
+// verpassen, weil der Marker noch gar nicht im DOM steht.
 let shyftActionsScrollPending = false;
 function requestShyftActionsAutoScroll() {
     shyftActionsScrollPending = true;
@@ -5759,16 +5775,15 @@ function maybeAutoScrollToActiveShyftActions() {
     if (!panel || !panel.classList.contains('active')) return;
     const container = document.getElementById('shyftActionsBody');
     if (!container || container.children.length === 0) return; // Daten noch nicht geladen - Pending bleibt gesetzt
-    shyftActionsScrollPending = false; // ab hier: genau ein Versuch pro Tab-Oeffnen, egal ob Karten gefunden werden
-    const activeCards = container.querySelectorAll('.shyftActionCard.is-active');
-    if (activeCards.length === 0) return;
+    shyftActionsScrollPending = false; // ab hier: genau ein Versuch pro Tab-Oeffnen, egal ob der Marker gefunden wird
+    const marker = document.getElementById('shyftNowMarker');
+    if (!marker) return;
     // rAF, damit Layout (inkl. evtl. noch nicht geladener Icon-Bilder) sicher steht, bevor die
-    // Positionen gemessen werden.
+    // Position gemessen wird.
     requestAnimationFrame(() => {
-        const first = activeCards[0].getBoundingClientRect();
-        const last = activeCards[activeCards.length - 1].getBoundingClientRect();
-        const groupCenter = (first.top + last.bottom) / 2;
-        window.scrollBy({top: groupCenter - window.innerHeight / 2, behavior: 'auto'});
+        const rect = marker.getBoundingClientRect();
+        const targetOffsetFromTop = window.innerHeight / 3;
+        window.scrollBy({top: rect.top - targetOffsetFromTop, behavior: 'auto'});
     });
 }
 

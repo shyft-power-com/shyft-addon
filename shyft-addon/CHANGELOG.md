@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.118
+
+* **Gerätesteuerung: "Jetzt"-Zeitpunkt jetzt korrekt platziert und optisch sichtbar abgetrennt.** Der Hinweis "Keine Aktionen in den nächsten X Stunden geplant." saß bisher teils immer noch zu weit oben, wenn ein Tag sowohl eine noch bevorstehende als auch bereits vergangene Aktionen enthielt (Nutzer-Screenshot) - die Platzierung wird jetzt pro Karte statt pro Tag entschieden. Zusätzlich trennt eine durchgehende Linie den aktuellen Zeitpunkt immer sichtbar von der Historie ab, auch während gerade eine Aktion läuft (dann ohne Hinweistext).
+* **Öffnen des Tabs scrollt jetzt zu diesem "Jetzt"-Marker** statt zur zuletzt aktiven Aktion (die bei "gerade nichts aktiv" gar nicht existierte) - positioniert bei einem Drittel der Bildschirmhöhe von oben, sodass oben Platz für vergangene und darunter für aktuelle/zukünftige Aktionen bleibt.
+
 ## 0.0.45.117
 
 * **Fix: Der Basisfall ("was ohne Shyft-Optimierung passiert wäre") startete jede stündliche Neuberechnung mit dem ECHTEN, vom Optimierer bereits günstig vorbereiteten Zustand** (vorgeheiztes Haus, voller Heimspeicher, warmes Wasser, Auto-Ladestand) - er "erbte" so faktisch den Erfolg der Optimierung, ohne je für eine eigene (schlechtere) Vorstunden-Entscheidung zu bezahlen. Sichtbar wurde das im neuen Analyse-Tab: die Basisfall-Kosten lagen über mehrere zusammenhängende Stunden exakt bei 0 €, obwohl unverändert Grundlast anfiel (der simulierte Speicher deckte sie im Basisfall aus einem Ladestand, der real nur dank der Optimierung so hoch war).
