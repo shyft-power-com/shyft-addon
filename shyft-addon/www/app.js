@@ -7002,6 +7002,29 @@ function buildFlowLine(x1, y1, x2, y2, kw, options = {}) {
     return buildFlowLineFromPath(buildFlowPath(x1, y1, x2, y2), kw, options);
 }
 
+// Baut eine horizontale Sammel-Zuleitung (ein Ast des Verbraucher-Bus, siehe buildEnergyFlowSvgMobile)
+// fuer mehrere an einer Achse haengende Geraete, mit korrekt pro Abschnitt getrennter Animation:
+// das haeuserseitige Segment bis zum naechstgelegenen Geraet traegt die kombinierte Last ALLER
+// Geraete auf diesem Ast (die muessen es alle durchqueren), jedes weitere Segment danach nur noch
+// die Last der noch nicht erreichten (weiter entfernten) Geraete. Ohne diese Aufteilung trug der
+// GESAMTE Ast bis zum am weitesten entfernten Geraet die volle kombinierte Last - ist z.B. nur ein
+// naeher liegendes Geraet aktiv, sah es so aus, als flösse auch zum weiter entfernten (ausgeschalteten)
+// Geraet Strom (siehe Nutzer-Meldung: Fluss zur ausgeschalteten Waermepumpe, obwohl nur das Auto laedt).
+function buildDeviceBusChain(startX, y, deviceXs, deviceKws) {
+    const order = deviceXs.map((_, i) => i).sort((a, b) => Math.abs(deviceXs[a] - startX) - Math.abs(deviceXs[b] - startX));
+    const elements = [];
+    let fromX = startX;
+    for (let rank = 0; rank < order.length; rank++) {
+        const idx = order[rank];
+        const remainingKw = order.slice(rank).reduce((sum, j) => sum + deviceKws[j], 0);
+        const toX = deviceXs[idx];
+        const segment = buildFlowLineFromPath(`M ${fromX},${y} H ${toX}`, remainingKw, {thresholdKw: 0.1});
+        if (segment) elements.push(segment);
+        fromX = toX;
+    }
+    return elements;
+}
+
 // Echte Fotos/Illustrationen des Nutzers (shyft-power.com) statt selbst gezeichneter Formen -
 // siehe www/assets/. Nur die animierten Stromfluss-Linien selbst (buildFlowLine & Co., weiter
 // unten) sind weiterhin eigenes SVG, plus die drei Icons, fuer die keine Bild-Assets existieren
@@ -7419,12 +7442,23 @@ function buildEnergyFlowSvgDesktop(data) {
     const trunkKw = heatpumpFlowKw + carFlowKw + sonstigerFlowKw + householdFlowKw;
     const trunkLine = buildFlowLineFromPath(buildFlowPath(houseRightX, houseCy, busX, houseCy), trunkKw, {thresholdKw: 0.1});
     if (trunkLine) svg.appendChild(trunkLine);
-    const upperSpineKw = heatpumpFlowKw + carFlowKw;
-    const upperSpine = buildFlowLineFromPath(`M ${busX},${houseCy} V ${trunkTopY}`, upperSpineKw, {thresholdKw: 0.1});
-    if (upperSpine) svg.appendChild(upperSpine);
-    const lowerSpineKw = sonstigerFlowKw + householdFlowKw;
-    const lowerSpine = buildFlowLineFromPath(`M ${busX},${houseCy} V ${trunkBottomY}`, lowerSpineKw, {thresholdKw: 0.1});
-    if (lowerSpine) svg.appendChild(lowerSpine);
+    // Jede Spine-Haelfte nochmal am naeheren der beiden Geraete geteilt (Auto/Sonstiges liegen
+    // naeher an houseCy als Waermepumpe/Haushaltsstrom, siehe rowY*-Konstanten oben): das Segment
+    // zwischen Knoten und dem naeheren Geraet traegt beide Lasten (beide muessen es durchqueren),
+    // das Segment DANACH bis zum weiter entfernten Geraet nur noch dessen eigene Last. Vorher trug
+    // die komplette Spine bis ganz nach oben/unten die kombinierte Last - lud z.B. gerade das Auto,
+    // wanderten Punkte sichtbar bis auf Waermepumpen-Hoehe, obwohl die selbst 0 kW hatte (siehe
+    // Nutzer-Meldung: "warum fliesst Strom zur ausgeschalteten Waermepumpe").
+    const upperNearSpineKw = heatpumpFlowKw + carFlowKw;
+    const upperNearSpine = buildFlowLineFromPath(`M ${busX},${houseCy} V ${rowYCar}`, upperNearSpineKw, {thresholdKw: 0.1});
+    if (upperNearSpine) svg.appendChild(upperNearSpine);
+    const upperFarSpine = buildFlowLineFromPath(`M ${busX},${rowYCar} V ${trunkTopY}`, heatpumpFlowKw, {thresholdKw: 0.1});
+    if (upperFarSpine) svg.appendChild(upperFarSpine);
+    const lowerNearSpineKw = sonstigerFlowKw + householdFlowKw;
+    const lowerNearSpine = buildFlowLineFromPath(`M ${busX},${houseCy} V ${rowYOther}`, lowerNearSpineKw, {thresholdKw: 0.1});
+    if (lowerNearSpine) svg.appendChild(lowerNearSpine);
+    const lowerFarSpine = buildFlowLineFromPath(`M ${busX},${rowYOther} V ${trunkBottomY}`, householdFlowKw, {thresholdKw: 0.1});
+    if (lowerFarSpine) svg.appendChild(lowerFarSpine);
     // Der Haushaltsstrom-Wert (Gesamt-Hausverbrauch) gehoert auf diesen Trunk, nicht auf den
     // separaten Zweig unten - dort steht ohnehin nur der Rest-Anteil (residualKw), der die
     // Wallbox-/Waermepumpen-Leistung schon herausrechnet.
@@ -7639,18 +7673,18 @@ function buildEnergyFlowSvgMobile(data) {
         // nach BEIDEN Seiten nach aussen, nicht quer durch). Jedes Segment startet am Knoten, die
         // Punkte laufen also nach aussen zum jeweiligen Geraet. Analog zum Desktop-upper-/lowerSpine.
         const branchKwByType = {heatpump: flows.heatpumpFlowKw, car: flows.carFlowKw, sonstiger: flows.sonstigerFlowKw, household: flows.householdFlowKw};
+        const leftXs = [], leftKws = [], rightXs = [], rightKws = [];
         let leftKw = 0, rightKw = 0;
         devices.forEach((type, i) => {
             const kw = branchKwByType[type] || 0;
-            if (colXs[i] <= houseCx) leftKw += kw; else rightKw += kw;
+            if (colXs[i] <= houseCx) { leftXs.push(colXs[i]); leftKws.push(kw); leftKw += kw; }
+            else { rightXs.push(colXs[i]); rightKws.push(kw); rightKw += kw; }
         });
         const trunkLine = buildFlowLineFromPath(buildFlowPath(houseCx, trunkTopY, houseCx, busY), leftKw + rightKw, {thresholdKw: 0.1});
         if (trunkLine) svg.appendChild(trunkLine);
         if (n > 1) {
-            const leftBus = buildFlowLineFromPath(`M ${houseCx},${busY} H ${colXs[0]}`, leftKw, {thresholdKw: 0.1});
-            if (leftBus) svg.appendChild(leftBus);
-            const rightBus = buildFlowLineFromPath(`M ${houseCx},${busY} H ${colXs[n - 1]}`, rightKw, {thresholdKw: 0.1});
-            if (rightBus) svg.appendChild(rightBus);
+            for (const el of buildDeviceBusChain(houseCx, busY, leftXs, leftKws)) svg.appendChild(el);
+            for (const el of buildDeviceBusChain(houseCx, busY, rightXs, rightKws)) svg.appendChild(el);
         }
 
         // Nur die Icons stehen nebeneinander (wie gewuenscht) - das volle Detail je Geraet (wie auf

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.120
+
+* **Fix: Energiefluss-Widget zeigte animierten Stromfluss zu einem ausgeschalteten Gerät (z.B. Wärmepumpe), wenn ein anderes Gerät auf derselben gemeinsamen Zuleitung aktiv war (z.B. Auto lädt).** Wärmepumpe+Auto sowie Sonstiges+Haushaltsstrom teilen sich je eine Zuleitung vom Haus - die wurde bisher über ihre gesamte Länge mit der kombinierten Last beider Geräte animiert, auch auf dem Teilstück hinter dem näher liegenden Gerät, das eigentlich nur noch die Last des weiter entfernten Geräts führt. Die Zuleitung wird jetzt am Abzweigpunkt des näheren Geräts in zwei Segmente geteilt (Desktop- und Mobil-Layout), jedes mit nur der tatsächlich dort fließenden Last.
+
 ## 0.0.45.119
 
 * **"Batterie-Entladen verschieben" startet jetzt nicht mehr blind bei (fast) vollem Speicher, solange noch PV-Überschuss anliegt** (Nutzer-Feedback: die Aktion hielt den Speicher dann fest, obwohl es bei ~100 % Ladestand nichts zu "verschieben" gibt - kleine Verbrauchsschwankungen konnten weder aus dem Speicher gedeckt noch unvorhergesehener PV-Überschuss dort zwischengespeichert werden). Der tatsächliche Start wird jetzt aufgeschoben, solange PV-Leistung > 0,2 kW UND Speicher-SOC > 98 % gemessen werden: die Aktion bleibt dafür als "geplant" mit korrektem Enddatum, aber leerem Startzeitpunkt sichtbar. Ein Live-Listener auf den Speicher-SOC-Sensor startet sie sofort, sobald der Ladestand wieder unter 98 % fällt (zusätzlich zum ohnehin laufenden 15-Minuten-Poll) - mit einem Log-Eintrag sowohl beim Aufschub als auch beim tatsächlichen Start.
