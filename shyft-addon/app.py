@@ -1090,14 +1090,58 @@ def _household_savings_action():
     }
 
 
+def _record_household_savings_snapshot():
+    "Haelt die tagesaktuelle 'Ersparnis Haushaltsstrom'-Momentaufnahme in energy_archive fest (siehe dort) - aufgerufen bei jedem frischen Optimierungslauf (siehe _write_dashboard_cache). Der letzte Aufruf vor Mitternacht haelt so automatisch den finalen Tageswert fest, ohne eigene Tageswechsel-Erkennung noetig zu haben - Grundlage fuer die Gerätesteuerung-Historie (_historical_household_savings_actions) und den Analyse-Tab (query_day_actions)."
+    action = _household_savings_action()
+    if action is None:
+        return
+    date_str = datetime.fromtimestamp(action["Date Start"] / 1000, tz=timezone.utc).astimezone().date().isoformat()
+    try:
+        energy_archive.record_household_savings_snapshot(date_str, action["costsbase"], action["costsopt"], action["Savings"])
+    except Exception as e:
+        print("[Shyft] Ersparnis Haushaltsstrom: Tages-Snapshot konnte nicht gespeichert werden:", repr(e))
+
+
+def _historical_household_savings_actions():
+    """Archivierte 'Ersparnis Haushaltsstrom'-Tage (siehe _record_household_savings_snapshot) als
+    Aktions-Dicts fuer die Gerätesteuerung-Historie (Nutzer-Vorgabe: die Karte soll nach Tagesende
+    nicht mehr verschwinden) - deckt das gesamte readShyftActions-Anzeigefenster
+    (SHYFT_ACTIONS_DISPLAY_MAX_DAYS) ab. Der heutige Tag kommt bewusst NICHT von hier (der bleibt
+    live ueber _household_savings_action, direkt aus dem aktuellen Cache-Stand statt einer
+    moeglicherweise schon veralteten Momentaufnahme)."""
+    today_str = _local_now().date().isoformat()
+    cutoff_date = (_local_now() - timedelta(days=SHYFT_ACTIONS_DISPLAY_MAX_DAYS)).date().isoformat()
+    result = []
+    for row in energy_archive.query_household_savings_since(cutoff_date):
+        if row["date"] >= today_str:
+            continue
+        day_start_local = datetime.strptime(row["date"], "%Y-%m-%d").astimezone()
+        result.append({
+            "_id": f"{HOUSEHOLD_SAVINGS_ACTION_ID_PREFIX}_{row['date']}",
+            "Action Name": HOUSEHOLD_SAVINGS_ACTION_NAME,
+            "Action Trigger Type": "Optimizer",
+            "Status": "beendet",
+            "Subtitle": "Rechnerische Ersparnis",
+            "Tooltip": HOUSEHOLD_SAVINGS_TOOLTIP,
+            "Date Start": int(day_start_local.timestamp() * 1000),
+            "Date End": int((day_start_local + timedelta(days=1)).timestamp() * 1000),
+            "Savings": row["savings_eur"],
+            "costsbase": row["costsbase_eur"],
+            "costsopt": row["costsopt_eur"],
+        })
+    return result
+
+
 @app.route("/shyft/actions", methods=["GET"])
 def readShyftActions():
     """Liefert die Aktionsliste fuer die Gerätesteuerung-Tab-Anzeige (die tatsaechliche Ausfuehrung
     gegen die Geraete passiert separat in process_shyft_actions): die vom Addon selbst berechneten
     Aktionen (siehe COMPUTED_ACTIONS_PATH/recompute_actions_from_optimizer_run - kein Bubble-Call
     mehr, siehe CHANGELOG), gemergt mit der addon-eigenen PV-Überschussladen-Rückfalllogik (siehe
-    run_pv_surplus_charging_tick) und der taeglichen Haushaltsstrom-Ersparnis-Dummy-Aktion (siehe
-    _household_savings_action), damit alle drei nahtlos in einer Liste erscheinen.
+    run_pv_surplus_charging_tick), der heutigen (live berechneten) Haushaltsstrom-Ersparnis-Dummy-
+    Aktion (siehe _household_savings_action) und deren archivierten Vortagen (siehe
+    _historical_household_savings_actions/energy_archive.household_savings_daily), damit alle
+    nahtlos in einer Liste erscheinen.
     Fuer die Anzeige auf die letzten SHYFT_ACTIONS_DISPLAY_MAX_DAYS Tage (plus alle noch
     laufenden/geplanten) begrenzt - der Store selbst bleibt vollstaendig erhalten."""
     if is_demo_mode():
@@ -1108,6 +1152,7 @@ def readShyftActions():
     household_action = _household_savings_action()
     if household_action:
         all_actions.append(household_action)
+    all_actions.extend(_historical_household_savings_actions())
     cutoff_ms = (time.time() - SHYFT_ACTIONS_DISPLAY_MAX_DAYS * 86400) * 1000
     visible = [a for a in all_actions if a.get("Date End") is None or a.get("Date End") >= cutoff_ms]
     return jsonify({"status": "success",
@@ -7366,6 +7411,7 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
     _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms)
     recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id, base)
     _record_energy_archive_plan_contribution(input_csv, output_csv, creation_date_ms, base)
+    _record_household_savings_snapshot()
 
 
 # Kaltstart-Fallback fuer _dashboard_sync_since, wenn noch gar kein Lauf gecacht ist - danach

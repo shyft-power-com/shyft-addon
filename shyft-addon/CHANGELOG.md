@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.133
+
+* **"Ersparnis Haushaltsstrom" wird jetzt archiviert** - bisher wurde diese Karte bei jedem Laden frisch nur für den heutigen Tag berechnet und war danach unwiederbringlich weg (Nutzer-Meldung: für vergangene Tage nicht mehr sichtbar). Der jeweils letzte Tageswert wird jetzt fortlaufend festgehalten und erscheint dauerhaft sowohl in der Gerätesteuerung-Historie als auch in der Tages-Detailansicht des Analyse-Tabs.
+* **Analyse-Tab: Einträge jetzt absteigend sortiert** (neuestes zuerst) statt aufsteigend.
+
 ## 0.0.45.132
 
 * **Fix: Log-Zeitstempel, Hoch-/Niedertarif-Fenster (dynamischer Tarif), §14a-Zeitfenster und diverse Tagesgrenzen (Verbrauchs-/Anwesenheitsprognose, Haushaltsstrom-Ersparnis) verließen sich bisher auf die Systemzeitzone des Addon-Containers** (`datetime.now()`/`.astimezone()` ohne Argument) - die ist bei Home-Assistant-Add-ons nicht garantiert korrekt gesetzt und war hier auf UTC statt der echten lokalen Zeitzone. Sichtbar wurde das z.B. an einem Log-Eintrag, der scheinbar VOR dem eigentlichen Aktionsstart lag (tatsächlich exakt um den UTC/Sommerzeit-Versatz von 2 Stunden verschoben). Alle betroffenen Stellen fragen jetzt einmalig (gecacht) die von Home Assistant selbst konfigurierte Zeitzone ab (`GET /api/config`) statt sich auf die Container-Systemzeit zu verlassen.

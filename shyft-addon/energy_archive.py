@@ -89,6 +89,22 @@ def _ensure_schema(conn):
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_completed_actions_date_start ON completed_actions(date_start_ms)")
+    # "Ersparnis Haushaltsstrom" (siehe app._household_savings_action) ist anders als die uebrigen
+    # Aktionstypen kein diskretes Start/Ende-Ereignis, sondern eine bei jedem frischen
+    # Optimierungslauf frisch berechnete Tages-Momentaufnahme - je Kalendertag EINE Zeile, die per
+    # Upsert immer wieder ueberschrieben wird (record_household_savings_snapshot), bis der Tag
+    # vorbei ist und die naechste Momentaufnahme unter einem neuen Datum landet. Dadurch haelt der
+    # letzte Aufruf vor Mitternacht automatisch den finalen Tageswert fest, ohne eigene
+    # Tageswechsel-Erkennung.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS household_savings_daily (
+            date TEXT PRIMARY KEY,
+            costsbase_eur REAL,
+            costsopt_eur REAL,
+            savings_eur REAL,
+            updated_at TEXT NOT NULL
+        )
+    """)
 
 
 def _accumulate_open_segment(row, at):
@@ -216,7 +232,7 @@ _GROUP_EXPR_BY_GRANULARITY = {
 
 
 def query_summary(granularity, start_iso=None, end_iso=None):
-    "Je Periode (siehe _GROUP_EXPR_BY_GRANULARITY) aufsummierte Verbrauchs-/Kosten-/Ersparnis-Werte, aeltestes zuerst. start_iso/end_iso (siehe hour_key) grenzen optional auf hour_start_utc >= start_iso bzw. < end_iso ein."
+    "Je Periode (siehe _GROUP_EXPR_BY_GRANULARITY) aufsummierte Verbrauchs-/Kosten-/Ersparnis-Werte, neuestes zuerst (Nutzer-Vorgabe). start_iso/end_iso (siehe hour_key) grenzen optional auf hour_start_utc >= start_iso bzw. < end_iso ein."
     group_expr = _GROUP_EXPR_BY_GRANULARITY.get(granularity, _GROUP_EXPR_BY_GRANULARITY["daily"])
     where, params = [], []
     if start_iso:
@@ -238,13 +254,13 @@ def query_summary(granularity, start_iso=None, end_iso=None):
             FROM hourly_archive
             {where_clause}
             GROUP BY period
-            ORDER BY period
+            ORDER BY period DESC
         """, params).fetchall()
         return [dict(r) for r in rows]
 
 
 def query_day_actions(date_str):
-    "Kompakte Liste erfolgreich ausgefuehrter Aktionen fuer einen Kalendertag (lokale Addon-Zeitzone, wie ueberall sonst im Addon, siehe _local_day_offset in app.py). date_str im Format YYYY-MM-DD."
+    "Kompakte Liste erfolgreich ausgefuehrter Aktionen fuer einen Kalendertag (lokale Addon-Zeitzone, wie ueberall sonst im Addon, siehe _local_day_offset in app.py). date_str im Format YYYY-MM-DD. Haengt am Ende die archivierte 'Ersparnis Haushaltsstrom'-Tageszeile (siehe household_savings_daily) an, falls fuer diesen Tag vorhanden - dieselbe Zeilenform wie completed_actions, damit das Frontend sie identisch behandeln kann."
     day_start_local = datetime.strptime(date_str, "%Y-%m-%d").astimezone()
     day_end_local = day_start_local + timedelta(days=1)
     start_ms = int(day_start_local.timestamp() * 1000)
@@ -257,4 +273,51 @@ def query_day_actions(date_str):
             WHERE date_start_ms >= ? AND date_start_ms < ?
             ORDER BY date_start_ms
         """, (start_ms, end_ms)).fetchall()
+        result = [dict(r) for r in rows]
+    household = query_household_savings_for_day(date_str)
+    if household:
+        result.append({
+            "action_type": "Ersparnis Haushaltsstrom",
+            "savings_eur": household["savings_eur"],
+            "power_kw": None,
+            "date_start_ms": start_ms,
+            "date_end_ms": end_ms,
+        })
+    return result
+
+
+def record_household_savings_snapshot(date_str, costsbase, costsopt, savings):
+    "Schreibt/aktualisiert die tagesaktuelle 'Ersparnis Haushaltsstrom'-Momentaufnahme (siehe app._household_savings_action) unter ihrem lokalen Kalendertag - wird bei JEDEM frischen Optimierungslauf neu aufgerufen (siehe app._write_dashboard_cache), aehnlich record_plan_contribution. Der letzte Aufruf vor Mitternacht haelt so automatisch den finalen Tageswert fest, danach landet die naechste Momentaufnahme unter einem neuen Datum und laesst diese Zeile unveraendert stehen."
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        conn.execute("""
+            INSERT INTO household_savings_daily (date, costsbase_eur, costsopt_eur, savings_eur, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(date) DO UPDATE SET
+                costsbase_eur=excluded.costsbase_eur, costsopt_eur=excluded.costsopt_eur,
+                savings_eur=excluded.savings_eur, updated_at=excluded.updated_at
+        """, (date_str, costsbase, costsopt, savings, datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+
+
+def query_household_savings_for_day(date_str):
+    "Archivierter 'Ersparnis Haushaltsstrom'-Tageswert (oder None) fuer genau diesen Kalendertag - fuer die Tages-Detailansicht im Analyse-Tab (query_day_actions)."
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        row = conn.execute(
+            "SELECT date, costsbase_eur, costsopt_eur, savings_eur FROM household_savings_daily WHERE date = ?",
+            (date_str,)).fetchone()
+        return dict(row) if row else None
+
+
+def query_household_savings_since(cutoff_date_str):
+    "Archivierte 'Ersparnis Haushaltsstrom'-Tageswerte ab (einschliesslich) cutoff_date_str, neuestes zuerst - Basis fuer die Gerätesteuerung-Historie (siehe app._historical_household_savings_actions)."
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        rows = conn.execute("""
+            SELECT date, costsbase_eur, costsopt_eur, savings_eur
+            FROM household_savings_daily
+            WHERE date >= ?
+            ORDER BY date DESC
+        """, (cutoff_date_str,)).fetchall()
         return [dict(r) for r in rows]
