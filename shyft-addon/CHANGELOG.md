@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.134
+
+* **Diagnose-Log für unerwartet negative PV-Überschussladen-Bewertung**: `_pv_surplus_session_value` protokolliert jetzt energy_kwh, die verwendete Stunde, p_buy/p_sell und die rohe Leistungshistorie, sobald costsbase oder costsopt negativ herauskommt (strukturell sollte das nie passieren) - damit sich ein solcher Fall beim nächsten Auftreten nachvollziehen lässt, statt wie bisher spurlos zu bleiben, sobald der Dashboard-Cache überschrieben ist.
+
 ## 0.0.45.133
 
 * **"Ersparnis Haushaltsstrom" wird jetzt archiviert** - bisher wurde diese Karte bei jedem Laden frisch nur für den heutigen Tag berechnet und war danach unwiederbringlich weg (Nutzer-Meldung: für vergangene Tage nicht mehr sichtbar). Der jeweils letzte Tageswert wird jetzt fortlaufend festgehalten und erscheint dauerhaft sowohl in der Gerätesteuerung-Historie als auch in der Tages-Detailansicht des Analyse-Tabs.

@@ -3676,6 +3676,16 @@ def _pv_surplus_session_value(session, config):
         return None, None, None
     costsbase = energy_kwh * ev_price
     costsopt = energy_kwh * feed_in
+    # Diagnose-Log (Nutzer-Vorgabe): energy_kwh/ev_price/feed_in sollten strukturell nie negativ
+    # sein (power_history-Leistungswerte sind immer auf PV_SURPLUS_MIN_KW nach unten gekappt) - ein
+    # negatives costsbase/costsopt ist also unerwartet. Bisher liessen sich weder die Rohwerte noch
+    # die konkrete Stunde im Nachhinein rekonstruieren, sobald der Dashboard-Cache ueberschrieben
+    # war (Nutzer-Beobachtung: costsbase/costsopt widersprachen sich, Ursache nicht mehr nachweisbar).
+    if costsbase < 0 or costsopt < 0:
+        print(f"[Shyft] PV-Überschussladen-Bewertung unerwartet negativ - energy_kwh={energy_kwh!r}, "
+              f"hour_start_utc={hour_start_utc.isoformat()}, ev_price(p_buy)={ev_price!r}, "
+              f"feed_in(p_sell)={feed_in!r}, costsbase={costsbase!r}, costsopt={costsopt!r}, "
+              f"session_start_ms={start_ms!r}, power_history={session.get('power_history')!r}")
     return costsbase - costsopt, costsbase, costsopt
 
 
