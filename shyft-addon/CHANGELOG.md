@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.124
+
+* **Dashboard: "Diagrammdaten konnten nicht geladen werden" erscheint jetzt erst nach 3 aufeinanderfolgenden fehlgeschlagenen Ladeversuchen**, nicht mehr schon beim ersten. Ein einzelner kurzer Ladefehler (z.B. ein verpasster 30-Sekunden-Refresh-Tick) ist nicht ungewöhnlich und soll nicht sofort alarmieren; der Zähler wird bei jedem erfolgreichen Laden zurückgesetzt.
+
 ## 0.0.45.123
 
 * **Raumtemperatur-Chart zeigt jetzt zusätzlich die vom Optimierer simulierte tatsächliche Innentemperatur (T_i aus der output.csv)** als zweite, graue, durchgezogene Linie mit eigener rechter Skala neben der bisherigen Soll-Temperatur-Kurve. Der Tooltip beim Überfahren mit der Maus zeigt beide Werte gemeinsam an.

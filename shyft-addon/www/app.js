@@ -8097,6 +8097,27 @@ function updateOrAppendDashboardWidget(container, key, newEl) {
     }
 }
 
+// Toleriert vereinzelte, kurze Ladefehler (z.B. ein einzelner verpasster 30s-Refresh-Tick) ohne
+// sofort die alarmierende Fehlermeldung zu zeigen - erst DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD
+// aufeinanderfolgende Fehlschlaege gelten als echtes, anhaltendes Problem (Nutzer-Vorgabe: ein
+// einzelner Fehlschlag ist nicht ungewoehnlich). Wird bei jedem erfolgreichen Laden zurueckgesetzt
+// (siehe loadDashboard).
+let dashboardChartLoadFailureCount = 0;
+const DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD = 3;
+
+function showDashboardChartLoadError(container, message) {
+    dashboardChartLoadFailureCount++;
+    if (dashboardChartLoadFailureCount < DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD) {
+        console.log(`[Shyft] Dashboard-Chart-Laden fehlgeschlagen (Versuch ${dashboardChartLoadFailureCount}/${DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD}), noch keine Anzeige: ${message}`);
+        return;
+    }
+    container.innerHTML = '';
+    const error = document.createElement('p');
+    error.className = 'shyftActionsError';
+    error.textContent = message;
+    container.appendChild(error);
+}
+
 // Baut/aktualisiert alle Dashboard-Widgets - sowohl beim ersten Seitenaufruf (container ist leer,
 // jedes updateOrAppendDashboardWidget haengt einfach an) als auch bei jedem periodischen Refresh
 // (siehe refreshDashboard unten): dann wird JEDES Widget einzeln an seinem bestehenden Platz
@@ -8107,13 +8128,10 @@ async function loadDashboard() {
     try {
         const data = await getJson(insideHomeAssistant + '/dashboard/chart-data');
         if (data.status !== 'success') {
-            container.innerHTML = '';
-            const error = document.createElement('p');
-            error.className = 'shyftActionsError';
-            error.textContent = data.message || 'Diagrammdaten konnten nicht geladen werden.';
-            container.appendChild(error);
+            showDashboardChartLoadError(container, data.message || 'Diagrammdaten konnten nicht geladen werden.');
             return;
         }
+        dashboardChartLoadFailureCount = 0;
         // Eine evtl. von einem vorherigen fehlgeschlagenen Ladeversuch (z.B. Addon-Neustart durch
         // auto_update) noch vorhandene Fehlermeldung entfernen - der Erfolgspfad hier unten baut die
         // Widgets nur einzeln per updateOrAppendDashboardWidget auf/aus (kein voller Container-Reset),
@@ -8276,11 +8294,7 @@ async function loadDashboard() {
         }
     } catch (err) {
         console.log(err);
-        container.innerHTML = '';
-        const error = document.createElement('p');
-        error.className = 'shyftActionsError';
-        error.textContent = 'Diagrammdaten konnten nicht geladen werden.';
-        container.appendChild(error);
+        showDashboardChartLoadError(container, 'Diagrammdaten konnten nicht geladen werden.');
     }
 }
 
