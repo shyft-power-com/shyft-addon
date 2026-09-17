@@ -21,6 +21,15 @@ Abweichungen Richtung aktuellem Julia-Modell (so mit dem Product Owner abgestimm
 * Waermepumpen-Leistung deckt exakt den Stundenbedarf, keine 20-%-Modulationsuntergrenze,
   kein alternierendes Ueber-/Unterheizen (Excel-Spalte F).
 * EV-Wirkungsgrad 0.93 / Verlust 0.00004 / Fixverlust 0.2 kWh je Ladestunde (Julia).
+* "Sonstiger Verbraucher" (OD) war im Excel-Modell gar nicht enthalten, ist aber im aktuellen
+  Julia-Modell aktiv: es laeuft (mit fixer Leistung ``otherDevice_P``) genau dann, wenn ``p_buy``
+  unter dem in ``OD_running_hours`` hinterlegten Schwellenpreis liegt (Cent/kWh, /100 fuer EUR/kWh
+  - der Name ist eine Altlast, siehe run_SHEMS.jl:137 "is now threshold price (didn't rename the
+  variable)"; eine Mindestlaufzeit gibt es nicht (mehr), der einzige Julia-Codepfad dafuer ist
+  auskommentiert). Base Case wendet dieselbe Schwelle an wie der Optimierer (Nutzer-Vorgabe) - fuer
+  dieses Geraet selbst ergibt sich dadurch strukturell KEINE Ersparnis (beide Modelle treffen exakt
+  dieselbe Ein/Aus-Entscheidung), sein Verbrauch steht aber, genau wie beim Optimierer, den anderen
+  Verbrauchern nicht mehr aus PV/Batterie zur Verfuegung.
 
 Rueckgabe (Excel-Referenzen in Klammern):
   netProfitBase48HoursSum : float   - Gesamtkosten Base Case inkl. Restwerte (O106);
@@ -33,6 +42,9 @@ Rueckgabe (Excel-Referenzen in Klammern):
                                        Vergleichs-Traces, kein Excel-Aequivalent; direkt vergleichbar
                                        mit den gleichnamigen Optimierer-Output-Spalten T_i/T_HW/
                                        SOC_B/SOC_EV (SOC_EV normiert 0..1 wie beim Optimierer)
+  ODLoadBaseList           : [float] - Leistung des "Sonstigen Verbrauchers" je Stunde (0 oder
+                                       otherDevice_P) - Debug-Trace, vergleichbar mit der
+                                       Optimierer-Output-Spalte OD_Power
 """
 
 import csv
@@ -59,7 +71,17 @@ _SCALAR_KEYS = (
     "hw_tankSize", "T_supply_max", "hw_soc_min", "fh_size", "fh_eff", "T_i_0", "T_i_min",
     "T_i_buffer", "curve_level", "curve_slope", "ev_soc_norm", "ev_b_size",
     "ev_charge_rate", "ev_soc_0", "p_min", "OptimizerPeriods", "p_gas",
+    "otherDevice_P", "OD_running_hours",
 )
+# run_SHEMS.jl:137/227-230: OD_running_hours ist trotz des Namens (Altlast, siehe Julia-Kommentar
+# "is now threshold price (didn't rename the variable)") LAENGST keine Mindestlaufzeit mehr, sondern
+# ein Schwellenpreis in Cent/kWh, /100 fuer EUR/kWh - "Sonstiger Verbraucher" laeuft oekonomisch nur,
+# wenn p_buy darunter liegt. Es gibt keine Mindestlaufzeit-Garantie (der einzige Julia-Codepfad dafuer
+# ist auskommentiert). Nutzer-Vorgabe: Base Case wendet dieselbe Schwelle an wie der Optimierer - dann
+# gibt es fuer dieses Geraet selbst strukturell keine Ersparnis (beide Modelle treffen dieselbe
+# Ein/Aus-Entscheidung), was fuer diesen speziellen Aktionstyp korrekt ist. Wichtig bleibt aber, dass
+# sein Verbrauch (wenn an) den anderen Verbrauchern nicht mehr zur Verfuegung steht - siehe "load" unten.
+OD_CENT_TO_EUR = 100.0
 _SERIES_KEYS = ("electkwh", "hotwaterkwh", "PV_generation", "Temperature", "p_buy", "p_sell", "d_ev_kwh")
 _HOURLIST_KEYS = ("heating", "hw_usage_h", "ev_usage_h")
 
@@ -186,6 +208,13 @@ def _compute_base_case(input_csv, state_overrides=None):
     soc_b = min(b_soc_max, p["SOC_b_0_percent"] / 100.0 * b_soc_max)
     b_rate_max = 0.5 * b_soc_max
 
+    # "Sonstiger Verbraucher" (OD) - siehe _SCALAR_KEYS-Kommentar oben: dieselbe Schwellenpreis-
+    # Logik wie run_SHEMS.jl:227-230, damit beide Modelle fuer dieses Geraet dieselbe Ein/Aus-
+    # Entscheidung treffen. otherDevice_P <= 0 bedeutet "kein Geraet konfiguriert" (run_SHEMS.jl:110).
+    od_power = p["otherDevice_P"]
+    od_active = od_power > 0.0
+    od_threshold_eur = p["OD_running_hours"] / OD_CENT_TO_EUR
+
     fh_size = p["fh_size"]
     p_heat_loss = 0.0
     if fh_size > 0 and p["fh_eff"] > 0:
@@ -293,6 +322,15 @@ def _compute_base_case(input_csv, state_overrides=None):
     if soc_ev_after_hour0 is None:
         soc_ev_after_hour0 = soc_ev_end
 
+    # --- Sonstiger Verbraucher (OD): dieselbe Schwellenpreis-Entscheidung wie der Optimierer, siehe
+    # od_active/od_threshold_eur oben - laeuft rein reaktiv je Stunde (kein Vorausplanen noetig, die
+    # Entscheidung haengt nur vom jeweils AKTUELLEN p_buy ab, nicht von einem Mindestlaufzeit-Ziel).
+    od_load = [0.0] * horizon
+    if od_active:
+        for i in range(horizon):
+            if p_buy[i] < od_threshold_eur:
+                od_load[i] = od_power
+
     # --- Batterie (Eigenverbrauch) + Netzsaldo + Kosten -------------------------------
     net_cost_list = [0.0] * horizon
     power_usage_list = [0.0] * horizon
@@ -302,7 +340,11 @@ def _compute_base_case(input_csv, state_overrides=None):
         if i == 1:
             soc_b_after_hour0 = soc_b
         pv_avail = g_e[i] * PV_ETA
-        load = d_e[i] + hp_heat[i] + hp_dhw[i]  # E-Auto laeuft im Base Case nie ueber PV/Batterie (Excel)
+        # E-Auto laeuft im Base Case nie ueber PV/Batterie (Excel) - OD dagegen schon: sein Verbrauch
+        # soll den anderen Verbrauchern (Nutzer-Vorgabe) nicht zusaetzlich zur Verfuegung stehen,
+        # genau wie beim Optimierer, wo PV_OD/B_OD/GR_OD sich denselben PV-/Batterie-Fluss mit den
+        # uebrigen Verbrauchern teilen.
+        load = d_e[i] + hp_heat[i] + hp_dhw[i] + od_load[i]
         net = pv_avail - load
         batt_charge_gross = 0.0
         if net > 1e-9:
@@ -322,7 +364,7 @@ def _compute_base_case(input_csv, state_overrides=None):
         grid -= ev_charge_gross[i]  # E-Auto-Ladung immer aus dem Netz
         # grid > 0: Einspeisung (Ertrag, negative Kosten) | grid < 0: Bezug (Kosten)
         net_cost_list[i] = (-grid * (p_sell[i] if grid > 0 else p_buy[i])) or 0.0  # or 0.0: kein -0.0
-        power_usage_list[i] = d_e[i] + hp_heat[i] + hp_dhw[i] + ev_charge_gross[i] + batt_charge_gross
+        power_usage_list[i] = d_e[i] + hp_heat[i] + hp_dhw[i] + ev_charge_gross[i] + batt_charge_gross + od_load[i]
         soc_b_list[i] = soc_b / b_soc_max * 100.0 if b_soc_max > 0 else 0.0
     soc_b_end = soc_b
     if soc_b_after_hour0 is None:
@@ -358,6 +400,7 @@ def _compute_base_case(input_csv, state_overrides=None):
         "T_HWBaseList": [round(v, 6) for v in t_hw_list],
         "SOC_BBaseList": [round(v, 6) for v in soc_b_list],
         "SOC_EVBaseList": [round(v, 6) for v in soc_ev_list],
+        "ODLoadBaseList": [round(v, 6) for v in od_load],
         # Zustand NACH Stunde 0 (nicht der Endzustand des gesamten Horizonts) - Grundlage fuer den
         # naechsten Aufruf ueber state_overrides (siehe Docstring oben und Aufrufer in app.py).
         "nextState": {

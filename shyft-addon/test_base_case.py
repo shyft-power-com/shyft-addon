@@ -10,7 +10,7 @@ def test_demo_shape():
     result = base_case.compute_base_case(_demo_csv())
     assert set(result) == {
         "netProfitBase48HoursSum", "netProfitBaseList", "PowerUsageBaseList", "nextState",
-        "T_iBaseList", "T_HWBaseList", "SOC_BBaseList", "SOC_EVBaseList",
+        "T_iBaseList", "T_HWBaseList", "SOC_BBaseList", "SOC_EVBaseList", "ODLoadBaseList",
     }
     assert len(result["netProfitBaseList"]) == 48
     assert len(result["PowerUsageBaseList"]) == 48
@@ -18,6 +18,7 @@ def test_demo_shape():
     assert len(result["T_HWBaseList"]) == 48
     assert len(result["SOC_BBaseList"]) == 48
     assert len(result["SOC_EVBaseList"]) == 48
+    assert len(result["ODLoadBaseList"]) == 48
     assert isinstance(result["netProfitBase48HoursSum"], float)
     assert set(result["nextState"]) == {"T_i_0", "T_hw_0", "ev_soc_0", "SOC_b_0_percent"}
 
@@ -66,6 +67,54 @@ def test_next_state_reflects_hour_zero_not_full_horizon():
     result = base_case.compute_base_case(_demo_csv())
     assert 0.0 <= result["nextState"]["SOC_b_0_percent"] <= 100.0
     assert 0.0 <= result["nextState"]["ev_soc_0"] <= 1.0
+
+
+def test_od_runs_only_below_price_threshold():
+    # otherDevice_P=2.0, OD_running_hours=10 -> Schwelle 0.10 EUR/kWh (Julia: /100). p_buy
+    # unterschreitet die Schwelle in Stunde 0+2, nicht in Stunde 1 - OD darf nur dort laufen.
+    header = (
+        "electkwh;heatingkwh;hw_usage_h;heating;hotwaterkwh;ev_usage_h;d_ev_kwh;PV_generation;"
+        "Temperature;p_buy;p_sell;b_soc_max_kWh;SOC_b_0_percent;T_hw_0;hp_max_power;hw_tankSize;"
+        "T_supply_max;hw_soc_min;fh_size;fh_eff;T_i_0;T_i_min;T_i_buffer;curve_level;curve_slope;"
+        "otherDevice_P;otherDevice_SOC;OD_running_hours;ev_soc_norm;ev_b_size;ev_charge_rate;"
+        "ev_soc_0;p_min;OptimizerPeriods;CO;p_gas;CO_0;hp_type;b_soc_min"
+    )
+    rows = [
+        "0.5;0;;;0;;0;0;10;0.05;0.08;0;0;0;3;0;60;44;0;0;20;20;0.3;0;0;2.0;0;10;0;0;0;0;0;3;no;0.1;0;Air-Water;10",
+        "0.5;0;;;0;;0;0;10;0.15;0.08;0;0;0;3;0;60;44;0;0;20;20;0.3;0;0;2.0;0;10;0;0;0;0;0;3;no;0.1;0;Air-Water;10",
+        "0.5;0;;;0;;0;0;10;0.05;0.08;0;0;0;3;0;60;44;0;0;20;20;0.3;0;0;2.0;0;10;0;0;0;0;0;3;no;0.1;0;Air-Water;10",
+    ]
+    result = base_case.compute_base_case("\n".join([header] + rows))
+    assert result["ODLoadBaseList"] == [2.0, 0.0, 2.0]
+    assert result["PowerUsageBaseList"] == [2.5, 0.5, 2.5]
+    assert result["netProfitBaseList"] == [round(2.5 * 0.05, 6), round(0.5 * 0.15, 6), round(2.5 * 0.05, 6)]
+
+
+def test_od_load_reduces_pv_surplus_available_to_other_consumers():
+    # Ohne OD deckt die PV die Grundlast komplett und speist den Rest ein (Ertrag, negative
+    # Kosten). Mit eingeschaltetem OD (gleiche Schwelle, gleicher p_buy) wird derselbe
+    # PV-Ueberschuss zusaetzlich vom "Sonstigen Verbraucher" beansprucht - der Netzbezug (und
+    # damit die Kosten) muessen dadurch steigen, nicht gleich bleiben (Nutzer-Vorgabe: OD-Verbrauch
+    # steht anderen Verbrauchern nicht mehr zur Verfuegung, genau wie beim Optimierer).
+    header = (
+        "electkwh;heatingkwh;hw_usage_h;heating;hotwaterkwh;ev_usage_h;d_ev_kwh;PV_generation;"
+        "Temperature;p_buy;p_sell;b_soc_max_kWh;SOC_b_0_percent;T_hw_0;hp_max_power;hw_tankSize;"
+        "T_supply_max;hw_soc_min;fh_size;fh_eff;T_i_0;T_i_min;T_i_buffer;curve_level;curve_slope;"
+        "otherDevice_P;otherDevice_SOC;OD_running_hours;ev_soc_norm;ev_b_size;ev_charge_rate;"
+        "ev_soc_0;p_min;OptimizerPeriods;CO;p_gas;CO_0;hp_type;b_soc_min"
+    )
+    row_with_od = "0.5;0;;;0;;0;1.0;10;0.20;0.08;0;0;0;3;0;60;44;0;0;20;20;0.3;0;0;2.0;0;100;0;0;0;0;0;1;no;0.1;0;Air-Water;10"
+    row_without_od = "0.5;0;;;0;;0;1.0;10;0.20;0.08;0;0;0;3;0;60;44;0;0;20;20;0.3;0;0;0;0;100;0;0;0;0;0;1;no;0.1;0;Air-Water;10"
+
+    with_od = base_case.compute_base_case("\n".join([header, row_with_od]))
+    without_od = base_case.compute_base_case("\n".join([header, row_without_od]))
+
+    assert without_od["ODLoadBaseList"] == [0.0]
+    assert with_od["ODLoadBaseList"] == [2.0]
+    # ohne OD: PV-Ueberschuss wird eingespeist -> negative Kosten (Ertrag)
+    assert without_od["netProfitBaseList"][0] < 0.0
+    # mit OD: derselbe Ueberschuss reicht nicht mehr, echter Netzbezug -> positive Kosten
+    assert with_od["netProfitBaseList"][0] > 0.0
 
 
 def test_flat_no_pv_no_storage_matches_hand_calc():

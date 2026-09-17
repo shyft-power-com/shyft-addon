@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.130
+
+* **Base Case berücksichtigt jetzt "Sonstiger Verbraucher" (OD).** Bisher war dieser Aktionstyp im Base Case gar nicht modelliert. Er läuft jetzt mit derselben Schwellenpreis-Logik wie der Optimierer (`otherDevice_P` an, sobald `p_buy` unter dem in `OD_running_hours` hinterlegten Schwellenpreis liegt, Cent/kWh) - eine echte Mindestlaufzeit-Garantie gibt es weder hier noch im Optimierer (der einzige Julia-Codepfad dafür ist deaktiviert). Weil beide Modelle dieselbe Ein/Aus-Entscheidung treffen, ergibt sich für dieses Gerät selbst strukturell keine Ersparnis - sein Verbrauch steht aber jetzt auch im Base Case, genau wie beim Optimierer, den anderen Verbrauchern nicht mehr aus PV/Batterie zur Verfügung (statt wie zuvor komplett zu fehlen).
+* Base Case liefert außerdem `ODLoadBaseList` (Leistung des Sonstigen Verbrauchers je Stunde) als zusätzlichen Debug-Trace, analog zu `T_iBaseList`/`T_HWBaseList`/`SOC_BBaseList`/`SOC_EVBaseList` (0.0.45.127).
+
 ## 0.0.45.129
 
 * **Gerätesteuerung: Aktions-Karten überarbeitet** - gleicher Abstand links und rechts vom Geräte-Icon (Zeitspalte hatte vorher unsichtbaren Leerraum, der das Icon zu weit nach rechts schob; der Gerätename hat dadurch jetzt mehr Platz). Ersparnis-Pill zeigt jetzt einen Pfeil schräg nach unten statt nach oben (passt intuitiv zu sinkenden Kosten). Kosten ohne Optimierung, Ersparnis-Pill und Kosten mit Optimierung stehen jetzt in einer Zeile ohne eigene Textbeschriftung ("0,14 €" statt "Ohne Optimierung: 0,14 €"); ein Hinweis-Symbol daneben erklärt beim Überfahren oder Antippen die Bedeutung der drei Werte.
