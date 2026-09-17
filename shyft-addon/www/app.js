@@ -5847,6 +5847,13 @@ function formatEinsatzplanValue(value, unit, decimals) {
 // Reihenfolge/Einheiten/Nachkommastellen der vier Kacheln - dieselben Keys stehen sowohl auf
 // Top-Level von 'einsatzplan' (voller Zeitraum) als auch unter 'einsatzplan.heute'/'.morgen'
 // (siehe _compute_einsatzplan_kpis in app.py).
+// "Berechnet um XX:XX Uhr" in der Einsatzplan-Legende wird farblich markiert, je aelter der
+// zugrundeliegende Optimierungslauf ist - Nutzer-Vorgabe, damit ein veralteter (z.B. wegen eines
+// fehlgeschlagenen stuendlichen Dashboard-Syncs eingefrorener) Plan sofort auffaellt statt nur an
+// falsch wirkenden Chart-Werten erkennbar zu sein.
+const EINSATZPLAN_STALE_WARN_MS = (60 + 10) * 60 * 1000;  // 1:10 h
+const EINSATZPLAN_STALE_ERROR_MS = (2 * 60 + 10) * 60 * 1000;  // 2:10 h
+
 const EINSATZPLAN_STATS = [
     ['stromverbrauch_kwh', 'Stromverbrauch', 'kWh', 0],
     ['netzstrom_preis_cent', 'ø Netzstrom', 'Cent/kWh', 1],
@@ -5901,7 +5908,17 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
 
     const legend = document.createElement('div');
     legend.className = 'einsatzplanLegend';
-    legend.textContent = `Berechnet um ${formatShyftTime(einsatzplan.creation_date)} Uhr, Kennzahlen jeweils für die nächsten ${einsatzplan.hours} Stunden (bzw. in Klammern für die restlichen heutigen Stunden | für morgen).`;
+    const ageMs = Date.now() - einsatzplan.creation_date;
+    const timeSpan = document.createElement('span');
+    timeSpan.textContent = `Berechnet um ${formatShyftTime(einsatzplan.creation_date)} Uhr`;
+    if (ageMs >= EINSATZPLAN_STALE_ERROR_MS) {
+        timeSpan.className = 'einsatzplanLegendStaleError';
+        timeSpan.textContent += ' !';
+    } else if (ageMs >= EINSATZPLAN_STALE_WARN_MS) {
+        timeSpan.className = 'einsatzplanLegendStaleWarn';
+    }
+    legend.appendChild(timeSpan);
+    legend.appendChild(document.createTextNode(`, Kennzahlen jeweils für die nächsten ${einsatzplan.hours} Stunden (bzw. in Klammern für die restlichen heutigen Stunden | für morgen).`));
     if (optimizerRunning) {
         const running = document.createElement('span');
         running.className = 'einsatzplanLegendRunning';
@@ -6646,21 +6663,41 @@ function mostLikelyPresenceState(entry) {
 // Hinweis, keine ~-Markierung. 'learning' -> erst wenige Fahrtage Historie. 'default' -> noch gar
 // kein Fahrtag, Standard-Fahrprofil aktiv. Die kWh-Werte sind exakt die, die auch als d_ev_kwh in
 // die optimizer-input.csv gehen (build_ev_optimizer_fields).
-// "Anwesenheitsprognose"-Ueberschrift (+ Erklaer-Tooltip) fuer den Bereich unter dem
-// "Ladestand Auto"-Chart - Ueberschrift der "Verbrauchsprognose (48h)"-Details.
+// "Prognose im Detail"-Ueberschrift (+ Erklaer-Tooltip) fuer den Bereich unter dem
+// "Ladestand Auto"-Chart - Ueberschrift der aufklappbaren "Prognose im Detail (48h)"-Details.
 function buildPresenceForecastHeading() {
     const subheading = document.createElement('div');
     subheading.className = 'dashboardChartSubheading';
-    subheading.textContent = 'Anwesenheitsprognose';
-    subheading.appendChild(buildTooltip('Statistische Vorhersage aus der bisher geloggten Anwesenheits-/Fahrhistorie: für jede Kombination aus Wochentag und Uhrzeit werden mindestens drei historische Beobachtungen benötigt, sonst greift ein grober Rückfall auf ein Standardprofil (weniger verlässlich).'));
+    subheading.textContent = 'Prognose im Detail';
+    subheading.appendChild(buildTooltip('Statistische Vorhersage aus der bisher geloggten Anwesenheits-/Fahrhistorie: für jede Kombination aus Wochentag und Uhrzeit werden mindestens drei historische Beobachtungen benötigt, sonst greift ein grober Rückfall auf ein Standardprofil (weniger verlässlich). Die Daten in der Detailprognose und im Diagramm können zwischen zwei Optimierungsläufen voneinander abweichen.'));
     return subheading;
+}
+
+// Debounced Sammel-Trigger fuer per Muelleimer-Icon geloeschte Verbrauchsprognose-Stunden (siehe
+// buildCarConsumptionForecastDetails): loest NICHT bei jedem einzelnen Klick sofort eine Neu-
+// Optimierung aus, sondern wartet 10s ab dem letzten Loeschen, falls kurz danach noch weitere
+// Stunden geloescht werden - danach genau ein /trigger-Aufruf (identisch zum "Optimierung
+// anstoßen"-Button, siehe trigger() in index.html), still im Hintergrund (kein alert()).
+const CONSUMPTION_FORECAST_DELETE_TRIGGER_DELAY_MS = 10000;
+let consumptionForecastDeleteTriggerTimer = null;
+
+function scheduleConsumptionForecastOptimizerTrigger() {
+    if (consumptionForecastDeleteTriggerTimer) clearTimeout(consumptionForecastDeleteTriggerTimer);
+    consumptionForecastDeleteTriggerTimer = setTimeout(async () => {
+        consumptionForecastDeleteTriggerTimer = null;
+        try {
+            await postJson(insideHomeAssistant + '/trigger', {});
+        } catch (err) {
+            console.log(err);
+        }
+    }, CONSUMPTION_FORECAST_DELETE_TRIGGER_DELAY_MS);
 }
 
 function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionBasis, presenceForecast) {
     const details = document.createElement('details');
     details.className = 'dashboardConsumptionForecast';
     const summary = document.createElement('summary');
-    summary.textContent = 'Verbrauchsprognose (48h) anzeigen';
+    summary.textContent = 'Prognose im Detail (48h) anzeigen';
     details.appendChild(summary);
     const uncertain = consumptionBasis && consumptionBasis !== 'ok';
     if (uncertain) {
@@ -6674,6 +6711,7 @@ function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionB
     const list = document.createElement('div');
     list.className = 'dashboardConsumptionForecastList';
     labels.forEach((label, i) => {
+        const hourMs = new Date(label).getTime();
         const timeText = new Date(label).toLocaleString('de-DE', {weekday: 'short', hour: '2-digit', minute: '2-digit'}).replace('.', '');
         const marker = uncertain ? '~' : '';
         const state = presenceForecast ? mostLikelyPresenceState(presenceForecast.byLabel[label]) : null;
@@ -6686,8 +6724,35 @@ function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionB
             row.appendChild(dot);
         }
         const text = document.createElement('span');
+        text.className = 'dashboardConsumptionForecastRowText';
         text.textContent = `${marker}${timeText}: ${consumptionKwh[i].toFixed(3)} kWh` + (state ? ` (${state.label})` : '');
         row.appendChild(text);
+        // Muelleimer-Icon: nagelt diese Stunde dauerhaft auf "abwesend, keine Fahrt" fest (siehe
+        // deleteConsumptionForecast/_apply_manual_absence_overrides in app.py) - fuer eine einzelne
+        // Stunde, in der der Nutzer weiss, dass die vorhergesagte Fahrt nicht stattfindet.
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'dashboardConsumptionForecastDelete';
+        del.title = 'Verbrauch für diese Stunde löschen (Auto abwesend, keine Fahrt)';
+        del.textContent = '🗑';
+        del.addEventListener('click', async () => {
+            del.disabled = true;
+            try {
+                const result = await postJson(insideHomeAssistant + '/dashboard/delete-consumption-forecast', {hourMs});
+                if (result.status !== 'success') throw new Error(result.message || 'unbekannter Fehler');
+                row.classList.add('dashboardConsumptionForecastRowDeleted');
+                text.textContent = `${timeText}: 0.000 kWh (abwesend)`;
+                if (state) {
+                    const dot = row.querySelector('.dashboardChartLegendDot');
+                    if (dot) dot.style.background = PRESENCE_STATE_COLORS.steht;
+                }
+                scheduleConsumptionForecastOptimizerTrigger();
+            } catch (err) {
+                console.log(err);
+                del.disabled = false;
+            }
+        });
+        row.appendChild(del);
         list.appendChild(row);
     });
     details.appendChild(list);
@@ -8091,8 +8156,16 @@ async function loadDashboard() {
             ladestandAutoChart.appendChild(buildPresenceForecastHeading());
         }
         if (consumptionForecast) {
-            ladestandAutoChart.appendChild(buildCarConsumptionForecastDetails(
-                consumptionForecast.labels, consumptionForecast.consumptionKwh, consumptionForecast.consumptionBasis, presenceForecast));
+            const consumptionDetails = buildCarConsumptionForecastDetails(
+                consumptionForecast.labels, consumptionForecast.consumptionKwh, consumptionForecast.consumptionBasis, presenceForecast);
+            // updateOrAppendDashboardWidget ERSETZT das komplette 'ladestandAuto'-Widget bei jedem
+            // periodischen Refresh (alle 30s, siehe refreshDashboard) - ein frisches <details>-
+            // Element ist dabei immer zu (Nutzer-Feedback: ein manuell aufgeklapptes Element fiel
+            // dadurch von selbst wieder zu). Offen-Zustand daher hier vom noch existierenden alten
+            // Element uebernehmen, bevor es gleich ersetzt wird.
+            const existingDetails = container.querySelector('[data-dashboard-widget-key="ladestandAuto"] .dashboardConsumptionForecast');
+            if (existingDetails && existingDetails.open) consumptionDetails.open = true;
+            ladestandAutoChart.appendChild(consumptionDetails);
         }
         // Unconditional wie der Chart selbst (der auch ohne konfiguriertes Auto leer/flach
         // gerendert wird) - kein configData-Gate noetig, das wegen des parallelen

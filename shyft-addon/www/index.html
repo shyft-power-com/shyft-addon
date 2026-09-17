@@ -16,6 +16,7 @@
             --color-input-bg: #ffffff;
             --color-input-border: #d5dbd9;
             --color-error: #e74c3c;
+            --color-warning: #e67e22;
             --color-tooltip-bg: #091747;
             --color-tooltip-text: #ffffff;
             --page-padding: 24px;
@@ -37,6 +38,7 @@
                 --color-input-bg: #0f1830;
                 --color-input-border: #2a3a5c;
                 --color-error: #ff7a6e;
+                --color-warning: #ffa74d;
                 --color-tooltip-bg: #1c2b4d;
                 --color-tooltip-text: #eef2f7;
             }
@@ -1643,6 +1645,16 @@
             color: var(--color-text-secondary);
             margin-top: 0.6em;
         }
+        /* "Berechnet um XX:XX Uhr": orange ab 1:10h, rot (+ Ausrufezeichen im Text) ab 2:10h Alter
+           des zugrundeliegenden Optimierungslaufs - siehe EINSATZPLAN_STALE_WARN_MS/-ERROR_MS. */
+        .einsatzplanLegendStaleWarn {
+            color: var(--color-warning);
+            font-weight: 600;
+        }
+        .einsatzplanLegendStaleError {
+            color: var(--color-error);
+            font-weight: 700;
+        }
         .einsatzplanLegendRunning {
             color: var(--color-accent);
             font-weight: 600;
@@ -1698,6 +1710,30 @@
             gap: 0.4em;
             padding: 0.1em 0;
         }
+        .dashboardConsumptionForecastRowText {
+            flex: 1;
+        }
+        /* Gleiches Muster wie .htWindowDelete (Zeitfenster-Loeschen in der Konfiguration). */
+        .dashboardConsumptionForecastDelete {
+            background: none;
+            border: none;
+            color: var(--color-error);
+            font-size: 1em;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0.1em 0.2em;
+            flex-shrink: 0;
+        }
+        .dashboardConsumptionForecastDelete:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+        .dashboardConsumptionForecastRowDeleted {
+            opacity: 0.6;
+        }
+        .dashboardConsumptionForecastRowDeleted .dashboardConsumptionForecastDelete {
+            visibility: hidden;
+        }
         .dashboardChartTitle {
             font-family: var(--font-heading);
             font-weight: 600;
@@ -1716,7 +1752,8 @@
             font-weight: 600;
             font-size: 0.85em;
             color: var(--color-text);
-            margin-top: -0.2em;
+            /* Nutzer-Vorgabe: etwas mehr Abstand zum Chart darueber (vorher -0.2em, wirkte zu eng). */
+            margin-top: 0.5em;
             margin-bottom: 0.3em;
         }
         .dashboardChartLegend {

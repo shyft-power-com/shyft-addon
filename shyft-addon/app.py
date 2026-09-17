@@ -2030,6 +2030,51 @@ def _apply_planned_car_trips(probabilities, standing_probabilities, driving_prob
     if changed:
         _write_planned_car_trips(remaining)
 
+
+# "Verbrauch löschen" (Muelleimer-Icon in der Verbrauchsprognose, Dashboard): der Nutzer weiss es
+# fuer eine einzelne Stunde besser als die gelernte Prognose (z.B. eine faelschlich vorhergesagte
+# Fahrt). Anders als PLANNED_CAR_TRIPS_PATH (fuegt eine ZUSAETZLICHE Fahrt hinzu) wird hier eine
+# Stunde auf "abwesend, aber keine Fahrt" (steht, 0 kWh) festgenagelt, bis sie in der Vergangenheit
+# liegt - siehe deleteConsumptionForecast.
+CAR_PRESENCE_MANUAL_ABSENCE_PATH = "/data/car_presence_manual_absence.json"
+
+
+def _read_manual_absence_hours():
+    "Liste der per Muelleimer-Icon geloeschten Stunden (Unix-ms, volle Stunde) - bereits vergangene werden beim Lesen automatisch entfernt, kein separater Cleanup-Job noetig (gleiches Muster wie _read_planned_car_trips)."
+    try:
+        with open(CAR_PRESENCE_MANUAL_ABSENCE_PATH, "r") as f:
+            hours_ms = json.load(f)
+    except Exception:
+        hours_ms = []
+    now_ms = time.time() * 1000
+    active = [h for h in hours_ms if isinstance(h, (int, float)) and h + 3600000 > now_ms]
+    if len(active) != len(hours_ms):
+        _write_manual_absence_hours(active)
+    return active
+
+
+def _write_manual_absence_hours(hours_ms):
+    try:
+        with open(CAR_PRESENCE_MANUAL_ABSENCE_PATH, "w") as f:
+            json.dump(hours_ms, f)
+    except Exception as e:
+        print("[Shyft] Manuelle Abwesenheits-Korrekturen konnten nicht gespeichert werden:", repr(e))
+
+
+def _apply_manual_absence_overrides(probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, start):
+    "Erzwingt fuer jede per Muelleimer-Icon geloeschte Stunde den Zustand 'steht' mit 0 kWh Verbrauch - NACH _apply_planned_car_trips aufgerufen, damit eine manuelle Korrektur immer Vorrang vor einer geplanten Zusatzfahrt hat."
+    manual_hours = set(int(h) for h in _read_manual_absence_hours())
+    if not manual_hours:
+        return
+    for i in range(len(consumption_kwh_forecast)):
+        hour_ms = int((start + timedelta(hours=i)).timestamp() * 1000)
+        if hour_ms in manual_hours:
+            probabilities[i] = 0.0
+            standing_probabilities[i] = 1.0
+            driving_probabilities[i] = 0.0
+            consumption_kwh_forecast[i] = 0.0
+
+
 def _recency_weight(sample_dt, now):
     "Exponentieller Abfall nach Alter - siehe CAR_PRESENCE_RECENCY_HALF_LIFE_DAYS."
     age_days = max(0.0, (now - sample_dt).total_seconds() / 86400.0)
@@ -2279,6 +2324,7 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
     # current_connected: falls das Auto laut Live-Sensor JETZT eingesteckt ist, obwohl eine Fahrt
     # noch laufen sollte, wird die Realitaet bevorzugt (siehe _apply_planned_car_trips).
     _apply_planned_car_trips(probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, start, current_connected)
+    _apply_manual_absence_overrides(probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, start)
 
     low_data_basis = [consumption_basis != "ok"] * hours
 
@@ -2484,6 +2530,26 @@ def planCarTrip():
     _write_planned_car_trips(trips)
 
     return sync_site_data()
+
+
+@app.route("/dashboard/delete-consumption-forecast", methods=["POST"])
+def deleteConsumptionForecast():
+    """Muelleimer-Icon in der Verbrauchsprognose (Dashboard, unter 'Ladestand Auto'): nagelt die
+    angegebene Stunde dauerhaft auf 'abwesend, keine Fahrt' fest (siehe
+    _apply_manual_absence_overrides). Stoesst ANDERS als planCarTrip absichtlich KEINE sofortige
+    Neu-Optimierung an - das Frontend sammelt mehrere kurz hintereinander geloeschte Stunden erst
+    per 10s-Debounce und stoesst danach einmal /trigger an, statt bei jedem Klick einen eigenen
+    Optimierungslauf zu verursachen."""
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        hour_ms = int(data.get("hourMs"))
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "hourMs fehlt oder ist ungültig."}), 400
+    hours = _read_manual_absence_hours()
+    if hour_ms not in hours:
+        hours.append(hour_ms)
+        _write_manual_absence_hours(hours)
+    return jsonify({"status": "success"})
 
 
 def mapToResponse(response):
@@ -7703,7 +7769,7 @@ def _on_grid_power_live_update(entity_id, old_state, new_state):
 
 
 def _on_wallbox_state_live_update(entity_id, old_state, new_state):
-    "Reagiert sofort auf einen geaenderten Wallbox-Verbindungsstatus: loggt ihn fuer die Anwesenheitsprognose (die aktuelle Stunde spiegelt beim naechsten Abruf ohnehin den Live-Status, aber ein sofortiger Log-Eintrag verbessert die Verweildauer-Genauigkeit fuer die Sicherheitsheuristik), wertet die PV-Ueberschuss-Regelung neu aus (z.B. sofortiger Stopp statt bis zu 5 Minuten Verzoegerung, wenn das Auto gerade abgesteckt wurde) und stoesst bei 'Auto kann jetzt laden' (Uebergang False/None -> True, siehe classify_wallbox_connection_state) eine volle Neu-Optimierung an (derselbe Sync wie der 'Optimierung anstoßen'-Button, siehe sync_site_data) - der Optimierer bekommt so sofort den neuen Auto-Status samt aktualisierter Anwesenheitsprognose, statt bis zu einer Stunde auf den naechsten stuendlichen Sync zu warten."
+    "Reagiert sofort auf einen geaenderten Wallbox-Verbindungsstatus: loggt ihn fuer die Anwesenheitsprognose (die aktuelle Stunde spiegelt beim naechsten Abruf ohnehin den Live-Status, aber ein sofortiger Log-Eintrag verbessert die Verweildauer-Genauigkeit fuer die Sicherheitsheuristik), wertet die PV-Ueberschuss-Regelung neu aus (z.B. sofortiger Stopp statt bis zu 5 Minuten Verzoegerung, wenn das Auto gerade abgesteckt wurde) und stoesst bei JEDEM Wechsel von 'kann laden' auf 'kann nicht laden' oder umgekehrt (siehe classify_wallbox_connection_state) eine volle Neu-Optimierung an (derselbe Sync wie der 'Optimierung anstoßen'-Button, siehe sync_site_data) - der Optimierer bekommt so sofort den neuen Auto-Status samt aktualisierter Anwesenheitsprognose, statt bis zu einer Stunde auf den naechsten stuendlichen Sync zu warten."
     with app.app_context():
         try:
             sync_car_presence_log()
@@ -7720,8 +7786,11 @@ def _on_wallbox_state_live_update(entity_id, old_state, new_state):
             if is_chargeable is True and was_chargeable is not True:
                 print("[Shyft] Wallbox: 'Auto kann jetzt laden' - stosse Neu-Optimierung an.")
                 sync_site_data()
+            elif is_chargeable is False and was_chargeable is not False:
+                print("[Shyft] Wallbox: 'Auto kann nicht mehr laden' - stosse Neu-Optimierung an.")
+                sync_site_data()
         except Exception as e:
-            print("[Shyft] Live-getriggerte Neu-Optimierung (Auto kann jetzt laden) fehlgeschlagen:", repr(e))
+            print("[Shyft] Live-getriggerte Neu-Optimierung (Wallbox-Statuswechsel) fehlgeschlagen:", repr(e))
 
 
 def _on_battery_soc_live_update(entity_id, old_state, new_state):

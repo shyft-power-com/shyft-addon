@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.45.121
+
+* **Einsatzplan: "Berechnet um XX:XX Uhr" wird jetzt farblich markiert, je älter der zugrundeliegende Optimierungslauf ist** - orange ab 1:10 Std., rot mit zusätzlichem Ausrufezeichen ab 2:10 Std. Alter, damit ein eingefrorener Plan (z.B. nach einem fehlgeschlagenen stündlichen Dashboard-Sync) sofort auffällt statt nur an falsch wirkenden Chart-Werten erkennbar zu sein.
+* **Dashboard: etwas mehr Abstand zwischen dem "Ladestand Auto"-Chart und der Überschrift darunter.**
+* **"Anwesenheitsprognose" und "Verbrauchsprognose" heißen jetzt einheitlich "Prognose im Detail"** (Ladestand Auto). Der Hinweistext (?) weist zusätzlich darauf hin, dass Detailprognose und Diagramm zwischen zwei Optimierungsläufen leicht voneinander abweichen können.
+* **Neu: einzelne Stunden in der "Prognose im Detail" können jetzt per Mülleimer-Icon gelöscht werden**, wenn die vorhergesagte Fahrt nicht stattfinden wird - die Stunde gilt danach als "abwesend" mit 0 kWh Verbrauch. Nach 10 Sekunden ohne weitere Löschung (falls mehrere Stunden nacheinander korrigiert werden) wird automatisch ein neuer Optimierungslauf angestoßen.
+* **Fix: ein aufgeklapptes "Prognose im Detail" klappte sich beim automatischen 30-Sekunden-Refresh des Dashboards wieder von selbst zu.** Der Aufklapp-Zustand wird jetzt über den Refresh hinweg beibehalten.
+* **Neu: springt der Wallbox-Status von "kann laden" auf "kann nicht laden" (Auto abgesteckt), wird jetzt ebenfalls sofort eine neue Optimierung angestoßen** - bisher löste nur der umgekehrte Übergang ("kann jetzt laden") sofort aus, der Fall "Auto abgesteckt" musste bis zu eine Stunde auf den nächsten stündlichen Sync warten.
+
 ## 0.0.45.120
 
 * **Fix: Energiefluss-Widget zeigte animierten Stromfluss zu einem ausgeschalteten Gerät (z.B. Wärmepumpe), wenn ein anderes Gerät auf derselben gemeinsamen Zuleitung aktiv war (z.B. Auto lädt).** Wärmepumpe+Auto sowie Sonstiges+Haushaltsstrom teilen sich je eine Zuleitung vom Haus - die wurde bisher über ihre gesamte Länge mit der kombinierten Last beider Geräte animiert, auch auf dem Teilstück hinter dem näher liegenden Gerät, das eigentlich nur noch die Last des weiter entfernten Geräts führt. Die Zuleitung wird jetzt am Abzweigpunkt des näheren Geräts in zwei Segmente geteilt (Desktop- und Mobil-Layout), jedes mit nur der tatsächlich dort fließenden Last.
