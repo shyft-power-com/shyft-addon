@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.128
+
+* **Raumtemperatur-Chart: zweite Kurve heißt jetzt "Innenraum"** (statt "Innenräume / Gebäude", war zu lang für die Legende).
+* **Tooltip beim Überfahren mit der Maus ist jetzt dreizeilig**: Zeitpunkt, "Heizung-Soll: X °C", "Innenraum: Y °C" - statt einer einzelnen, mit "·" zusammengequetschten Zeile.
+
 ## 0.0.45.127
 
 * **Base Case liefert jetzt auch Temperatur-/Ladestand-Traces je Stunde** (`T_iBaseList`, `T_HWBaseList`, `SOC_BBaseList`, `SOC_EVBaseList` in `base_case.compute_base_case`, durchgereicht über den Dashboard-Cache als `base_t_i`/`base_t_hw`/`base_soc_b`/`base_soc_ev` in `/dashboard/chart-data`) - reine Debug-/Vergleichswerte, ändern nichts an den bisherigen Kostenzahlen, machen aber den direkten Vergleich mit den gleichnamigen Optimierer-Output-Spalten `T_i`/`T_HW`/`SOC_B`/`SOC_EV` möglich.

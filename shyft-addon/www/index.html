@@ -1806,7 +1806,11 @@
             font-size: 11px;
             padding: 4px 8px;
             border-radius: 4px;
-            white-space: nowrap;
+            /* pre-line statt nowrap: respektiert explizite "\n"-Zeilenumbrueche (siehe secondSeries
+               in buildLineChart, dreizeiliger Tooltip), ein einzeiliger Tooltip ohne "\n" bleibt
+               unveraendert einzeilig. */
+            white-space: pre-line;
+            text-align: center;
             pointer-events: none;
             z-index: 5;
         }

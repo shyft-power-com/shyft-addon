@@ -6310,11 +6310,18 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         const idx = Math.max(0, Math.min(lastIndex, Math.round((svgX - paddingLeft) / plotWidth * lastIndex)));
         const d = new Date(labels[idx]);
         const dateText = d.toLocaleString('de-DE', {weekday: 'short', hour: '2-digit', minute: '2-digit'}).replace('.', '');
-        let text = `${dateText}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
+        let text;
         if (secondSeries) {
+            // Dreizeilig (Nutzer-Vorgabe): Zeitpunkt, dann je eine Zeile pro Kurve, jeweils mit
+            // ihrer eigenen Beschriftung (primaryLabel fuer die Hauptreihe, secondSeries.label fuer
+            // die zweite) statt einer einzelnen, mit "·" zusammengequetschten Zeile.
             const v2 = secondSeries.values[idx];
             const unit2 = secondSeries.unit !== undefined ? secondSeries.unit : unit;
-            text += ` · ${secondSeries.label}: ${v2.toFixed(secondSeries.decimals ?? 1)}${unit2 ? ' ' + unit2 : ''}`;
+            const primaryText = `${primaryLabel || subtitle || title}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
+            const secondaryText = `${secondSeries.label}: ${v2.toFixed(secondSeries.decimals ?? 1)}${unit2 ? ' ' + unit2 : ''}`;
+            text = `${dateText}\n${primaryText}\n${secondaryText}`;
+        } else {
+            text = `${dateText}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
         }
         tooltip.textContent = text;
         tooltip.style.left = (points[idx][0] * scale).toFixed(1) + 'px';
@@ -8211,7 +8218,7 @@ async function loadDashboard() {
             // (Nutzer-Vorgabe), Tooltip zeigt beide Werte gemeinsam an.
             secondSeries: {
                 values: data.t_i,
-                label: 'Innenräume / Gebäude',
+                label: 'Innenraum',
                 color: 'var(--color-text-secondary)',
                 decimals: 1,
             },
