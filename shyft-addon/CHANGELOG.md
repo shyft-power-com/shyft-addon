@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.123
+
+* **Raumtemperatur-Chart zeigt jetzt zusätzlich die vom Optimierer simulierte tatsächliche Innentemperatur (T_i aus der output.csv)** als zweite, graue, durchgezogene Linie mit eigener rechter Skala neben der bisherigen Soll-Temperatur-Kurve. Der Tooltip beim Überfahren mit der Maus zeigt beide Werte gemeinsam an.
+
 ## 0.0.45.122
 
 * **Fix: "Diagrammdaten konnten nicht geladen werden" blieb auf dem Dashboard stehen, obwohl die Daten beim nächsten Aktualisierungslauf schon wieder da waren** (z.B. nach einem kurzen Ladefehler während eines Addon-Neustarts durch `auto_update`). Der Erfolgspfad baut die Widgets nur einzeln auf, ohne die zuvor eingeblendete Fehlermeldung zu kennen - sie wird jetzt beim nächsten erfolgreichen Laden explizit entfernt.

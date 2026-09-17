@@ -1111,7 +1111,7 @@ def readDashboardChartData():
 
     # output_csv isn't necessarily the same length as input_csv (the optimizer's own horizon can
     # be shorter) - it's assumed to start at the same creation_date regardless, just with fewer rows
-    output_labels, t_i_target, t_hw, soc_b, soc_ev = [], [], [], [], []
+    output_labels, t_i_target, t_i, t_hw, soc_b, soc_ev = [], [], [], [], [], []
     opt_cost, opt_usage = [], []
     output_rows = []
     if output_csv:
@@ -1120,6 +1120,10 @@ def readDashboardChartData():
             for i, row in enumerate(output_rows):
                 output_labels.append((start + timedelta(hours=i)).isoformat())
                 t_i_target.append(_safe_float(row.get("T_i_Target")))
+                # T_i: die vom Optimierer SIMULIERTE tatsaechliche Innentemperatur (nicht der Sollwert
+                # T_i_Target und kein Live-Sensorwert) - zweite Kurve im Raumtemperatur-Chart
+                # (Nutzer-Vorgabe), eigene rechte Skala, damit ein Chart beide Werte zeigt.
+                t_i.append(_safe_float(row.get("T_i")))
                 t_hw.append(_safe_float(row.get("T_HW")))
                 soc_b.append(_safe_float(row.get("SOC_B")))
                 soc_ev.append(_safe_float(row.get("SOC_EV")))
@@ -1159,8 +1163,8 @@ def readDashboardChartData():
     now_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     skip = max(0, int((now_hour - start).total_seconds() // 3600))
     labels, pv_generation, p_buy, temperature = labels[skip:], pv_generation[skip:], p_buy[skip:], temperature[skip:]
-    output_labels, t_i_target, t_hw, soc_b, soc_ev = (
-        output_labels[skip:], t_i_target[skip:], t_hw[skip:], soc_b[skip:], soc_ev[skip:])
+    output_labels, t_i_target, t_i, t_hw, soc_b, soc_ev = (
+        output_labels[skip:], t_i_target[skip:], t_i[skip:], t_hw[skip:], soc_b[skip:], soc_ev[skip:])
     base_cost, base_usage = base_cost[skip:], base_usage[skip:]
     opt_cost, opt_usage = opt_cost[skip:], opt_usage[skip:]
 
@@ -1172,6 +1176,7 @@ def readDashboardChartData():
         "temperature": temperature,
         "output_labels": output_labels,
         "t_i_target": t_i_target,
+        "t_i": t_i,
         "t_hw": t_hw,
         "soc_b": soc_b,
         "soc_ev": soc_ev,

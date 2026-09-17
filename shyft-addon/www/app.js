@@ -6001,11 +6001,13 @@ function computePvEnergySummary(labels, values) {
 //                 should always show its full possible range (Ladestand)
 //   decimals    - digits shown in the hover/tap tooltip
 function buildLineChart(title, unit, labels, values, options = {}) {
-    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null} = options;
+    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null} = options;
     const width = 600, height = 220;
     // presenceForecast reserves an extra strip just above the x-axis labels for the
-    // Anwesenheitsprognose overlay bar (see below)
-    const paddingLeft = 45, paddingRight = 15, paddingTop = 15, paddingBottom = presenceForecast ? 38 : 26;
+    // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
+    // eigener rechter Skala, siehe unten) braucht zusaetzlichen Platz rechts fuer ihre eigene
+    // Achsenbeschriftung.
+    const paddingLeft = 45, paddingRight = secondSeries ? 34 : 15, paddingTop = 15, paddingBottom = presenceForecast ? 38 : 26;
     const plotWidth = width - paddingLeft - paddingRight;
     const plotHeight = height - paddingTop - paddingBottom;
 
@@ -6045,6 +6047,28 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         wrapper.appendChild(legend);
     }
 
+    // Kleine Legende, damit die Hauptkurve (linke Skala) von der zweiten (rechte Skala, siehe
+    // secondSeries) unterscheidbar bleibt - beide Skalen sind unabhaengig voneinander, die Farben
+    // allein wuerden das nicht selbsterklaerend machen.
+    if (secondSeries) {
+        const legend = document.createElement('div');
+        legend.className = 'dashboardChartLegend';
+        for (const [color, label] of [
+            ['var(--color-accent)', subtitle || title],
+            [secondSeries.color || 'var(--color-text-secondary)', secondSeries.label],
+        ]) {
+            const item = document.createElement('span');
+            item.className = 'dashboardChartLegendItem';
+            const dot = document.createElement('span');
+            dot.className = 'dashboardChartLegendDot';
+            dot.style.background = color;
+            item.appendChild(dot);
+            item.appendChild(document.createTextNode(label));
+            legend.appendChild(item);
+        }
+        wrapper.appendChild(legend);
+    }
+
     if (!values || values.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'shyftActionsEmpty';
@@ -6070,6 +6094,28 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         paddingLeft + (i / lastIndex) * plotWidth,
         paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight,
     ]);
+
+    // Zweite Kurve mit EIGENER rechter Skala (Nutzer-Vorgabe, siehe secondSeries oben) - unabhaengig
+    // von der Hauptreihe skaliert (eigenes Min/Max +10% Puffer, gleiches Muster wie yMin/yMax),
+    // damit beide Kurven trotz ggf. sehr unterschiedlicher Wertebereiche gut lesbar bleiben. Immer
+    // eine einfache durchgezogene Linie - kein Flaechenchart, kein Stepped/Slope-Coloring,
+    // unabhaengig davon, wie die Hauptreihe gerendert wird.
+    let points2 = null, yMin2 = 0, yMax2 = 1, yRange2 = 1, secondLineMarkup = '';
+    if (secondSeries) {
+        const rawMin2 = Math.min(...secondSeries.values);
+        const rawMax2 = Math.max(...secondSeries.values);
+        const valueRange2 = (rawMax2 - rawMin2) || 1;
+        yMin2 = rawMin2 - valueRange2 * 0.1;
+        yMax2 = rawMax2 + valueRange2 * 0.1;
+        yRange2 = yMax2 - yMin2;
+        points2 = secondSeries.values.map((v, i) => [
+            paddingLeft + (i / lastIndex) * plotWidth,
+            paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight,
+        ]);
+        const color2 = secondSeries.color || 'var(--color-text-secondary)';
+        const linePath2 = points2.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+        secondLineMarkup = `<path d="${linePath2}" fill="none" stroke="${color2}" stroke-width="2" />`;
+    }
 
     function colorForValue(v) {
         if (!colorBands) return 'var(--color-accent)';
@@ -6168,6 +6214,17 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="end">${round ? Math.round(v) : v.toFixed(1)}</text>`;
     }).join('');
 
+    // Rechte Achsenbeschriftung fuer secondSeries - eigene Skala, also eigene Ticks (gleiches Muster
+    // wie yLabels links), am rechten Rand nach aussen ausgerichtet.
+    let yLabels2 = '';
+    if (secondSeries) {
+        const yTicks2 = [yMax2, (yMin2 + yMax2) / 2, yMin2];
+        yLabels2 = yTicks2.map(v => {
+            const y = (paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight).toFixed(1);
+            return `<text x="${(width - paddingRight + 6).toFixed(1)}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="start">${v.toFixed(secondSeries.decimals ?? 1)}</text>`;
+        }).join('');
+    }
+
     // vertical marker wherever the local calendar date changes between two consecutive hourly
     // points - shown on every chart so a day boundary is easy to spot regardless of which
     // variable is plotted
@@ -6211,11 +6268,14 @@ function buildLineChart(title, unit, labels, values, options = {}) {
             <line x1="${paddingLeft}" y1="${baseline.toFixed(1)}" x2="${width - paddingRight}" y2="${baseline.toFixed(1)}" stroke="var(--color-border)" />
             ${areaMarkup}
             ${lineMarkup}
+            ${secondLineMarkup}
             ${presenceMarkup}
             ${dayBoundaryMarkup}
             ${yLabels}
+            ${yLabels2}
             ${xLabels}
             <circle class="dashboardChartMarker" r="4.5" cx="0" cy="0" visibility="hidden" />
+            ${secondSeries ? '<circle class="dashboardChartMarker dashboardChartMarkerSecond" r="4.5" cx="0" cy="0" visibility="hidden" />' : ''}
         </svg>`;
     wrapper.appendChild(chartContainer);
 
@@ -6233,10 +6293,13 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 
     const svgEl = chartContainer.querySelector('svg');
     const marker = chartContainer.querySelector('.dashboardChartMarker');
+    const marker2 = secondSeries ? chartContainer.querySelector('.dashboardChartMarkerSecond') : null;
 
     // Sichtbarer Punkt auf der Linie an der gerade ausgewaehlten Stunde - vor allem fuers Touch-
     // Swipen auf dem Handy gedacht (siehe Nutzer-Feedback): der Finger verdeckt die beruehrte
     // Stelle selbst, ohne einen Marker war dort nicht erkennbar, welche Stunde man gerade trifft.
+    // Zeigt bei secondSeries beide Werte im selben Tooltip an (Nutzer-Vorgabe), statt zwei getrennte
+    // Tooltips zu ueberlagern.
     function showTooltip(clientX) {
         const rect = svgEl.getBoundingClientRect();
         if (rect.width === 0) return;
@@ -6245,18 +6308,30 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         const idx = Math.max(0, Math.min(lastIndex, Math.round((svgX - paddingLeft) / plotWidth * lastIndex)));
         const d = new Date(labels[idx]);
         const dateText = d.toLocaleString('de-DE', {weekday: 'short', hour: '2-digit', minute: '2-digit'}).replace('.', '');
-        tooltip.textContent = `${dateText}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
+        let text = `${dateText}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
+        if (secondSeries) {
+            const v2 = secondSeries.values[idx];
+            const unit2 = secondSeries.unit !== undefined ? secondSeries.unit : unit;
+            text += ` · ${secondSeries.label}: ${v2.toFixed(secondSeries.decimals ?? 1)}${unit2 ? ' ' + unit2 : ''}`;
+        }
+        tooltip.textContent = text;
         tooltip.style.left = (points[idx][0] * scale).toFixed(1) + 'px';
         tooltip.style.top = (points[idx][1] * scale).toFixed(1) + 'px';
         tooltip.hidden = false;
         marker.setAttribute('cx', points[idx][0].toFixed(1));
         marker.setAttribute('cy', points[idx][1].toFixed(1));
         marker.setAttribute('visibility', 'visible');
+        if (marker2 && points2) {
+            marker2.setAttribute('cx', points2[idx][0].toFixed(1));
+            marker2.setAttribute('cy', points2[idx][1].toFixed(1));
+            marker2.setAttribute('visibility', 'visible');
+        }
     }
 
     function hideTooltip() {
         tooltip.hidden = true;
         marker.setAttribute('visibility', 'hidden');
+        if (marker2) marker2.setAttribute('visibility', 'hidden');
     }
 
     svgEl.addEventListener('mousemove', e => showTooltip(e.clientX));
@@ -8109,6 +8184,15 @@ async function loadDashboard() {
             stepped: true,
             round: true,
             decimals: 0,
+            // T_i aus dem output.csv: die vom Optimierer simulierte tatsaechliche Innentemperatur
+            // (kein Live-Sensorwert) - zweite Kurve mit eigener rechter Skala, grau, durchgezogen
+            // (Nutzer-Vorgabe), Tooltip zeigt beide Werte gemeinsam an.
+            secondSeries: {
+                values: data.t_i,
+                label: 'Ist (Modell)',
+                color: 'var(--color-text-secondary)',
+                decimals: 1,
+            },
             // Solange "Heizung aktiviert?" (heatpump_heating_activated) explizit auf Aus steht,
             // berechnet das Addon keine Heizungs-Aktionen mehr (siehe compute_heizung_actions in
             // app.py) - der Chart bleibt technisch bestehen, wird aber bewusst als "gerade nicht
