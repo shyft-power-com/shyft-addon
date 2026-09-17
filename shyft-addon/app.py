@@ -1141,6 +1141,12 @@ def readDashboardChartData():
     # Endwert-Korrektur bereits in der letzten Stunde (siehe base_case.py).
     base_cost = cache.get("netProfitBaseList") or []
     base_usage = cache.get("PowerUsageBaseList") or []
+    # Physikalische Zustands-Traces des Base Case (siehe base_case.py) - direkt vergleichbar mit
+    # t_i/t_hw/soc_b/soc_ev oben (gleiche Definition/Einheit, nur aus der Nicht-Shyft-Simulation).
+    base_t_i = cache.get("T_iBaseList") or []
+    base_t_hw = cache.get("T_HWBaseList") or []
+    base_soc_b = cache.get("SOC_BBaseList") or []
+    base_soc_ev = cache.get("SOC_EVBaseList") or []
 
     # Legenden-Summen fuer die Beta-Vergleichscharts: gesamt + heute/morgen (lokale Addon-Zeitzone),
     # ueber den GESAMTEN Optimierungszeitraum (vor dem "ab jetzt"-Slicing weiter unten).
@@ -1166,6 +1172,7 @@ def readDashboardChartData():
     output_labels, t_i_target, t_i, t_hw, soc_b, soc_ev = (
         output_labels[skip:], t_i_target[skip:], t_i[skip:], t_hw[skip:], soc_b[skip:], soc_ev[skip:])
     base_cost, base_usage = base_cost[skip:], base_usage[skip:]
+    base_t_i, base_t_hw, base_soc_b, base_soc_ev = base_t_i[skip:], base_t_hw[skip:], base_soc_b[skip:], base_soc_ev[skip:]
     opt_cost, opt_usage = opt_cost[skip:], opt_usage[skip:]
 
     return jsonify({
@@ -1182,6 +1189,10 @@ def readDashboardChartData():
         "soc_ev": soc_ev,
         "base_cost": base_cost,
         "base_usage": base_usage,
+        "base_t_i": base_t_i,
+        "base_t_hw": base_t_hw,
+        "base_soc_b": base_soc_b,
+        "base_soc_ev": base_soc_ev,
         "opt_cost": opt_cost,
         "opt_usage": opt_usage,
         "cost_summary": cost_summary,

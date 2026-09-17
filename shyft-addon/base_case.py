@@ -29,6 +29,10 @@ Rueckgabe (Excel-Referenzen in Klammern):
                                       die Endwert-Korrektur steckt komplett in der letzten Stunde
   PowerUsageBaseList       : [float] - Brutto-Stromverbrauch je Stunde inkl. EV- und
                                        Batterieladung (P58:P105, neu definiert)
+  T_iBaseList/T_HWBaseList/SOC_BBaseList/SOC_EVBaseList : [float] je Stunde - reine Debug-/
+                                       Vergleichs-Traces, kein Excel-Aequivalent; direkt vergleichbar
+                                       mit den gleichnamigen Optimierer-Output-Spalten T_i/T_HW/
+                                       SOC_B/SOC_EV (SOC_EV normiert 0..1 wie beim Optimierer)
 """
 
 import csv
@@ -205,12 +209,14 @@ def _compute_base_case(input_csv, state_overrides=None):
 
     # --- Waermepumpe Heizung: exakt den Stundenbedarf decken, T_i auf T_i_min halten ---
     hp_heat = [0.0] * horizon
+    t_i_list = [0.0] * horizon  # T_i NACH jeder Stunde - Debug-/Vergleichs-Trace (siehe Rueckgabe "T_iBaseList")
     t_i = t_i_0
     t_i_after_hour0 = None  # Zustand NACH Stunde 0 (siehe compute_base_case/state_overrides) - erfasst zu Beginn von Iteration 1, bevor die dortige Mutation greift
     for i in range(horizon):
         if i == 1:
             t_i_after_hour0 = t_i
         if (i + 1) not in heating_hours or p_heat_loss <= 0.0:
+            t_i_list[i] = t_i
             continue
         t_out_cap = min(t_out[i], t_i_min - C_P_TH * fh_size / p_heat_loss - 4.0)
         span = t_i_min - t_out_cap
@@ -222,16 +228,19 @@ def _compute_base_case(input_csv, state_overrides=None):
         if t_i + drift_no_hp >= t_i_min:
             # Raum ist noch warm genug -> nicht heizen, frei auf T_i_min zutreiben (max. Puffer)
             t_i = min(t_i + drift_no_hp, t_i_buffer_abs)
+            t_i_list[i] = t_i
             continue
         q_thermal = loss_minus_gain + (t_i_min - t_i) * fh_size * C_STORE  # exakt auf T_i_min landen
         hp_heat[i] = _fh_heat_pump_power(q_thermal, heatdis, t_i_min, t_out_cap, p["hp_max_power"])
         t_i = t_i_min
+        t_i_list[i] = t_i
     t_i_end = t_i
     if t_i_after_hour0 is None:  # horizon == 1: die einzige Iteration war bereits Stunde 0
         t_i_after_hour0 = t_i_end
 
     # --- Warmwasser: Sofortbereitstellung; Tank kuehlt zwischen den Zapfungen weiter aus
     hp_dhw = [0.0] * horizon
+    t_hw_list = [t_hw] * horizon  # T_HW NACH jeder Stunde - Debug-/Vergleichs-Trace ("T_HWBaseList"); bleibt beim konstanten Startwert, wenn hw_active False ist
     cop_hw_last = COP_MIN
     t_hw_after_hour0 = None
     if hw_active:
@@ -244,6 +253,7 @@ def _compute_base_case(input_csv, state_overrides=None):
                 hp_dhw[i] = d_hw[i] / cop_hw
             cop_hw_last = cop_hw
             t_hw = t_hw_next
+            t_hw_list[i] = t_hw
     t_hw_end = t_hw
     if t_hw_after_hour0 is None:
         t_hw_after_hour0 = t_hw_end
@@ -251,6 +261,7 @@ def _compute_base_case(input_csv, state_overrides=None):
     # --- E-Auto: sofort bis ev_soc_norm; Fahrten so spaet wie moeglich abdecken ---------
     ev_charge_gross = [0.0] * horizon
     soc_ev = soc_ev_0
+    soc_ev_list = [soc_ev_0] * horizon  # SOC_EV NACH jeder Stunde, normiert (0..1) - Debug-/Vergleichs-Trace ("SOC_EVBaseList"), analog zum Optimierer-Output "SOC_EV"
     soc_ev_after_hour0 = None
     if ev_active:
         eff_rate = max(0.0, ev_rate_max * EV_ETA - EV_FIXED_LOSS_KWH)  # Netto-SOC-Gewinn je voller Ladestunde
@@ -274,8 +285,10 @@ def _compute_base_case(input_csv, state_overrides=None):
                     if gain > 1e-9:
                         ev_charge_gross[i] = (gain + EV_FIXED_LOSS_KWH) / EV_ETA
                         soc_ev = soc_ev * (1 - EV_LOSS) + ev_charge_gross[i] * EV_ETA - EV_FIXED_LOSS_KWH - d_ev[i]
+                        soc_ev_list[i] = soc_ev / ev_b_size if ev_b_size > 0 else 0.0
                         continue
             soc_ev = soc_ev * (1 - EV_LOSS) - d_ev[i]
+            soc_ev_list[i] = soc_ev / ev_b_size if ev_b_size > 0 else 0.0
     soc_ev_end = soc_ev
     if soc_ev_after_hour0 is None:
         soc_ev_after_hour0 = soc_ev_end
@@ -283,6 +296,7 @@ def _compute_base_case(input_csv, state_overrides=None):
     # --- Batterie (Eigenverbrauch) + Netzsaldo + Kosten -------------------------------
     net_cost_list = [0.0] * horizon
     power_usage_list = [0.0] * horizon
+    soc_b_list = [0.0] * horizon  # SOC_B NACH jeder Stunde in % - Debug-/Vergleichs-Trace ("SOC_BBaseList"), analog zum Optimierer-Output "SOC_B"
     soc_b_after_hour0 = None
     for i in range(horizon):
         if i == 1:
@@ -309,6 +323,7 @@ def _compute_base_case(input_csv, state_overrides=None):
         # grid > 0: Einspeisung (Ertrag, negative Kosten) | grid < 0: Bezug (Kosten)
         net_cost_list[i] = (-grid * (p_sell[i] if grid > 0 else p_buy[i])) or 0.0  # or 0.0: kein -0.0
         power_usage_list[i] = d_e[i] + hp_heat[i] + hp_dhw[i] + ev_charge_gross[i] + batt_charge_gross
+        soc_b_list[i] = soc_b / b_soc_max * 100.0 if b_soc_max > 0 else 0.0
     soc_b_end = soc_b
     if soc_b_after_hour0 is None:
         soc_b_after_hour0 = soc_b_end
@@ -336,6 +351,13 @@ def _compute_base_case(input_csv, state_overrides=None):
         "netProfitBase48HoursSum": round(sum(net_cost_list), 6),
         "netProfitBaseList": [round(v, 6) for v in net_cost_list],
         "PowerUsageBaseList": [round(v, 6) for v in power_usage_list],
+        # Physikalische Zustands-Traces je Stunde - fuers Debugging/den Vergleich gegen die
+        # gleichnamigen Optimierer-Output-Spalten (T_i, T_HW, SOC_B, SOC_EV) gedacht, fliessen in
+        # keine der obigen Kostenzahlen zusaetzlich ein (die stecken dort schon drin).
+        "T_iBaseList": [round(v, 6) for v in t_i_list],
+        "T_HWBaseList": [round(v, 6) for v in t_hw_list],
+        "SOC_BBaseList": [round(v, 6) for v in soc_b_list],
+        "SOC_EVBaseList": [round(v, 6) for v in soc_ev_list],
         # Zustand NACH Stunde 0 (nicht der Endzustand des gesamten Horizonts) - Grundlage fuer den
         # naechsten Aufruf ueber state_overrides (siehe Docstring oben und Aufrufer in app.py).
         "nextState": {

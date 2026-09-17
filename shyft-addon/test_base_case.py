@@ -8,9 +8,16 @@ def _demo_csv():
 
 def test_demo_shape():
     result = base_case.compute_base_case(_demo_csv())
-    assert set(result) == {"netProfitBase48HoursSum", "netProfitBaseList", "PowerUsageBaseList", "nextState"}
+    assert set(result) == {
+        "netProfitBase48HoursSum", "netProfitBaseList", "PowerUsageBaseList", "nextState",
+        "T_iBaseList", "T_HWBaseList", "SOC_BBaseList", "SOC_EVBaseList",
+    }
     assert len(result["netProfitBaseList"]) == 48
     assert len(result["PowerUsageBaseList"]) == 48
+    assert len(result["T_iBaseList"]) == 48
+    assert len(result["T_HWBaseList"]) == 48
+    assert len(result["SOC_BBaseList"]) == 48
+    assert len(result["SOC_EVBaseList"]) == 48
     assert isinstance(result["netProfitBase48HoursSum"], float)
     assert set(result["nextState"]) == {"T_i_0", "T_hw_0", "ev_soc_0", "SOC_b_0_percent"}
 
