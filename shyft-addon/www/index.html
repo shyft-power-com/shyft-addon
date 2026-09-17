@@ -1124,6 +1124,18 @@
             font-size: 0.78em;
             color: var(--color-text-secondary);
         }
+        /* Macht die gesamte Kosten-Zeile (statt eines eigenen "?"-Icons, siehe attachTooltip in
+           app.js) selbst zum Hover-/Tap-Ausloeser fuer die Erklaerung - reused .tooltip-text fuer
+           die eigentliche Bubble (gleiches Aussehen wie ueberall sonst), nur der Ausloeser ist hier
+           die ganze Zeile statt eines kleinen Icons. */
+        .hasValueTooltip {
+            position: relative;
+            cursor: help;
+        }
+        .hasValueTooltip:hover .tooltip-text {
+            opacity: 1;
+            visibility: visible;
+        }
         .shyftActionIconBolt {
             display: inline-flex;
             align-items: center;

@@ -5171,19 +5171,19 @@ function formatEntityDisplay(entityId) {
 // da sich die Position der Kachel zwischenzeitlich veraendert haben kann (z.B. nach Auf-/Zuklappen).
 const TOOLTIP_EDGE_MARGIN_PX = 8;
 
-function buildTooltip(description) {
-    const tooltip = document.createElement("span");
-    tooltip.className = 'tooltip';
-    const tooltipIcon = document.createElement("span");
-    tooltipIcon.className = 'tooltip-icon';
-    tooltipIcon.textContent = '?';
-    tooltip.appendChild(tooltipIcon);
+// Haengt einen Tooltip-Bubble-Text (samt Rand-Klemmlogik) an ein BEREITS vorhandenes Element an,
+// das dadurch selbst zum Hover-/Tap-Ausloeser wird - ohne eigenes "?"-Icon. Basis fuer buildTooltip
+// (dort zusaetzlich mit Icon, siehe unten) UND fuer Stellen wie die Kosten-Zeile einer Aktionskarte,
+// wo der gesamte Wertebereich selbst hoverbar/antippbar sein soll (Nutzer-Vorgabe), statt extra ein
+// "?"-Icon danebenzusetzen. el muss selbst fuer den Hover-Trigger sorgen (siehe .hasValueTooltip in
+// index.html) - diese Funktion kuemmert sich nur um den Bubble-Text und seine Positionierung.
+function attachTooltip(el, description) {
     const tooltipText = document.createElement("span");
     tooltipText.className = 'tooltip-text';
     tooltipText.textContent = description;
-    tooltip.appendChild(tooltipText);
+    el.appendChild(tooltipText);
 
-    tooltip.addEventListener('mouseenter', () => {
+    el.addEventListener('mouseenter', () => {
         tooltipText.style.transform = '';
         const rect = tooltipText.getBoundingClientRect();
         // Grenze ist der tatsaechlich beschneidende Kasten: <body> ist per overflow-x:clip
@@ -5200,8 +5200,8 @@ function buildTooltip(description) {
             shift = maxRight - rect.right;
         }
         // Die kleine Pfeilspitze (::after) soll trotz Verschiebung der Blase weiter genau auf das
-        // "?"-Icon zeigen, nicht einfach mittig in der (jetzt verschobenen) Blase bleiben - siehe
-        // die --tooltip-arrow-shift-Variable in der ::after-Regel.
+        // ausloesende Element zeigen, nicht einfach mittig in der (jetzt verschobenen) Blase bleiben
+        // - siehe die --tooltip-arrow-shift-Variable in der ::after-Regel.
         if (shift !== 0) {
             tooltipText.style.transform = `translateX(calc(-50% + ${shift}px))`;
             tooltipText.style.setProperty('--tooltip-arrow-shift', shift + 'px');
@@ -5209,6 +5209,17 @@ function buildTooltip(description) {
             tooltipText.style.removeProperty('--tooltip-arrow-shift');
         }
     });
+    return tooltipText;
+}
+
+function buildTooltip(description) {
+    const tooltip = document.createElement("span");
+    tooltip.className = 'tooltip';
+    const tooltipIcon = document.createElement("span");
+    tooltipIcon.className = 'tooltip-icon';
+    tooltipIcon.textContent = '?';
+    tooltip.appendChild(tooltipIcon);
+    attachTooltip(tooltip, description);
     return tooltip;
 }
 
@@ -5353,14 +5364,19 @@ const SHYFT_ACTION_BOLT_ICON_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"
 function buildShyftActionCard(action) {
     const status = action['Status'] || '';
     const normalizedStatus = status.toLowerCase();
-    const isActive = normalizedStatus.startsWith('aktiv');
+    const isHouseholdSavings = action['Action Name'] === HOUSEHOLD_SAVINGS_ACTION_NAME;
+    // Die Haushaltsstrom-Ersparnis ist eine rein rechnerische, taeglich neu erzeugte Dummy-Aktion
+    // (siehe _household_savings_action in app.py) - sie steuert nichts und "laeuft" nicht im Sinne
+    // der anderen Aktionen, auch wenn ihr Status backendseitig immer "aktiv" ist (fuer den ganzen
+    // Kalendertag). Bekommt deshalb bewusst NIE die "is-active"-Hervorhebung (Nutzer-Vorgabe:
+    // dezenter darstellen, nicht wie eine echte laufende Geraete-Aktion).
+    const isActive = normalizedStatus.startsWith('aktiv') && !isHouseholdSavings;
     const isDeactivated = normalizedStatus.includes('deaktiviert');
     const baseStatus = status.replace(/\s*\(deaktiviert\)/i, '').trim();
     // "no, error" = Start nicht moeglich (nicht eingerichtet/getestet ODER Geraetefehler),
     // "yes, not finished" = Beenden fehlgeschlagen - beides rot umranden (siehe .shyftActionCard.is-error).
     const exec = (action['Execution Status'] || '').toLowerCase();
     const isError = exec === 'no, error' || exec === 'yes, not finished';
-    const isHouseholdSavings = action['Action Name'] === HOUSEHOLD_SAVINGS_ACTION_NAME;
 
     const card = document.createElement('div');
     card.className = 'shyftActionCard' + (isActive ? ' is-active' : '') + (isDeactivated ? ' is-deactivated' : '') + (isError ? ' is-error' : '');
@@ -5413,7 +5429,9 @@ function buildShyftActionCard(action) {
         subtitleEl.textContent = action['Subtitle'];
         main.appendChild(subtitleEl);
     }
-    if (typeof action['Savings'] === 'number') {
+    // Unter 1 Cent (Nutzer-Vorgabe) wird die ganze Zeile ausgeblendet statt eine irrefuehrende
+    // "0,00 €"-Ersparnis zu zeigen - so klein ist der Wert praktisch nur Rundungsrauschen.
+    if (typeof action['Savings'] === 'number' && Math.abs(action['Savings']) >= 0.01) {
         // Einzeilig statt Pill + separater Preiszeile darunter (Nutzer-Vorgabe): Basis-Kosten,
         // Ersparnis-Pill, Kosten mit Shyft nebeneinander, jeweils ohne eigene Beschriftung ("0,14 €"
         // statt "Ohne Optimierung: 0,14 €") - die Bedeutung der drei Werte erklaert stattdessen ein
@@ -5436,7 +5454,10 @@ function buildShyftActionCard(action) {
             opt.className = 'shyftActionCostPlain';
             opt.textContent = formatShyftEuroPlain(action['costsopt']);
             savingsEl.appendChild(opt);
-            savingsEl.appendChild(buildTooltip('Kosten ohne Optimierung | Ersparnis | Kosten mit Shyft'));
+            // Kein eigenes "?"-Icon (Nutzer-Vorgabe) - die ganze Zeile selbst ist Hover-/Tap-
+            // Ausloeser fuer die Erklaerung (siehe attachTooltip/.hasValueTooltip).
+            savingsEl.classList.add('hasValueTooltip');
+            attachTooltip(savingsEl, 'Kosten ohne Optimierung | Ersparnis | Kosten mit Shyft');
         }
         main.appendChild(savingsEl);
     }

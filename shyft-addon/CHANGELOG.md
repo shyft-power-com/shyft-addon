@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.131
+
+* **Fix: widersprüchliche Kosten-Anzeige bei "Batterie-Entladen/-Laden verschieben"** (z.B. "0,00 € / Ersparnis 0,02 € / 0,00 €") - die stündliche Verlängerungslogik summierte bisher immer alle Geld-Felder (auch costsbase/costsopt), obwohl diese Aktionstypen bewusst gar kein Kosten-Paar führen (ihre Ersparnis ist die unabhängige "Batterieschonung"-Kennzahl). costsbase/costsopt werden jetzt nur noch summiert, wenn sie tatsächlich gesetzt waren - für diese Aktionstypen erscheint jetzt nur noch die Ersparnis-Pille, ohne widersprüchliches Kosten-Paar.
+* **Aktionskarten: Kosten-Zeile mit Ersparnis unter 1 Cent wird jetzt komplett ausgeblendet**, statt eine irreführende "0,00 €"-Ersparnis anzuzeigen.
+* **Hinweis zur Kosten-Zeile jetzt ohne eigenes "?"-Icon** - die ganze Zeile (Kosten ohne Optimierung / Ersparnis / Kosten mit Shyft) ist jetzt selbst per Hover bzw. Antippen der Auslöser für die Erklärung.
+
 ## 0.0.45.130
 
 * **Base Case berücksichtigt jetzt "Sonstiger Verbraucher" (OD).** Bisher war dieser Aktionstyp im Base Case gar nicht modelliert. Er läuft jetzt mit derselben Schwellenpreis-Logik wie der Optimierer (`otherDevice_P` an, sobald `p_buy` unter dem in `OD_running_hours` hinterlegten Schwellenpreis liegt, Cent/kWh) - eine echte Mindestlaufzeit-Garantie gibt es weder hier noch im Optimierer (der einzige Julia-Codepfad dafür ist deaktiviert). Weil beide Modelle dieselbe Ein/Aus-Entscheidung treffen, ergibt sich für dieses Gerät selbst strukturell keine Ersparnis - sein Verbrauch steht aber jetzt auch im Base Case, genau wie beim Optimierer, den anderen Verbrauchern nicht mehr aus PV/Batterie zur Verfügung (statt wie zuvor komplett zu fehlen).

@@ -6857,8 +6857,16 @@ def run_hourly_action_transition():
             if next_action is not None and next_action.get("Target Value") == current.get("Target Value"):
                 current["Date End"] = next_action.get("Date End")
                 current["Energy (electr)"] = (current.get("Energy (electr)") or 0) + (next_action.get("Energy (electr)") or 0)
-                current["costsopt"] = (current.get("costsopt") or 0) + (next_action.get("costsopt") or 0)
-                current["costsbase"] = (current.get("costsbase") or 0) + (next_action.get("costsbase") or 0)
+                # costsopt/costsbase nur summieren, wenn mindestens eine der beiden Stunden sie
+                # tatsaechlich gesetzt hatte - sonst wuerden hier faelschlich "0 + 0"-Werte fuer
+                # Aktionstypen entstehen, die (siehe _battery_preservation_value) bewusst GAR KEIN
+                # Kosten-Paar fuehren, nur "Savings". Das Frontend zeigte dann fuer diese Aktionen
+                # widerspruechlich "0,00 € / Ersparnis X € / 0,00 €" an (Nutzer-Meldung), obwohl die
+                # Ersparnis in Wahrheit aus einer ganz anderen, unabhaengigen Kennzahl stammt.
+                if current.get("costsopt") is not None or next_action.get("costsopt") is not None:
+                    current["costsopt"] = (current.get("costsopt") or 0) + (next_action.get("costsopt") or 0)
+                if current.get("costsbase") is not None or next_action.get("costsbase") is not None:
+                    current["costsbase"] = (current.get("costsbase") or 0) + (next_action.get("costsbase") or 0)
                 current["Savings"] = (current.get("Savings") or 0) + (next_action.get("Savings") or 0)
                 to_remove_ids.add(next_action.get("_id"))
                 changed = True
