@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.129
+
+* **Gerätesteuerung: Aktions-Karten überarbeitet** - gleicher Abstand links und rechts vom Geräte-Icon (Zeitspalte hatte vorher unsichtbaren Leerraum, der das Icon zu weit nach rechts schob; der Gerätename hat dadurch jetzt mehr Platz). Ersparnis-Pill zeigt jetzt einen Pfeil schräg nach unten statt nach oben (passt intuitiv zu sinkenden Kosten). Kosten ohne Optimierung, Ersparnis-Pill und Kosten mit Optimierung stehen jetzt in einer Zeile ohne eigene Textbeschriftung ("0,14 €" statt "Ohne Optimierung: 0,14 €"); ein Hinweis-Symbol daneben erklärt beim Überfahren oder Antippen die Bedeutung der drei Werte.
+
 ## 0.0.45.128
 
 * **Raumtemperatur-Chart: zweite Kurve heißt jetzt "Innenraum"** (statt "Innenräume / Gebäude", war zu lang für die Legende).

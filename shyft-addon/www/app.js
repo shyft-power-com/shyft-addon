@@ -5322,7 +5322,10 @@ function shyftDayKey(ms) {
 // Best-effort guess at the daily savings figure (sum of each action's "Savings" field) -
 // not confirmed against shyft-power's own calculation, treat as approximate.
 function formatShyftEuro(value) {
-    const arrow = value < 0 ? '↘' : (value > 0 ? '↗' : '→');
+    // Nutzer-Vorgabe: eine Ersparnis (Kosten sinken) zeigt einen Pfeil schraeg nach UNTEN, nicht
+    // nach oben - "nach unten" passt intuitiv zu sinkenden Kosten, "nach oben" wirkte wie eine
+    // Verschlechterung trotz gruener (positiver) Einfaerbung.
+    const arrow = value < 0 ? '↗' : (value > 0 ? '↘' : '→');
     return arrow + ' ' + value.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €';
 }
 
@@ -5411,17 +5414,29 @@ function buildShyftActionCard(action) {
         main.appendChild(subtitleEl);
     }
     if (typeof action['Savings'] === 'number') {
+        // Einzeilig statt Pill + separater Preiszeile darunter (Nutzer-Vorgabe): Basis-Kosten,
+        // Ersparnis-Pill, Kosten mit Shyft nebeneinander, jeweils ohne eigene Beschriftung ("0,14 €"
+        // statt "Ohne Optimierung: 0,14 €") - die Bedeutung der drei Werte erklaert stattdessen ein
+        // gemeinsamer Hinweis-Tooltip.
+        const hasCosts = typeof action['costsbase'] === 'number' && typeof action['costsopt'] === 'number';
         const savingsEl = document.createElement('div');
         savingsEl.className = 'shyftActionSavings';
+        if (hasCosts) {
+            const base = document.createElement('span');
+            base.className = 'shyftActionCostPlain';
+            base.textContent = formatShyftEuroPlain(action['costsbase']);
+            savingsEl.appendChild(base);
+        }
         const pill = document.createElement('span');
         pill.className = 'shyftActionSavingsPill ' + (action['Savings'] < 0 ? 'negative' : 'positive');
         pill.textContent = formatShyftEuro(action['Savings']);
         savingsEl.appendChild(pill);
-        if (typeof action['costsbase'] === 'number' && typeof action['costsopt'] === 'number') {
-            const prices = document.createElement('div');
-            prices.className = 'shyftActionSavingsPrices';
-            prices.textContent = `Ohne Optimierung: ${formatShyftEuroPlain(action['costsbase'])} · Mit Optimierung: ${formatShyftEuroPlain(action['costsopt'])}`;
-            savingsEl.appendChild(prices);
+        if (hasCosts) {
+            const opt = document.createElement('span');
+            opt.className = 'shyftActionCostPlain';
+            opt.textContent = formatShyftEuroPlain(action['costsopt']);
+            savingsEl.appendChild(opt);
+            savingsEl.appendChild(buildTooltip('Kosten ohne Optimierung | Ersparnis | Kosten mit Shyft'));
         }
         main.appendChild(savingsEl);
     }
