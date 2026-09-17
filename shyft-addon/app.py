@@ -800,11 +800,11 @@ def sync_pv_history():
 
 @app.route("/config", methods=["GET"])
 def readConfig():
-    content = "nothing"
-    with open(CONFIG_PATH, "r") as file:
-        content = file.read()
-
-    return content
+    # Ueber _read_current_config (statt frueher direktem Rohdatei-Read) - damit eine beschaedigte
+    # config.json (siehe _read_current_config-Docstring) auch hier automatisch repariert statt roh
+    # samt Muell-Restbytes an den Client durchgereicht wird (der haette daran ebenfalls seinen
+    # eigenen JSON.parse verschluckt).
+    return jsonify(_read_current_config())
 
 
 @app.route("/sensorids", methods=["GET"])
@@ -4685,12 +4685,35 @@ def testAutoManagedControl(control_key):
 
 def _read_current_config():
     with open(CONFIG_PATH, "r") as file:
-        return json.load(file)
+        content = file.read()
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        # Vor dem atomaren Schreiben unten (siehe _write_current_config) konnte ein ueberlappender
+        # Schreibzugriff (z.B. ein Auto-Save-Request, der waehrend eines Addon-Neustarts durch
+        # auto_update lief) die Datei mit Restbytes einer laengeren vorherigen Version verunreinigt
+        # zuruecklassen - "Extra data" ab der Stelle, wo der neue (kuerzere) Inhalt endet. Beobachtet:
+        # das legte NICHT nur die Konfiguration, sondern jeden Endpunkt lahm, der _read_current_config
+        # aufruft (Dashboard, Anwesenheitsprognose, Config-Warnungen, ...). Bestmoegliche Rettung: das
+        # erste vollstaendige JSON-Objekt am Dateianfang uebernehmen (das ist der eigentliche, nur zu
+        # lang gewordene Inhalt) statt alles mit einem 500er lahmzulegen, und die Datei damit gleich
+        # reparieren (atomar neu schreiben), statt bei jedem Aufruf erneut zu stolpern.
+        print(f"[Shyft] config.json beschädigt ({e}) - versuche Wiederherstellung des führenden JSON-Objekts.")
+        try:
+            recovered, _ = json.JSONDecoder().raw_decode(content)
+        except json.JSONDecodeError:
+            raise e
+        _write_current_config(recovered)
+        print("[Shyft] config.json wiederhergestellt und neu geschrieben.")
+        return recovered
 
 
 def _write_current_config(data):
-    with open(CONFIG_PATH, "w") as file:
+    "Atomares Schreiben (temp-Datei im selben Verzeichnis + os.replace) - verhindert, dass ein ueberlappender oder unterbrochener Schreibzugriff die Datei mit Restbytes eines laengeren vorherigen Inhalts beschädigt zurücklässt (siehe _read_current_config)."
+    tmp_path = CONFIG_PATH + ".tmp"
+    with open(tmp_path, "w") as file:
         file.write(json.dumps(data))
+    os.replace(tmp_path, CONFIG_PATH)
 
 
 # Which actorMappings keys represent a distinct Aktionstyp shyft-power schedules, and the exact
