@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.126
+
+* **Raumtemperatur-Chart: Beschriftungen angepasst** - Titel heißt jetzt schlicht "Raumtemperatur (°C)" (statt "Raumtemperatur (Ziel, °C)"), die Legende darunter zeigt "Heizung-Soll" (statt "Ziel") und "Innenräume / Gebäude" (statt "Ist (Modell)").
+
 ## 0.0.45.125
 
 * **Kritischer Fix: eine beschädigte config.json legte reihenweise Dashboard-/Config-Endpunkte mit 500-Fehlern lahm** (u.a. Anwesenheits-/Verbrauchsprognose unter "Ladestand Auto", Energiefluss-Widget, PV-Prognose-vs-Ist, Konfigurations-Warnungen, die Konfigurationsseite selbst) - Ursache war ein nicht-atomares Schreiben der Konfigurationsdatei: ein überlappender oder durch einen Addon-Neustart (auto_update) unterbrochener Schreibzugriff konnte Restbytes einer vorherigen, längeren Version stehen lassen ("Extra data"-JSON-Fehler). Die Datei wird jetzt atomar geschrieben (temporäre Datei + Umbenennen), und eine bereits beschädigte Datei wird beim nächsten Lesen automatisch repariert (führendes gültiges JSON-Objekt wird übernommen, Rest verworfen), statt weiterhin jeden betroffenen Endpunkt lahmzulegen.

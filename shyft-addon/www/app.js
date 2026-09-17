@@ -6001,7 +6001,7 @@ function computePvEnergySummary(labels, values) {
 //                 should always show its full possible range (Ladestand)
 //   decimals    - digits shown in the hover/tap tooltip
 function buildLineChart(title, unit, labels, values, options = {}) {
-    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null} = options;
+    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null} = options;
     const width = 600, height = 220;
     // presenceForecast reserves an extra strip just above the x-axis labels for the
     // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
@@ -6049,12 +6049,14 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 
     // Kleine Legende, damit die Hauptkurve (linke Skala) von der zweiten (rechte Skala, siehe
     // secondSeries) unterscheidbar bleibt - beide Skalen sind unabhaengig voneinander, die Farben
-    // allein wuerden das nicht selbsterklaerend machen.
+    // allein wuerden das nicht selbsterklaerend machen. primaryLabel (statt subtitle/title) laesst
+    // sich unabhaengig vom Chart-Titel beschriften (Nutzer-Vorgabe: Titel bleibt "Raumtemperatur
+    // (°C)", die Legende darunter zeigt trotzdem "Heizung-Soll").
     if (secondSeries) {
         const legend = document.createElement('div');
         legend.className = 'dashboardChartLegend';
         for (const [color, label] of [
-            ['var(--color-accent)', subtitle || title],
+            ['var(--color-accent)', primaryLabel || subtitle || title],
             [secondSeries.color || 'var(--color-text-secondary)', secondSeries.label],
         ]) {
             const item = document.createElement('span');
@@ -8198,7 +8200,9 @@ async function loadDashboard() {
             updateOrAppendDashboardWidget(container, 'einsatzplan', buildEinsatzplanCard(data.einsatzplan, data.optimizer_running));
         }
         updateOrAppendDashboardWidget(container, 'raumtemperatur', buildLineChart('Raumtemperatur', '°C', data.output_labels, data.t_i_target, {
-            subtitle: 'Ziel',
+            // Kein subtitle mehr (Nutzer-Vorgabe: Titel bleibt schlicht "Raumtemperatur (°C)"),
+            // primaryLabel beschriftet stattdessen nur die Legende darunter.
+            primaryLabel: 'Heizung-Soll',
             stepped: true,
             round: true,
             decimals: 0,
@@ -8207,7 +8211,7 @@ async function loadDashboard() {
             // (Nutzer-Vorgabe), Tooltip zeigt beide Werte gemeinsam an.
             secondSeries: {
                 values: data.t_i,
-                label: 'Ist (Modell)',
+                label: 'Innenräume / Gebäude',
                 color: 'var(--color-text-secondary)',
                 decimals: 1,
             },
