@@ -8039,6 +8039,13 @@ async function loadDashboard() {
             container.appendChild(error);
             return;
         }
+        // Eine evtl. von einem vorherigen fehlgeschlagenen Ladeversuch (z.B. Addon-Neustart durch
+        // auto_update) noch vorhandene Fehlermeldung entfernen - der Erfolgspfad hier unten baut die
+        // Widgets nur einzeln per updateOrAppendDashboardWidget auf/aus (kein voller Container-Reset),
+        // das kennt die Fehlermeldung nicht als eigenes Widget und liesse sie sonst dauerhaft stehen,
+        // auch nachdem die Daten wieder da sind (Nutzer-Feedback).
+        const staleError = container.querySelector('.shyftActionsError');
+        if (staleError) staleError.remove();
         // Wetter zuerst holen: der aktuelle Wettercode fliesst ins Himmels-Icon des Energiefluss-
         // Widgets (renderSkyIcon) und wird weiter unten fuer den Wetter-Streifen wiederverwendet.
         let weather = null;

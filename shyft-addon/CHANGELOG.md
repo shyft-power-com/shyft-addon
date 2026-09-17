@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.122
+
+* **Fix: "Diagrammdaten konnten nicht geladen werden" blieb auf dem Dashboard stehen, obwohl die Daten beim nächsten Aktualisierungslauf schon wieder da waren** (z.B. nach einem kurzen Ladefehler während eines Addon-Neustarts durch `auto_update`). Der Erfolgspfad baut die Widgets nur einzeln auf, ohne die zuvor eingeblendete Fehlermeldung zu kennen - sie wird jetzt beim nächsten erfolgreichen Laden explizit entfernt.
+
 ## 0.0.45.121
 
 * **Einsatzplan: "Berechnet um XX:XX Uhr" wird jetzt farblich markiert, je älter der zugrundeliegende Optimierungslauf ist** - orange ab 1:10 Std., rot mit zusätzlichem Ausrufezeichen ab 2:10 Std. Alter, damit ein eingefrorener Plan (z.B. nach einem fehlgeschlagenen stündlichen Dashboard-Sync) sofort auffällt statt nur an falsch wirkenden Chart-Werten erkennbar zu sein.
