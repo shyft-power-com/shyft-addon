@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.132
+
+* **Fix: Log-Zeitstempel, Hoch-/Niedertarif-Fenster (dynamischer Tarif), §14a-Zeitfenster und diverse Tagesgrenzen (Verbrauchs-/Anwesenheitsprognose, Haushaltsstrom-Ersparnis) verließen sich bisher auf die Systemzeitzone des Addon-Containers** (`datetime.now()`/`.astimezone()` ohne Argument) - die ist bei Home-Assistant-Add-ons nicht garantiert korrekt gesetzt und war hier auf UTC statt der echten lokalen Zeitzone. Sichtbar wurde das z.B. an einem Log-Eintrag, der scheinbar VOR dem eigentlichen Aktionsstart lag (tatsächlich exakt um den UTC/Sommerzeit-Versatz von 2 Stunden verschoben). Alle betroffenen Stellen fragen jetzt einmalig (gecacht) die von Home Assistant selbst konfigurierte Zeitzone ab (`GET /api/config`) statt sich auf die Container-Systemzeit zu verlassen.
+* **PV-Überschussladen (Fallback): Referenzpreis fürs Laden vereinfacht** - statt (wenn vorhanden) den Preis der letzten regulären Optimierer-Ladeaktion heranzuziehen, wird jetzt immer einheitlich `p_buy` der Start-Stunde aus der input.csv verwendet (voller Bezugspreis inkl. Netzentgelte/Abgaben), unabhängig davon, ob/wann zuletzt eine reguläre Ladeaktion lief.
+
 ## 0.0.45.131
 
 * **Fix: widersprüchliche Kosten-Anzeige bei "Batterie-Entladen/-Laden verschieben"** (z.B. "0,00 € / Ersparnis 0,02 € / 0,00 €") - die stündliche Verlängerungslogik summierte bisher immer alle Geld-Felder (auch costsbase/costsopt), obwohl diese Aktionstypen bewusst gar kein Kosten-Paar führen (ihre Ersparnis ist die unabhängige "Batterieschonung"-Kennzahl). costsbase/costsopt werden jetzt nur noch summiert, wenn sie tatsächlich gesetzt waren - für diese Aktionstypen erscheint jetzt nur noch die Ersparnis-Pille, ohne widersprüchliches Kosten-Paar.

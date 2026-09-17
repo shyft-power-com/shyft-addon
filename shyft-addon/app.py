@@ -20,6 +20,7 @@ import functools
 import threading
 import requests
 from datetime import datetime, timezone, timedelta, date
+from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
 import sys
@@ -204,6 +205,45 @@ sync_service = SyncService(homeassistant_adapter, shyft_adapter)
 # definiert wird - zum Zeitpunkt dieses Aufrufs zaehlt nur, dass der Name bis zum ersten
 # tatsaechlichen Aufruf (beim ersten (Re-)Connect, lange nach dem Modul-Import) existiert.
 live_entity_watcher = LiveEntityWatcher(homeassistant_adapter, lambda: _read_current_config())
+
+# ============================================================================
+# "Lokale Zeit" fuer Log-Zeitstempel, Tarif-Zeitfenster (HT/NT, §14a) und Tagesgrenzen (Verbrauchs-
+# /Anwesenheitsprognose, Haushaltsstrom-Ersparnis) - NICHT ueber datetime.now()/.astimezone() ohne
+# Argument, die verlassen sich auf die Systemzeitzone DES CONTAINERS. Die ist bei Home-Assistant-
+# Add-ons nicht garantiert auf die tatsaechliche Nutzer-Zeitzone gesetzt (haeufig UTC) - das fuehrte
+# real zu einer 2h-Verschiebung (UTC vs. CEST), sichtbar z.B. an Log-Zeitstempeln, die VOR dem
+# eigentlichen (aus einer echten Unix-Epoche korrekt umgerechneten) Aktions-Startzeitpunkt zu liegen
+# schienen (Nutzer-Beobachtung). Stattdessen wird die von Home Assistant selbst konfigurierte
+# Zeitzone abgefragt (GET /api/config, Feld "time_zone") und 1x pro Prozesslaufzeit gecacht - die
+# aendert sich praktisch nie, ein Neustart des Addons wuerde einen etwaigen Wechsel ohnehin aufholen.
+_ha_timezone_cache = {"tz": None, "failed_at": 0}
+# Bei einem Fehlschlag (z.B. HA-Verbindung beim Addon-Start noch nicht bereit) erst nach dieser
+# Wartezeit erneut versuchen, statt bei JEDEM get_ha_timezone()-Aufruf einen neuen (bis zu 10s
+# blockierenden) Request abzusetzen.
+HA_TIMEZONE_RETRY_SECONDS = 300
+
+
+def get_ha_timezone():
+    "Von Home Assistant konfigurierte Zeitzone (siehe Modulkommentar oben) - Fallback UTC, falls die Abfrage fehlschlaegt oder noch nicht lange genug her ist (HA_TIMEZONE_RETRY_SECONDS)."
+    if _ha_timezone_cache["tz"] is not None:
+        return _ha_timezone_cache["tz"]
+    if time.time() - _ha_timezone_cache["failed_at"] < HA_TIMEZONE_RETRY_SECONDS:
+        return timezone.utc
+    try:
+        config = homeassistant_adapter.get_from_homeassistant("/api/config", timeout=10)
+        tz_name = (config or {}).get("time_zone")
+        _ha_timezone_cache["tz"] = ZoneInfo(tz_name) if tz_name else timezone.utc
+        return _ha_timezone_cache["tz"]
+    except Exception as e:
+        print("[Shyft] Zeitzone konnte nicht von Home Assistant abgefragt werden, verwende UTC:", repr(e))
+        _ha_timezone_cache["failed_at"] = time.time()
+        return timezone.utc
+
+
+def _local_now():
+    "datetime.now() in der echten (von Home Assistant konfigurierten) lokalen Zeitzone - siehe Modulkommentar oben."
+    return datetime.now(get_ha_timezone())
+
 
 @app.after_request
 def add_no_cache_headers(response):
@@ -590,7 +630,7 @@ def compute_price_buy_array(config, base_time_utc, hours):
         windows = config.get("electricityHtWindows") or []
         out = []
         for i in range(hours):
-            local_dt = (base_time_utc + timedelta(hours=i)).astimezone()
+            local_dt = (base_time_utc + timedelta(hours=i)).astimezone(get_ha_timezone())
             out.append(ht if _hour_in_ht_windows(local_dt, windows) else nt)
         return out
 
@@ -652,7 +692,7 @@ def compute_price_buy_array(config, base_time_utc, hours):
                 raw_price = _resolve_fallback_price(h, by_hour, bubble_by_hour)
             if raw_price is None:
                 raw_price = prev_raw_price if prev_raw_price is not None else 0.0
-            local_dt = h.astimezone()
+            local_dt = h.astimezone(get_ha_timezone())
             quarter = (local_dt.month - 1) // 3 + 1
             if quarter in quarters:
                 netzentgelt = ht if _hour_in_ht_windows(local_dt, windows) else nt
@@ -696,7 +736,7 @@ def electricity_price_preview():
     spot_ct = round(spot_eur * 100.0, 2)
     spot_ct_netto = round(spot_ct / AWATTAR_VAT_FACTOR, 2)
     total_ct = round(spot_ct + surcharge_ct, 2)
-    now_local = now.astimezone()
+    now_local = now.astimezone(get_ha_timezone())
     hour_local = now_local.replace(minute=0, second=0, microsecond=0)
 
     # Awattar veroeffentlicht nur Stundenpreise - es gibt keinen 15-Minuten-Kurs zum Anzeigen.
@@ -886,8 +926,8 @@ def entity_history_signals():
             has_positive = any(v > 0.01 for _, v in values)
             # Solar-artig: nie negativ, nachts (0-5 Uhr lokal) ueberwiegend ~0, mittags (11-15 Uhr
             # lokal) an mindestens einem Tag klar > 0 - genau das vom Nutzer beschriebene PV-Muster.
-            night_values = [v for t, v in values if 0 <= t.astimezone().hour < 5]
-            midday_values = [v for t, v in values if 11 <= t.astimezone().hour < 15]
+            night_values = [v for t, v in values if 0 <= t.astimezone(get_ha_timezone()).hour < 5]
+            midday_values = [v for t, v in values if 11 <= t.astimezone(get_ha_timezone()).hour < 15]
             night_mostly_zero = bool(night_values) and (sum(1 for v in night_values if abs(v) < 0.05) / len(night_values)) >= 0.8
             midday_ever_positive = any(v > 0.05 for v in midday_values)
             is_solar_like = (not has_negative) and night_mostly_zero and midday_ever_positive
@@ -1032,7 +1072,7 @@ def _household_savings_action():
     daily_fraction = min(1.0, 24 / horizon_hours)
     costsbase = share * net_profit_base * daily_fraction
     costsopt = share * net_profit_opt * daily_fraction
-    midnight_local = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    midnight_local = _local_now().replace(hour=0, minute=0, second=0, microsecond=0)
     return {
         "_id": f"{HOUSEHOLD_SAVINGS_ACTION_ID_PREFIX}_{midnight_local.date().isoformat()}",
         "Action Name": HOUSEHOLD_SAVINGS_ACTION_NAME,
@@ -1209,8 +1249,8 @@ EINSATZPLAN_ZERO_THRESHOLD = 1e-6
 
 def _local_day_offset(hour_start_utc):
     "0 = heute, 1 = morgen, 2+/negativ = ausserhalb - in der lokalen Zeitzone des Addons (dieselbe, in der auch Home Assistant laeuft)."
-    today_local = datetime.now().astimezone().date()
-    hour_local_date = hour_start_utc.astimezone().date()
+    today_local = _local_now().date()
+    hour_local_date = hour_start_utc.astimezone(get_ha_timezone()).date()
     return (hour_local_date - today_local).days
 
 
@@ -1356,7 +1396,7 @@ def _read_future_pv_forecast_by_hour():
         return {}
     result = {}
     for i, row in enumerate(rows):
-        hour_local = _hour_floor((start_utc + timedelta(hours=i)).astimezone())
+        hour_local = _hour_floor((start_utc + timedelta(hours=i)).astimezone(get_ha_timezone()))
         result[hour_local] = _safe_float(row.get("PV_generation"))
     return result
 
@@ -1388,7 +1428,7 @@ def readPvForecastVsActual():
     if snapshot and snapshot.get("date") == today_local:
         for label, value in zip(snapshot.get("labels", []), snapshot.get("pv_generation", [])):
             try:
-                today_forecast_by_hour[_hour_floor(datetime.fromisoformat(label).astimezone())] = value
+                today_forecast_by_hour[_hour_floor(datetime.fromisoformat(label).astimezone(get_ha_timezone()))] = value
             except ValueError:
                 continue
 
@@ -1396,7 +1436,7 @@ def readPvForecastVsActual():
 
     actual_by_hour = {}
     if entity_id:
-        now_local = datetime.now().astimezone()
+        now_local = _local_now()
         midnight_local = _hour_floor(now_local.replace(hour=0))
         # Die gerade laufende Stunde bekommt bewusst NIE einen "Ist"-Wert (weder aus Messpunkten
         # noch aus dem Nacht-Fallback unten) - siehe Docstring: ihr Mittel waere aus zu wenigen
@@ -1410,7 +1450,7 @@ def readPvForecastVsActual():
                     value = float(event.state)
                 except (ValueError, TypeError):
                     continue  # z.B. "unknown"/"unavailable" - diesen Messpunkt auslassen
-                hour_local = _hour_floor(event.last_changed.astimezone())
+                hour_local = _hour_floor(event.last_changed.astimezone(get_ha_timezone()))
                 sums[hour_local] = sums.get(hour_local, 0) + value
                 counts[hour_local] = counts.get(hour_local, 0) + 1
             actual_by_hour = {hour: sums[hour] / counts[hour] for hour in sums if hour < current_hour_key}
@@ -1433,7 +1473,7 @@ def readPvForecastVsActual():
             actual_by_hour.setdefault(hour_key, 0.0)
             hour_cursor += timedelta(hours=1)
 
-    midnight_local = _hour_floor(datetime.now().astimezone().replace(hour=0))
+    midnight_local = _hour_floor(_local_now().replace(hour=0))
     candidate_hours = set(today_forecast_by_hour) | set(future_forecast_by_hour) | set(actual_by_hour)
     all_hours = {h for h in candidate_hours if h >= midnight_local}
     if not all_hours:
@@ -2168,7 +2208,7 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
             transitions_by_state.setdefault((ts.weekday(), ts.hour, connected), []).append(
                 (ts, 1.0 if by_hour[next_ts] else 0.0))
 
-        local_date = ts.astimezone().date()
+        local_date = ts.astimezone(get_ha_timezone()).date()
         daily_total_kwh.setdefault(local_date, 0.0)
 
         away_state = item.get("state")
@@ -2308,7 +2348,7 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
     consumption_kwh_forecast = [0.0] * hours
     day_indices = {}
     for i in range(hours):
-        day_indices.setdefault((start + timedelta(hours=i)).astimezone().date(), []).append(i)
+        day_indices.setdefault((start + timedelta(hours=i)).astimezone(get_ha_timezone()).date(), []).append(i)
 
     for local_date, idxs in day_indices.items():
         e_day = e_day_for_weekday(local_date.weekday())
@@ -2316,7 +2356,7 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
             continue
         if coldstart:
             block_hours = EV_DEFAULT_WEEKEND_BLOCK_HOURS if local_date.weekday() >= 5 else EV_DEFAULT_WEEKDAY_BLOCK_HOURS
-            target_idxs = [i for i in idxs if (start + timedelta(hours=i)).astimezone().hour in block_hours]
+            target_idxs = [i for i in idxs if (start + timedelta(hours=i)).astimezone(get_ha_timezone()).hour in block_hours]
             weights = [1.0] * len(target_idxs)
         else:
             target_idxs = [i for i in idxs if _is_predicted_driving(i)]
@@ -3516,7 +3556,7 @@ def _next_full_hour_ms(now_ms):
 
 def _append_pv_surplus_log(session, target_kw, note=None):
     "Vermerkt Ladeleistung und Uhrzeit im Log-Feld der Aktion, wie shyft-power es fuer seine eigenen Aktionen auch tut."
-    timestamp = datetime.now().strftime("%H:%M Uhr")
+    timestamp = _local_now().strftime("%H:%M Uhr")
     line = f"{timestamp}: {target_kw:.1f} kW"
     if note:
         line += f" ({note})"
@@ -3542,24 +3582,8 @@ def _pv_surplus_session_energy_kwh(session):
     return energy
 
 
-def _last_regular_ev_charge_price(config):
-    "Preis (EUR/kWh) der letzten regulaeren (vom Optimierer geplanten, NICHT PV-Ueberschuss-Fallback-) 'Auto laden'-Aktion aus COMPUTED_ACTIONS_PATH: CostsBase / Energy(electr) dieser Aktion (Nutzer-Vorgabe fuer die PV-Ueberschussladen-Bewertung). None, wenn keine solche Aktion mit auswertbaren Werten gefunden wird - der Aufrufer faellt dann auf p_buy aus der input.csv zurueck (siehe _pv_surplus_session_value)."
-    candidates = [a for a in _read_computed_actions()
-                  if a.get("Action Name") == EV_CHARGE_ACTION_NAME
-                  and a.get("costsbase") is not None
-                  and (a.get("Energy (electr)") or 0) > 0
-                  and a.get("Date Start") is not None]
-    if not candidates:
-        return None
-    latest = max(candidates, key=lambda a: a["Date Start"])
-    try:
-        return latest["costsbase"] / latest["Energy (electr)"]
-    except (TypeError, ZeroDivisionError):
-        return None
-
-
 def _input_csv_value_for_hour(hour_start_utc, column):
-    "Wert einer input.csv-Spalte (z.B. 'p_buy'/'p_sell') fuer die Stunde hour_start_utc, aus dem aktuell gecachten Optimierungslauf (DASHBOARD_CACHE_PATH) - Fallback fuer _pv_surplus_session_value, wenn keine passende reguläre 'Auto laden'-Aktion als Preisreferenz gefunden wird, bzw. Quelle der PV-Einspeiseverguetung."
+    "Wert einer input.csv-Spalte (z.B. 'p_buy'/'p_sell') fuer die Stunde hour_start_utc, aus dem aktuell gecachten Optimierungslauf (DASHBOARD_CACHE_PATH) - Preisquelle fuer _pv_surplus_session_value (Bezugspreis UND Einspeiseverguetung)."
     try:
         with open(DASHBOARD_CACHE_PATH, "r") as f:
             cache = json.load(f)
@@ -3585,10 +3609,13 @@ def _pv_surplus_session_value(session, config):
     Regelschleife, siehe _run_pv_surplus_charging_tick_impl - kommt im Optimierer-Modell gar nicht
     vor, deshalb bewusst NICHT ueber die Verbrauchsanteils-Formel/X_sum gerechnet). Nutzer-Vorgabe:
     tatsaechlich geladene Energiemenge mal (Preis_EVStrom - Einspeiseverguetung_PVStrom):
-      CostsBase = energy_kwh * ev_price   (Preis_EVStrom = letzte reguläre 'Auto laden'-Aktion:
-                  CostsBase/Energy(electr); Fallback p_buy der Start-Stunde aus input.csv)
-      CostsOpt  = energy_kwh * feed_in    (p_sell der Start-Stunde aus input.csv)
+      CostsBase = energy_kwh * p_buy   (p_buy der Start-Stunde aus input.csv - der volle Bezugspreis
+                  inkl. Netzentgelte/Abgaben, nicht der reine Boersenpreis)
+      CostsOpt  = energy_kwh * feed_in (p_sell der Start-Stunde aus input.csv)
       Savings   = CostsBase - CostsOpt
+    Fruehrer wurde CostsBase stattdessen aus der letzten regulaeren 'Auto laden'-Aktion abgeleitet
+    (CostsBase/Energy(electr) dieser Aktion) - jetzt immer einheitlich ueber p_buy, einfacher und
+    unabhaengig davon, ob/wann zuletzt eine reguläre Ladeaktion lief (Nutzer-Vorgabe).
     (None, None, None), wenn keine Energie geladen wurde oder einer der Preise nicht ermittelbar
     ist (z.B. noch kein Dashboard-Cache vorhanden)."""
     energy_kwh = _pv_surplus_session_energy_kwh(session)
@@ -3598,9 +3625,7 @@ def _pv_surplus_session_value(session, config):
     if start_ms is None:
         return None, None, None
     hour_start_utc = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
-    ev_price = _last_regular_ev_charge_price(config)
-    if ev_price is None:
-        ev_price = _input_csv_value_for_hour(hour_start_utc, "p_buy")
+    ev_price = _input_csv_value_for_hour(hour_start_utc, "p_buy")
     feed_in = _input_csv_value_for_hour(hour_start_utc, "p_sell")
     if ev_price is None or feed_in is None:
         return None, None, None
@@ -4152,7 +4177,7 @@ def _fail_action(action, config, exec_status, msg, prev_exec, verb):
     nur, wenn sich der Execution Status dadurch aendert (kein Spam bei Retry jedes Polls)."""
     action["Execution Status"] = exec_status
     action["Error Message"] = msg
-    note = f"{datetime.now().strftime('%H:%M Uhr')}: Fehler beim {verb} - {msg}"
+    note = f"{_local_now().strftime('%H:%M Uhr')}: Fehler beim {verb} - {msg}"
     action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
     _update_computed_action(action)
     if prev_exec != exec_status:
@@ -5883,7 +5908,7 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
             # entstehen, sobald die Aktion tatsaechlich aktiv/gestartet ist. Fuer die gerade laufende
             # Stunde (is_current_hour) ist das hier bereits der Fall.
             if is_current_hour:
-                timestamp = datetime.now().strftime("%H:%M Uhr")
+                timestamp = _local_now().strftime("%H:%M Uhr")
                 action["Log"] = f"{timestamp}: gestartet mit {target_value:.1f} kW (PV-Überschuss, Korrektur folgt beim Start)"
         result[i] = action
 
@@ -5916,7 +5941,7 @@ def _apply_ev_pv_surplus_start_correction(action, config, context="bei Start"):
     boosted = ev_sum + (live_pv_kw - pv_sum_forecast) / 2
     corrected = round(max(PV_SURPLUS_MIN_KW, min(compute_wallbox_max_kw(config), boosted)), 1)
     if corrected != action.get("Target Value"):
-        timestamp = datetime.now().strftime("%H:%M Uhr")
+        timestamp = _local_now().strftime("%H:%M Uhr")
         note = f"{timestamp}: Zielwert {context} auf {corrected:.1f} kW korrigiert (PV-Überschuss, aktuell gemessen)"
         action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
         action["Target Value"] = corrected
@@ -5991,7 +6016,7 @@ def _convert_ev_charge_action_to_pv_surplus_fallback(action, config):
     eingetragen, genau wie ein "echtes" Beenden es auch taete."""
     action["Status"] = "beendet"
     action["_convertedToPvSurplusFallback"] = True
-    timestamp = datetime.now().strftime("%H:%M Uhr")
+    timestamp = _local_now().strftime("%H:%M Uhr")
     note = f"{timestamp}: in PV-Überschussladen (Fallback) umgewandelt - Wallbox lädt unverändert weiter"
     action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
     _update_computed_action(action)
@@ -6505,7 +6530,7 @@ def _apply_battery_discharge_shift_hold(action, config, now_ms, enabled, already
         # wirklich gestartete Aktion trifft, siehe handle_shyft_action_end "nur simuliert"-Zweig).
         action["_dischargeShiftHeld"] = False
         action["Status"] = "beendet"
-        timestamp = datetime.now().strftime("%H:%M Uhr")
+        timestamp = _local_now().strftime("%H:%M Uhr")
         note = f"{timestamp}: Zeitfenster abgelaufen, ohne dass sich der Speicher entladen musste"
         action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
         _update_computed_action(action)
@@ -6518,7 +6543,7 @@ def _apply_battery_discharge_shift_hold(action, config, now_ms, enabled, already
             action["Date Start"] = None
             soc = read_home_battery_soc(config)
             soc_text = f"{soc:.0f} %" if soc is not None else "unbekanntem Ladestand"
-            timestamp = datetime.now().strftime("%H:%M Uhr")
+            timestamp = _local_now().strftime("%H:%M Uhr")
             note = f"{timestamp}: Start aufgeschoben - Speicher bei {soc_text}, PV-Überschuss vorhanden"
             action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
             _update_computed_action(action)
@@ -6528,7 +6553,7 @@ def _apply_battery_discharge_shift_hold(action, config, now_ms, enabled, already
         action["_dischargeShiftHeld"] = False
         action["Status"] = "aktiv"
         action["Date Start"] = int(now_ms)
-        timestamp = datetime.now().strftime("%H:%M Uhr")
+        timestamp = _local_now().strftime("%H:%M Uhr")
         note = f"{timestamp}: gestartet - Speicher unter {BATTERY_DISCHARGE_SHIFT_HOLD_SOC_PCT} % gefallen"
         action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
         handle_shyft_action_start(action, enabled, config)
@@ -6687,7 +6712,7 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
         elif hour0_existing:
             new_target = computed_by_hour[0]["Target Value"]
             if hour0_existing.get("Target Value") != new_target:
-                timestamp = datetime.now().strftime("%H:%M Uhr")
+                timestamp = _local_now().strftime("%H:%M Uhr")
                 note = f"{timestamp}: neuer Zielwert {new_target:.1f} kW"
                 hour0_existing["Log"] = (hour0_existing.get("Log") + "\n" + note) if hour0_existing.get("Log") else note
                 hour0_existing["Target Value"] = new_target
@@ -7072,7 +7097,7 @@ def _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms):
     if existing and existing.get("date") == today_local:
         existing_by_label = dict(zip(existing.get("labels", []), existing.get("pv_generation", [])))
 
-    now_hour_local = datetime.now().astimezone().replace(minute=0, second=0, microsecond=0)
+    now_hour_local = _local_now().replace(minute=0, second=0, microsecond=0)
     start_utc = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
     try:
         rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
@@ -7083,7 +7108,7 @@ def _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms):
     labels, pv_generation = [], []
     for i, row in enumerate(rows):
         row_dt_utc = start_utc + timedelta(hours=i)
-        row_dt_local = row_dt_utc.astimezone()
+        row_dt_local = row_dt_utc.astimezone(get_ha_timezone())
         if row_dt_local.date().isoformat() != today_local:
             continue
         label = row_dt_utc.isoformat()
@@ -7139,7 +7164,7 @@ def _overlay_live_demo_series(input_csv, start_utc):
     # start_utc-Zeile (= Zeile 0 der Charts) ausrichten.
     temps, pv_kw = [], []
     try:
-        midnight_local = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+        midnight_local = _local_now().replace(hour=0, minute=0, second=0, microsecond=0)
         offset_h = max(0, round((start_utc.timestamp() - midnight_local.timestamp()) / 3600))
         wf = pv_forecast.compute_site_weather_fields(offset_h + n, pv_sensor_configured=True)
         temps = wf["temperature"].split(",")[offset_h:offset_h + n]
@@ -7460,7 +7485,7 @@ def push_pv_forecast_sensor():
 
     datetimes_ms = weather.get("datetimes") or []
     pv_prediction = weather.get("pvPrediction") or []
-    current_hour_local = datetime.now().astimezone().replace(minute=0, second=0, microsecond=0)
+    current_hour_local = _local_now().replace(minute=0, second=0, microsecond=0)
     current_hour_ms = int(current_hour_local.timestamp() * 1000)
     try:
         current_index = datetimes_ms.index(current_hour_ms)
@@ -7469,7 +7494,7 @@ def push_pv_forecast_sensor():
         current_kw = pv_prediction[0] if pv_prediction else 0.0
 
     forecast = [
-        {"datetime": datetime.fromtimestamp(ms / 1000, tz=timezone.utc).astimezone().isoformat(), "kw": round(kw, 3)}
+        {"datetime": datetime.fromtimestamp(ms / 1000, tz=timezone.utc).astimezone(get_ha_timezone()).isoformat(), "kw": round(kw, 3)}
         for ms, kw in zip(datetimes_ms, pv_prediction)
     ]
 

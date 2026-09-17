@@ -231,13 +231,13 @@ class HomeAssistantAdapter:
         integration_list.sort(key=lambda i: i["name"].lower())
         return {"integrations": integration_list, "entityMap": entity_map, "deviceMap": device_map}
 
-    def get_from_homeassistant(self, path):
+    def get_from_homeassistant(self, path, timeout=None):
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
             "Authorization": f"Bearer {self._token()}"
         }
         completeUri = self.homeassistant_uri + path
-        response = requests.get(completeUri, headers=headers)
+        response = requests.get(completeUri, headers=headers, timeout=timeout)
         try:
             return response.json()
         except:
