@@ -29,7 +29,9 @@ class LiveEntityWatcher:
     Handler werden nicht gegen eine feste entity_id registriert, sondern gegen einen
     sensorMappings-Key (z.B. "photovoltaic_powerflow_grid") - die tatsächliche entity_id wird bei
     jedem (Re-)Connect frisch aus der aktuellen Config aufgelöst, damit eine geänderte
-    Sensor-Zuordnung ohne Addon-Neustart wirkt.
+    Sensor-Zuordnung ohne Addon-Neustart wirkt. Ein Key kann auch auf eine LISTE mehrerer entity_ids
+    zeigen (z.B. "electricity_grid_power_sensors") - dann wird jede davon einzeln beobachtet und
+    loest bei einer Aenderung denselben Handler aus.
 
     Läuft in einem eigenen Daemon-Thread; verbindet sich automatisch neu bei Verbindungsabbruch,
     Auth-Fehlern, oder wenn schlicht noch kein passender Sensor zugeordnet ist.
@@ -57,14 +59,19 @@ class LiveEntityWatcher:
         self._stop = True
 
     def _resolve_entity_to_keys(self):
-        "entity_id -> [sensorMappings-Keys mit registriertem Handler, die aktuell auf diese entity_id zeigen]."
+        """entity_id -> [sensorMappings-Keys mit registriertem Handler, die aktuell auf diese
+        entity_id zeigen]. Ein sensorMappings-Wert ist normalerweise ein einzelner entity_id-String,
+        kann aber (z.B. 'electricity_grid_power_sensors', mehrere Netzleistungs-Sensoren) auch eine
+        LISTE von entity_ids sein - dann wird jede davon einzeln unter demselben Key registriert."""
         config = self.config_reader()
         mappings = config.get("sensorMappings", {})
         entity_to_keys = {}
         for key in self.handlers:
-            entity_id = mappings.get(key)
-            if entity_id:
-                entity_to_keys.setdefault(entity_id, []).append(key)
+            value = mappings.get(key)
+            entity_ids = value if isinstance(value, list) else ([value] if value else [])
+            for entity_id in entity_ids:
+                if entity_id:
+                    entity_to_keys.setdefault(entity_id, []).append(key)
         return entity_to_keys
 
     def _run_forever(self):

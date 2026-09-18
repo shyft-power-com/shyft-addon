@@ -690,6 +690,51 @@
         .quarterCheckboxItem input {
             margin: 0;
         }
+        /* Mehrfach-Sensor-Zuordnung "Netzsensor" (siehe buildMultiSensorField) - Zeilen-/Button-Look
+           an die HT-Zeitfenster-Liste direkt oberhalb angelehnt (.htWindowAddButton/.htWindowDelete). */
+        .multiSensorFieldLabel {
+            display: flex;
+            align-items: center;
+            gap: 0.4em;
+            color: var(--color-text);
+            font-size: 0.9em;
+            margin-bottom: 0.4em;
+        }
+        .multiSensorFieldRow {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+            margin-bottom: 0.5em;
+        }
+        .multiSensorFieldRow .clearableInput {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+        .multiSensorFieldRemove {
+            flex: 0 0 auto;
+            background: none;
+            border: none;
+            color: var(--color-error);
+            font-size: 1.2em;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0.1em 0.4em;
+        }
+        .multiSensorFieldAdd {
+            background: var(--color-accent);
+            color: var(--color-accent-contrast);
+            border: none;
+            border-radius: 6px;
+            padding: 0.5em 1em;
+            font-family: var(--font-body);
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 0.2em;
+        }
+        .multiSensorFieldAdd:hover {
+            filter: brightness(0.95);
+        }
         /* Prüfzeile im dynamischen Stromtarif (siehe buildElectricityPricePreview) - nur der
            Gesamtpreis (Börse + fixer Anteil) der aktuellen Stunde. */
         .electricityPricePreview {

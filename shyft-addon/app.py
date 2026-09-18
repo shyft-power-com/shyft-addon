@@ -3001,17 +3001,58 @@ PV_SURPLUS_MIN_KW = CHARGING_MIN_AMPS * CHARGING_PHASE_VOLTAGE / 1000  # 6A/1-ph
 # aus sync_service.py).
 
 
+# "einspeise" im entity_id ODER im HA-Anzeigenamen (friendly_name) markiert eine reine
+# Einspeiseleistungs-Entitaet (z.B. Tibber Pulse, der Netzbezug und Einspeisung als zwei getrennte,
+# jeweils POSITIV gemeldete Sensoren liefert statt eines einzigen vorzeichenbehafteten) - deren Wert
+# wird automatisch negiert, damit die gemeinsame Konvention eingehalten wird (negativ = Einspeisung,
+# siehe read_grid_power_kw). Nutzer-Vorgabe: automatische Erkennung statt eines manuellen Schalters.
+def _is_feed_in_sensor_name(entity_id, friendly_name):
+    haystack = f"{entity_id or ''} {friendly_name or ''}".lower()
+    return "einspeise" in haystack
+
+
+def _grid_power_entity_ids(config):
+    """Alle fuer die aktuelle Netzleistung konfigurierten Entitaeten: der (optionale) Wechselrichter-
+    Sensor 'photovoltaic_powerflow_grid' UND/ODER die (optionalen, mehreren) 'Strom'-Kachel-Sensoren
+    unter 'electricity_grid_power_sensors' (siehe buildMultiSensorField in app.js) - z.B. fuer einen
+    Tibber Pulse mit getrennten Bezug-/Einspeise-Sensoren. Duplikate werden entfernt (eine Entitaet
+    in beiden Feldern soll nicht doppelt gelesen werden), Reihenfolge sonst beliebig."""
+    sensor_mappings = config.get("sensorMappings", {})
+    ids = []
+    single = sensor_mappings.get("photovoltaic_powerflow_grid")
+    if single:
+        ids.append(single)
+    ids.extend(e for e in (sensor_mappings.get("electricity_grid_power_sensors") or []) if e)
+    return list(dict.fromkeys(ids))
+
+
 def read_grid_power_kw(config):
-    "Aktuelle Netzeinspeisung/-bezug in kW (negativ = Einspeisung) - konvertiert die Home-Assistant-Einheit (z.B. W) wie sync_service es auch fuer shyft-power tut. None, wenn kein Sensor zugeordnet oder nicht lesbar."
-    entity_id = config.get("sensorMappings", {}).get("photovoltaic_powerflow_grid", "")
-    if not entity_id:
-        return None
-    try:
-        state = homeassistant_adapter.load_entity_state(entity_id)
-        value, _ = convert_to_expected_unit("photovoltaic_powerflow_grid", state.state, state.unit)
-        return float(value)
-    except Exception:
-        return None
+    """Aktuelle Netzeinspeisung/-bezug in kW (negativ = Einspeisung) - liest ALLE dafuer
+    konfigurierten Entitaeten (siehe _grid_power_entity_ids) und verwendet davon den zuletzt
+    aktualisierten Wert (Nutzer-Vorgabe: mehrere Quellen moeglich, der jeweils aktuellste gewinnt).
+    Eine als Einspeiseleistung erkannte Entitaet (siehe _is_feed_in_sensor_name) wird automatisch
+    negiert. None, wenn kein Sensor zugeordnet oder keiner lesbar ist.
+
+    Gilt bisher NUR fuer diese Live-Lesung (auch fuers Energiefluss-Widget und den Live-Websocket-
+    Trigger, siehe _on_grid_power_live_update) - die Energie-Archiv-Funktion
+    (_grid_import_export_kwh) nutzt fuer die kWh-Historie weiterhin ausschliesslich den
+    Wechselrichter-Sensor. Ein echter Merge mehrerer HISTORIEN (statt nur "welcher Live-Wert ist
+    neuer") waere dafuer deutlich aufwendiger - laut Nutzer-Entscheidung erstmal zurueckgestellt,
+    ggf. spaeter nachziehen."""
+    best_value, best_updated = None, None
+    for entity_id in _grid_power_entity_ids(config):
+        try:
+            state = homeassistant_adapter.load_entity_state(entity_id)
+            value, _ = convert_to_expected_unit("photovoltaic_powerflow_grid", state.state, state.unit)
+            value = float(value)
+        except Exception:
+            continue
+        if _is_feed_in_sensor_name(entity_id, state.friendly_name):
+            value = -value
+        updated = state.last_updated
+        if best_updated is None or (updated is not None and updated > best_updated):
+            best_value, best_updated = value, updated
+    return best_value
 
 
 def read_pv_power_kw(config):
@@ -3162,7 +3203,15 @@ def _reconcile_orphaned_sensor_problems():
     nach einem Sensor-Tausch blieb "hat sich seit X Stunden nicht aktualisiert" fuer den ALTEN
     Sensor stehen, obwohl er in keinem Feld mehr zugeordnet war."""
     config = _read_current_config()
-    current_entity_ids = set((config.get("sensorMappings") or {}).values())
+    # .values() kann fuer 'electricity_grid_power_sensors' eine LISTE statt eines einzelnen
+    # entity_id-Strings enthalten (siehe _grid_power_entity_ids) - ein blosses set(...) darueber
+    # wuerde mit "unhashable type: list" abstuerzen, deshalb hier explizit abflachen.
+    current_entity_ids = set()
+    for value in (config.get("sensorMappings") or {}).values():
+        if isinstance(value, list):
+            current_entity_ids.update(v for v in value if v)
+        elif value:
+            current_entity_ids.add(value)
     for problem in problem_registry.active_problems():
         problem_id = problem.get("id", "")
         for prefix in ("sensor_unavailable:", "sensor_stale:"):
@@ -7877,14 +7926,18 @@ _last_live_grid_kw = {"value": None}
 
 
 def _on_grid_power_live_update(entity_id, old_state, new_state):
-    "Reagiert auf jede Aenderung des Netz-Sensors, sobald sie um mindestens PV_SURPLUS_LIVE_UPDATE_THRESHOLD_KW vom letzten verarbeiteten Wert abweicht - fuer Sensoren, die alle paar Sekunden aktualisieren, statt auf den naechsten 5-Minuten-Tick zu warten."
+    """Reagiert auf jede Aenderung EINES der konfigurierten Netz-Sensoren (Wechselrichter UND/ODER
+    'Strom'-Kachel, siehe _grid_power_entity_ids/read_grid_power_kw), sobald sich der daraus
+    ermittelte Wert um mindestens PV_SURPLUS_LIVE_UPDATE_THRESHOLD_KW vom letzten verarbeiteten Wert
+    unterscheidet - fuer Sensoren, die alle paar Sekunden aktualisieren, statt auf den naechsten
+    5-Minuten-Tick zu warten. Liest bewusst NICHT direkt aus dem uebergebenen new_state (das waere
+    nur EIN Sensor) - stattdessen immer read_grid_power_kw() neu, damit bei mehreren konfigurierten
+    Quellen konsistent der aktuellste Wert ueber alle verwendet wird, unabhaengig davon, welcher
+    einzelne Sensor gerade den Trigger ausgeloest hat."""
     with app.app_context():
-        try:
-            raw_state = (new_state or {}).get("state")
-            unit = ((new_state or {}).get("attributes") or {}).get("unit_of_measurement")
-            value, _ = convert_to_expected_unit("photovoltaic_powerflow_grid", raw_state, unit)
-            new_kw = float(value)
-        except (TypeError, ValueError):
+        config = _read_current_config()
+        new_kw = read_grid_power_kw(config)
+        if new_kw is None:
             return
         last_kw = _last_live_grid_kw["value"]
         _last_live_grid_kw["value"] = new_kw
@@ -7931,6 +7984,7 @@ def _on_battery_soc_live_update(entity_id, old_state, new_state):
 
 
 live_entity_watcher.register("photovoltaic_powerflow_grid", _on_grid_power_live_update)
+live_entity_watcher.register("electricity_grid_power_sensors", _on_grid_power_live_update)
 live_entity_watcher.register("wallbox_plugged", _on_wallbox_state_live_update)
 live_entity_watcher.register("battery_state_of_charge", _on_battery_soc_live_update)
 

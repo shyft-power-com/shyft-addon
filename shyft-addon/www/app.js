@@ -24,6 +24,10 @@ let notificationTargetOptions = [];
 let actionTestStatusMap = {};
 
 const helpinformation = {
+    'electricity_grid_power_sensors': {
+        label: 'Aktueller Strom - Netz',
+        description: ' Die aktuelle Leistung, die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist. Du kannst mehrere Entitäten auswählen. Auch vom Wechselrichter kannst du den Sensor "Aktueller Strom - Netz" messen lassen. Shyft wählt jeweils den aktuellsten Wert aus.'
+    },
     'photovoltaic_powerflow_load': {
         label: 'Aktueller Strom - Haushalt',
         description: ' Die Leistung (in kW), die dein Haushalt aktuell verbraucht.'
@@ -34,7 +38,7 @@ const helpinformation = {
     },
     'photovoltaic_powerflow_grid': {
         label: 'Aktueller Strom - Netz',
-        description: ' Die aktuelle Leistung (in kW), die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist.'
+        description: ' Die aktuelle Leistung (in kW), die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist. Du kannst den Wechselrichter-Sensor zusätzlich zu einem optional in der "Strom-Kachel" hinterlegten Sensor angeben - Shyft wählt jeweils den aktuellsten Wert aus.'
     },
     'photovoltaic_powerflow_battery': {
         label: 'Aktueller Strom - Batterie',
@@ -169,6 +173,7 @@ const SENSOR_ENTITY_FILTERS = {
     'photovoltaic_powerflow_pv': {type: 'power_unit'},
     'photovoltaic_powerflow_load': {type: 'power_unit'},
     'photovoltaic_powerflow_grid': {type: 'power_unit'},
+    'electricity_grid_power_sensors': {type: 'power_unit'},
     'photovoltaic_powerflow_battery': {type: 'power_unit'},
     // Keine reine Anzeige-Entitaet: das Addon SCHREIBT hierueber den Steuerungsmodus, muss also eine
     // settable Entitaet mit einer festen Optionsliste sein (select./input_select.).
@@ -1782,6 +1787,14 @@ function renderGeneralConfigSection() {
 
     bodyDiv.appendChild(buildElectricitySubheading('Einspeisung'));
     bodyDiv.appendChild(buildElectricityPriceSellField());
+
+    // Optional: zusaetzliche(r) Netzleistungs-Sensor(en) unabhaengig vom (ebenfalls optionalen)
+    // Wechselrichter-Sensor "photovoltaic_powerflow_grid" - siehe read_grid_power_kw in app.py, das
+    // von allen konfigurierten Quellen den jeweils aktuellsten Wert verwendet. Mehrfachauswahl, da
+    // manche Integrationen (z.B. Tibber Pulse) Netzbezug und Einspeisung als zwei getrennte Sensoren
+    // liefern statt eines einzigen vorzeichenbehafteten.
+    bodyDiv.appendChild(buildElectricitySubheading('Netzsensor (optional)'));
+    bodyDiv.appendChild(buildMultiSensorField('electricity_grid_power_sensors'));
     container.appendChild(bodyDiv);
 
     // Ein nie bestaetigtes Default-Feld (z.B. Grundlast) haelt die Kachel offen (siehe
@@ -5251,6 +5264,94 @@ function wrapEntityInputWithClear(dropdownEl, input) {
     dropdownArrow.setAttribute('aria-hidden', 'true');
     wrapper.appendChild(dropdownArrow);
     return wrapper;
+}
+
+// Mehrfach-Sensor-Zuordnung (aktuell nur fuer "electricity_grid_power_sensors" in der Strom-Kachel,
+// siehe renderGeneralConfigSection): mehrere Entitaeten fuer DENSELBEN Signaltyp, z.B. weil manche
+// Integrationen (Tibber Pulse) Netzbezug und Einspeisung als zwei getrennte Sensoren liefern statt
+// eines einzigen vorzeichenbehafteten. Anders als die normalen Sensor-Felder (siehe buildMappingRow,
+// je Schluessel genau EINE Entitaet) speichert dieser Schluessel ein ARRAY - schreibt sich deshalb
+// direkt in configData['sensorMappings'] (wie buildBatteryCoupledEntityField), statt ueber den
+// generischen DOM-id-basierten Sammelmechanismus in saveConfigurationNow zu laufen (der geht von
+// "ein Input pro Schluessel" aus). Das DOM ist hier die Quelle der Wahrheit fuer "wie viele Zeilen" -
+// configData wird bei jeder Aenderung/jedem Entfernen frisch aus allen sichtbaren Inputs neu
+// zusammengesetzt (leere Eintraege werden dabei herausgefiltert).
+function buildMultiSensorField(sensorKey) {
+    const container = document.createElement('div');
+    container.className = 'configField multiSensorField';
+
+    const labelRow = document.createElement('div');
+    labelRow.className = 'multiSensorFieldLabel';
+    const context = helpinformation[sensorKey] ?? {label: sensorKey};
+    labelRow.textContent = context.label;
+    labelRow.appendChild(buildTooltip(context.description ?? sensorKey));
+    container.appendChild(labelRow);
+
+    const datalistId = 'entityOptions_' + sensorKey;
+    const datalist = document.createElement('datalist');
+    datalist.id = datalistId;
+    populateSensorDatalist(datalist, allSensorIdOptions, sensorKey, {});
+    container.appendChild(datalist);
+
+    const rowsContainer = document.createElement('div');
+    container.appendChild(rowsContainer);
+
+    function collectAndSave() {
+        const inputs = rowsContainer.querySelectorAll('input.sensorInput');
+        const values = Array.from(inputs).map(el => extractEntityId(el.value)).filter(Boolean);
+        configData['sensorMappings'] = configData['sensorMappings'] || {};
+        configData['sensorMappings'][sensorKey] = values;
+        autoSave();
+    }
+
+    function addRow(value) {
+        const row = document.createElement('div');
+        row.className = 'multiSensorFieldRow';
+
+        const input = document.createElement('input');
+        input.className = 'sensorInput';
+        input.setAttribute('autocomplete', 'off');
+        input.value = formatEntityDisplay(value || '');
+        input.addEventListener('change', () => {
+            input.value = formatEntityDisplay(extractEntityId(input.value));
+            collectAndSave();
+        });
+        const inputWrapper = wrapEntityInputWithClear(
+            attachEntityDropdown(input, {datalistId, headerText: 'Home-Assistant-Entität'}), input);
+        row.appendChild(inputWrapper);
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'multiSensorFieldRemove';
+        removeButton.textContent = '×';
+        removeButton.setAttribute('aria-label', 'Sensor entfernen');
+        removeButton.addEventListener('click', () => {
+            row.remove();
+            // Immer mindestens eine Zeile stehen lassen, damit gleich ein neuer Sensor eingetragen werden kann.
+            if (!rowsContainer.querySelector('input.sensorInput')) addRow('');
+            collectAndSave();
+        });
+        row.appendChild(removeButton);
+
+        rowsContainer.appendChild(row);
+    }
+
+    const existing = (configData['sensorMappings'] || {})[sensorKey];
+    const initialValues = Array.isArray(existing) ? existing.filter(Boolean) : [];
+    if (initialValues.length > 0) {
+        for (const value of initialValues) addRow(value);
+    } else {
+        addRow('');
+    }
+
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.className = 'multiSensorFieldAdd';
+    addButton.textContent = '+ Sensor hinzufügen';
+    addButton.addEventListener('click', () => addRow(''));
+    container.appendChild(addButton);
+
+    return container;
 }
 
 function buildMappingRow(key, value, helpInfo, valuePostfix, datalistId, showLiveValue, toggleChecked, onChange) {

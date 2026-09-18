@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.135
+
+* **Neu: "Strom"-Kachel bekommt ein optionales Feld "Aktueller Strom - Netz" mit Mehrfachauswahl.** Damit lässt sich zusätzlich zum (weiterhin unterstützten) Wechselrichter-Sensor ein oder mehrere Netzleistungs-Sensoren hinterlegen - z.B. für einen Tibber Pulse, der Netzbezug und Einspeisung als zwei getrennte, jeweils positive Sensoren liefert statt eines einzigen vorzeichenbehafteten. Ein Sensorname, der "einspeise" enthält, wird automatisch als Einspeiseleistung erkannt und sein Vorzeichen gedreht. Von allen konfigurierten Quellen (Wechselrichter + "Strom"-Kachel) wird jeweils der zuletzt aktualisierte Wert verwendet - u.a. für die PV-Überschusssteuerung und deren Live-Reaktion auf Sensor-Änderungen. Betrifft (noch) nur Live-Lesungen, nicht die kWh-Historie im Energie-Archiv (dafür bräuchte es einen echten Mehrfach-Historien-Merge - ggf. später).
+
 ## 0.0.45.134
 
 * **Diagnose-Log für unerwartet negative PV-Überschussladen-Bewertung**: `_pv_surplus_session_value` protokolliert jetzt energy_kwh, die verwendete Stunde, p_buy/p_sell und die rohe Leistungshistorie, sobald costsbase oder costsopt negativ herauskommt (strukturell sollte das nie passieren) - damit sich ein solcher Fall beim nächsten Auftreten nachvollziehen lässt, statt wie bisher spurlos zu bleiben, sobald der Dashboard-Cache überschrieben ist.

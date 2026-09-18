@@ -37,10 +37,11 @@ class PeriodElement:
 
 
 class EntityState:
-    def __init__(self, state: str, unit: str, last_updated: datetime = None):
+    def __init__(self, state: str, unit: str, last_updated: datetime = None, friendly_name: str = None):
         self.state = state
         self.unit = unit
         self.last_updated = last_updated
+        self.friendly_name = friendly_name
 
 
 # Adapter for integrating homeassistant
@@ -97,7 +98,8 @@ class HomeAssistantAdapter:
                 last_updated = datetime.fromisoformat(last_updated_raw)
             except ValueError:
                 last_updated = None
-        return EntityState(response["state"], unit, last_updated)
+        friendly_name = response.get("attributes", {}).get("friendly_name", "")
+        return EntityState(response["state"], unit, last_updated, friendly_name)
 
     def _fetch_history_events(self, sensor_id: str,
                               start_timestamp: datetime,
