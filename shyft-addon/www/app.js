@@ -3594,12 +3594,6 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction}) {
         const row = document.createElement('div');
         row.className = 'entityDropdownOption';
         row.textContent = opt.label;
-        if (opt.friendlyName) {
-            const nameEl = document.createElement('span');
-            nameEl.className = 'entityDropdownFriendlyName';
-            nameEl.textContent = ' - ' + opt.friendlyName;
-            row.appendChild(nameEl);
-        }
         row.addEventListener('mousedown', (event) => {
             event.preventDefault();
             selectValue(opt.value);
@@ -4827,8 +4821,18 @@ function buildToggleSwitch(id, checked) {
     return label;
 }
 
+// Eingabefeld-Text -> entity_id. Unterstuetzt beide Anzeigeformen aus /sensorids: "Anzeigename
+// (entity_id, Wert Einheit)" und "entity_id (Wert Einheit)"; ein reiner entity_id-Text sowie das
+// aeltere "entity_id: ..."-Format funktionieren weiter. Der Wert im Klammertext kann veraltet sein
+// (Live-Wert hat sich seit dem Rendern geaendert) - daher kein exakter Label-Vergleich als einzige Regel.
 function extractEntityId(value) {
-    return (value || '').split(/[:\s]/)[0];
+    const text = (value || '').trim();
+    if (!text) return '';
+    const byLabel = allSensorIdOptions.find(entity => entity.label === text);
+    if (byLabel) return byLabel.entity_id;
+    const inParens = text.match(/\(([a-z0-9_]+\.[a-z0-9_]+),/);
+    if (inParens) return inParens[1];
+    return text.split(/[:\s]/)[0];
 }
 
 // ----------------------------------------------------------------------
@@ -5184,8 +5188,7 @@ function formatEntityDisplay(entityId) {
     if (!entityId) return '';
     const match = allSensorIdOptions.find(entity => entity.entity_id === entityId);
     if (!match) return entityId;
-    const stateAndUnit = match.label.slice(match.entity_id.length + 2, -1); // strip "entity_id (" prefix and trailing ")"
-    return `${entityId} (${stateAndUnit})`;
+    return match.label;
 }
 
 // Haelt die Sprechblase innerhalb des sichtbaren Bereichs: .tooltip-text ist per CSS auf das
@@ -5360,7 +5363,7 @@ function buildMultiSensorField(sensorKey) {
         chip.className = 'integrationPickerChip';
         const label = document.createElement('span');
         label.className = 'integrationPickerChipLabel';
-        label.textContent = entityId;
+        label.textContent = formatEntityDisplay(entityId);
         chip.appendChild(label);
         const remove = document.createElement('button');
         remove.type = 'button';
@@ -5403,7 +5406,7 @@ function buildMultiSensorField(sensorKey) {
             }
         });
         const text = document.createElement('span');
-        text.textContent = friendlyName ? `${labelText} - ${friendlyName}` : labelText;
+        text.textContent = labelText;
         optionLabel.appendChild(checkbox);
         optionLabel.appendChild(text);
         return optionLabel;

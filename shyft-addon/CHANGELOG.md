@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.141
+
+* **Sensor-Anzeige in der Konfiguration einheitlich als "Anzeigename (entity_id, Wert Einheit)"** (z.B. "Einspeisung (sensor.power_clayallee_241, 1.1 kW)") - in allen Sensor-Dropdowns, den Eingabefeldern und den Chips der Netzsensor-Auswahl. Sensoren ohne eigenen Anzeigenamen erscheinen weiter als "entity_id (Wert Einheit)". Die Suche findet nach wie vor über Anzeigename und entity_id.
+
 ## 0.0.45.140
 
 * **Strom-Kachel: "Aktueller Strom - Netz" nutzt jetzt dieselbe Mehrfachauswahl wie die Geräteauswahl (z.B. Wechselrichter)** - gewählte Sensoren erscheinen als Chips mit "×", darunter eine durchsuchbare Checkbox-Liste, statt "+ Sensor hinzufügen"-Button mit einzelnen Eingabezeilen.

@@ -2659,10 +2659,17 @@ def mapToResponse(response):
         attributes = item.get("attributes", {})
         unitOfMeasurement = attributes.get("unit_of_measurement", "")
         stateAndUnit = item["state"] + " " + unitOfMeasurement if unitOfMeasurement else item["state"]
+        friendly_name = attributes.get("friendly_name", "")
+        # Anzeigeformat "Anzeigename (entity_id, Wert Einheit)"; ohne (abweichenden) Anzeigenamen
+        # "entity_id (Wert Einheit)" - siehe extractEntityId in www/app.js, das beide Formen zurueckparst.
+        if friendly_name and friendly_name != item["entity_id"]:
+            label = f'{friendly_name} ({item["entity_id"]}, {stateAndUnit})'
+        else:
+            label = f'{item["entity_id"]} ({stateAndUnit})'
         result.append({
             "entity_id": item["entity_id"],
-            "label": item["entity_id"] + " (" + stateAndUnit + ")",
-            "friendly_name": attributes.get("friendly_name", ""),
+            "label": label,
+            "friendly_name": friendly_name,
             "device_class": attributes.get("device_class", ""),
             "state": item["state"],
             "unit": unitOfMeasurement,
