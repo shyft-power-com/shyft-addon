@@ -3,6 +3,7 @@ from homeassistant_adapter import HomeAssistantAdapter, EntityState
 from shyft_adapter import ShyftAdapter
 from live_entity_watcher import LiveEntityWatcher
 import problem_registry
+import assistant
 import pv_forecast
 import base_case
 import energy_archive
@@ -289,6 +290,52 @@ def accountStatusEndpoint():
     das Feature vorab auf einer eigenen Test-HA-Instanz zu pruefen, waehrend die Datenerfassung
     selbst (energy_archive) unabhaengig davon fuer alle Nutzer laeuft."""
     return jsonify({"isDemo": is_demo_mode(), "isTestEnvironment": shyft_adapter.development_mode})
+
+
+@app.route("/assistant/status", methods=["GET"])
+def assistantStatusEndpoint():
+    """Hilfe-Assistent (KI-Chat, nur mit test_-Zugangsschluessel, siehe account-status): ist in Home
+    Assistant eine KI (ai_task-Entitaet, z.B. Google Gemini) eingerichtet? Das Frontend waehlt danach
+    den Platzhaltertext."""
+    if not shyft_adapter.development_mode:
+        return jsonify({"enabled": False, "aiAvailable": False})
+    try:
+        states = homeassistant_adapter.get_from_homeassistant("/api/states", timeout=15)
+        return jsonify({"enabled": True, "aiAvailable": assistant.find_ai_task_entity(states) is not None})
+    except Exception as e:
+        print("[Shyft] Hilfe-Assistent: Status konnte nicht ermittelt werden:", repr(e))
+        return jsonify({"enabled": True, "aiAvailable": False})
+
+
+@app.route("/assistant/ask", methods=["POST"])
+def assistantAskEndpoint():
+    """Beantwortet eine Nutzerfrage ueber Home Assistants ai_task.generate_data. Body: {question,
+    history: [{question, answer}], uiHelp}. Der Prompt enthaelt Wissensbasis, Konfiguration, aktive
+    Probleme und Sensorwerte (siehe assistant.build_prompt) - der Nutzer wird im Frontend darauf hingewiesen."""
+    if not shyft_adapter.development_mode:
+        return jsonify({"status": "error", "message": "Nicht verfügbar."}), 403
+    body = request.get_json(force=True, silent=True) or {}
+    question = (body.get("question") or "").strip()
+    if not question:
+        return jsonify({"status": "error", "message": "Bitte gib eine Frage ein."}), 400
+    try:
+        states = homeassistant_adapter.get_from_homeassistant("/api/states", timeout=15)
+        ai_entity = assistant.find_ai_task_entity(states)
+        if ai_entity is None:
+            return jsonify({"status": "error", "message": "In Home Assistant ist keine KI eingerichtet."}), 400
+        prompt = assistant.build_prompt(
+            question, body.get("history"), body.get("uiHelp"), _read_current_config(),
+            problem_registry.active_problems(), states)
+        response = homeassistant_adapter.call_service_with_response(
+            "ai_task", "generate_data",
+            {"task_name": "shyft_hilfe", "instructions": prompt, "entity_id": ai_entity})
+        answer = assistant.extract_answer(response)
+        if answer is None:
+            return jsonify({"status": "error", "message": "Die KI hat keine Antwort geliefert."}), 502
+        return jsonify({"status": "success", "answer": answer})
+    except Exception as e:
+        print("[Shyft] Hilfe-Assistent: Anfrage fehlgeschlagen:", repr(e))
+        return jsonify({"status": "error", "message": f"Die Anfrage an die KI ist fehlgeschlagen: {e}"}), 502
 
 
 @app.route("/analysis/summary", methods=["GET"])
@@ -1306,13 +1353,13 @@ def _local_day_offset(hour_start_utc):
 
 
 def _opt_end_value_terms(input_rows, output_rows):
-    """Debug-Gegenstueck zu base_case "endValue": dieselben Endwert-Terme (Batterie/EV/Raumtemperatur,
-    gleiche Formeln wie base_case.py), aber fuer den ENDzustand des OPTIMIERERS - der Julia-Output
-    enthaelt nur die Zustaende zu Beginn jeder Stunde (SOC_x[1:h_end]), der Endzustand nach der letzten
-    Stunde wird hier ueber dieselben Bilanzgleichungen wie in run_SHEMS.jl nachgerechnet (Batterie:
-    :177, EV: :232). Der Raumtemperatur-Endwert ist nur die Naeherung T_i der letzten Stunde. Der
-    Warmwasser-Term steckt bereits in profits_net_opt (run_SHEMS.jl, costs_opt[h_end]). Nur zur
-    Diagnose - veraendert weder opt_cost noch die Ersparnis-Berechnung. None, wenn nicht berechenbar."""
+    """Debug-Gegenstueck zu base_case "endValue": Endzustaende des OPTIMIERERS nach der letzten Stunde
+    samt der Endbedingungen aus run_SHEMS.jl. Der Julia-Output enthaelt nur die Zustaende zu Beginn jeder
+    Stunde (SOC_x[1:h_end]); der Endzustand wird ueber dieselben Bilanzgleichungen nachgerechnet
+    (Batterie :177, EV :232). Raumtemperatur nur als Naeherung (T_i der letzten Stunde). Der Base Case
+    erfuellt dieselben Endbedingungen (Batterie >= 0,9*Start, Warmwasser >= Start, EV-Norm), siehe
+    base_case.py - dieser Block dient dem direkten Vergleich der beiden Endzustaende. Aendert weder opt_cost
+    noch die Ersparnis-Berechnung. None, wenn nicht berechenbar."""
     if not input_rows or not output_rows:
         return None
     try:
@@ -1321,10 +1368,11 @@ def _opt_end_value_terms(input_rows, output_rows):
         n = len(output_rows)
         b_max = _safe_float(p0.get("b_soc_max_kWh"))
         b_start = min(b_max, _safe_float(p0.get("SOC_b_0_percent")) / 100.0 * b_max)
-        b_eta, b_loss = base_case.B_ETA, base_case.B_LOSS
+        b_min = _safe_float(p0.get("b_soc_min")) / 100.0 * b_max
         charge_in = sum(_safe_float(last.get(k)) for k in ("PV_B", "GR_B", "CO_B"))
         charge_out = sum(_safe_float(last.get(k)) for k in ("B_DE", "B_HP", "B_OD", "B_EV"))
-        b_end = (1 - b_loss) * _safe_float(last.get("SOC_B")) / 100.0 * b_max + b_eta * charge_in - charge_out / b_eta
+        b_end = ((1 - base_case.B_LOSS) * _safe_float(last.get("SOC_B")) / 100.0 * b_max
+                 + base_case.B_ETA * charge_in - charge_out / base_case.B_ETA)
         ev_size = _safe_float(p0.get("ev_b_size"))
         ev_start = _safe_float(p0.get("ev_soc_0")) * ev_size
         d_ev_last = _safe_float(input_rows[n - 1].get("d_ev_kwh")) if n - 1 < len(input_rows) else 0.0
@@ -1332,25 +1380,15 @@ def _opt_end_value_terms(input_rows, output_rows):
         ev_end = (_safe_float(last.get("SOC_EV")) * ev_size * (1 - base_case.EV_LOSS)
                   + base_case.EV_ETA * _safe_float(last.get("EV_sum")) * plugged
                   - base_case.EV_FIXED_LOSS_KWH * plugged - d_ev_last)
-        p_buy = [_safe_float(r.get("p_buy")) for r in input_rows[:n]]
-        mean_p_buy = sum(p_buy) / len(p_buy) if p_buy else 0.0
-        last_p_buy = p_buy[-1] if p_buy else 0.0
-        p_min = _safe_float(p0.get("p_min"))
-        fh_size = _safe_float(p0.get("fh_size"))
-        t_i_start = _safe_float(p0.get("T_i_0"))
-        t_i_end = _safe_float(last.get("T_i"))
-        term_battery = (b_end - b_start) * mean_p_buy
-        term_ev = (ev_end - ev_start) * p_min / base_case.EV_ETA
-        term_i = (t_i_end - t_i_start) / (base_case.C_STORE * fh_size) * last_p_buy if fh_size > 0 else 0.0
         return {
-            "residual": round(-term_battery - term_ev - term_i, 6),
-            "term_battery": round(-term_battery, 6), "term_ev": round(-term_ev, 6), "term_i": round(-term_i, 6),
-            "soc_b_kwh_start": round(b_start, 4), "soc_b_kwh_end": round(b_end, 4),
+            "soc_b_kwh_start": round(b_start, 4), "soc_b_kwh_target": round(max(0.9 * b_start, b_min), 4),
+            "soc_b_kwh_end": round(b_end, 4),
             "soc_ev_kwh_start": round(ev_start, 4), "soc_ev_kwh_end": round(ev_end, 4),
-            "t_i_start": round(t_i_start, 3), "t_i_end_approx": round(t_i_end, 3),
+            "t_i_start": round(_safe_float(p0.get("T_i_0")), 3), "t_i_end_approx": round(_safe_float(last.get("T_i")), 3),
+            "t_hw_start": round(_safe_float(p0.get("T_hw_0")), 3), "t_hw_last_hour_start": round(_safe_float(last.get("T_HW")), 3),
         }
     except Exception as e:
-        print("[Shyft] Optimierer-Endwert-Terme nicht berechenbar:", repr(e))
+        print("[Shyft] Optimierer-Endzustand nicht berechenbar:", repr(e))
         return None
 
 

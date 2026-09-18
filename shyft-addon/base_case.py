@@ -265,25 +265,57 @@ def _compute_base_case(input_csv, state_overrides=None):
     if t_i_after_hour0 is None:  # horizon == 1: die einzige Iteration war bereits Stunde 0
         t_i_after_hour0 = t_i_end
 
-    # --- Warmwasser: Sofortbereitstellung; Tank kuehlt zwischen den Zapfungen weiter aus
+    # --- Warmwasser: Sofortbereitstellung; Tank kuehlt zwischen den Zapfungen weiter aus - und muss
+    # am Horizont-Ende wieder auf T_hw_0 sein (Optimierer-Endbedingung run_SHEMS.jl:223
+    # T_hw[h_end+1] >= T_hw_0): den Fehlbetrag heizt die WP in den LETZTEN Stunden nach (so spaet wie
+    # moeglich, rueckwaerts von der letzten Stunde bis zur WP-Leistungsgrenze aufgefuellt).
     hp_dhw = [0.0] * horizon
-    t_hw_list = [t_hw] * horizon  # T_HW ZU BEGINN jeder Stunde (wie T_hw[1:h_end] im Optimierer-Output) - Debug-/Vergleichs-Trace ("T_HWBaseList"); bleibt beim konstanten Startwert, wenn hw_active False ist
+    hw_extra = [0.0] * horizon  # zusaetzliche elektrische Nachheiz-Energie je Stunde (kWh)
+    t_hw_starts = [t_hw] * (horizon + 1)
     cop_hw_last = COP_MIN
-    t_hw_after_hour0 = None
-    if hw_active:
+
+    def _simulate_hw():
+        "Tank-Trajektorie mit der aktuellen Nachheiz-Belegung hw_extra (run_SHEMS.jl:219: T[h+1] = T - (T-20)*loss + c_hw*(cop*X10 - d_hw))."
+        starts = [t_hw_0]
+        base_el = [0.0] * horizon
+        cop_last = COP_MIN
+        t = t_hw_0
         for i in range(horizon):
-            if i == 1:
-                t_hw_after_hour0 = t_hw
-            t_hw_list[i] = t_hw
-            t_hw_next = t_hw - (t_hw - 20.0) * HW_LOSS  # Zufuhr == Zapfung -> reine Abkuehlung (Excel-Spalte S)
-            cop_hw = max(COP_MIN, 5.5 - ((t_hw + t_hw_next) / 2.0 - t_out[i]) / 20.0)
+            t_loss = t - (t - 20.0) * HW_LOSS  # Zufuhr == Zapfung -> reine Abkuehlung (Excel-Spalte S)
+            t_next = t_loss
+            cop = COP_MIN
+            for _ in range(4):  # cop haengt von der mittleren Tanktemperatur ab (implizit) -> Fixpunkt
+                cop = max(COP_MIN, 5.5 - ((t + t_next) / 2.0 - t_out[i]) / 20.0)
+                t_next = t_loss + c_hw * cop * hw_extra[i]
             if d_hw[i] > 0.0:
-                hp_dhw[i] = d_hw[i] / cop_hw
-            cop_hw_last = cop_hw
-            t_hw = t_hw_next
-    t_hw_end = t_hw
-    if t_hw_after_hour0 is None:
-        t_hw_after_hour0 = t_hw_end
+                base_el[i] = d_hw[i] / cop
+            cop_last = cop
+            starts.append(t_next)
+            t = t_next
+        return starts, base_el, cop_last
+
+    if hw_active:
+        t_hw_starts, hp_dhw, cop_hw_last = _simulate_hw()
+        if c_hw > 0.0:
+            for _ in range(40):
+                deficit = t_hw_0 - t_hw_starts[horizon]
+                if deficit <= 1e-4:
+                    break
+                energy = deficit / (c_hw * cop_hw_last)
+                for i in range(horizon - 1, -1, -1):
+                    room = max(0.0, p["hp_max_power"] - hp_heat[i] - hp_dhw[i] - hw_extra[i])
+                    add = min(room, energy)
+                    hw_extra[i] += add
+                    energy -= add
+                    if energy <= 1e-9:
+                        break
+                if energy > 1e-9:
+                    break  # WP-Leistung reicht nicht mehr - Rest bleibt als Fehlbetrag (siehe term_hw)
+                t_hw_starts, hp_dhw, cop_hw_last = _simulate_hw()
+        hp_dhw = [hp_dhw[i] + hw_extra[i] for i in range(horizon)]
+    t_hw_list = t_hw_starts[:horizon]  # T_HW ZU BEGINN jeder Stunde (wie T_hw[1:h_end] im Optimierer-Output) - Debug-/Vergleichs-Trace ("T_HWBaseList")
+    t_hw_end = t_hw_starts[horizon]
+    t_hw_after_hour0 = t_hw_starts[1] if horizon > 1 else t_hw_end
 
     # --- E-Auto: sofort bis ev_soc_norm; Fahrten so spaet wie moeglich abdecken ---------
     ev_charge_gross = [0.0] * horizon
@@ -301,6 +333,12 @@ def _compute_base_case(input_csv, state_overrides=None):
             plugged_i = (i + 1) not in ev_away_hours
             need = required[i + 1] + d_ev[i] - (eff_rate if plugged_i else 0.0)
             required[i] = min(max(0.0, need) / (1.0 - EV_LOSS), ev_b_size)
+            if i == horizon - 1:
+                # Endbedingung (Optimierer: SOC_EV[h] >= ev_soc_norm bis zur letzten Stunde, run_SHEMS.jl:236):
+                # der Ladestand zu Beginn der letzten Stunde muss den Normwert erreichen - waere das Auto
+                # in den Stunden davor unterwegs, wird das rueckwaerts bis in die letzten Ladestunden
+                # durchgereicht (so spaet wie moeglich, aber rechtzeitig).
+                required[i] = max(required[i], min(ev_soc_norm_kwh, ev_b_size))
         for i in range(horizon):
             if i == 1:
                 soc_ev_after_hour0 = soc_ev
@@ -334,6 +372,16 @@ def _compute_base_case(input_csv, state_overrides=None):
                 od_load[i] = od_power
 
     # --- Batterie (Eigenverbrauch) + Netzsaldo + Kosten -------------------------------
+    # Endbedingung wie beim Optimierer (run_SHEMS.jl:182: SOC_b[h_end+1] >= max(0.9*SOC_b_0, b.soc_min)):
+    # Pflicht-SOC je Stunde rueckwaerts ("so spaet wie moeglich, aber rechtzeitig") - liegt der Speicher
+    # darunter, wird der Fehlbetrag in den letzten Stunden aus dem Netz nachgeladen und darunter nicht mehr
+    # entladen. Ladeleistung wie in der Schleife unten (charge_soc <= b_rate_max je Stunde).
+    soc_b_start_kwh = soc_b
+    soc_b_target = max(0.9 * soc_b_start_kwh, b_soc_min_kwh) if b_soc_max > 0 else 0.0
+    required_b = [0.0] * (horizon + 1)
+    required_b[horizon] = soc_b_target
+    for i in range(horizon - 1, -1, -1):
+        required_b[i] = min(b_soc_max, max(0.0, required_b[i + 1] - b_rate_max) / (1.0 - B_LOSS))
     net_cost_list = [0.0] * horizon
     power_usage_list = [0.0] * horizon
     soc_b_list = [0.0] * horizon  # SOC_B ZU BEGINN jeder Stunde in % (wie SOC_B im Optimierer-Output) - Debug-/Vergleichs-Trace ("SOC_BBaseList")
@@ -350,6 +398,8 @@ def _compute_base_case(input_csv, state_overrides=None):
         load = d_e[i] + hp_heat[i] + hp_dhw[i] + od_load[i]
         net = pv_avail - load
         batt_charge_gross = 0.0
+        charge_soc = 0.0
+        floor_b = max(b_soc_min_kwh, required_b[i + 1])  # nicht unter den Pflicht-SOC entladen
         if net > 1e-9:
             room = b_soc_max - soc_b * (1 - B_LOSS)
             charge_soc = max(0.0, min(net * B_ETA, b_rate_max, room))
@@ -357,13 +407,20 @@ def _compute_base_case(input_csv, state_overrides=None):
             batt_charge_gross = charge_soc / B_ETA
             grid = net - batt_charge_gross
         elif net < -1e-9:
-            avail = soc_b * (1 - B_LOSS) - b_soc_min_kwh
+            avail = soc_b * (1 - B_LOSS) - floor_b
             discharge_soc = max(0.0, min(-net / B_ETA, b_rate_max, avail))
             soc_b = soc_b * (1 - B_LOSS) - discharge_soc
             grid = net + discharge_soc * B_ETA
         else:
             soc_b = soc_b * (1 - B_LOSS)
             grid = 0.0
+        if b_soc_max > 0 and soc_b < required_b[i + 1] - 1e-9:
+            # Pflicht-Nachladung aus dem Netz (Endbedingung), begrenzt durch Ladeleistung und Kapazitaet
+            extra = max(0.0, min(required_b[i + 1] - soc_b, b_rate_max - charge_soc, b_soc_max - soc_b))
+            soc_b += extra
+            extra_gross = extra / B_ETA
+            batt_charge_gross += extra_gross
+            grid -= extra_gross
         grid -= ev_charge_gross[i]  # E-Auto-Ladung immer aus dem Netz
         # grid > 0: Einspeisung (Ertrag, negative Kosten) | grid < 0: Bezug (Kosten)
         net_cost_list[i] = (-grid * (p_sell[i] if grid > 0 else p_buy[i])) or 0.0  # or 0.0: kein -0.0
@@ -372,14 +429,19 @@ def _compute_base_case(input_csv, state_overrides=None):
     if soc_b_after_hour0 is None:
         soc_b_after_hour0 = soc_b_end
 
-    # --- Restwerte am Horizont-Ende (identisch spaeter auf die Optimierer-Ausgabe anwenden)
+    # --- Restwerte am Horizont-Ende: Batterie/EV/Warmwasser erfuellen die Endbedingungen des Optimierers
+    # jetzt durch Nachladen in den letzten Stunden (siehe oben) - eine zusaetzliche Bewertung der
+    # Zustandsdifferenz (frueher: Endzustand vs. Startzustand zu p_min/Durchschnittspreis) entfaellt damit.
+    # Uebrig bleiben nur FEHLBETRAEGE, falls die Endbedingung physikalisch nicht mehr erreichbar war
+    # (z.B. Ladeleistung zu klein), sowie der Raumtemperatur-Term (dort kein Zwangsheizen - der Base Case
+    # haelt T_i ohnehin so knapp wie moeglich, der Unterschied ist Rundungsgroesse).
     last_p_buy = p_buy[horizon - 1]
     mean_p_buy = statistics.fmean(p_buy) if p_buy else 0.0
-    term_battery = (soc_b_end - min(b_soc_max, p["SOC_b_0_percent"] / 100.0 * b_soc_max)) * mean_p_buy
-    term_ev = (soc_ev_end - soc_ev_0) * p_min / EV_ETA
+    term_battery = -max(0.0, soc_b_target - soc_b_end) * mean_p_buy  # <= 0; residual = ... - term_battery
+    term_ev = 0.0
     term_hw = 0.0
     if hw_active and c_hw > 0.0 and cop_hw_last > 0.0:
-        term_hw = (t_hw_0 - t_hw_end) / (c_hw * cop_hw_last) * last_p_buy
+        term_hw = max(0.0, t_hw_0 - t_hw_end) / (c_hw * cop_hw_last) * last_p_buy
     term_i = 0.0
     if heating_hours and fh_size > 0:
         term_i = (t_i_end - t_i_0) / (C_STORE * fh_size) * last_p_buy
@@ -412,7 +474,8 @@ def _compute_base_case(input_csv, state_overrides=None):
             "term_battery": round(-term_battery, 6),
             "term_ev": round(-term_ev, 6),
             "term_i": round(-term_i, 6),
-            "soc_b_kwh_start": round(min(b_soc_max, p["SOC_b_0_percent"] / 100.0 * b_soc_max), 4),
+            "soc_b_kwh_start": round(soc_b_start_kwh, 4),
+            "soc_b_kwh_target": round(soc_b_target, 4),
             "soc_b_kwh_end": round(soc_b_end, 4),
             "soc_ev_kwh_start": round(soc_ev_0, 4),
             "soc_ev_kwh_end": round(soc_ev_end, 4),

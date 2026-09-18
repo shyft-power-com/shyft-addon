@@ -169,3 +169,63 @@ def test_ev_trace_is_start_of_hour_state():
     # Stunde 0 des Traces ist der Startzustand (wie SOC_EV[1] im Optimierer), nicht der Zustand nach Stunde 0.
     result = base_case.compute_base_case(_ev_csv(soc0=0.2, trips={5: 27.0}))
     assert abs(result["SOC_EVBaseList"][0] - 0.2) < 1e-9
+
+
+_COLS = ("electkwh;heatingkwh;hw_usage_h;heating;hotwaterkwh;ev_usage_h;d_ev_kwh;PV_generation;"
+         "Temperature;p_buy;p_sell;b_soc_max_kWh;SOC_b_0_percent;T_hw_0;hp_max_power;hw_tankSize;"
+         "T_supply_max;hw_soc_min;fh_size;fh_eff;T_i_0;T_i_min;T_i_buffer;curve_level;curve_slope;"
+         "otherDevice_P;otherDevice_SOC;OD_running_hours;ev_soc_norm;ev_b_size;ev_charge_rate;"
+         "ev_soc_0;p_min;OptimizerPeriods;CO;p_gas;CO_0;hp_type;b_soc_min").split(";")
+_DEFAULTS = dict(electkwh=0.5, heatingkwh=0, hw_usage_h="", heating="", hotwaterkwh=0, ev_usage_h="", d_ev_kwh=0,
+                 PV_generation=0, Temperature=10, p_buy=0.2, p_sell=0.08, b_soc_max_kWh=0, SOC_b_0_percent=0,
+                 T_hw_0=0, hp_max_power=3, hw_tankSize=0, T_supply_max=60, hw_soc_min=44, fh_size=0, fh_eff=0,
+                 T_i_0=20, T_i_min=20, T_i_buffer=0.3, curve_level=0, curve_slope=0, otherDevice_P=0,
+                 otherDevice_SOC=0, OD_running_hours=0, ev_soc_norm=0, ev_b_size=0, ev_charge_rate=0, ev_soc_0=0,
+                 p_min=0, OptimizerPeriods=0, CO="no", p_gas=0.1, CO_0=0, hp_type="Air-Water", b_soc_min=10)
+
+
+def _csv(n, first=None, **kv):
+    rows = []
+    for i in range(n):
+        v = dict(_DEFAULTS, OptimizerPeriods=n, **kv)
+        if i == 0 and first:
+            v.update(first)
+        rows.append(";".join(str(v[c]) for c in _COLS))
+    return "\n".join([";".join(_COLS)] + rows)
+
+
+def test_battery_ends_at_least_90_percent_of_start_like_optimizer():
+    # Optimierer-Endbedingung: SOC_b[h_end+1] >= max(0.9*SOC_b_0, b.soc_min). 10-kWh-Speicher bei 50 %,
+    # nachts keine PV, Grundlast -> ohne Endbedingung wuerde er bis zum Minimum leerlaufen.
+    result = base_case.compute_base_case(_csv(12, b_soc_max_kWh=10, SOC_b_0_percent=50))
+    ev = result["endValue"]
+    assert ev["soc_b_kwh_end"] >= 0.9 * 5.0 - 1e-6
+    assert ev["soc_b_kwh_target"] == 4.5
+    assert result["netProfitBaseList"][-1] > 0.0  # Nachladung aus dem Netz kostet
+
+
+def test_hot_water_reheated_to_start_temperature_at_end():
+    # Tank kuehlt ohne Nachheizen aus; Endbedingung T_hw[h_end+1] >= T_hw_0 -> WP heizt in den letzten
+    # Stunden nach (mehr Verbrauch dort), Endtemperatur == Starttemperatur.
+    kw = dict(hw_tankSize=300, T_hw_0=50, hw_usage_h=1, hotwaterkwh=0)
+    result = base_case.compute_base_case(_csv(24, **kw))
+    ev = result["endValue"]
+    assert abs(ev["t_hw_end"] - ev["t_hw_start"]) < 1e-2
+    usage = result["PowerUsageBaseList"]
+    assert max(usage[-3:]) > max(usage[:-3])  # Nachheizen konzentriert sich am Ende
+    assert ev["term_hw"] == 0.0
+
+
+def test_ev_reaches_norm_at_start_of_last_hour_after_late_return():
+    # Auto ist bis Stunde 6 unterwegs (Fahrt 15 kWh), danach eingesteckt; Norm 50 % von 60 kWh.
+    csv_text = _csv(10, first=None, ev_soc_norm=0.5, ev_b_size=60, ev_charge_rate=11, ev_soc_0=0.5,
+                    ev_usage_h=1)
+    # ev_usage_h nur in Zeile 0 -> Stunde 1 weg; Fahrtverbrauch dort
+    lines = csv_text.split("\n")
+    cols = lines[1].split(";")
+    cols[_COLS.index("d_ev_kwh")] = "15"
+    lines[1] = ";".join(cols)
+    result = base_case.compute_base_case("\n".join(lines))
+    soc = result["SOC_EVBaseList"]
+    assert soc[-1] >= 0.5 - 1e-3  # Beginn der letzten Stunde: Norm erreicht
+    assert min(soc) >= -1e-9

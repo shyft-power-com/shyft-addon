@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.143
+
+* **Base Case erfüllt jetzt die Endbedingungen des Optimierers, statt Endzustände nachträglich zu bewerten** (Nutzer-Vorschlag). Batterie: am Horizont-Ende mindestens `max(0,9 × Start-SOC, Mindest-SOC)` (run_SHEMS.jl:182) - der Fehlbetrag wird in den letzten Stunden aus dem Netz nachgeladen, darunter wird nicht mehr entladen. Warmwasser: Tank muss am Ende wieder `T_hw_0` erreichen (run_SHEMS.jl:223) - die Wärmepumpe heizt in den letzten Stunden nach (bisher kühlte der Tank im Base Case über den ganzen Horizont ohne Nachheizen aus und wurde erst über eine Kostenkorrektur am Ende bewertet). Auto: Ladestand zu Beginn der letzten Stunde ≥ `ev_soc_norm` (run_SHEMS.jl:236), rückwärts bis in die letzten Ladestunden durchgereicht. Die pauschale Endwert-Korrektur für Batterie und EV (Endzustand vs. Startzustand) entfällt; übrig bleiben nur Fehlbeträge, falls eine Endbedingung physikalisch nicht mehr erreichbar war, sowie der (rundungsgroße) Raumtemperatur-Term.
+* Diagnose: `opt_end_value` in `/dashboard/chart-data` zeigt jetzt Endzustände samt Zielwerten des Optimierers (statt nachgerechneter Bewertungs-Terme), passend zu `base_end_value`.
+
 ## 0.0.45.142
 
 * **Base Case: SOC_EV hält jetzt die Optimierer-Nebenbedingungen ein.** Die Mindest-SOC-Rückwärtsrechnung für kommende Fahrten ignorierte den variablen Ladeverlust (`ev.loss`) und wandte auf den Fahrt-Bedarf die 0,2-kWh-Hysterese an - dadurch konnte der Ladestand vor einer Fahrt knapp unter 0 landen (live: -0,00007). Fahrt-Deckung ist jetzt Pflicht (keine Hysterese, inkl. Verlust), die Hysterese gilt nur noch für das Halten von `ev_soc_norm`; Ladeleistung ≤ `ev_charge_rate`, SOC ≤ Akkukapazität wie bisher.
