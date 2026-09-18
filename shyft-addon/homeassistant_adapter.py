@@ -338,6 +338,18 @@ class HomeAssistantAdapter:
             value = response.get("state")
         return float(value)
 
+    def call_service_with_response(self, domain, service, data=None, timeout=120):
+        "Wie call_service, fordert aber die Antwortdaten des Dienstes an (POST ...?return_response, z.B. fuer ai_task.generate_data) und wartet bis zu timeout Sekunden (KI-Antworten koennen dauern)."
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self._token()}"}
+        uri = f"{self.homeassistant_uri}/api/services/{domain}/{service}?return_response"
+        response = requests.post(uri, headers=headers, json=data if data is not None else {}, timeout=timeout)
+        if not response.ok:
+            raise Exception(f"POST /api/services/{domain}/{service} failed: {response.status_code} {response.text}")
+        try:
+            return response.json()
+        except ValueError:
+            return {}
+
     def get_number_min_max(self, entity_id):
         "Liest die 'min'/'max'-Attribute einer number-Entity aus ihrem aktuellen HA-Zustand (z.B. der vom Hersteller/der Integration hinterlegte gueltige Wertebereich eines Waermepumpen-Reglers) - je None, wenn die Entity das Attribut nicht liefert oder es nicht numerisch ist."
         response = self.get_from_homeassistant(f"/api/states/{entity_id}")

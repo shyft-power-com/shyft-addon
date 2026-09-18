@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.144
+
+* **Neu (nur Testumgebung, Zugangsschlüssel mit `test_`): Hilfe-Assistent.** Auf allen Seiten erscheint unten rechts ein Chat-Icon; ein Klick öffnet ein Eingabefeld ("Frage die KI um Hilfe"), die Antwort kommt über die in Home Assistant eingerichtete KI (`ai_task.generate_data`, z.B. Google Gemini). Ist keine KI eingerichtet, erklärt das Feld, wie man die Integration einbindet. Der KI werden Wissensbasis, Feldbeschreibungen der Oberfläche, die aktuelle Konfiguration (ohne Zugangsdaten), aktive Probleme, die Werte der zugeordneten Sensoren und eine Auswahl weiterer Entitäten mitgegeben; unter dem Eingabefeld steht der Datenschutz-Hinweis sowie die Kontaktadresse für Fragen an das Shyft-Team.
+
 ## 0.0.45.143
 
 * **Base Case erfüllt jetzt die Endbedingungen des Optimierers, statt Endzustände nachträglich zu bewerten** (Nutzer-Vorschlag). Batterie: am Horizont-Ende mindestens `max(0,9 × Start-SOC, Mindest-SOC)` (run_SHEMS.jl:182) - der Fehlbetrag wird in den letzten Stunden aus dem Netz nachgeladen, darunter wird nicht mehr entladen. Warmwasser: Tank muss am Ende wieder `T_hw_0` erreichen (run_SHEMS.jl:223) - die Wärmepumpe heizt in den letzten Stunden nach (bisher kühlte der Tank im Base Case über den ganzen Horizont ohne Nachheizen aus und wurde erst über eine Kostenkorrektur am Ende bewertet). Auto: Ladestand zu Beginn der letzten Stunde ≥ `ev_soc_norm` (run_SHEMS.jl:236), rückwärts bis in die letzten Ladestunden durchgereicht. Die pauschale Endwert-Korrektur für Batterie und EV (Endzustand vs. Startzustand) entfällt; übrig bleiben nur Fehlbeträge, falls eine Endbedingung physikalisch nicht mehr erreichbar war, sowie der (rundungsgroße) Raumtemperatur-Term.

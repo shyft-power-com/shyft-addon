@@ -1,3 +1,5 @@
+import {initAssistantWidget} from './assistant.js';
+
 const outsideHomeAssistant = "http://localhost:8000/0";
 const insideHomeAssistant = window.location.pathname;
 const configUri = insideHomeAssistant + "/config";
@@ -856,6 +858,29 @@ async function applyAnalyseTabVisibility() {
     try {
         const status = await getJson(insideHomeAssistant + '/account-status');
         button.hidden = !status.isTestEnvironment;
+    } catch (err) {
+        console.log(err);
+    }
+}
+
+// Hilfe-Assistent (KI-Chat, siehe assistant.js): nur mit test_-praefixiertem Zugangsschluessel.
+// uiHelp gibt der KI die Feldbeschreibungen der Oberflaeche mit (Tooltips), damit sie die Begriffe kennt.
+function buildAssistantUiHelp() {
+    const lines = [];
+    for (const source of [helpinformation, actorHelpInformation]) {
+        for (const info of Object.values(source)) {
+            if (info && info.label) lines.push(`${info.label}: ${String(info.description || '').trim()}`);
+        }
+    }
+    return lines.join('\n');
+}
+
+async function applyAssistantWidget() {
+    try {
+        const status = await getJson(insideHomeAssistant + '/account-status');
+        if (status.isTestEnvironment) {
+            initAssistantWidget({getJson, baseUri: insideHomeAssistant, buildUiHelp: buildAssistantUiHelp});
+        }
     } catch (err) {
         console.log(err);
     }
@@ -8788,6 +8813,7 @@ if (document.readyState === 'complete') {
     setupTabs();
     syncTopBarHeightVar();
     applyAnalyseTabVisibility();
+    applyAssistantWidget();
 } else {
     window.addEventListener('load', () => {
         loadConfiguration().then(loadShyftActions);
@@ -8795,6 +8821,7 @@ if (document.readyState === 'complete') {
         setupTabs();
         syncTopBarHeightVar();
         applyAnalyseTabVisibility();
+        applyAssistantWidget();
     });
 }
 

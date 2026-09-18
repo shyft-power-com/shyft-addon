@@ -2040,7 +2040,154 @@
             margin: 0.4em 0 0;
             padding-left: 1.2em;
         }
-    </style>
+    
+        /* Hilfe-Assistent (KI-Chat, siehe assistant.js) - schwebendes Icon unten rechts auf allen Seiten */
+        .assistantWidget {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            z-index: 900;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 10px;
+            font-family: var(--font-body);
+        }
+        .assistantLauncher {
+            width: 54px;
+            height: 54px;
+            border-radius: 50%;
+            border: none;
+            background: var(--color-accent);
+            color: var(--color-accent-contrast);
+            box-shadow: 0 4px 14px rgba(9, 23, 71, 0.25);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+        }
+        .assistantLauncher:hover {
+            filter: brightness(0.95);
+        }
+        .assistantPanel {
+            width: min(380px, calc(100vw - 32px));
+            max-height: min(560px, calc(100vh - 110px));
+            display: flex;
+            flex-direction: column;
+            background: var(--color-bg-card);
+            color: var(--color-text);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            box-shadow: 0 8px 28px rgba(9, 23, 71, 0.25);
+            overflow: hidden;
+        }
+        .assistantPanel[hidden] {
+            display: none;
+        }
+        .assistantHeader {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.6em 0.9em;
+            font-weight: 600;
+            border-bottom: 1px solid var(--color-border);
+        }
+        .assistantClose {
+            background: none;
+            border: none;
+            color: var(--color-text-secondary);
+            font-size: 1.4em;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0 0.2em;
+        }
+        .assistantMessages {
+            flex: 1 1 auto;
+            min-height: 60px;
+            overflow-y: auto;
+            padding: 0.7em 0.9em;
+            display: flex;
+            flex-direction: column;
+            gap: 0.6em;
+        }
+        .assistantMessage {
+            padding: 0.55em 0.75em;
+            border-radius: 10px;
+            font-size: 0.9em;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            max-width: 92%;
+        }
+        .assistantMessage--user {
+            align-self: flex-end;
+            background: var(--color-accent);
+            color: var(--color-accent-contrast);
+        }
+        .assistantMessage--answer {
+            align-self: flex-start;
+            background: var(--color-input-bg);
+            border: 1px solid var(--color-border);
+        }
+        .assistantMessage--pending {
+            align-self: flex-start;
+            color: var(--color-text-secondary);
+            font-style: italic;
+        }
+        .assistantMessage--error {
+            align-self: flex-start;
+            border: 1px solid var(--color-error);
+            color: var(--color-error);
+        }
+        .assistantInputRow {
+            display: flex;
+            gap: 0.5em;
+            align-items: flex-end;
+            padding: 0.6em 0.9em 0.3em;
+        }
+        .assistantInput {
+            flex: 1 1 auto;
+            min-width: 0;
+            resize: none;
+            font-family: var(--font-body);
+            font-size: 0.9em;
+            color: var(--color-text);
+            background: var(--color-input-bg);
+            border: 1px solid var(--color-input-border);
+            border-radius: 8px;
+            padding: 0.5em 0.6em;
+        }
+        .assistantInput:disabled {
+            opacity: 0.85;
+        }
+        .assistantSend {
+            flex: 0 0 auto;
+            background: var(--color-accent);
+            color: var(--color-accent-contrast);
+            border: none;
+            border-radius: 8px;
+            padding: 0.55em 0.9em;
+            font-family: var(--font-body);
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .assistantSend:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .assistantNotice {
+            padding: 0.2em 0.9em;
+            font-size: 0.78em;
+            color: var(--color-text-secondary);
+        }
+        .assistantNotice:last-child {
+            padding-bottom: 0.7em;
+        }
+        .assistantNotice a {
+            color: inherit;
+        }
+</style>
     <title>shyft addon</title>
 </head>
 <body>
