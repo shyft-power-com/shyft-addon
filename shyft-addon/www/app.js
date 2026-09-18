@@ -3869,7 +3869,7 @@ function buildAutoManagedNumberControl(control) {
         // serverseitig synchron erhoeht, auf Bestaetigung wartet UND danach IMMER zurueckstellt
         // (siehe /actions/heating_target_temp/test) - kann daher spuerbar laenger dauern als der
         // generische Delta-Test.
-        valueDisplay.textContent = control.onlyIncrement ? 'Teste... (kann bis zu 2:30 min dauern)' : 'Teste...';
+        valueDisplay.textContent = control.onlyIncrement ? 'Teste... (kann bis zu 10 min dauern)' : 'Teste...';
         try {
             const response = await fetch(insideHomeAssistant + '/actions/' + control.key + '/test', {
                 method: 'POST',

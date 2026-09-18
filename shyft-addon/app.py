@@ -4724,8 +4724,10 @@ def statusAutoManagedControl(control_key):
 # Versuch danach, egal ob die Erhoehung bestaetigt werden konnte.
 HEATING_TARGET_TEMP_TEST_STEP_C = 1
 HEATING_TARGET_TEMP_TEST_POLL_INTERVAL_SECONDS = 10
-HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS = 90
-HEATING_TARGET_TEMP_TEST_REVERT_TIMEOUT_SECONDS = 60
+# Cloud-Waermepumpen (z.B. Viessmann) uebernehmen einen geschriebenen Wert erst beim naechsten
+# Cloud-Abgleich in Home Assistant: gemessen ~90 s fuers Erhoehen, ~195 s fuers Zuruecksetzen.
+HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS = 300
+HEATING_TARGET_TEMP_TEST_REVERT_TIMEOUT_SECONDS = 300
 
 
 def _write_and_verify_auto_managed_number(control_key, entity_id, target_value, poll_timeout_seconds,

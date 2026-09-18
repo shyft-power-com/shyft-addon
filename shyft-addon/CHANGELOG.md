@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.138
+
+* **Fix: Test "Heizung Soll-Temperatur" schlug fehl, obwohl die Wärmepumpe den Wert übernahm.** Cloud-Wärmepumpen (z.B. Viessmann) melden einen geschriebenen Wert erst nach ca. 90 s (Erhöhen) bzw. bis ca. 200 s (Zurücksetzen) an Home Assistant zurück - die Test-Fristen (90 s / 60 s) waren dafür zu knapp. Beide Fristen liegen jetzt bei 5 Minuten, der Hinweistext im Test-Button wurde entsprechend angepasst.
+
 ## 0.0.45.137
 
 * **Fix: Zielwerte für direkt gesteuerte "number"-Aktoren (Heizung Soll-Temperatur, PV-Einspeiselimit, Verbrauchslimit §14a) werden jetzt auf den vom Gerät selbst gemeldeten Wertebereich begrenzt** - bisher konnte ein vom Optimierer berechneter Zielwert außerhalb des vom Regler (z.B. Viessmann Vitocal) erlaubten Bereichs liegen und wurde dann bei jedem Versuch mit einem HTTP-500-Fehler abgelehnt, ohne dass die Integration selbst fehlerhaft war. Meldet das Gerät kein Minimum/Maximum, bleibt es beim bisherigen Verhalten (Fehlermeldung im Log). Musste tatsächlich geklemmt werden, wird das als normaler (nicht rot markierter) Log-Eintrag an der Aktion vermerkt, mit dem Hinweis, die Min-/Max-Grenzen in der Konfiguration zu prüfen.
