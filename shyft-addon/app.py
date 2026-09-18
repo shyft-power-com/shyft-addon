@@ -1748,8 +1748,8 @@ def _note_sensor_health(sensor_key, entity_id, ok):
     else:
         problem_registry.register(
             problem_id,
-            f"Der Sensor fuer \"{label}\" ({entity_id}) liefert aktuell keinen Wert (unavailable). "
-            f"Solange er fehlt, rechnet shyft-power fuer dieses Geraet mit unvollstaendigen Daten.",
+            f"Der Sensor für \"{label}\" ({entity_id}) liefert aktuell keinen Wert (unavailable). "
+            f"Solange er fehlt, rechnet shyft-power für dieses Gerät mit unvollständigen Daten.",
         )
 
 
@@ -1764,7 +1764,7 @@ def _update_input_csv_health(config, live_values):
     problem_registry.register(
         "input_csv_missing_data",
         "Es fehlen aktuell die grundlegenden Stromfluss-Werte (PV, Haushalt, Netz), die shyft-power "
-        "zur Optimierung braucht. Pruefe die Sensor-Zuordnung fuer den Wechselrichter auf der "
+        "zur Optimierung braucht. Prüfe die Sensor-Zuordnung für den Wechselrichter auf der "
         "Konfigurationsseite.",
     )
 
@@ -2756,13 +2756,13 @@ def execute_auto_managed_action(control_key, phase, target_value):
 
     entity_id = config.get("sensorMappings", {}).get(control["sensor_field"], "")
     if not entity_id:
-        raise Exception(f"Keine Entity fuer '{control_key}' zugeordnet")
+        raise Exception(f"Keine Entity für '{control_key}' zugeordnet")
 
     if control["type"] == "number":
         if phase != "start":
             return  # no Ende-Verhalten defined yet for direct-value controls - a later step may add one
         if target_value is None:
-            raise Exception("Aktion enthaelt keinen Zielwert (Target Value)")
+            raise Exception("Aktion enthält keinen Zielwert (Target Value)")
         homeassistant_adapter.call_service("script", control["script_id"], {"target_value": target_value})
     elif control["type"] == "switch":
         service = "turn_on" if phase == "start" else "turn_off"
@@ -2781,7 +2781,7 @@ CHARGING_SINGLE_PHASE_MAX_AMPS = 16
 def compute_charging_phases_and_amps(target_kw):
     "Converts shyft-power's kW Target Value for 'Auto laden' into a phase count + Ampere for the wallbox. Always rounds up so the result never falls below the 6A EV charging minimum."
     if target_kw is None:
-        raise Exception("Aktion enthaelt keinen Zielwert (Target Value)")
+        raise Exception("Aktion enthält keinen Zielwert (Target Value)")
     single_phase_amps = math.ceil(target_kw * 1000 / CHARGING_PHASE_VOLTAGE)
     if single_phase_amps <= CHARGING_SINGLE_PHASE_MAX_AMPS:
         return 1, max(CHARGING_MIN_AMPS, single_phase_amps)
@@ -3235,10 +3235,10 @@ def _note_indoor_temp_staleness(entity_id, age_seconds):
         seit = f"{hours:.0f} Stunden" if hours >= 2 else f"{age_seconds / 60:.0f} Minuten"
         problem_registry.register(
             problem_id,
-            f"Der Sensor fuer \"Innenraumtemperatur (gemessen)\" ({entity_id}) hat sich seit "
+            f"Der Sensor für \"Innenraumtemperatur (gemessen)\" ({entity_id}) hat sich seit "
             f"{seit} nicht aktualisiert. Solange rechnet shyft-power mit der Prognose des letzten "
-            f"Laufs bzw. der gewuenschten Mindest-Raumtemperatur statt mit dem Messwert - pruefe "
-            f"den Sensor bzw. die zugehoerige Integration.",
+            f"Laufs bzw. der gewünschten Mindest-Raumtemperatur statt mit dem Messwert - prüfe "
+            f"den Sensor bzw. die zugehörige Integration.",
         )
     else:
         problem_registry.clear(problem_id)
@@ -4143,7 +4143,7 @@ def _end_dhw_target_temp_restore(action, config):
         return
     restore_value = round(restore_value)  # siehe Rundungs-Kommentar in _start_dhw_target_temp_boost
     if not _write_and_verify_dhw_target_temp(entity_id, restore_value, DHW_TARGET_TEMP_RETRY_TIMEOUT_SECONDS):
-        raise Exception(f"Solltemperatur konnte nicht auf {restore_value} °C zurueckgesetzt werden")
+        raise Exception(f"Solltemperatur konnte nicht auf {restore_value} °C zurückgesetzt werden")
 
 
 DHW_ACTIVATION_TEST_POLL_INTERVAL_SECONDS = 5
@@ -4947,7 +4947,7 @@ def _write_and_verify_battery_entity(entity_id, domain, service, data_key, targe
 
 def _notify_battery_control_failure(action_key, phase, failed_fields, config):
     label = ACTION_TYPE_TOGGLE_KEYS.get(action_key, action_key)
-    message = (f"Batterie-Steuerung fuer \"{label}\" ({phase}): {', '.join(failed_fields)} konnte(n) "
+    message = (f"Batterie-Steuerung für \"{label}\" ({phase}): {', '.join(failed_fields)} konnte(n) "
                f"nach {BATTERY_RETRY_TIMEOUT_SECONDS // 60} Minuten nicht gesetzt werden.")
     try:
         target = config.get("notificationTargets", {}).get("phone", "")
@@ -5012,7 +5012,7 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
     if failed:
         if notify_on_failure:
             _notify_battery_control_failure(action_key, phase, failed, config)
-        raise Exception(f"Batterie-Steuerung unvollstaendig: {', '.join(failed)}")
+        raise Exception(f"Batterie-Steuerung unvollständig: {', '.join(failed)}")
 
 
 def _battery_control_variant(config, action_key):
@@ -5574,7 +5574,7 @@ def _note_action_outcome(label, phase, error=None):
         problem_registry.register(
             problem_id,
             f"Die Aktion \"{label}\" konnte nicht {phase} werden: {error}. shyft-power hat die "
-            f"Aktion angefordert, aber vom Geraet kam eine Fehlermeldung.",
+            f"Aktion angefordert, aber vom Gerät kam eine Fehlermeldung.",
         )
 
 

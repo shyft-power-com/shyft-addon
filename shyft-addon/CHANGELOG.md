@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.136
+
+* **Fix: fehlende Umlaute in einigen Nutzer-sichtbaren Fehler- und Hinweistexten** (z.B. "Sensor fuer" statt "Sensor für", "unvollstaendig" statt "unvollständig") - betraf Problemmeldungen (Dashboard/Konfigurationsseite) und Fehlermeldungen auf Aktionskarten für Sensor-Ausfälle, Innenraumtemperatur-Staleness, Batterie- und Warmwasser-Steuerungsfehler.
+
 ## 0.0.45.135
 
 * **Neu: "Strom"-Kachel bekommt ein optionales Feld "Aktueller Strom - Netz" mit Mehrfachauswahl.** Damit lässt sich zusätzlich zum (weiterhin unterstützten) Wechselrichter-Sensor ein oder mehrere Netzleistungs-Sensoren hinterlegen - z.B. für einen Tibber Pulse, der Netzbezug und Einspeisung als zwei getrennte, jeweils positive Sensoren liefert statt eines einzigen vorzeichenbehafteten. Ein Sensorname, der "einspeise" enthält, wird automatisch als Einspeiseleistung erkannt und sein Vorzeichen gedreht. Von allen konfigurierten Quellen (Wechselrichter + "Strom"-Kachel) wird jeweils der zuletzt aktualisierte Wert verwendet - u.a. für die PV-Überschusssteuerung und deren Live-Reaktion auf Sensor-Änderungen. Betrifft (noch) nur Live-Lesungen, nicht die kWh-Historie im Energie-Archiv (dafür bräuchte es einen echten Mehrfach-Historien-Merge - ggf. später).
