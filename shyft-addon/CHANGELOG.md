@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.140
+
+* **Strom-Kachel: "Aktueller Strom - Netz" nutzt jetzt dieselbe Mehrfachauswahl wie die Geräteauswahl (z.B. Wechselrichter)** - gewählte Sensoren erscheinen als Chips mit "×", darunter eine durchsuchbare Checkbox-Liste, statt "+ Sensor hinzufügen"-Button mit einzelnen Eingabezeilen.
+* **Sensor-Suche findet jetzt auch über den Anzeigenamen aus Home Assistant** (z.B. "Einspeisung" findet `sensor.power_clayallee_241`) - in allen Sensor-/Entitäts-Dropdowns; der Anzeigename wird zusätzlich hinter dem Eintrag angezeigt.
+
 ## 0.0.45.139
 
 * **Umbenannt: Aktion "Ersparnis Haushaltsstrom" heißt jetzt "Ersparnis Haushaltsstrom / Batterie"** (Gerätesteuerung, Historie und Tages-Detailansicht im Analyse-Tab). Bereits archivierte Tageswerte erscheinen ebenfalls unter dem neuen Namen.

@@ -2662,6 +2662,7 @@ def mapToResponse(response):
         result.append({
             "entity_id": item["entity_id"],
             "label": item["entity_id"] + " (" + stateAndUnit + ")",
+            "friendly_name": attributes.get("friendly_name", ""),
             "device_class": attributes.get("device_class", ""),
             "state": item["state"],
             "unit": unitOfMeasurement,

@@ -1376,6 +1376,7 @@ function populateSensorDatalist(datalist, candidateEntities, key, historySignals
         const option = document.createElement('option');
         option.value = entity.label;
         option.dataset.bucket = score > 0 ? 'match' : 'other';
+        if (entity.friendly_name) option.dataset.friendlyName = entity.friendly_name;
         datalist.appendChild(option);
     }
 }
@@ -1414,6 +1415,7 @@ function populateDhwSwitchDatalist(datalist, candidates, historySignals) {
         option.value = entity.entity_id;
         option.textContent = entity.label;
         option.dataset.bucket = score > 0 ? 'match' : 'other';
+        if (entity.friendly_name) option.dataset.friendlyName = entity.friendly_name;
         datalist.appendChild(option);
     }
 }
@@ -3592,6 +3594,12 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction}) {
         const row = document.createElement('div');
         row.className = 'entityDropdownOption';
         row.textContent = opt.label;
+        if (opt.friendlyName) {
+            const nameEl = document.createElement('span');
+            nameEl.className = 'entityDropdownFriendlyName';
+            nameEl.textContent = ' - ' + opt.friendlyName;
+            row.appendChild(nameEl);
+        }
         row.addEventListener('mousedown', (event) => {
             event.preventDefault();
             selectValue(opt.value);
@@ -3626,10 +3634,10 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction}) {
 
         const datalist = document.getElementById(datalistId);
         const allOptions = datalist
-            ? Array.from(datalist.options).map(opt => ({value: opt.value, label: opt.textContent || opt.value, bucket: opt.dataset.bucket}))
+            ? Array.from(datalist.options).map(opt => ({value: opt.value, label: opt.textContent || opt.value, bucket: opt.dataset.bucket, friendlyName: opt.dataset.friendlyName || ''}))
             : [];
         const filterText = input.value.trim().toLowerCase();
-        const filtered = filterText ? allOptions.filter(opt => opt.label.toLowerCase().includes(filterText)) : allOptions;
+        const filtered = filterText ? allOptions.filter(opt => (opt.label + ' ' + opt.friendlyName).toLowerCase().includes(filterText)) : allOptions;
 
         if (filtered.length === 0) {
             const empty = document.createElement('div');
@@ -3730,6 +3738,7 @@ function buildAutomationEntityRow(labelText, tooltipText, inputId, value, placeh
         const option = document.createElement('option');
         option.value = entity.entity_id;
         option.textContent = entity.label;
+        if (entity.friendly_name) option.dataset.friendlyName = entity.friendly_name;
         datalist.appendChild(option);
     }
     valueCell.appendChild(datalist);
@@ -4311,6 +4320,7 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
                             const option = document.createElement('option');
                             option.value = entity.entity_id;
                             option.textContent = entity.label;
+                            if (entity.friendly_name) option.dataset.friendlyName = entity.friendly_name;
                             entityDatalist.appendChild(option);
                         }
                     }
@@ -4482,6 +4492,7 @@ function buildCarChargeControl() {
         const option = document.createElement('option');
         option.value = entity.entity_id;
         option.textContent = entity.label;
+        if (entity.friendly_name) option.dataset.friendlyName = entity.friendly_name;
         automationDatalist.appendChild(option);
     }
     automationValueCell.appendChild(automationDatalist);
@@ -5269,13 +5280,12 @@ function wrapEntityInputWithClear(dropdownEl, input) {
 // Mehrfach-Sensor-Zuordnung (aktuell nur fuer "electricity_grid_power_sensors" in der Strom-Kachel,
 // siehe renderGeneralConfigSection): mehrere Entitaeten fuer DENSELBEN Signaltyp, z.B. weil manche
 // Integrationen (Tibber Pulse) Netzbezug und Einspeisung als zwei getrennte Sensoren liefern statt
-// eines einzigen vorzeichenbehafteten. Anders als die normalen Sensor-Felder (siehe buildMappingRow,
-// je Schluessel genau EINE Entitaet) speichert dieser Schluessel ein ARRAY - schreibt sich deshalb
-// direkt in configData['sensorMappings'] (wie buildBatteryCoupledEntityField), statt ueber den
-// generischen DOM-id-basierten Sammelmechanismus in saveConfigurationNow zu laufen (der geht von
-// "ein Input pro Schluessel" aus). Das DOM ist hier die Quelle der Wahrheit fuer "wie viele Zeilen" -
-// configData wird bei jeder Aenderung/jedem Entfernen frisch aus allen sichtbaren Inputs neu
-// zusammengesetzt (leere Eintraege werden dabei herausgefiltert).
+// eines einzigen vorzeichenbehafteten. Gleiche Bedienung wie die Geraeteauswahl (buildIntegrationPicker):
+// gewaehlte Sensoren erscheinen als Chips mit "×" im Feld, das Dropdown darunter ist eine durchsuchbare
+// Checkbox-Liste. Anders als die normalen Sensor-Felder (siehe buildMappingRow, je Schluessel genau EINE
+// Entitaet) speichert dieser Schluessel ein ARRAY - schreibt sich deshalb direkt in
+// configData['sensorMappings'] (wie buildBatteryCoupledEntityField), statt ueber den generischen
+// DOM-id-basierten Sammelmechanismus in saveConfigurationNow zu laufen.
 function buildMultiSensorField(sensorKey) {
     const container = document.createElement('div');
     container.className = 'configField multiSensorField';
@@ -5287,70 +5297,170 @@ function buildMultiSensorField(sensorKey) {
     labelRow.appendChild(buildTooltip(context.description ?? sensorKey));
     container.appendChild(labelRow);
 
-    const datalistId = 'entityOptions_' + sensorKey;
-    const datalist = document.createElement('datalist');
-    datalist.id = datalistId;
-    populateSensorDatalist(datalist, allSensorIdOptions, sensorKey, {});
-    container.appendChild(datalist);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'integrationPicker';
+    container.appendChild(wrapper);
 
-    const rowsContainer = document.createElement('div');
-    container.appendChild(rowsContainer);
+    const button = document.createElement('div');
+    button.className = 'integrationPickerButton';
+    button.setAttribute('role', 'button');
+    button.tabIndex = 0;
+    button.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            button.click();
+        }
+    });
+    const buttonText = document.createElement('span');
+    buttonText.className = 'integrationPickerButtonText';
+    const buttonArrow = document.createElement('span');
+    buttonArrow.className = 'integrationPickerButtonArrow';
+    buttonArrow.textContent = '▾';
+    button.appendChild(buttonText);
+    button.appendChild(buttonArrow);
+    wrapper.appendChild(button);
 
-    function collectAndSave() {
-        const inputs = rowsContainer.querySelectorAll('input.sensorInput');
-        const values = Array.from(inputs).map(el => extractEntityId(el.value)).filter(Boolean);
+    const panel = document.createElement('div');
+    panel.className = 'integrationPickerPanel';
+    panel.hidden = true;
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.className = 'integrationPickerSearch';
+    search.setAttribute('autocomplete', 'off');
+    search.placeholder = 'Suchen...';
+    panel.appendChild(search);
+    const list = document.createElement('div');
+    list.className = 'integrationPickerList';
+    panel.appendChild(list);
+    wrapper.appendChild(panel);
+
+    const existing = (configData['sensorMappings'] || {})[sensorKey];
+    let selectedIds = Array.isArray(existing) ? existing.filter(Boolean) : [];
+
+    const filter = SENSOR_ENTITY_FILTERS[sensorKey];
+    const candidates = allSensorIdOptions
+        .filter(entity => entityMatchesSensorFilter(entity, filter))
+        .map(entity => ({entity, score: scoreSensorEntityForField(entity, sensorKey, undefined)}));
+
+    function save() {
         configData['sensorMappings'] = configData['sensorMappings'] || {};
-        configData['sensorMappings'][sensorKey] = values;
+        configData['sensorMappings'][sensorKey] = [...selectedIds];
         autoSave();
     }
 
-    function addRow(value) {
-        const row = document.createElement('div');
-        row.className = 'multiSensorFieldRow';
-
-        const input = document.createElement('input');
-        input.className = 'sensorInput';
-        input.setAttribute('autocomplete', 'off');
-        input.value = formatEntityDisplay(value || '');
-        input.addEventListener('change', () => {
-            input.value = formatEntityDisplay(extractEntityId(input.value));
-            collectAndSave();
-        });
-        const inputWrapper = wrapEntityInputWithClear(
-            attachEntityDropdown(input, {datalistId, headerText: 'Home-Assistant-Entität'}), input);
-        row.appendChild(inputWrapper);
-
-        const removeButton = document.createElement('button');
-        removeButton.type = 'button';
-        removeButton.className = 'multiSensorFieldRemove';
-        removeButton.textContent = '×';
-        removeButton.setAttribute('aria-label', 'Sensor entfernen');
-        removeButton.addEventListener('click', () => {
-            row.remove();
-            // Immer mindestens eine Zeile stehen lassen, damit gleich ein neuer Sensor eingetragen werden kann.
-            if (!rowsContainer.querySelector('input.sensorInput')) addRow('');
-            collectAndSave();
-        });
-        row.appendChild(removeButton);
-
-        rowsContainer.appendChild(row);
+    function removeSelection(entityId) {
+        selectedIds = selectedIds.filter(existingId => existingId !== entityId);
+        updateButtonText();
+        if (!panel.hidden) renderList(search.value);
+        save();
     }
 
-    const existing = (configData['sensorMappings'] || {})[sensorKey];
-    const initialValues = Array.isArray(existing) ? existing.filter(Boolean) : [];
-    if (initialValues.length > 0) {
-        for (const value of initialValues) addRow(value);
-    } else {
-        addRow('');
+    function buildChip(entityId) {
+        const chip = document.createElement('span');
+        chip.className = 'integrationPickerChip';
+        const label = document.createElement('span');
+        label.className = 'integrationPickerChipLabel';
+        label.textContent = entityId;
+        chip.appendChild(label);
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'integrationPickerChipRemove';
+        remove.textContent = '×';
+        remove.title = `${entityId} entfernen`;
+        remove.setAttribute('aria-label', `${entityId} entfernen`);
+        remove.addEventListener('click', (event) => {
+            event.stopPropagation();
+            removeSelection(entityId);
+        });
+        chip.appendChild(remove);
+        return chip;
     }
 
-    const addButton = document.createElement('button');
-    addButton.type = 'button';
-    addButton.className = 'multiSensorFieldAdd';
-    addButton.textContent = '+ Sensor hinzufügen';
-    addButton.addEventListener('click', () => addRow(''));
-    container.appendChild(addButton);
+    function updateButtonText() {
+        buttonText.innerHTML = '';
+        if (selectedIds.length === 0) {
+            buttonText.textContent = 'nicht vorhanden';
+            return;
+        }
+        for (const entityId of selectedIds) buttonText.appendChild(buildChip(entityId));
+    }
 
+    function buildCheckbox(entityId, labelText, friendlyName) {
+        const optionLabel = document.createElement('label');
+        optionLabel.className = 'integrationPickerOption';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = entityId;
+        checkbox.checked = selectedIds.includes(entityId);
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+                selectedIds = [...selectedIds, entityId];
+                updateButtonText();
+                renderList(search.value);
+                save();
+            } else {
+                removeSelection(entityId);
+            }
+        });
+        const text = document.createElement('span');
+        text.textContent = friendlyName ? `${labelText} - ${friendlyName}` : labelText;
+        optionLabel.appendChild(checkbox);
+        optionLabel.appendChild(text);
+        return optionLabel;
+    }
+
+    function renderList(filterText) {
+        list.innerHTML = '';
+        const normalizedFilter = (filterText || '').trim().toLowerCase();
+        // Bereits gewaehlte Sensoren, die nicht (mehr) zum Filter passen (z.B. nicht mehr in HA vorhanden),
+        // bleiben trotzdem sichtbar/abwaehlbar.
+        const knownIds = new Set(candidates.map(c => c.entity.entity_id));
+        const orphanSelected = selectedIds.filter(id => !knownIds.has(id)).map(id => ({entity: {entity_id: id, label: id}, score: Infinity}));
+        const all = [...orphanSelected, ...candidates]
+            .filter(({entity}) => `${entity.label} ${entity.friendly_name || ''}`.toLowerCase().includes(normalizedFilter))
+            .map(item => ({...item, score: selectedIds.includes(item.entity.entity_id) ? Infinity : item.score}));
+
+        if (all.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'integrationPickerEmpty';
+            empty.textContent = 'Keine Treffer';
+            list.appendChild(empty);
+            return;
+        }
+
+        const header = document.createElement('div');
+        header.className = 'integrationPickerHeader';
+        header.textContent = 'Home-Assistant-Entität';
+        list.appendChild(header);
+
+        const matching = all.filter(item => item.score > 0).sort((a, b) => b.score - a.score);
+        const others = all.filter(item => item.score <= 0);
+        for (const {entity} of matching) list.appendChild(buildCheckbox(entity.entity_id, entity.label, entity.friendly_name));
+
+        if (others.length === 0) return;
+        if (matching.length > 0) {
+            const divider = document.createElement('hr');
+            divider.className = 'integrationPickerDivider';
+            list.appendChild(divider);
+        }
+        for (const {entity} of others) list.appendChild(buildCheckbox(entity.entity_id, entity.label, entity.friendly_name));
+    }
+
+    search.addEventListener('input', () => renderList(search.value));
+
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const wasOpen = !panel.hidden;
+        closeOpenIntegrationPicker();
+        if (wasOpen) return;
+        panel.hidden = false;
+        openIntegrationPicker = {wrapper, panel};
+        search.value = '';
+        renderList('');
+        search.focus();
+    });
+
+    updateButtonText();
     return container;
 }
 
