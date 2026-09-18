@@ -1232,6 +1232,10 @@ def readDashboardChartData():
     base_t_hw = cache.get("T_HWBaseList") or []
     base_soc_b = cache.get("SOC_BBaseList") or []
     base_soc_ev = cache.get("SOC_EVBaseList") or []
+    # Endwert-Korrektur-Aufschluesselung (Debug): Base Case (aus dem Cache) vs. dieselben Terme fuer den
+    # Optimierer-Endzustand - zeigt, ob beide Seiten mit demselben Restwert-Massstab bewertet werden.
+    base_end_value = cache.get("endValue")
+    opt_end_value = _opt_end_value_terms(rows, output_rows)
 
     # Legenden-Summen fuer die Beta-Vergleichscharts: gesamt + heute/morgen (lokale Addon-Zeitzone),
     # ueber den GESAMTEN Optimierungszeitraum (vor dem "ab jetzt"-Slicing weiter unten).
@@ -1278,6 +1282,8 @@ def readDashboardChartData():
         "base_t_hw": base_t_hw,
         "base_soc_b": base_soc_b,
         "base_soc_ev": base_soc_ev,
+        "base_end_value": base_end_value,
+        "opt_end_value": opt_end_value,
         "opt_cost": opt_cost,
         "opt_usage": opt_usage,
         "cost_summary": cost_summary,
@@ -1297,6 +1303,55 @@ def _local_day_offset(hour_start_utc):
     today_local = _local_now().date()
     hour_local_date = hour_start_utc.astimezone(get_ha_timezone()).date()
     return (hour_local_date - today_local).days
+
+
+def _opt_end_value_terms(input_rows, output_rows):
+    """Debug-Gegenstueck zu base_case "endValue": dieselben Endwert-Terme (Batterie/EV/Raumtemperatur,
+    gleiche Formeln wie base_case.py), aber fuer den ENDzustand des OPTIMIERERS - der Julia-Output
+    enthaelt nur die Zustaende zu Beginn jeder Stunde (SOC_x[1:h_end]), der Endzustand nach der letzten
+    Stunde wird hier ueber dieselben Bilanzgleichungen wie in run_SHEMS.jl nachgerechnet (Batterie:
+    :177, EV: :232). Der Raumtemperatur-Endwert ist nur die Naeherung T_i der letzten Stunde. Der
+    Warmwasser-Term steckt bereits in profits_net_opt (run_SHEMS.jl, costs_opt[h_end]). Nur zur
+    Diagnose - veraendert weder opt_cost noch die Ersparnis-Berechnung. None, wenn nicht berechenbar."""
+    if not input_rows or not output_rows:
+        return None
+    try:
+        p0 = input_rows[0]
+        last = output_rows[-1]
+        n = len(output_rows)
+        b_max = _safe_float(p0.get("b_soc_max_kWh"))
+        b_start = min(b_max, _safe_float(p0.get("SOC_b_0_percent")) / 100.0 * b_max)
+        b_eta, b_loss = base_case.B_ETA, base_case.B_LOSS
+        charge_in = sum(_safe_float(last.get(k)) for k in ("PV_B", "GR_B", "CO_B"))
+        charge_out = sum(_safe_float(last.get(k)) for k in ("B_DE", "B_HP", "B_OD", "B_EV"))
+        b_end = (1 - b_loss) * _safe_float(last.get("SOC_B")) / 100.0 * b_max + b_eta * charge_in - charge_out / b_eta
+        ev_size = _safe_float(p0.get("ev_b_size"))
+        ev_start = _safe_float(p0.get("ev_soc_0")) * ev_size
+        d_ev_last = _safe_float(input_rows[n - 1].get("d_ev_kwh")) if n - 1 < len(input_rows) else 0.0
+        plugged = _safe_float(last.get("ev_plugged"))
+        ev_end = (_safe_float(last.get("SOC_EV")) * ev_size * (1 - base_case.EV_LOSS)
+                  + base_case.EV_ETA * _safe_float(last.get("EV_sum")) * plugged
+                  - base_case.EV_FIXED_LOSS_KWH * plugged - d_ev_last)
+        p_buy = [_safe_float(r.get("p_buy")) for r in input_rows[:n]]
+        mean_p_buy = sum(p_buy) / len(p_buy) if p_buy else 0.0
+        last_p_buy = p_buy[-1] if p_buy else 0.0
+        p_min = _safe_float(p0.get("p_min"))
+        fh_size = _safe_float(p0.get("fh_size"))
+        t_i_start = _safe_float(p0.get("T_i_0"))
+        t_i_end = _safe_float(last.get("T_i"))
+        term_battery = (b_end - b_start) * mean_p_buy
+        term_ev = (ev_end - ev_start) * p_min / base_case.EV_ETA
+        term_i = (t_i_end - t_i_start) / (base_case.C_STORE * fh_size) * last_p_buy if fh_size > 0 else 0.0
+        return {
+            "residual": round(-term_battery - term_ev - term_i, 6),
+            "term_battery": round(-term_battery, 6), "term_ev": round(-term_ev, 6), "term_i": round(-term_i, 6),
+            "soc_b_kwh_start": round(b_start, 4), "soc_b_kwh_end": round(b_end, 4),
+            "soc_ev_kwh_start": round(ev_start, 4), "soc_ev_kwh_end": round(ev_end, 4),
+            "t_i_start": round(t_i_start, 3), "t_i_end_approx": round(t_i_end, 3),
+        }
+    except Exception as e:
+        print("[Shyft] Optimierer-Endwert-Terme nicht berechenbar:", repr(e))
+        return None
 
 
 def _series_day_split(values, start):

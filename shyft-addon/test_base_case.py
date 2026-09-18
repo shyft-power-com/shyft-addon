@@ -10,7 +10,7 @@ def test_demo_shape():
     result = base_case.compute_base_case(_demo_csv())
     assert set(result) == {
         "netProfitBase48HoursSum", "netProfitBaseList", "PowerUsageBaseList", "nextState",
-        "T_iBaseList", "T_HWBaseList", "SOC_BBaseList", "SOC_EVBaseList", "ODLoadBaseList",
+        "T_iBaseList", "T_HWBaseList", "SOC_BBaseList", "SOC_EVBaseList", "ODLoadBaseList", "endValue",
     }
     assert len(result["netProfitBaseList"]) == 48
     assert len(result["PowerUsageBaseList"]) == 48
@@ -133,3 +133,39 @@ def test_flat_no_pv_no_storage_matches_hand_calc():
     assert result["netProfitBaseList"] == [0.3, 0.3, 0.3]
     assert result["PowerUsageBaseList"] == [1.0, 1.0, 1.0]
     assert abs(result["netProfitBase48HoursSum"] - 0.9) < 1e-9
+
+
+def _ev_csv(soc0, trips, horizon=8, b_size=60.0, rate=11.0, norm=0.5):
+    # trips: {1-basierte Stunde: Fahrverbrauch kWh} - in diesen Stunden ist das Auto unterwegs
+    header = (
+        "electkwh;heatingkwh;hw_usage_h;heating;hotwaterkwh;ev_usage_h;d_ev_kwh;PV_generation;"
+        "Temperature;p_buy;p_sell;b_soc_max_kWh;SOC_b_0_percent;T_hw_0;hp_max_power;hw_tankSize;"
+        "T_supply_max;hw_soc_min;fh_size;fh_eff;T_i_0;T_i_min;T_i_buffer;curve_level;curve_slope;"
+        "otherDevice_P;otherDevice_SOC;OD_running_hours;ev_soc_norm;ev_b_size;ev_charge_rate;"
+        "ev_soc_0;p_min;OptimizerPeriods;CO;p_gas;CO_0;hp_type;b_soc_min"
+    )
+    rows = []
+    away = sorted(trips)
+    for h in range(1, horizon + 1):
+        usage_h = str(away[h - 1]) if h - 1 < len(away) else ""
+        d_ev = trips.get(h, 0)
+        rows.append(f"0.5;0;;;0;{usage_h};{d_ev};0;10;0.20;0.08;0;0;0;3;0;60;44;0;0;20;20;0.3;0;0;0;0;0;{norm};{b_size};{rate};{soc0};0.1;{horizon};no;0.1;0;Air-Water;10")
+    return "\n".join([header] + rows)
+
+
+def test_ev_soc_never_negative_for_coverable_trip():
+    # Fahrt in Stunde 5 braucht 27 kWh (0.45 des 60-kWh-Akkus), Start bei 20 % -> muss vorher
+    # nachgeladen werden. Der SOC (Optimierer-Nebenbedingung: SOC_EV >= 0 fuer erfuellbare Fahrten,
+    # <= soc_max) darf nie unter 0 oder ueber die Kapazitaet gehen, auch nicht durch den variablen
+    # Ladeverlust (frueher landete er knapp unter 0).
+    result = base_case.compute_base_case(_ev_csv(soc0=0.2, trips={5: 27.0}))
+    soc = result["SOC_EVBaseList"]
+    assert min(soc) >= -1e-9
+    assert max(soc) <= 1.0 + 1e-9
+    assert result["endValue"]["soc_ev_kwh_end"] >= -1e-9
+
+
+def test_ev_trace_is_start_of_hour_state():
+    # Stunde 0 des Traces ist der Startzustand (wie SOC_EV[1] im Optimierer), nicht der Zustand nach Stunde 0.
+    result = base_case.compute_base_case(_ev_csv(soc0=0.2, trips={5: 27.0}))
+    assert abs(result["SOC_EVBaseList"][0] - 0.2) < 1e-9

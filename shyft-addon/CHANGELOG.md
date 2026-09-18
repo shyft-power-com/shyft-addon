@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.142
+
+* **Base Case: SOC_EV hält jetzt die Optimierer-Nebenbedingungen ein.** Die Mindest-SOC-Rückwärtsrechnung für kommende Fahrten ignorierte den variablen Ladeverlust (`ev.loss`) und wandte auf den Fahrt-Bedarf die 0,2-kWh-Hysterese an - dadurch konnte der Ladestand vor einer Fahrt knapp unter 0 landen (live: -0,00007). Fahrt-Deckung ist jetzt Pflicht (keine Hysterese, inkl. Verlust), die Hysterese gilt nur noch für das Halten von `ev_soc_norm`; Ladeleistung ≤ `ev_charge_rate`, SOC ≤ Akkukapazität wie bisher.
+* **Base-Case-Traces (`T_i`, `T_HW`, `SOC_B`, `SOC_EV`) beziehen sich jetzt wie die Optimierer-Spalten auf den Zustand zu BEGINN jeder Stunde** (Stunde 0 = Startzustand) statt auf den Zustand danach - vorher waren beide Seiten im Vergleich um eine Stunde verschoben.
+* **Neu (Diagnose): Aufschlüsselung der Endwert-Korrektur.** `/dashboard/chart-data` liefert `base_end_value` (Base Case: Terme Batterie/EV/Raumtemperatur/Warmwasser samt Start-/Endzuständen und Preisen) und `opt_end_value` (dieselben Terme für den Endzustand des Optimierers, aus den Bilanzgleichungen nachgerechnet). Hintergrund: Der Base Case schlägt die Restwert-Korrektur komplett auf seine letzte Stunde auf, `profits_net_opt` enthält dagegen nur den Warmwasser-Anteil - beide Seiten sind damit bisher nicht mit demselben Massstab bewertet. Ändert noch keine Kosten- oder Ersparnis-Zahl.
+
 ## 0.0.45.141
 
 * **Sensor-Anzeige in der Konfiguration einheitlich als "Anzeigename (entity_id, Wert Einheit)"** (z.B. "Einspeisung (sensor.power_clayallee_241, 1.1 kW)") - in allen Sensor-Dropdowns, den Eingabefeldern und den Chips der Netzsensor-Auswahl. Sensoren ohne eigenen Anzeigenamen erscheinen weiter als "entity_id (Wert Einheit)". Die Suche findet nach wie vor über Anzeigename und entity_id.

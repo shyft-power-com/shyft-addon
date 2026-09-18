@@ -238,14 +238,14 @@ def _compute_base_case(input_csv, state_overrides=None):
 
     # --- Waermepumpe Heizung: exakt den Stundenbedarf decken, T_i auf T_i_min halten ---
     hp_heat = [0.0] * horizon
-    t_i_list = [0.0] * horizon  # T_i NACH jeder Stunde - Debug-/Vergleichs-Trace (siehe Rueckgabe "T_iBaseList")
+    t_i_list = [0.0] * horizon  # T_i ZU BEGINN jeder Stunde (wie T_i[1:h_end] im Optimierer-Output) - Debug-/Vergleichs-Trace ("T_iBaseList")
     t_i = t_i_0
     t_i_after_hour0 = None  # Zustand NACH Stunde 0 (siehe compute_base_case/state_overrides) - erfasst zu Beginn von Iteration 1, bevor die dortige Mutation greift
     for i in range(horizon):
         if i == 1:
             t_i_after_hour0 = t_i
+        t_i_list[i] = t_i
         if (i + 1) not in heating_hours or p_heat_loss <= 0.0:
-            t_i_list[i] = t_i
             continue
         t_out_cap = min(t_out[i], t_i_min - C_P_TH * fh_size / p_heat_loss - 4.0)
         span = t_i_min - t_out_cap
@@ -257,32 +257,30 @@ def _compute_base_case(input_csv, state_overrides=None):
         if t_i + drift_no_hp >= t_i_min:
             # Raum ist noch warm genug -> nicht heizen, frei auf T_i_min zutreiben (max. Puffer)
             t_i = min(t_i + drift_no_hp, t_i_buffer_abs)
-            t_i_list[i] = t_i
             continue
         q_thermal = loss_minus_gain + (t_i_min - t_i) * fh_size * C_STORE  # exakt auf T_i_min landen
         hp_heat[i] = _fh_heat_pump_power(q_thermal, heatdis, t_i_min, t_out_cap, p["hp_max_power"])
         t_i = t_i_min
-        t_i_list[i] = t_i
     t_i_end = t_i
     if t_i_after_hour0 is None:  # horizon == 1: die einzige Iteration war bereits Stunde 0
         t_i_after_hour0 = t_i_end
 
     # --- Warmwasser: Sofortbereitstellung; Tank kuehlt zwischen den Zapfungen weiter aus
     hp_dhw = [0.0] * horizon
-    t_hw_list = [t_hw] * horizon  # T_HW NACH jeder Stunde - Debug-/Vergleichs-Trace ("T_HWBaseList"); bleibt beim konstanten Startwert, wenn hw_active False ist
+    t_hw_list = [t_hw] * horizon  # T_HW ZU BEGINN jeder Stunde (wie T_hw[1:h_end] im Optimierer-Output) - Debug-/Vergleichs-Trace ("T_HWBaseList"); bleibt beim konstanten Startwert, wenn hw_active False ist
     cop_hw_last = COP_MIN
     t_hw_after_hour0 = None
     if hw_active:
         for i in range(horizon):
             if i == 1:
                 t_hw_after_hour0 = t_hw
+            t_hw_list[i] = t_hw
             t_hw_next = t_hw - (t_hw - 20.0) * HW_LOSS  # Zufuhr == Zapfung -> reine Abkuehlung (Excel-Spalte S)
             cop_hw = max(COP_MIN, 5.5 - ((t_hw + t_hw_next) / 2.0 - t_out[i]) / 20.0)
             if d_hw[i] > 0.0:
                 hp_dhw[i] = d_hw[i] / cop_hw
             cop_hw_last = cop_hw
             t_hw = t_hw_next
-            t_hw_list[i] = t_hw
     t_hw_end = t_hw
     if t_hw_after_hour0 is None:
         t_hw_after_hour0 = t_hw_end
@@ -290,34 +288,38 @@ def _compute_base_case(input_csv, state_overrides=None):
     # --- E-Auto: sofort bis ev_soc_norm; Fahrten so spaet wie moeglich abdecken ---------
     ev_charge_gross = [0.0] * horizon
     soc_ev = soc_ev_0
-    soc_ev_list = [soc_ev_0] * horizon  # SOC_EV NACH jeder Stunde, normiert (0..1) - Debug-/Vergleichs-Trace ("SOC_EVBaseList"), analog zum Optimierer-Output "SOC_EV"
+    soc_ev_list = [soc_ev_0 / ev_b_size if ev_b_size > 0 else 0.0] * horizon  # SOC_EV ZU BEGINN jeder Stunde, normiert (0..1) - wie SOC_EV[1:h_end] im Optimierer-Output; Debug-/Vergleichs-Trace ("SOC_EVBaseList")
     soc_ev_after_hour0 = None
     if ev_active:
         eff_rate = max(0.0, ev_rate_max * EV_ETA - EV_FIXED_LOSS_KWH)  # Netto-SOC-Gewinn je voller Ladestunde
-        required = [0.0] * (horizon + 1)  # Mindest-SOC zu Beginn jeder Stunde, um alle kuenftigen Fahrten zu decken
+        # Mindest-SOC zu Beginn jeder Stunde, um alle kuenftigen Fahrten zu decken - rueckwaerts durch
+        # dieselbe Bilanz wie der Optimierer (run_SHEMS.jl:232: SOC[h+1] = SOC[h]*(1-loss) + Ladung
+        # - d_ev[h]), INKL. des variablen Verlusts; ohne ihn landete der SOC vor einer Fahrt knapp
+        # unter 0 (Rundungs-Verletzung der Nebenbedingung SOC_EV >= 0 fuer eine erfuellbare Fahrt).
+        required = [0.0] * (horizon + 1)
         for i in range(horizon - 1, -1, -1):
-            if (i + 1) in ev_away_hours:
-                required[i] = required[i + 1] + d_ev[i]
-            else:
-                required[i] = max(0.0, required[i + 1] - eff_rate)
-            required[i] = min(required[i], ev_b_size)
+            plugged_i = (i + 1) not in ev_away_hours
+            need = required[i + 1] + d_ev[i] - (eff_rate if plugged_i else 0.0)
+            required[i] = min(max(0.0, need) / (1.0 - EV_LOSS), ev_b_size)
         for i in range(horizon):
             if i == 1:
                 soc_ev_after_hour0 = soc_ev
+            soc_ev_list[i] = soc_ev / ev_b_size
+            soc_no_charge = soc_ev * (1 - EV_LOSS) - d_ev[i]  # Ende der Stunde ohne Ladung
             plugged = (i + 1) not in ev_away_hours
             if plugged:
-                target = max(ev_soc_norm_kwh, required[i + 1])
-                # 0.2 kWh Fixverlust je Ladestunde -> ein reales, ungeregeltes System jagt kein
-                # Mini-Defizit hinterher; erst ab spuerbarem Ruecktand nachladen (Hysterese).
-                if target - soc_ev > EV_FIXED_LOSS_KWH:
-                    gain = min(target - soc_ev, ev_rate_max * EV_ETA - EV_FIXED_LOSS_KWH, ev_b_size - soc_ev)
+                # Pflicht: kuenftige Fahrten abdecken (keine Hysterese - sonst faellt der SOC vor der
+                # Fahrt unter 0). Komfort: ev_soc_norm halten, dort mit Hysterese (0.2 kWh Fixverlust
+                # je Ladestunde -> ein reales, ungeregeltes System jagt kein Mini-Defizit hinterher).
+                need_trip = required[i + 1] - soc_no_charge
+                need_norm = ev_soc_norm_kwh - soc_no_charge
+                if need_trip > 1e-9 or need_norm > EV_FIXED_LOSS_KWH:
+                    gain = min(max(need_trip, need_norm), eff_rate, ev_b_size - soc_no_charge)  # <= soc_max und <= rate_max
                     if gain > 1e-9:
                         ev_charge_gross[i] = (gain + EV_FIXED_LOSS_KWH) / EV_ETA
-                        soc_ev = soc_ev * (1 - EV_LOSS) + ev_charge_gross[i] * EV_ETA - EV_FIXED_LOSS_KWH - d_ev[i]
-                        soc_ev_list[i] = soc_ev / ev_b_size if ev_b_size > 0 else 0.0
+                        soc_ev = soc_no_charge + gain
                         continue
-            soc_ev = soc_ev * (1 - EV_LOSS) - d_ev[i]
-            soc_ev_list[i] = soc_ev / ev_b_size if ev_b_size > 0 else 0.0
+            soc_ev = soc_no_charge
     soc_ev_end = soc_ev
     if soc_ev_after_hour0 is None:
         soc_ev_after_hour0 = soc_ev_end
@@ -334,11 +336,12 @@ def _compute_base_case(input_csv, state_overrides=None):
     # --- Batterie (Eigenverbrauch) + Netzsaldo + Kosten -------------------------------
     net_cost_list = [0.0] * horizon
     power_usage_list = [0.0] * horizon
-    soc_b_list = [0.0] * horizon  # SOC_B NACH jeder Stunde in % - Debug-/Vergleichs-Trace ("SOC_BBaseList"), analog zum Optimierer-Output "SOC_B"
+    soc_b_list = [0.0] * horizon  # SOC_B ZU BEGINN jeder Stunde in % (wie SOC_B im Optimierer-Output) - Debug-/Vergleichs-Trace ("SOC_BBaseList")
     soc_b_after_hour0 = None
     for i in range(horizon):
         if i == 1:
             soc_b_after_hour0 = soc_b
+        soc_b_list[i] = soc_b / b_soc_max * 100.0 if b_soc_max > 0 else 0.0
         pv_avail = g_e[i] * PV_ETA
         # E-Auto laeuft im Base Case nie ueber PV/Batterie (Excel) - OD dagegen schon: sein Verbrauch
         # soll den anderen Verbrauchern (Nutzer-Vorgabe) nicht zusaetzlich zur Verfuegung stehen,
@@ -365,7 +368,6 @@ def _compute_base_case(input_csv, state_overrides=None):
         # grid > 0: Einspeisung (Ertrag, negative Kosten) | grid < 0: Bezug (Kosten)
         net_cost_list[i] = (-grid * (p_sell[i] if grid > 0 else p_buy[i])) or 0.0  # or 0.0: kein -0.0
         power_usage_list[i] = d_e[i] + hp_heat[i] + hp_dhw[i] + ev_charge_gross[i] + batt_charge_gross + od_load[i]
-        soc_b_list[i] = soc_b / b_soc_max * 100.0 if b_soc_max > 0 else 0.0
     soc_b_end = soc_b
     if soc_b_after_hour0 is None:
         soc_b_after_hour0 = soc_b_end
@@ -401,6 +403,29 @@ def _compute_base_case(input_csv, state_overrides=None):
         "SOC_BBaseList": [round(v, 6) for v in soc_b_list],
         "SOC_EVBaseList": [round(v, 6) for v in soc_ev_list],
         "ODLoadBaseList": [round(v, 6) for v in od_load],
+        # Aufschluesselung der Endwert-Korrektur (steckt komplett in der LETZTEN Stunde von
+        # netProfitBaseList) - Debug: Positiv = Kosten. Start-/Endzustaende in den Einheiten der
+        # jeweiligen Terme (kWh bzw. Grad), Preise in EUR/kWh.
+        "endValue": {
+            "residual": round(residual, 6),
+            "term_hw": round(term_hw, 6),
+            "term_battery": round(-term_battery, 6),
+            "term_ev": round(-term_ev, 6),
+            "term_i": round(-term_i, 6),
+            "soc_b_kwh_start": round(min(b_soc_max, p["SOC_b_0_percent"] / 100.0 * b_soc_max), 4),
+            "soc_b_kwh_end": round(soc_b_end, 4),
+            "soc_ev_kwh_start": round(soc_ev_0, 4),
+            "soc_ev_kwh_end": round(soc_ev_end, 4),
+            "t_hw_start": round(t_hw_0, 3),
+            "t_hw_end": round(t_hw_end, 3),
+            "t_i_start": round(t_i_0, 3),
+            "t_i_end": round(t_i_end, 3),
+            "mean_p_buy": round(mean_p_buy, 5),
+            "last_p_buy": round(last_p_buy, 5),
+            "p_min": round(p_min, 5),
+            "ev_b_size": round(ev_b_size, 3),
+            "b_soc_max_kwh": round(b_soc_max, 3),
+        },
         # Zustand NACH Stunde 0 (nicht der Endzustand des gesamten Horizonts) - Grundlage fuer den
         # naechsten Aufruf ueber state_overrides (siehe Docstring oben und Aufrufer in app.py).
         "nextState": {
