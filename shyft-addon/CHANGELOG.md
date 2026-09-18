@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.139
+
+* **Umbenannt: Aktion "Ersparnis Haushaltsstrom" heißt jetzt "Ersparnis Haushaltsstrom / Batterie"** (Gerätesteuerung, Historie und Tages-Detailansicht im Analyse-Tab). Bereits archivierte Tageswerte erscheinen ebenfalls unter dem neuen Namen.
+
 ## 0.0.45.138
 
 * **Fix: Test "Heizung Soll-Temperatur" schlug fehl, obwohl die Wärmepumpe den Wert übernahm.** Cloud-Wärmepumpen (z.B. Viessmann) melden einen geschriebenen Wert erst nach ca. 90 s (Erhöhen) bzw. bis ca. 200 s (Zurücksetzen) an Home Assistant zurück - die Test-Fristen (90 s / 60 s) waren dafür zu knapp. Beide Fristen liegen jetzt bei 5 Minuten, der Hinweistext im Test-Button wurde entsprechend angepasst.

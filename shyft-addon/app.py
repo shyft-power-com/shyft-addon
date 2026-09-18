@@ -1020,7 +1020,7 @@ def _demo_shyft_actions():
     return actions
 
 
-HOUSEHOLD_SAVINGS_ACTION_NAME = "Ersparnis Haushaltsstrom"
+HOUSEHOLD_SAVINGS_ACTION_NAME = "Ersparnis Haushaltsstrom / Batterie"
 HOUSEHOLD_SAVINGS_ACTION_ID_PREFIX = "ersparnis_haushaltsstrom"
 HOUSEHOLD_SAVINGS_TOOLTIP = ("Diese Aktion fasst die Ersparnisse aus den Shyft-Aktionen zusammen, "
                              "die den Verbrauchern nicht direkt zugeordnet werden können "

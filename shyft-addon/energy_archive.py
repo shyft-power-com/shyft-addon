@@ -277,7 +277,7 @@ def query_day_actions(date_str):
     household = query_household_savings_for_day(date_str)
     if household:
         result.append({
-            "action_type": "Ersparnis Haushaltsstrom",
+            "action_type": "Ersparnis Haushaltsstrom / Batterie",
             "savings_eur": household["savings_eur"],
             "power_kw": None,
             "date_start_ms": start_ms,

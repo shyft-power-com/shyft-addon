@@ -5455,7 +5455,7 @@ const actionLogKey = a => `${a['Action Name'] || ''}|${a['Date Start'] || ''}`;
 
 // Taegliche Haushaltsstrom-Dummy-Aktion (siehe _household_savings_action, app.py) - kein echter
 // Aktionstyp mit eigenem Geraet, deshalb hier per Namen erkannt statt ueber ACTION_NAME_TO_SECTION_KEY.
-const HOUSEHOLD_SAVINGS_ACTION_NAME = 'Ersparnis Haushaltsstrom';
+const HOUSEHOLD_SAVINGS_ACTION_NAME = 'Ersparnis Haushaltsstrom / Batterie';
 
 // Blitz (Strom)-Icon, an das mdi:lightning-bolt angelehnt (kein Icon-Font/CDN-Zugriff im Addon-Frontend
 // noetig) - fuer die Haushaltsstrom-Dummy-Aktion, die zu keiner echten Geraete-Kachel gehoert und
