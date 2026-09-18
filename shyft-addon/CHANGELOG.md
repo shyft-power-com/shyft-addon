@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.137
+
+* **Fix: Zielwerte für direkt gesteuerte "number"-Aktoren (Heizung Soll-Temperatur, PV-Einspeiselimit, Verbrauchslimit §14a) werden jetzt auf den vom Gerät selbst gemeldeten Wertebereich begrenzt** - bisher konnte ein vom Optimierer berechneter Zielwert außerhalb des vom Regler (z.B. Viessmann Vitocal) erlaubten Bereichs liegen und wurde dann bei jedem Versuch mit einem HTTP-500-Fehler abgelehnt, ohne dass die Integration selbst fehlerhaft war. Meldet das Gerät kein Minimum/Maximum, bleibt es beim bisherigen Verhalten (Fehlermeldung im Log). Musste tatsächlich geklemmt werden, wird das als normaler (nicht rot markierter) Log-Eintrag an der Aktion vermerkt, mit dem Hinweis, die Min-/Max-Grenzen in der Konfiguration zu prüfen.
+
 ## 0.0.45.136
 
 * **Fix: fehlende Umlaute in einigen Nutzer-sichtbaren Fehler- und Hinweistexten** (z.B. "Sensor fuer" statt "Sensor für", "unvollstaendig" statt "unvollständig") - betraf Problemmeldungen (Dashboard/Konfigurationsseite) und Fehlermeldungen auf Aktionskarten für Sensor-Ausfälle, Innenraumtemperatur-Staleness, Batterie- und Warmwasser-Steuerungsfehler.

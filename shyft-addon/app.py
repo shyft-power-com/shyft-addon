@@ -2736,7 +2736,9 @@ def execute_auto_managed_action(control_key, phase, target_value):
     """Executes the concrete Start/Ende-Verhalten for an AUTO_MANAGED_CONTROLS Aktionstyp - either
     "direct" (the addon writes the mapped entity itself, the original/default behavior) or
     "ha_automation" (the addon triggers the user's own automation instead - see controlVariant in
-    the config and trigger_ha_automation)."""
+    the config and trigger_ha_automation). Returns a non-error clamp-note string (see
+    _clamp_to_entity_range) if the target value had to be limited to the entity's own min/max, or
+    None otherwise - the caller appends this to the action's Log without treating it as a failure."""
     config = _read_current_config()
     control = AUTO_MANAGED_CONTROLS[control_key]
     variant = resolve_control_variant(control_key, config)
@@ -2745,14 +2747,14 @@ def execute_auto_managed_action(control_key, phase, target_value):
         actor_mappings = config.get("actorMappings", {})
         if control["type"] == "number":
             if phase != "start":
-                return  # no Ende-Verhalten defined yet for direct-value controls either
+                return None  # no Ende-Verhalten defined yet for direct-value controls either
             trigger_ha_automation(actor_mappings.get(control_key), "start", target_value)
         elif control["type"] == "switch":
             # two independent automations (not one automation + a "phase" variable like elsewhere)
             # since the user asked for that shape specifically for "Sonstiger Verbraucher"
             actor_key = "consumer_on" if phase == "start" else "consumer_off"
             trigger_ha_automation(actor_mappings.get(actor_key), phase, target_value)
-        return
+        return None
 
     entity_id = config.get("sensorMappings", {}).get(control["sensor_field"], "")
     if not entity_id:
@@ -2760,13 +2762,43 @@ def execute_auto_managed_action(control_key, phase, target_value):
 
     if control["type"] == "number":
         if phase != "start":
-            return  # no Ende-Verhalten defined yet for direct-value controls - a later step may add one
+            return None  # no Ende-Verhalten defined yet for direct-value controls - a later step may add one
         if target_value is None:
             raise Exception("Aktion enthält keinen Zielwert (Target Value)")
+        target_value, clamp_note = _clamp_to_entity_range(entity_id, target_value)
         homeassistant_adapter.call_service("script", control["script_id"], {"target_value": target_value})
+        return clamp_note
     elif control["type"] == "switch":
         service = "turn_on" if phase == "start" else "turn_off"
         homeassistant_adapter.call_service("homeassistant", service, {"entity_id": entity_id})
+    return None
+
+
+def _clamp_to_entity_range(entity_id, target_value):
+    """Begrenzt target_value auf das von der Ziel-Entity selbst ueber ihre 'min'/'max'-Attribute
+    gemeldete Wertebereich (z.B. der vom Hersteller/der Integration vorgegebene Regelbereich eines
+    Waermepumpen-Reglers) - ohne das waere ein zu hoher/niedriger Optimierer-Zielwert ein
+    Endlos-Fehlschlag (HA lehnt den Schreibversuch ab), obwohl das angebundene Geraet selbst
+    einwandfrei funktioniert. Liefert keine Entity 'min'/'max' (z.B. weil nicht unterstuetzt oder
+    nicht lesbar), bleibt target_value unveraendert - der bisherige Fehlerpfad (HA lehnt ab, Aktion
+    wird als fehlgeschlagen markiert) greift dann weiterhin. Rueckgabe: (ggf. geklemmter Wert,
+    Hinweistext fuers Aktions-Log falls tatsaechlich geklemmt wurde, sonst None - dieser Fall gilt
+    NICHT als Fehler, da das Geraet damit trotzdem erfolgreich angesteuert wird)."""
+    try:
+        entity_min, entity_max = homeassistant_adapter.get_number_min_max(entity_id)
+    except Exception:
+        entity_min, entity_max = None, None
+    if entity_min is None or entity_max is None:
+        return target_value, None
+    clamped_value = min(max(target_value, entity_min), entity_max)
+    if clamped_value == target_value:
+        return target_value, None
+    note = (
+        f"Zielwert wurde durch das Gerät eingeschränkt (angefordert: {target_value:g}, "
+        f"gesetzt: {clamped_value:g}) - überprüfe die Min-Max-Grenzen in der Konfiguration "
+        f"deiner Wärmepumpe."
+    )
+    return clamped_value, note
 
 
 # Assumptions behind the kW -> Phasen/Ampere conversion for "Auto laden" (not yet configurable):
@@ -5651,9 +5683,12 @@ def handle_shyft_action_start(action, actions_enabled, config):
             start_error = str(e)
     elif control_key:
         try:
-            execute_auto_managed_action(control_key, "start", target)
+            clamp_note = execute_auto_managed_action(control_key, "start", target)
             print(f"[Shyft] Start ausgefuehrt fuer '{label}' (Ziel: {target}).")
             _note_action_outcome(label, "gestartet")
+            if clamp_note:
+                note = f"{_local_now().strftime('%H:%M Uhr')}: {clamp_note}"
+                action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
         except Exception as e:
             print(f"[Shyft] Start fuer '{label}' fehlgeschlagen: {e!r}")
             _note_action_outcome(label, "gestartet", e)

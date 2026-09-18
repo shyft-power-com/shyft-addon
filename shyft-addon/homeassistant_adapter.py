@@ -337,3 +337,16 @@ class HomeAssistantAdapter:
         else:
             value = response.get("state")
         return float(value)
+
+    def get_number_min_max(self, entity_id):
+        "Liest die 'min'/'max'-Attribute einer number-Entity aus ihrem aktuellen HA-Zustand (z.B. der vom Hersteller/der Integration hinterlegte gueltige Wertebereich eines Waermepumpen-Reglers) - je None, wenn die Entity das Attribut nicht liefert oder es nicht numerisch ist."
+        response = self.get_from_homeassistant(f"/api/states/{entity_id}")
+        attributes = response.get("attributes", {})
+
+        def _num(key):
+            try:
+                return float(attributes[key])
+            except (KeyError, TypeError, ValueError):
+                return None
+
+        return _num("min"), _num("max")
