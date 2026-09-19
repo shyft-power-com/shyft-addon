@@ -1552,6 +1552,10 @@ function isSectionComplete(section, currentIds) {
     const actorMappings = configData['actorMappings'] || {};
 
     for (const key of section.sensors) {
+        // Optionale Felder (siehe REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS) duerfen leer bleiben, ohne dass das
+        // Geraet als unvollstaendig gilt - sonst bliebe die Kachel (z.B. Waermepumpe ohne Vorlauftemperatur)
+        // aufgeklappt/mit "!" markiert, obwohl kein einziges Pflichtfeld rot markiert ist.
+        if (REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS.has(key)) continue;
         if (!sensorMappings[key]) return false;
     }
 
@@ -1579,6 +1583,7 @@ function isSectionComplete(section, currentIds) {
 
     const manualActions = section.actions.filter(key => !AUTO_MANAGED_ACTION_KEYS.has(key) && !CAR_CHARGE_ACTION_KEYS.has(key) && !HOT_WATER_ACTION_KEYS.has(key) && !BATTERY_DIRECT_ACTION_KEYS.has(key));
     for (const key of manualActions) {
+        if (REQUIRED_FIELD_OPTIONAL_ACTION_KEYS.has(key)) continue;
         if (!actorMappings[key]) return false;
     }
 
@@ -1612,8 +1617,8 @@ function isSectionComplete(section, currentIds) {
 }
 
 // Sensor-/Steuerungsfelder, die auch bei konfiguriertem Geraet leer bleiben duerfen (Nutzer-Vorgabe)
-// - anders als isSectionComplete oben (das behandelt bewusst ALLE Felder als Voraussetzung fuer die
-// Abschnitts-Checkmarkierung) gelten diese hier NICHT als Pflichtfeld fuer die Warnmeldung unten:
+// - gelten weder fuer isSectionComplete oben (Checkmarkierung/Aufklappen der Kachel) noch fuer die
+// Warnmeldung unten als Pflichtfeld:
 // die Waermepumpen-Leistung ist rein informativ, der Raumtemperatur-Sensor hat einen eigenen
 // Auto-Simulations-Fallback (siehe dessen description oben in INTEGRATION_SECTIONS), §14a/
 // PV-Einspeisung sind seltene Zusatzfunktionen, keine Grundvoraussetzung, "Heizung aktiviert?"

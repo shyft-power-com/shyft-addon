@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.150
+
+* **Fix: Gerätekacheln (z.B. Wärmepumpe) blieben aufgeklappt und mit "!" markiert, obwohl kein Pflichtfeld fehlte.** Die Vollständigkeitsprüfung der Kachel wertete auch die optionalen Felder (z.B. Wärmepumpen-Leistung, Vorlauftemperatur, "Heizung aktiviert?") als Pflicht, die Warnmeldung dagegen nicht. Beide Prüfungen behandeln optionale Felder jetzt gleich.
+
 ## 0.0.45.149
 
 * **Hilfe-Assistent jetzt für alle Nutzer sichtbar** - nicht mehr nur mit einem `test_`-Zugangsschlüssel.
