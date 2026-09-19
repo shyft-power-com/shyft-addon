@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.146
+
+* **Netzwert bei mehreren Sensoren: betragsmäßig größter Wert statt „zuletzt aktualisiert“.** Bei getrennten Bezug-/Einspeise-Sensoren (z. B. Tibber Pulse) melden beide laufend, sodass der zuletzt aktualisierte Wert zufällig mal der Bezugs-, mal der Einspeise-Sensor war. Jetzt zählen nur Sensoren, die höchstens 60 s hinter dem aktuellsten liegen (ein träger Wechselrichter-Sensor fällt daneben raus), und daraus gewinnt der Sensor mit dem größten Betrag - es kann nur bezogen ODER eingespeist werden, der andere Sensor zeigt statt 0 mitunter einen kleinen Rauschwert. Gilt für Energiefluss-Bild und Live-Trigger gleichermaßen.
+
 ## 0.0.45.145
 
 * **Energiefluss-Bild: Der Netzwert kommt jetzt auch aus den Sensoren der „Strom"-Kachel, nicht nur vom Wechselrichter.** Bisher las das Bild ausschließlich den Wechselrichter-Sensor; meldete der nur alle paar Minuten oder Stunden, blieb dort ein veralteter Wert samt „(20:00)"-Zeitstempel stehen, obwohl ein sekundenaktueller Stromsensor (z. B. Tibber Pulse) vorlag. Jetzt wird wie im übrigen Addon der zuletzt aktualisierte Wert aller konfigurierten Netz-Sensoren verwendet - samt dessen Zeitstempel.
