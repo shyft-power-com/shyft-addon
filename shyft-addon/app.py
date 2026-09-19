@@ -7575,15 +7575,15 @@ def _record_energy_archive_plan_contribution(input_csv, output_csv, creation_dat
         print("[Shyft] Energie-Archiv: Plan-Beitrag konnte nicht aufgezeichnet werden:", repr(e))
 
 
-def _grid_import_export_kwh(start, end, config=None):
-    """Netzbezug/-einspeisung (kWh) im Intervall [start, end) aus der Grid-Sensor-Historie
-    (sensorMappings-Eintrag photovoltaic_powerflow_grid, kW). Treppenfunktions-Integration statt
+def _sensor_history_kwh(sensor_key, start, end, config=None):
+    """Positive/negative Anteile (kWh) eines kW-Sensors im Intervall [start, end) aus dessen
+    HA-Historie (sensorMappings-Eintrag sensor_key). Treppenfunktions-Integration statt
     linearer Trapez-Naeherung - ein HA-Sensorzustand gilt konstant bis zum naechsten Ereignis (siehe
     load_entity_history_raw), das entspricht der tatsaechlichen Sensor-Semantik besser als eine
     Interpolation zwischen Messpunkten. Positive Leistung = Bezug, negative = Einspeisung (wie
-    GR_sum im Optimierer). (None, None) ohne zugeordneten Grid-Sensor oder ohne Historie."""
+    GR_sum im Optimierer). (None, None) ohne zugeordneten Sensor oder ohne Historie."""
     config = config or _read_current_config()
-    entity_id = config.get("sensorMappings", {}).get("photovoltaic_powerflow_grid", "")
+    entity_id = config.get("sensorMappings", {}).get(sensor_key, "")
     if not entity_id:
         return None, None
     try:
@@ -7593,14 +7593,14 @@ def _grid_import_export_kwh(start, end, config=None):
     try:
         raw = homeassistant_adapter.load_entity_history_raw(entity_id, start, end)
     except Exception as e:
-        print("[Shyft] Energie-Archiv: Grid-Historie konnte nicht geladen werden:", repr(e))
+        print(f"[Shyft] Energie-Archiv: Historie von '{sensor_key}' konnte nicht geladen werden:", repr(e))
         return None, None
     if not raw:
         return None, None
     import_kwh = export_kwh = 0.0
     for i, (last_changed, state) in enumerate(raw):
         try:
-            kw = float(convert_to_expected_unit("photovoltaic_powerflow_grid", state, unit)[0])
+            kw = float(convert_to_expected_unit(sensor_key, state, unit)[0])
         except (TypeError, ValueError):
             continue  # "unknown"/"unavailable" etc.
         segment_start = max(last_changed, start)
@@ -7615,6 +7615,39 @@ def _grid_import_export_kwh(start, end, config=None):
     return import_kwh, export_kwh
 
 
+def _grid_import_export_kwh(start, end, config=None):
+    "Netzbezug/-einspeisung (kWh) im Intervall [start, end) aus dem Netz-Sensor (photovoltaic_powerflow_grid), siehe _sensor_history_kwh - Grundlage der KOSTEN im Energie-Archiv."
+    return _sensor_history_kwh("photovoltaic_powerflow_grid", start, end, config)
+
+
+def _household_usage_kwh(start, end, config=None):
+    "Ist-Verbrauch des Haushalts (kWh) im Intervall [start, end) aus dem Sensor 'Aktueller Strom - Haushalt' (photovoltaic_powerflow_load) - vergleichbar mit geplant/Basisfall im Analyse-Tab. None ohne zugeordneten Sensor oder ohne Historie."
+    usage_kwh, _ = _sensor_history_kwh("photovoltaic_powerflow_load", start, end, config)
+    return usage_kwh
+
+
+HOUSEHOLD_USAGE_BACKFILL_DAYS = 9  # etwa so weit reicht die HA-Historie (Recorder-Standard 10 Tage)
+HOUSEHOLD_USAGE_BACKFILL_BATCH = 72
+
+
+def backfill_household_usage_periodically():
+    """Rechnet den Ist-Verbrauch bereits archivierter Stunden (frueher Netto-Netzbezug, siehe
+    energy_archive.hours_needing_usage_backfill) nachtraeglich aus dem Haushalt-Sensor neu - je Lauf
+    hoechstens HOUSEHOLD_USAGE_BACKFILL_BATCH Stunden, neueste zuerst, bis nichts mehr uebrig ist."""
+    if is_demo_mode():
+        return
+    try:
+        since = datetime.now(timezone.utc) - timedelta(days=HOUSEHOLD_USAGE_BACKFILL_DAYS)
+        config = _read_current_config()
+        for key in energy_archive.hours_needing_usage_backfill(energy_archive.hour_key(since), HOUSEHOLD_USAGE_BACKFILL_BATCH):
+            hour_start = datetime.strptime(key, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+            usage = _household_usage_kwh(hour_start, hour_start + timedelta(hours=1), config)
+            if usage is not None:
+                energy_archive.set_actual_usage(key, usage)
+    except Exception as e:
+        print("[Shyft] Energie-Archiv: Nachberechnung des Ist-Verbrauchs fehlgeschlagen:", repr(e))
+
+
 def finalize_completed_hour_periodically():
     "Cron-Job (siehe Scheduler, wenige Minuten nach jedem Stundenwechsel): schliesst die GERADE ABGELAUFENE Stunde im Energie-Archiv ab - Ist-Verbrauch/-Einspeisung aus der Grid-Sensor-Historie (siehe _grid_import_export_kwh), verrechnet mit dem zuletzt bekannten Strompreis dieser Stunde (siehe energy_archive.finalize_hour)."
     if is_demo_mode():
@@ -7623,7 +7656,8 @@ def finalize_completed_hour_periodically():
     hour_start = hour_end - timedelta(hours=1)
     try:
         import_kwh, export_kwh = _grid_import_export_kwh(hour_start, hour_end)
-        energy_archive.finalize_hour(energy_archive.hour_key(hour_start), hour_end, import_kwh, export_kwh)
+        usage_kwh = _household_usage_kwh(hour_start, hour_end)
+        energy_archive.finalize_hour(energy_archive.hour_key(hour_start), hour_end, import_kwh, export_kwh, usage_kwh)
     except Exception as e:
         print("[Shyft] Energie-Archiv: Stundenabschluss fehlgeschlagen:", repr(e))
 
@@ -8218,6 +8252,7 @@ scheduler.add_job(run_hourly_action_transition_periodically, 'cron', minute="0")
 # abgelaufenen Stunde schon abgegeben hat, bevor sie hier abgeschlossen wird (siehe
 # finalize_completed_hour_periodically/energy_archive.finalize_hour).
 scheduler.add_job(finalize_completed_hour_periodically, 'cron', minute="3")
+scheduler.add_job(backfill_household_usage_periodically, 'interval', minutes=30, next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90))
 # on the hour, alongside the other hourly syncs - one snapshot per hour is exactly the
 # resolution the Anwesenheitsprognose needs (see compute_car_presence_forecast)
 scheduler.add_job(sync_car_presence_log_periodically, 'cron', minute="0")

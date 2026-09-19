@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.153
+
+* **Analyse-Tab: "Verbrauch Ist" zeigt jetzt den Haushaltsverbrauch** (Sensor "Aktueller Strom - Haushalt") statt des Netto-Netzbezugs - damit ist er mit "Verbrauch geplant" und "Verbrauch Basisfall" vergleichbar. Die Kosten und Ersparnisse werden weiterhin aus Netzbezug und Einspeisung berechnet. Bereits archivierte Stunden der letzten ca. 9 Tage werden im Hintergrund automatisch neu berechnet (je Lauf bis zu 72 Stunden, neueste zuerst); ältere Stunden behalten ihren bisherigen Wert.
+* **Analyse-Tab: Stundenbezeichnung korrigiert** - statt "1909., 21 Uhr Uhr" steht dort jetzt "19.09., 21 Uhr".
+
 ## 0.0.45.152
 
 * **Charts: Achsenbeschriftungen deutlich größer** (Desktop 9 → 13 px, Handy 12 → 16 px), betrifft alle Dashboard-Charts; die letzte Zeitbeschriftung ist rechtsbündig, damit sie am Rand nicht abgeschnitten wird.

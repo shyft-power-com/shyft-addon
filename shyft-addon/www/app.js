@@ -8653,7 +8653,9 @@ function formatAnalysePeriod(period, granularity) {
         return `${m}.${y}`;
     }
     if (granularity === 'hourly') {
-        return new Date(period + 'Z').toLocaleString('de-DE', {day: '2-digit', month: '2-digit', hour: '2-digit'}).replace('.', '') + ' Uhr';
+        const d = new Date(period + 'Z');
+        const two = v => String(v).padStart(2, '0');
+        return `${two(d.getDate())}.${two(d.getMonth() + 1)}., ${two(d.getHours())} Uhr`;
     }
     // daily/weekly: period ist ein YYYY-MM-DD-Datum (bei weekly: der Montag der jeweiligen Woche)
     const label = new Date(period + 'T00:00:00Z').toLocaleDateString('de-DE', {day: '2-digit', month: '2-digit', year: 'numeric'});

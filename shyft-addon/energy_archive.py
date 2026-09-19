@@ -77,6 +77,11 @@ def _ensure_schema(conn):
             recorded_at TEXT NOT NULL
         )
     """)
+    # actual_usage_source: 'load' = Ist-Verbrauch aus dem Haushalt-Sensor (photovoltaic_powerflow_load);
+    # NULL = aeltere Zeile (damals Netto-Netzbezug) bzw. Haushalt-Wert nicht ermittelbar - Kandidat fuer
+    # die Nachberechnung (siehe hours_needing_usage_backfill/set_actual_usage).
+    if "actual_usage_source" not in {row[1] for row in conn.execute("PRAGMA table_info(hourly_archive)")}:
+        conn.execute("ALTER TABLE hourly_archive ADD COLUMN actual_usage_source TEXT")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS completed_actions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,11 +156,14 @@ def record_plan_contribution(hour_start_utc, planned_usage_kwh, planned_cost_eur
         conn.commit()
 
 
-def finalize_hour(hour_start_utc, hour_end_at, actual_import_kwh, actual_export_kwh):
+def finalize_hour(hour_start_utc, hour_end_at, actual_import_kwh, actual_export_kwh, actual_usage_kwh=None):
     """Schliesst eine abgelaufene Stunde ab: gewichtet den zuletzt offenen Planungs-Abschnitt bis
     hour_end_at nach, bildet geplant/Basisfall als zeitgewichteten Mittelwert ueber ALLE Laeufe
     dieser Stunde, verrechnet actual_import_kwh/actual_export_kwh mit dem zuletzt bekannten
-    Strompreis dieser Stunde und schreibt das Ergebnis nach hourly_archive.
+    Strompreis dieser Stunde und schreibt das Ergebnis nach hourly_archive. actual_usage_kwh ist der
+    Ist-VERBRAUCH des Haushalts (Sensor "Aktueller Strom - Haushalt", siehe app._household_usage_kwh) -
+    vergleichbar mit geplant/Basisfall; die KOSTEN dagegen entstehen aus dem Netzbezug/der Einspeisung.
+    None = nicht ermittelbar (Zeile wird spaeter nachberechnet, siehe hours_needing_usage_backfill).
 
     Gibt False zurueck (und schreibt nichts), wenn fuer diese Stunde nie ein Optimierungslauf
     aufgezeichnet wurde (z.B. Demo-Modus, oder das Feature war zu Stundenbeginn noch nicht aktiv) -
@@ -177,7 +185,6 @@ def finalize_hour(hour_start_utc, hour_end_at, actual_import_kwh, actual_export_
         price_sell = row["price_sell_eur_per_kwh"] or 0.0
         actual_import_kwh = actual_import_kwh or 0.0
         actual_export_kwh = actual_export_kwh or 0.0
-        actual_usage = actual_import_kwh - actual_export_kwh  # netto, wie GR_sum im Optimierer
         actual_cost = actual_import_kwh * price_buy - actual_export_kwh * price_sell
 
         savings_vs_base = None if base_cost is None else base_cost - actual_cost
@@ -186,21 +193,40 @@ def finalize_hour(hour_start_utc, hour_end_at, actual_import_kwh, actual_export_
         conn.execute("""
             INSERT INTO hourly_archive (hour_start_utc, planned_usage_kwh, planned_cost_eur, base_usage_kwh,
                 base_cost_eur, actual_usage_kwh, actual_import_kwh, actual_export_kwh, actual_cost_eur,
-                savings_vs_base_eur, savings_vs_planned_eur, recorded_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                savings_vs_base_eur, savings_vs_planned_eur, recorded_at, actual_usage_source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(hour_start_utc) DO UPDATE SET
                 planned_usage_kwh=excluded.planned_usage_kwh, planned_cost_eur=excluded.planned_cost_eur,
                 base_usage_kwh=excluded.base_usage_kwh, base_cost_eur=excluded.base_cost_eur,
                 actual_usage_kwh=excluded.actual_usage_kwh, actual_import_kwh=excluded.actual_import_kwh,
                 actual_export_kwh=excluded.actual_export_kwh, actual_cost_eur=excluded.actual_cost_eur,
                 savings_vs_base_eur=excluded.savings_vs_base_eur, savings_vs_planned_eur=excluded.savings_vs_planned_eur,
-                recorded_at=excluded.recorded_at
-        """, (hour_start_utc, planned_usage, planned_cost, base_usage, base_cost, actual_usage,
+                recorded_at=excluded.recorded_at, actual_usage_source=excluded.actual_usage_source
+        """, (hour_start_utc, planned_usage, planned_cost, base_usage, base_cost, actual_usage_kwh,
               actual_import_kwh, actual_export_kwh, actual_cost, savings_vs_base, savings_vs_planned,
-              datetime.now(timezone.utc).isoformat()))
+              datetime.now(timezone.utc).isoformat(), "load" if actual_usage_kwh is not None else None))
         conn.execute("DELETE FROM hour_plan_state WHERE hour_start_utc = ?", (hour_start_utc,))
         conn.commit()
         return True
+
+
+def hours_needing_usage_backfill(since_hour_key, limit):
+    "Stunden (neueste zuerst, hour_key-Format) ab since_hour_key, deren Ist-Verbrauch noch nicht aus dem Haushalt-Sensor stammt (actual_usage_source IS NULL) - Kandidaten fuer die Nachberechnung."
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT hour_start_utc FROM hourly_archive WHERE actual_usage_source IS NULL AND hour_start_utc >= ? "
+            "ORDER BY hour_start_utc DESC LIMIT ?", (since_hour_key, limit)).fetchall()
+        return [r["hour_start_utc"] for r in rows]
+
+
+def set_actual_usage(hour_start_utc, usage_kwh):
+    "Ersetzt den Ist-Verbrauch einer bereits archivierten Stunde durch den Haushalt-Sensor-Wert (Kosten/Ersparnis bleiben unveraendert)."
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        conn.execute("UPDATE hourly_archive SET actual_usage_kwh = ?, actual_usage_source = 'load' WHERE hour_start_utc = ?",
+                     (usage_kwh, hour_start_utc))
+        conn.commit()
 
 
 def archive_completed_action(action):
