@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.152
+
+* **Charts: Achsenbeschriftungen deutlich größer** (Desktop 9 → 13 px, Handy 12 → 16 px), betrifft alle Dashboard-Charts; die letzte Zeitbeschriftung ist rechtsbündig, damit sie am Rand nicht abgeschnitten wird.
+* **Raumtemperatur-Chart: Innenraum-Kurve flacher.** Die rechte Skala lässt jetzt 0,2 °C Platz unter und über den Innenraum-Werten (statt 10 % der Spanne), sodass kleine Schwankungen nicht mehr die ganze Diagrammhöhe ausfüllen.
+* **Hilfe-Assistent: Klick außerhalb schließt das Popup.**
+
 ## 0.0.45.151
 
 * **Hilfe-Assistent: Button "Google Gemini einrichten".** Ist in Home Assistant noch keine KI eingerichtet, erscheint unter dem Eingabefeld ein Button, der Home Assistants eigenen "Integration hinzufügen"-Dialog für Google Gemini öffnet (dort wird auch der API-Schlüssel eingegeben), samt Link zu Google AI Studio für den Schlüssel. Beim Zurückkehren zum Add-on wird automatisch neu geprüft, ob die KI jetzt vorhanden ist.

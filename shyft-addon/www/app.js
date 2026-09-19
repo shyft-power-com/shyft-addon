@@ -6280,7 +6280,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
     // eigener rechter Skala, siehe unten) braucht zusaetzlichen Platz rechts fuer ihre eigene
     // Achsenbeschriftung.
-    const paddingLeft = 45, paddingRight = secondSeries ? 34 : 15, paddingTop = 15, paddingBottom = presenceForecast ? 38 : 26;
+    const paddingLeft = 52, paddingRight = secondSeries ? 42 : 15, paddingTop = 20, paddingBottom = presenceForecast ? 38 : 26;
     const plotWidth = width - paddingLeft - paddingRight;
     const plotHeight = height - paddingTop - paddingBottom;
 
@@ -6380,8 +6380,12 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         const rawMin2 = Math.min(...secondSeries.values);
         const rawMax2 = Math.max(...secondSeries.values);
         const valueRange2 = (rawMax2 - rawMin2) || 1;
-        yMin2 = rawMin2 - valueRange2 * 0.1;
-        yMax2 = rawMax2 + valueRange2 * 0.1;
+        // absolutePadding (z.B. 0.2 °C beim Innenraum): fester Abstand in Einheiten des Werts statt
+        // 10 % der Spanne - bei einer kleinen Spanne (Innentemperatur schwankt nur um Zehntel Grad)
+        // verlaeuft die Kurve dadurch deutlich flacher, statt die volle Diagrammhoehe auszufuellen.
+        const pad2 = secondSeries.absolutePadding ?? valueRange2 * 0.1;
+        yMin2 = rawMin2 - pad2;
+        yMax2 = rawMax2 + pad2;
         yRange2 = yMax2 - yMin2;
         points2 = secondSeries.values.map((v, i) => [
             paddingLeft + (i / lastIndex) * plotWidth,
@@ -6480,7 +6484,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     const xLabels = tickIndices.map(i => {
         const x = (paddingLeft + (i / lastIndex) * plotWidth).toFixed(1);
         const text = new Date(labels[i]).toLocaleString('de-DE', {weekday: 'short', hour: '2-digit'}).replace('.', '');
-        return `<text x="${x}" y="${height - 6}" fill="var(--color-text-secondary)" text-anchor="middle">${text}</text>`;
+        return `<text x="${x}" y="${height - 6}" fill="var(--color-text-secondary)" text-anchor="${i === lastIndex ? 'end' : 'middle'}">${text}</text>`;
     }).join('');
 
     const yTicks = [yMax, (yMin + yMax) / 2, yMin];
@@ -6634,7 +6638,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 // lokal) - siehe readPvForecastVsActual in app.py.
 function buildPvForecastActualChart(labels, forecast, actual) {
     const width = 600, height = 220;
-    const paddingLeft = 45, paddingRight = 15, paddingTop = 15, paddingBottom = 26;
+    const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     const plotWidth = width - paddingLeft - paddingRight;
     const plotHeight = height - paddingTop - paddingBottom;
 
@@ -6716,7 +6720,7 @@ function buildPvForecastActualChart(labels, forecast, actual) {
     const xLabels = tickIndices.map(i => {
         const x = xFor(i).toFixed(1);
         const text = new Date(labels[i]).toLocaleString('de-DE', {weekday: 'short', hour: '2-digit'}).replace('.', '');
-        return `<text x="${x}" y="${height - 6}" fill="var(--color-text-secondary)" text-anchor="middle">${text}</text>`;
+        return `<text x="${x}" y="${height - 6}" fill="var(--color-text-secondary)" text-anchor="${i === lastIndex ? 'end' : 'middle'}">${text}</text>`;
     }).join('');
 
     const yTicks = [yMax, (yMin + yMax) / 2, yMin];
@@ -6826,7 +6830,7 @@ function buildPvForecastActualChart(labels, forecast, actual) {
 // ohne Luecken, Summen in der Legende, "(Beta)" im Titel.
 function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null} = {}) {
     const width = 600, height = 220;
-    const paddingLeft = 45, paddingRight = 15, paddingTop = 15, paddingBottom = 26;
+    const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     const plotWidth = width - paddingLeft - paddingRight;
     const plotHeight = height - paddingTop - paddingBottom;
 
@@ -6912,7 +6916,7 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
     const xLabels = tickIndices.map(i => {
         const text = new Date(labels[i]).toLocaleString('de-DE', {weekday: 'short', hour: '2-digit'}).replace('.', '');
-        return `<text x="${xFor(i).toFixed(1)}" y="${height - 6}" fill="var(--color-text-secondary)" text-anchor="middle">${text}</text>`;
+        return `<text x="${xFor(i).toFixed(1)}" y="${height - 6}" fill="var(--color-text-secondary)" text-anchor="${i === lastIndex ? 'end' : 'middle'}">${text}</text>`;
     }).join('');
 
     const yTicks = [yMax, (yMin + yMax) / 2, yMin];
@@ -8494,6 +8498,7 @@ async function loadDashboard() {
                 label: 'Innenraum',
                 color: 'var(--color-text-secondary)',
                 decimals: 1,
+                absolutePadding: 0.2,
             },
             // Solange "Heizung aktiviert?" (heatpump_heating_activated) explizit auf Aus steht,
             // berechnet das Addon keine Heizungs-Aktionen mehr (siehe compute_heizung_actions in

@@ -216,6 +216,10 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && !panel.hidden) setOpen(false);
     });
+    // Klick ausserhalb des Assistenten schliesst das Popup (Klicks auf Icon/Panel selbst nicht).
+    document.addEventListener('pointerdown', (event) => {
+        if (!panel.hidden && !root.contains(event.target)) setOpen(false);
+    });
 
     applyAvailability();
 }
