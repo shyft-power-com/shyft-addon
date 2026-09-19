@@ -1,5 +1,4 @@
-// Hilfe-Assistent (KI-Chat) - schwebendes Icon unten rechts auf allen Seiten, nur mit test_-
-// praefixiertem Zugangsschluessel (siehe /account-status.isTestEnvironment). Die Antworten kommen
+// Hilfe-Assistent (KI-Chat) - schwebendes Icon unten rechts auf allen Seiten. Die Antworten kommen
 // ueber Home Assistants ai_task.generate_data (siehe /assistant/ask in app.py); ohne eingerichtete
 // KI zeigt das Eingabefeld stattdessen einen Einrichtungshinweis.
 

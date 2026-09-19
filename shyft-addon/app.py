@@ -294,11 +294,8 @@ def accountStatusEndpoint():
 
 @app.route("/assistant/status", methods=["GET"])
 def assistantStatusEndpoint():
-    """Hilfe-Assistent (KI-Chat, nur mit test_-Zugangsschluessel, siehe account-status): ist in Home
-    Assistant eine KI (ai_task-Entitaet, z.B. Google Gemini) eingerichtet? Das Frontend waehlt danach
-    den Platzhaltertext."""
-    if not shyft_adapter.development_mode:
-        return jsonify({"enabled": False, "aiAvailable": False})
+    """Hilfe-Assistent (KI-Chat): ist in Home Assistant eine KI (ai_task-Entitaet, z.B. Google Gemini)
+    eingerichtet? Das Frontend waehlt danach den Platzhaltertext."""
     try:
         states = homeassistant_adapter.get_from_homeassistant("/api/states", timeout=15)
         return jsonify({"enabled": True, "aiAvailable": assistant.find_ai_task_entity(states) is not None})
@@ -312,8 +309,6 @@ def assistantAskEndpoint():
     """Beantwortet eine Nutzerfrage ueber Home Assistants ai_task.generate_data. Body: {question,
     history: [{question, answer}], uiHelp}. Der Prompt enthaelt Wissensbasis, Konfiguration, aktive
     Probleme und Sensorwerte (siehe assistant.build_prompt) - der Nutzer wird im Frontend darauf hingewiesen."""
-    if not shyft_adapter.development_mode:
-        return jsonify({"status": "error", "message": "Nicht verfügbar."}), 403
     body = request.get_json(force=True, silent=True) or {}
     question = (body.get("question") or "").strip()
     if not question:

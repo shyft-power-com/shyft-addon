@@ -863,7 +863,7 @@ async function applyAnalyseTabVisibility() {
     }
 }
 
-// Hilfe-Assistent (KI-Chat, siehe assistant.js): nur mit test_-praefixiertem Zugangsschluessel.
+// Hilfe-Assistent (KI-Chat, siehe assistant.js), auf allen Seiten.
 // uiHelp gibt der KI die Feldbeschreibungen der Oberflaeche mit (Tooltips), damit sie die Begriffe kennt.
 function buildAssistantUiHelp() {
     const lines = [];
@@ -875,15 +875,8 @@ function buildAssistantUiHelp() {
     return lines.join('\n');
 }
 
-async function applyAssistantWidget() {
-    try {
-        const status = await getJson(insideHomeAssistant + '/account-status');
-        if (status.isTestEnvironment) {
-            initAssistantWidget({getJson, baseUri: insideHomeAssistant, buildUiHelp: buildAssistantUiHelp});
-        }
-    } catch (err) {
-        console.log(err);
-    }
+function applyAssistantWidget() {
+    initAssistantWidget({getJson, baseUri: insideHomeAssistant, buildUiHelp: buildAssistantUiHelp});
 }
 
 async function renderSystemHealth() {
