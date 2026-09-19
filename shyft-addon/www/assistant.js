@@ -8,6 +8,11 @@ const PRIVACY_NOTICE = 'Hinweis: Bei der Nutzung der Hilfe-Funktion teilst du de
 const TEAM_NOTICE_TEXT = 'Bei Fragen an das Shyft-Team schreibe bitte an ';
 const TEAM_MAIL = 'info@shyft-power.com';
 const MAX_HISTORY_SENT = 3;
+// Oeffnet Home Assistants eigenen "Integration hinzufuegen"-Dialog fuer Google Gemini (dort wird auch der
+// API-Schluessel eingegeben). Der Add-on-Ingress liegt auf derselben Origin wie Home Assistant, ein
+// absoluter Pfad genuegt - dasselbe Ziel wie der My-Home-Assistant-Link "config_flow_start".
+const GEMINI_SETUP_URL = '/config/integrations/dashboard/add?domain=google_generative_ai_conversation';
+const GEMINI_API_KEY_URL = 'https://aistudio.google.com/app/apikey';
 
 const CHAT_ICON_SVG = '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z"/></svg>';
 
@@ -76,6 +81,28 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
     inputRow.appendChild(input);
     inputRow.appendChild(sendButton);
 
+    const setupBox = document.createElement('div');
+    setupBox.className = 'assistantSetup';
+    setupBox.hidden = true;
+    const setupButton = document.createElement('a');
+    setupButton.className = 'assistantSetupButton';
+    setupButton.href = GEMINI_SETUP_URL;
+    setupButton.target = '_blank';
+    setupButton.rel = 'noopener';
+    setupButton.textContent = 'Google Gemini einrichten';
+    const setupHint = document.createElement('div');
+    setupHint.className = 'assistantNotice assistantSetupHint';
+    setupHint.appendChild(document.createTextNode('Home Assistant fragt dort nach einem API-Schlüssel. Den erstellst du in '));
+    const keyLink = document.createElement('a');
+    keyLink.href = GEMINI_API_KEY_URL;
+    keyLink.target = '_blank';
+    keyLink.rel = 'noopener';
+    keyLink.textContent = 'Google AI Studio';
+    setupHint.appendChild(keyLink);
+    setupHint.appendChild(document.createTextNode('. Danach kommst du hierher zurück.'));
+    setupBox.appendChild(setupButton);
+    setupBox.appendChild(setupHint);
+
     const privacy = document.createElement('div');
     privacy.className = 'assistantNotice';
     privacy.textContent = PRIVACY_NOTICE;
@@ -92,6 +119,7 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
     panel.appendChild(header);
     panel.appendChild(messages);
     panel.appendChild(inputRow);
+    panel.appendChild(setupBox);
     panel.appendChild(privacy);
     panel.appendChild(team);
     root.appendChild(panel);
@@ -115,6 +143,7 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
         input.placeholder = aiAvailable ? PLACEHOLDER_AI_AVAILABLE : PLACEHOLDER_AI_MISSING;
         input.disabled = !aiAvailable;
         sendButton.disabled = !aiAvailable || busy;
+        setupBox.hidden = aiAvailable;
     }
 
     async function refreshStatus() {
@@ -166,6 +195,14 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
         applyAvailability();
         if (aiAvailable) input.focus();
     }
+
+    // Nach der Einrichtung in Home Assistant (anderer Tab) beim Zurueckkehren automatisch neu pruefen.
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && !panel.hidden && !aiAvailable) refreshStatus();
+    });
+    window.addEventListener('focus', () => {
+        if (!panel.hidden && !aiAvailable) refreshStatus();
+    });
 
     launcher.addEventListener('click', () => setOpen(panel.hidden));
     closeButton.addEventListener('click', () => { setOpen(false); launcher.focus(); });

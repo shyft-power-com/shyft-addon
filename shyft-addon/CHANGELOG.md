@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.151
+
+* **Hilfe-Assistent: Button "Google Gemini einrichten".** Ist in Home Assistant noch keine KI eingerichtet, erscheint unter dem Eingabefeld ein Button, der Home Assistants eigenen "Integration hinzufügen"-Dialog für Google Gemini öffnet (dort wird auch der API-Schlüssel eingegeben), samt Link zu Google AI Studio für den Schlüssel. Beim Zurückkehren zum Add-on wird automatisch neu geprüft, ob die KI jetzt vorhanden ist.
+
 ## 0.0.45.150
 
 * **Fix: Gerätekacheln (z.B. Wärmepumpe) blieben aufgeklappt und mit "!" markiert, obwohl kein Pflichtfeld fehlte.** Die Vollständigkeitsprüfung der Kachel wertete auch die optionalen Felder (z.B. Wärmepumpen-Leistung, Vorlauftemperatur, "Heizung aktiviert?") als Pflicht, die Warnmeldung dagegen nicht. Beide Prüfungen behandeln optionale Felder jetzt gleich.
