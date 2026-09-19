@@ -3169,20 +3169,34 @@ def read_grid_power_kw(config):
     return _read_grid_power_kw_with_timestamp(config)[0]
 
 
+# Zwei Netz-Sensoren gelten als "gleichzeitig aktuell", wenn ihre letzten Aktualisierungen hoechstens
+# so weit auseinanderliegen (siehe _read_grid_power_kw_with_timestamp) - deutlich mehr als die
+# Meldeabstaende eines Smart-Meter-Sensors (Sekunden), aber kuerzer als der eines traegen
+# Wechselrichter-Sensors (Minuten), dessen Wert neben einem Live-Sensor nichts mehr zaehlen soll.
+GRID_SENSORS_CONCURRENT_WINDOW_SECONDS = 60
+
+
 def _read_grid_power_kw_with_timestamp(config):
     """(kW, last_updated-datetime) der aktuellen Netzeinspeisung/-bezug (negativ = Einspeisung) - liest ALLE dafuer
-    konfigurierten Entitaeten (siehe _grid_power_entity_ids) und verwendet davon den zuletzt
-    aktualisierten Wert (Nutzer-Vorgabe: mehrere Quellen moeglich, der jeweils aktuellste gewinnt).
-    Eine als Einspeiseleistung erkannte Entitaet (siehe _is_feed_in_sensor_name) wird automatisch
-    negiert. None, wenn kein Sensor zugeordnet oder keiner lesbar ist.
+    konfigurierten Entitaeten (siehe _grid_power_entity_ids). Eine als Einspeiseleistung erkannte
+    Entitaet (siehe _is_feed_in_sensor_name) wird automatisch negiert. None, wenn kein Sensor
+    zugeordnet oder keiner lesbar ist.
+
+    Bei mehreren Sensoren (z.B. Tibber Pulse mit getrennten Bezug-/Einspeise-Sensoren, die BEIDE
+    laufend melden) taugt "der zuletzt aktualisierte gewinnt" nicht. Stattdessen: nur Sensoren, deren
+    letzte Aktualisierung hoechstens GRID_SENSORS_CONCURRENT_WINDOW_SECONDS hinter der des
+    aktuellsten liegt (also der gemeinsame aktuelle Zeitraum - ein traeger Wechselrichter-Sensor
+    faellt hier raus), und daraus der BETRAGSMAESSIG groesste Wert. Es kann nur entweder bezogen
+    oder eingespeist werden; der jeweils andere Sensor zeigt statt 0 mitunter einen kleinen Wert
+    (Stromstaerkeschwankungen). Ein Sensor ohne Zeitstempel zaehlt immer als aktuell.
 
     Gilt bisher NUR fuer diese Live-Lesung (auch fuers Energiefluss-Widget und den Live-Websocket-
     Trigger, siehe _on_grid_power_live_update) - die Energie-Archiv-Funktion
     (_grid_import_export_kwh) nutzt fuer die kWh-Historie weiterhin ausschliesslich den
     Wechselrichter-Sensor. Ein echter Merge mehrerer HISTORIEN (statt nur "welcher Live-Wert ist
-    neuer") waere dafuer deutlich aufwendiger - laut Nutzer-Entscheidung erstmal zurueckgestellt,
+    groesser") waere dafuer deutlich aufwendiger - laut Nutzer-Entscheidung erstmal zurueckgestellt,
     ggf. spaeter nachziehen."""
-    best_value, best_updated = None, None
+    readings = []  # (value, updated)
     for entity_id in _grid_power_entity_ids(config):
         try:
             state = homeassistant_adapter.load_entity_state(entity_id)
@@ -3192,10 +3206,14 @@ def _read_grid_power_kw_with_timestamp(config):
             continue
         if _is_feed_in_sensor_name(entity_id, state.friendly_name):
             value = -value
-        updated = state.last_updated
-        if best_updated is None or (updated is not None and updated > best_updated):
-            best_value, best_updated = value, updated
-    return best_value, best_updated
+        readings.append((value, state.last_updated))
+    if not readings:
+        return None, None
+    known = [u for _, u in readings if u is not None]
+    if known:
+        cutoff = max(known) - timedelta(seconds=GRID_SENSORS_CONCURRENT_WINDOW_SECONDS)
+        readings = [(v, u) for v, u in readings if u is None or u >= cutoff]
+    return max(readings, key=lambda r: abs(r[0]))
 
 
 def read_pv_power_kw(config):
