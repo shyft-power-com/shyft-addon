@@ -539,7 +539,12 @@ def _fetch_awattar_prices():
     if cached and time.time() - cached.get("fetched_at", 0) < AWATTAR_CACHE_TTL_SECONDS and cached.get("prices"):
         return {int(k): v for k, v in cached["prices"].items()}
     try:
-        resp = requests.get(AWATTAR_URL, timeout=20)
+        # Ohne start/end liefert Awattar nur die naechsten 24 h ab der aktuellen Stunde - obwohl ab
+        # dem Nachmittag der komplette Folgetag (bis 24 Uhr) veroeffentlicht ist. Deshalb explizit
+        # anfragen: 24 h zurueck (fuer den Tage-zurueck-Fallback) bis 72 h voraus (Awattar liefert
+        # nur, was schon veroeffentlicht ist).
+        hour_ms = int(time.time() // 3600) * 3600 * 1000
+        resp = requests.get(AWATTAR_URL, params={"start": hour_ms - 24 * 3600 * 1000, "end": hour_ms + 72 * 3600 * 1000}, timeout=20)
         resp.raise_for_status()
         rows = resp.json().get("data", [])
     except Exception as e:
@@ -3160,7 +3165,12 @@ def _grid_power_entity_ids(config):
 
 
 def read_grid_power_kw(config):
-    """Aktuelle Netzeinspeisung/-bezug in kW (negativ = Einspeisung) - liest ALLE dafuer
+    "Nur der Wert aus _read_grid_power_kw_with_timestamp - siehe dort."
+    return _read_grid_power_kw_with_timestamp(config)[0]
+
+
+def _read_grid_power_kw_with_timestamp(config):
+    """(kW, last_updated-datetime) der aktuellen Netzeinspeisung/-bezug (negativ = Einspeisung) - liest ALLE dafuer
     konfigurierten Entitaeten (siehe _grid_power_entity_ids) und verwendet davon den zuletzt
     aktualisierten Wert (Nutzer-Vorgabe: mehrere Quellen moeglich, der jeweils aktuellste gewinnt).
     Eine als Einspeiseleistung erkannte Entitaet (siehe _is_feed_in_sensor_name) wird automatisch
@@ -3185,7 +3195,7 @@ def read_grid_power_kw(config):
         updated = state.last_updated
         if best_updated is None or (updated is not None and updated > best_updated):
             best_value, best_updated = value, updated
-    return best_value
+    return best_value, best_updated
 
 
 def read_pv_power_kw(config):
@@ -3643,10 +3653,22 @@ def compute_energy_flow_data():
     # shyft-Cache stammt), bekommen bewusst keinen Zeitstempel.
     pv_configured = configured("wechselrichter")
     price_info = _read_current_price_info() if pv_configured else None
+    # Netzleistung: wie im Rest des Addons (read_grid_power_kw) der zuletzt aktualisierte Wert aus
+    # Wechselrichter-Sensor UND den 'Strom'-Kachel-Sensoren (z.B. Tibber Pulse, sekundenaktuell) -
+    # nicht mehr nur der Wechselrichter-Sensor, der bei manchen Geraeten nur alle paar Minuten/Stunden
+    # meldet (Anzeige blieb dann bei einem veralteten Wert samt "(HH:MM)"-Zeitstempel stehen).
+    grid_kw, grid_updated_at = None, None
+    if pv_configured:
+        if is_demo_sensor(config, "photovoltaic_powerflow_grid"):
+            grid_kw = _read_mapped_numeric(config, "photovoltaic_powerflow_grid")
+            grid_updated_at = _read_mapped_last_updated_iso(config, "photovoltaic_powerflow_grid")
+        else:
+            grid_kw, grid_dt = _read_grid_power_kw_with_timestamp(config)
+            grid_updated_at = grid_dt.isoformat() if grid_dt is not None else None
     result["grid"] = {
         "configured": pv_configured,
-        "kw": _read_mapped_numeric(config, "photovoltaic_powerflow_grid") if pv_configured else None,
-        "updatedAt": _read_mapped_last_updated_iso(config, "photovoltaic_powerflow_grid") if pv_configured else None,
+        "kw": grid_kw,
+        "updatedAt": grid_updated_at,
         "priceCent": price_info["cent"] if price_info else None,
         "priceLevel": price_info["level"] if price_info else None,
     }

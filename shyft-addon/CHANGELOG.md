@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.145
+
+* **Energiefluss-Bild: Der Netzwert kommt jetzt auch aus den Sensoren der „Strom"-Kachel, nicht nur vom Wechselrichter.** Bisher las das Bild ausschließlich den Wechselrichter-Sensor; meldete der nur alle paar Minuten oder Stunden, blieb dort ein veralteter Wert samt „(20:00)"-Zeitstempel stehen, obwohl ein sekundenaktueller Stromsensor (z. B. Tibber Pulse) vorlag. Jetzt wird wie im übrigen Addon der zuletzt aktualisierte Wert aller konfigurierten Netz-Sensoren verwendet - samt dessen Zeitstempel.
+* **Börsenpreise: Awattar wird jetzt mit explizitem Zeitfenster abgefragt.** Ohne Angabe liefert die Awattar-API nur die nächsten 24 Stunden ab der aktuellen Stunde - obwohl ab dem Nachmittag der komplette Folgetag (bis 24 Uhr) veröffentlicht ist. Dadurch griff das Addon für die letzten Stunden des Folgetags unnötig auf die Preisprognose statt auf die echten Day-Ahead-Preise zurück. Abgefragt werden jetzt 24 h zurück bis 72 h voraus (Awattar liefert nur, was bereits veröffentlicht ist).
+
 ## 0.0.45.144
 
 * **Neu (nur Testumgebung, Zugangsschlüssel mit `test_`): Hilfe-Assistent.** Auf allen Seiten erscheint unten rechts ein Chat-Icon; ein Klick öffnet ein Eingabefeld ("Frage die KI um Hilfe"), die Antwort kommt über die in Home Assistant eingerichtete KI (`ai_task.generate_data`, z.B. Google Gemini). Ist keine KI eingerichtet, erklärt das Feld, wie man die Integration einbindet. Der KI werden Wissensbasis, Feldbeschreibungen der Oberfläche, die aktuelle Konfiguration (ohne Zugangsdaten), aktive Probleme, die Werte der zugeordneten Sensoren und eine Auswahl weiterer Entitäten mitgegeben; unter dem Eingabefeld steht der Datenschutz-Hinweis sowie die Kontaktadresse für Fragen an das Shyft-Team.
