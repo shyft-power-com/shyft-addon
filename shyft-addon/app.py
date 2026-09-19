@@ -7071,6 +7071,45 @@ def _suppress_near_boundary_singleton(result, start):
     return result
 
 
+# Ab dieser Differenz (EUR, Optimierer-Gesamtkosten minus Base-Case-Gesamtkosten) gilt der Plan als
+# "teurer als der Base Case" und wird protokolliert (siehe _log_plan_costlier_than_base).
+PLAN_COSTLIER_THAN_BASE_LOG_THRESHOLD_EUR = 0.005
+
+
+def _log_plan_costlier_than_base(base, input_rows, output_rows, net_profit_base, net_profit_opt, x_sum_total, optimizer_run_id, start):
+    """Diagnose-Log (Nutzer-Auftrag: Fehler finden, nicht ausblenden): strukturell sollte der Plan des
+    Optimierers nie teurer sein als der Base Case (siehe base_case.py) - dann waere die Ersparnis
+    jeder Aktion (Verbrauchsanteil x (Base - Opt), siehe _action_energy_savings) negativ. Tritt es
+    trotzdem auf, wird hier einmalig pro Optimierungslauf alles festgehalten, was zur Ursachensuche
+    noetig ist: beide Gesamtsummen, die Stundenreihen beider Seiten (zeigt, ob die Differenz aus der
+    letzten Stunde/Endwert-Korrektur oder aus dem gesamten Verlauf kommt), die Endzustands-
+    Aufschluesselung beider Seiten und die Startzustaende."""
+    if net_profit_base is None or net_profit_opt is None:
+        return
+    diff = net_profit_opt - net_profit_base
+    if diff <= PLAN_COSTLIER_THAN_BASE_LOG_THRESHOLD_EUR:
+        return
+    try:
+        base_list = (base or {}).get("netProfitBaseList") or []
+        opt_list = [_safe_float(r.get("profits_net_opt")) for r in output_rows]
+        def _fmt(values):
+            return "[" + ", ".join(f"{v:.3f}" for v in values) + "]"
+        p0 = input_rows[0] if input_rows else {}
+        print(f"[Shyft] Optimierer-Plan teurer als Base Case - optimizer_run={optimizer_run_id!r}, "
+              f"start_utc={start.isoformat()}, base48={net_profit_base:.4f}, opt48={net_profit_opt:.4f}, "
+              f"diff(opt-base)={diff:.4f}, x_sum_total={x_sum_total!r}, "
+              f"stunden(base/opt)={len(base_list)}/{len(opt_list)}, "
+              f"letzte_stunde(base/opt)={(base_list[-1] if base_list else None)!r}/{(opt_list[-1] if opt_list else None)!r}, "
+              f"summe_ohne_letzte_stunde(base/opt)={sum(base_list[:-1]):.4f}/{sum(opt_list[:-1]):.4f}, "
+              f"startzustand(SOC_b_0%={p0.get('SOC_b_0_percent')!r}, T_i_0={p0.get('T_i_0')!r}, "
+              f"T_hw_0={p0.get('T_hw_0')!r}, ev_soc_0={p0.get('ev_soc_0')!r}), "
+              f"base_endValue={(base or {}).get('endValue')!r}, "
+              f"opt_endValue={_opt_end_value_terms(input_rows, output_rows)!r}, "
+              f"base_cost_je_stunde={_fmt(base_list)}, opt_cost_je_stunde={_fmt(opt_list)}")
+    except Exception as e:
+        print("[Shyft] Diagnose-Log 'Plan teurer als Base Case' fehlgeschlagen:", repr(e))
+
+
 def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id, base=None):
     """Wird bei jedem frischen Optimierungslauf aufgerufen (siehe _write_dashboard_cache) - berechnet und reconciled alle addon-seitigen Aktionstypen neu: 'Auto laden', 'Warmwasser', 'Heizung Soll-Temperatur', 'Verbraucher an', 'Batterie-Entladen verschieben', 'Batterie netzladen' und 'Batterie-Laden verschieben (PV-Ueberschuss)' - alle sieben bisher geplanten Aktionstypen sind damit umgesetzt.
 
@@ -7090,6 +7129,7 @@ def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms
         net_profit_base = (base or {}).get("netProfitBase48HoursSum")
         net_profit_opt = sum(_safe_float(r.get("profits_net_opt")) for r in output_rows) if output_rows else None
         x_sum_total = sum(_safe_float(r.get("X_sum")) for r in output_rows) if output_rows else None
+        _log_plan_costlier_than_base(base, input_rows, output_rows, net_profit_base, net_profit_opt, x_sum_total, optimizer_run_id, start)
         ev_actions = _suppress_near_boundary_singleton(compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
         _reconcile_computed_actions(config, EV_CHARGE_ACTION_NAME, EV_CHARGE_ID_PREFIX, ev_actions, start)
         dhw_actions = _suppress_near_boundary_singleton(compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)

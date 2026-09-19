@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.148
+
+* **Diagnose-Log: Optimierer-Plan teurer als Base Case.** Strukturell sollte der Plan des Optimierers nie teurer sein als der Base Case - sonst wäre die Ersparnis jeder Aktion (Verbrauchsanteil × (Base − Opt)) negativ, wie bei einer beobachteten „Heizung Soll-Temperatur“-Aktion (0,08 € / −0,07 € / 0,15 €). Liegen die Optimierer-Gesamtkosten mehr als 0,5 Cent über denen des Base Case, protokolliert das Addon pro Optimierungslauf beide Gesamtsummen, den Gesamtverbrauch, die Kosten je Stunde beider Seiten (zeigt, ob die Differenz aus der Endwert-Stunde oder dem gesamten Verlauf stammt), die Summe ohne letzte Stunde, die Startzustände sowie die Endzustands-Aufschlüsselung von Base Case und Optimierer. Reine Diagnose - Berechnung und Anzeige bleiben unverändert.
+
 ## 0.0.45.147
 
 * **Hilfe-Assistent (Testumgebung): kompakteres Popup und schlichteres Icon.** Das Chat-Icon zeigt nur noch die Sprechblase (ohne Fragezeichen); solange noch keine Frage gestellt wurde, ist nur das Eingabefeld sichtbar (kleineres Popup). Die KI verweist in ihren Antworten nicht mehr auf den GitHub-Code.
