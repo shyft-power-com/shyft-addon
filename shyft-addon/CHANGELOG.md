@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.147
+
+* **Hilfe-Assistent (Testumgebung): kompakteres Popup und schlichteres Icon.** Das Chat-Icon zeigt nur noch die Sprechblase (ohne Fragezeichen); solange noch keine Frage gestellt wurde, ist nur das Eingabefeld sichtbar (kleineres Popup). Die KI verweist in ihren Antworten nicht mehr auf den GitHub-Code.
+
 ## 0.0.45.146
 
 * **Netzwert bei mehreren Sensoren: betragsmäßig größter Wert statt „zuletzt aktualisiert“.** Bei getrennten Bezug-/Einspeise-Sensoren (z. B. Tibber Pulse) melden beide laufend, sodass der zuletzt aktualisierte Wert zufällig mal der Bezugs-, mal der Einspeise-Sensor war. Jetzt zählen nur Sensoren, die höchstens 60 s hinter dem aktuellsten liegen (ein träger Wechselrichter-Sensor fällt daneben raus), und daraus gewinnt der Sensor mit dem größten Betrag - es kann nur bezogen ODER eingespeist werden, der andere Sensor zeigt statt 0 mitunter einen kleinen Rauschwert. Gilt für Energiefluss-Bild und Live-Trigger gleichermaßen.

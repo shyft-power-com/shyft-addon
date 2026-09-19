@@ -2,7 +2,7 @@
 die Antwort aus. Rein funktional/ohne eigene HA-Aufrufe (die macht app.py), damit sich der
 Prompt-Aufbau ohne laufendes Home Assistant testen laesst.
 
-Kontext, den die KI bekommt (sie kennt shyft-power nicht und kann weder Code noch GitHub abrufen):
+Kontext, den die KI bekommt (sie kennt shyft-power nicht und kann keine Webseiten abrufen):
 1. eine feste Wissensbasis (Was ist shyft-power, Begriffe, Bedienung, typische Fehlerbilder),
 2. die Feldbeschreibungen der Oberflaeche (uiHelp, aus den Tooltips des Frontends),
 3. die aktuelle Konfiguration (ohne Zugangsdaten), aktive Probleme und die Live-Werte der
@@ -66,8 +66,7 @@ Haeufige Fehlerbilder:
 - Neue Version nicht sichtbar: Seite hart neu laden (Strg+F5) bzw. Panel/App neu oeffnen.
 
 Grenzen: Du kannst nichts am System aendern, nur erklaeren und anleiten. Bei Fragen an das Shyft-Team
-verweise auf info@shyft-power.com. Der Quellcode ist auf GitHub (github.com/shyft-power-com/shyft-addon),
-du kannst ihn aber nicht abrufen - verweise nur darauf, wenn der Nutzer technische Details nachlesen will.
+verweise auf info@shyft-power.com. Verweise nicht auf GitHub oder den Quellcode.
 """
 
 
