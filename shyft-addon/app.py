@@ -1892,6 +1892,27 @@ def _update_input_csv_health(config, live_values):
     )
 
 
+INPUT_CSV_HEALTH_PROBLEM_ID = "input_csv_missing_data"
+
+
+def refresh_input_csv_health():
+    """Wertet das Sammelproblem 'input_csv_missing_data' sofort neu aus (gleiche Pruefung wie im stuendlichen
+    sync_site_data, siehe _update_input_csv_health) - sonst bliebe die Meldung nach einer korrigierten
+    Sensor-Zuordnung bis zum naechsten vollen Sync (:55) stehen, obwohl alle Sensoren laengst lesbar sind."""
+    if is_demo_mode():
+        return
+    try:
+        _update_input_csv_health(_read_current_config(), sync_service.collect_live_values())
+    except Exception as e:
+        print("[Shyft] Neubewertung 'input_csv_missing_data' fehlgeschlagen:", repr(e))
+
+
+def refresh_input_csv_health_if_problem_active():
+    "Alle paar Minuten (siehe Scheduler): raeumt eine bereits behobene 'input_csv_missing_data'-Meldung von selbst ab; ohne aktives Problem passiert nichts (keine unnoetigen HA-Abfragen)."
+    if problem_registry.is_active(INPUT_CSV_HEALTH_PROBLEM_ID):
+        refresh_input_csv_health()
+
+
 @app.route("/system-health", methods=["GET"])
 def readSystemHealth():
     "Aktuelle Liste laufender, nutzer-relevanter Probleme fuer die Statuskarte oben auf der Konfigurationsseite (siehe problem_registry und renderSystemHealth im Frontend)."
@@ -4861,6 +4882,10 @@ def writeConfig():
         maybe_create_real_account(data.get("integrationMappings", {}))
     except Exception as e:
         print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
+
+    # Speichern der Zuordnung kann das Problem beheben (oder ausloesen) - nicht bis zum naechsten stuendlichen
+    # Sync warten. Im Hintergrund, die Neubewertung liest alle Sensoren aus Home Assistant.
+    threading.Thread(target=refresh_input_csv_health, daemon=True).start()
 
     response_data = dict(data)
     response_data["scriptSyncErrors"] = script_sync_errors
@@ -8374,6 +8399,7 @@ scheduler.add_job(run_hourly_action_transition_periodically, 'cron', minute="0")
 # abgelaufenen Stunde schon abgegeben hat, bevor sie hier abgeschlossen wird (siehe
 # finalize_completed_hour_periodically/energy_archive.finalize_hour).
 scheduler.add_job(finalize_completed_hour_periodically, 'cron', minute="3")
+scheduler.add_job(refresh_input_csv_health_if_problem_active, 'interval', minutes=5)
 scheduler.add_job(backfill_household_usage_periodically, 'interval', minutes=30, next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90))
 # on the hour, alongside the other hourly syncs - one snapshot per hour is exactly the
 # resolution the Anwesenheitsprognose needs (see compute_car_presence_forecast)

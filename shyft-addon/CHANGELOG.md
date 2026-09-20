@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.165
+
+* **Fix: Die Meldung "Es fehlen aktuell die grundlegenden Stromfluss-Werte (PV, Haushalt, Netz)" blieb stehen, obwohl die Sensoren längst wieder lesbar waren.** Sie wurde nur beim stündlichen Sync (:55) neu bewertet. Jetzt wird sie sofort nach dem Speichern der Konfiguration und danach alle 5 Minuten (nur solange sie aktiv ist) neu geprüft und verschwindet von selbst, sobald ein Sensor wieder Werte liefert.
+
 ## 0.0.45.164
 
 * **Heizungs-Test und Aktionen zeigen jetzt die echte Fehlerursache statt "nicht innerhalb von 300s bestätigt" bzw. "500 Server got itself in trouble".** Schlägt schon der Aufruf des Heizungs-Skripts fehl (z.B. weil die Herstellercloud das Gateway der Wärmepumpe als offline meldet: `GATEWAY_OFFLINE`), liest das Add-on die Ursache aus dem Home-Assistant-Log und zeigt sie an ("Die Wärmepumpe konnte nicht angesteuert werden: … Es wurde nichts geändert."). In diesem Fall wartet der Test nicht mehr 5 Minuten und versucht auch kein Zurücksetzen - es wurde ja nichts gesendet. Dieselbe Ursache erscheint im Log der Aktionskarte.
