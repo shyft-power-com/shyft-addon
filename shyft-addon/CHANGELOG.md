@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.164
+
+* **Heizungs-Test und Aktionen zeigen jetzt die echte Fehlerursache statt "nicht innerhalb von 300s bestätigt" bzw. "500 Server got itself in trouble".** Schlägt schon der Aufruf des Heizungs-Skripts fehl (z.B. weil die Herstellercloud das Gateway der Wärmepumpe als offline meldet: `GATEWAY_OFFLINE`), liest das Add-on die Ursache aus dem Home-Assistant-Log und zeigt sie an ("Die Wärmepumpe konnte nicht angesteuert werden: … Es wurde nichts geändert."). In diesem Fall wartet der Test nicht mehr 5 Minuten und versucht auch kein Zurücksetzen - es wurde ja nichts gesendet. Dieselbe Ursache erscheint im Log der Aktionskarte.
+
 ## 0.0.45.163
 
 * **"Heizung aktiviert?" und "Wärmepumpe an/aus" bieten jetzt auch Heizungs-Entitäten mit Betriebsmodi an** (z.B. `climate.vicare_heating` mit "auto"/"heat"/"off", auch `select`/`water_heater`). Bisher zeigte die Auswahl nur Entitäten, die gerade genau "on" oder "off" melden - eine Heizung im Modus "auto" fehlte. Jeder Zustand außer "off" zählt als "an"; an shyft-power gehen für diese beiden Sensoren nur "on"/"off" (Betriebsmodus → "on").

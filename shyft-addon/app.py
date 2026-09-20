@@ -2863,6 +2863,23 @@ def sync_all_auto_managed_scripts():
             print(f"[Shyft] Startup-Sync fuer '{control_key}' fehlgeschlagen:", repr(e))
 
 
+def _script_failure_reason(script_id, error):
+    """Lesbare Ursache fuer einen fehlgeschlagenen Aufruf des Auto-Skripts script_id: die echte Fehlermeldung aus dem
+    Home-Assistant-Log (die REST-Antwort ist nur ein generisches "500 ... Server got itself in trouble"), sonst der
+    urspruengliche Fehlertext. Ein GATEWAY_OFFLINE der Viessmann-Cloud bekommt einen erklaerenden Zusatz."""
+    reason = None
+    try:
+        reason = homeassistant_adapter.latest_script_error(script_id)
+    except Exception as e:
+        print(f"[Shyft] Fehlerursache von script.{script_id} nicht aus dem HA-Log lesbar:", repr(e))
+    if not reason:
+        return str(error)
+    text = f"Home Assistant meldet: {reason}"
+    if "GATEWAY_OFFLINE" in reason:
+        text += " (die Cloud des Herstellers erreicht das Gateway der Wärmepumpe nicht - Internetverbindung/Gateway der Wärmepumpe prüfen)"
+    return text
+
+
 def execute_auto_managed_action(control_key, phase, target_value):
     """Executes the concrete Start/Ende-Verhalten for an AUTO_MANAGED_CONTROLS Aktionstyp - either
     "direct" (the addon writes the mapped entity itself, the original/default behavior) or
@@ -2897,7 +2914,10 @@ def execute_auto_managed_action(control_key, phase, target_value):
         if target_value is None:
             raise Exception("Aktion enthält keinen Zielwert (Target Value)")
         target_value, clamp_note = _clamp_to_entity_range(entity_id, target_value)
-        homeassistant_adapter.call_service("script", control["script_id"], {"target_value": target_value})
+        try:
+            homeassistant_adapter.call_service("script", control["script_id"], {"target_value": target_value})
+        except Exception as e:
+            raise Exception(_script_failure_reason(control["script_id"], e))
         return clamp_note
     elif control["type"] == "switch":
         service = "turn_on" if phase == "start" else "turn_off"
@@ -4930,23 +4950,26 @@ HEATING_TARGET_TEMP_TEST_REVERT_TIMEOUT_SECONDS = 300
 
 def _write_and_verify_auto_managed_number(control_key, entity_id, target_value, poll_timeout_seconds,
                                            poll_interval_seconds=HEATING_TARGET_TEMP_TEST_POLL_INTERVAL_SECONDS):
-    "Ruft das fuer control_key hinterlegte HA-Skript mit target_value auf und prueft per Live-Status (Poll), ob der zugeordnete Sensor ihn wirklich uebernommen hat. True bei Erfolg innerhalb der Frist."
+    """Ruft das fuer control_key hinterlegte HA-Skript mit target_value auf und prueft per Live-Status (Poll), ob der
+    zugeordnete Sensor ihn wirklich uebernommen hat. Rueckgabe (status, detail): "confirmed" bei Erfolg innerhalb der
+    Frist, "timeout" wenn der Wert nicht rechtzeitig uebernommen wurde, "call_failed" wenn schon der Skriptaufruf
+    selbst fehlschlug (detail = Ursache aus dem HA-Log) - dann wurde nichts an das Geraet gesendet."""
     control = AUTO_MANAGED_CONTROLS[control_key]
     try:
         homeassistant_adapter.call_service("script", control["script_id"], {"target_value": target_value})
     except Exception as e:
         print(f"[Shyft] '{control_key}': Skript-Aufruf fehlgeschlagen:", repr(e))
-        return False
+        return "call_failed", _script_failure_reason(control["script_id"], e)
     deadline = time.time() + poll_timeout_seconds
     while True:
         try:
             current = homeassistant_adapter.read_entity_numeric_value(entity_id)
             if current is not None and abs(current - target_value) < 1e-6:
-                return True
+                return "confirmed", None
         except Exception as e:
             print(f"[Shyft] '{control_key}': Status von '{entity_id}' nicht lesbar:", repr(e))
         if time.time() >= deadline:
-            return False
+            return "timeout", None
         time.sleep(poll_interval_seconds)
 
 
@@ -4972,10 +4995,17 @@ def testHeatingTargetTempBoost():
         return jsonify({"success": False, "message": "Aktueller Wert nicht lesbar"}), 500
 
     boosted_value = original_value + HEATING_TARGET_TEMP_TEST_STEP_C
-    confirmed = _write_and_verify_auto_managed_number(
+    boost_status, boost_detail = _write_and_verify_auto_managed_number(
         control_key, entity_id, boosted_value, HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS)
-    revert_ok = _write_and_verify_auto_managed_number(
+    if boost_status == "call_failed":
+        # Der Befehl kam gar nicht erst beim Geraet an - es gibt nichts zurueckzusetzen (und das Warten aufs
+        # Bestaetigen bzw. der Rueckstell-Versuch waeren sinnlos).
+        return jsonify({"success": False, "message": f"Die Wärmepumpe konnte nicht angesteuert werden: {boost_detail}. Es wurde nichts geändert.",
+                        "originalValue": original_value, "boostedValue": boosted_value}), 500
+    confirmed = boost_status == "confirmed"
+    revert_status, revert_detail = _write_and_verify_auto_managed_number(
         control_key, entity_id, original_value, HEATING_TARGET_TEMP_TEST_REVERT_TIMEOUT_SECONDS)
+    revert_ok = revert_status == "confirmed"
 
     if confirmed and revert_ok:
         return jsonify({"success": True, "originalValue": original_value, "boostedValue": boosted_value})
@@ -4985,6 +5015,8 @@ def testHeatingTargetTempBoost():
     else:
         message = "Zurücksetzen auf den ursprünglichen Wert nicht bestätigt"
     if not revert_ok:
+        if revert_status == "call_failed":
+            message += f" - das Zurücksetzen auf {original_value}°C ist fehlgeschlagen ({revert_detail})"
         message += " - bitte in der Wärmepumpen-App prüfen, ob wieder der ursprüngliche Wert eingestellt ist"
     return jsonify({"success": False, "message": message, "originalValue": original_value, "boostedValue": boosted_value}), 500
 

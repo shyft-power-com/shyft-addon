@@ -188,6 +188,34 @@ class HomeAssistantAdapter:
 
         return self._build_integrations_and_entities(config_entries, entities, devices)
 
+    def latest_script_error(self, script_id):
+        """Neueste Fehlermeldung des HA-Skripts script.<script_id> aus dem System-Log (Websocket
+        system_log/list) - z.B. "Command failed with status code 400. Reason given was: GATEWAY_OFFLINE".
+        Die REST-Antwort eines fehlgeschlagenen Skriptaufrufs ist nur ein generisches "500 Server got itself in
+        trouble" ohne Ursache; die steht ausschliesslich im HA-Log. None, wenn nichts gefunden/lesbar."""
+        ws_uri = self.homeassistant_uri.replace("https://", "wss://").replace("http://", "ws://") + WEBSOCKET_PATH
+        ws = websocket.create_connection(ws_uri, timeout=10)
+        try:
+            ws.recv()  # auth_required
+            ws.send(json.dumps({"type": "auth", "access_token": self._token()}))
+            if json.loads(ws.recv()).get("type") != "auth_ok":
+                return None
+            entries = self._ws_command(ws, 1, "system_log/list")
+        finally:
+            ws.close()
+        for entry in entries or []:  # neueste zuerst
+            if not str(entry.get("name", "")).endswith("." + script_id):
+                continue
+            message = " ".join(entry.get("message") or []) if isinstance(entry.get("message"), list) else str(entry.get("message") or "")
+            marker = "Error executing script."
+            if marker in message:
+                message = message.split(marker, 1)[1].strip()
+            # "Unexpected error for call_service at pos 1: (Exc(...), 'Klartext')" - auf den Teil nach "at pos N:" kuerzen
+            if " at pos " in message and ": " in message.split(" at pos ", 1)[1]:
+                message = message.split(" at pos ", 1)[1].split(": ", 1)[1].strip()
+            return message[:400] or None
+        return None
+
     def _ws_command(self, ws, msg_id, command_type):
         ws.send(json.dumps({"id": msg_id, "type": command_type}))
         response = json.loads(ws.recv())
