@@ -571,13 +571,13 @@ async function saveConfigurationNow() {
         for (const key of section.sensors) {
             const element = document.getElementById(key + VALUE_POSTFIX);
             if (element) {
-                sensorValues[key] = element.value;
+                sensorValues[key] = extractEntityId(element.value);
             }
         }
         for (const key of section.actions) {
             const element = document.getElementById(key + ACTOR_VALUE_POSTFIX);
             if (element) {
-                actorValues[key] = element.value;
+                actorValues[key] = extractEntityId(element.value);
             }
             const toggleElement = document.getElementById(key + ACTION_TOGGLE_POSTFIX);
             if (toggleElement) {

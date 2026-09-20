@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.160
+
+* **Wichtiger Fix: Sensor-Zuordnungen wurden beim Speichern zerstört (seit 0.0.45.141).** Das neue Anzeigeformat "Anzeigename (entity_id, Wert Einheit)" wurde beim Speichern an der ersten Leerstelle abgeschnitten - aus "E3 Vitocal 16 ... (sensor.xyz, 45 °C)" wurde das Mapping "E3", aus "PV Leistung ..." wurde "PV". Home Assistant kennt solche Entitäten nicht, dadurch erschienen Sensor-Fehlermeldungen ("liefert keinen Wert") und "aktueller Wert nicht lesbar". Jetzt wird die entity_id aus der Klammer gelesen (Frontend UND Backend, ältere Formate funktionieren weiter). Zusätzlich behält das Backend ein bestehendes gültiges Mapping, wenn ein Wert ohne gültige entity_id (kein "domain.objekt") ankommt. **Bereits beschädigte Zuordnungen (Werte wie "E3", "PV", "Batterie") lassen sich nicht automatisch wiederherstellen - bitte in der Konfiguration die betroffenen Sensoren neu auswählen.**
+
 ## 0.0.45.159
 
 * **Tarif-Zeitfenster (Hoch-/Niedertarif und §14a Modul 3): Fenster dürfen sich nicht mehr überschneiden.** Beim Hinzufügen wird geprüft, ob das neue Fenster am selben Wochentag mindestens eine Stunde mit einem bestehenden teilt (auch bei Fenstern über Mitternacht, z.B. 22 - 6 Uhr); dann wird es nicht übernommen und eine Meldung nennt das kollidierende Fenster. Direkt aneinander anschließende Fenster (z.B. 0 - 5 und 5 - 9 Uhr) sind erlaubt. Bereits gespeicherte, sich überlappende Fenster bleiben unverändert.

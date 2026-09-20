@@ -4691,24 +4691,56 @@ def testCarChargeStop():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
+_ENTITY_ID_IN_DISPLAY_LABEL = re.compile(r"\(([a-z0-9_]+\.[a-z0-9_]+),")
+_VALID_ENTITY_ID = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+
+
+def _entity_id_from_display_value(value):
+    """Entity-ID aus dem Text eines Eingabefelds. Das Frontend zeigt "Anzeigename (entity_id, Wert Einheit)"
+    (siehe /sensorids) bzw. aelter "entity_id (Wert Einheit)" / "entity_id: Wert Einheit". Eine entity_id
+    enthaelt weder ":" noch Leerzeichen - beim aelteren Format reicht daher der Text bis dahin. Im neuen Format
+    steht sie in der Klammer (der Anzeigename davor kann Leerzeichen enthalten und darf nie als entity_id
+    genommen werden - sonst wuerde aus "E3 Vitocal 16 ..." ein Mapping "E3")."""
+    match = _ENTITY_ID_IN_DISPLAY_LABEL.search(value)
+    if match:
+        return match.group(1)
+    return re.split(r"[:\s]", value, maxsplit=1)[0]
+
+
+def _keep_valid_entity_ids(incoming, existing, keys=("sensorMappings", "actorMappings")):
+    """Sicherheitsnetz: liefert das Frontend fuer ein Mapping einen Wert, der keine entity_id sein kann
+    (kein "domain.objekt"), der bisher gespeicherte Wert aber eine gueltige war, bleibt der alte Wert stehen -
+    statt ein funktionierendes Mapping still zu ueberschreiben. Leere Werte (Nutzer hat das Feld geleert) und
+    Listen (Mehrfachauswahl) sind ausgenommen."""
+    for key in keys:
+        new_map, old_map = incoming.get(key), existing.get(key) or {}
+        if not isinstance(new_map, dict):
+            continue
+        for inner_key, new_value in list(new_map.items()):
+            old_value = old_map.get(inner_key)
+            if (isinstance(new_value, str) and new_value and not _VALID_ENTITY_ID.match(new_value)
+                    and isinstance(old_value, str) and _VALID_ENTITY_ID.match(old_value)):
+                print(f"[Shyft] Mapping '{key}.{inner_key}': ungueltiger Wert {new_value!r} ignoriert, behalte {old_value!r}.")
+                new_map[inner_key] = old_value
+
+
 @app.route("/config", methods=["PUT"])
 def writeConfig():
     content = request.get_data(as_text=True)
     incoming = json.loads(content)
 
     # iterate over key/value pairs. integrationMappings holds lists (multi-select), the rest hold plain strings.
-    # entity ids never contain ":" or whitespace, so splitting on the first one strips both the old
-    # "entity_id: state unit" and the current "entity_id (state unit)" display formats.
     for key, value in incoming.items():
         if not isinstance(value, dict):
             continue
         for inner_key, inner_value in value.items():
             if isinstance(inner_value, str):
-                value[inner_key] = re.split(r"[:\s]", inner_value, maxsplit=1)[0]
+                value[inner_key] = _entity_id_from_display_value(inner_value)
 
     # merge onto the existing config instead of replacing it outright, so backend-managed
     # fields the frontend doesn't know about (startedShyftActionIds, endedShyftActionIds) survive
     data = _read_current_config()
+    _keep_valid_entity_ids(incoming, data)
     old_action_type_enabled = data.get("actionTypeEnabled", {})
     old_wallbox_mapping = data.get("wallboxConnectionStatusMapping", {})
     old_health_entity_ids = {
