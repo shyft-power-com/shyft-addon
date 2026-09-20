@@ -1810,10 +1810,10 @@ def readConfigWarnings():
 # _read_mapped_entity_state ein "unavailable" als Problem; rein optionale Sensoren duerfen
 # unauffaellig fehlen.
 HEALTH_MONITORED_SENSOR_KEYS = {
-    "photovoltaic_powerflow_pv": "Aktueller Strom - PV",
-    "photovoltaic_powerflow_load": "Aktueller Strom - Haushalt",
-    "photovoltaic_powerflow_grid": "Aktueller Strom - Netz",
-    "photovoltaic_powerflow_battery": "Aktueller Strom - Batterie",
+    "photovoltaic_powerflow_pv": "PV: Aktuelle Leistung",
+    "photovoltaic_powerflow_load": "Haushalt: Aktuelle Leistung",
+    "photovoltaic_powerflow_grid": "Netz: Aktuelle Leistung",
+    "photovoltaic_powerflow_battery": "Batterie: Aktuelle Leistung",
     "battery_state_of_charge": "Ladestand Heimspeicher",
     "heatpump_current_power_elect": "Aktuelle Leistung Waermepumpe",
     "heatpump_temp_indoor_measured": "Innenraumtemperatur (gemessen)",
@@ -7621,7 +7621,7 @@ def _grid_import_export_kwh(start, end, config=None):
 
 
 def _household_usage_kwh(start, end, config=None):
-    "Ist-Verbrauch des Haushalts (kWh) im Intervall [start, end) aus dem Sensor 'Aktueller Strom - Haushalt' (photovoltaic_powerflow_load) - vergleichbar mit geplant/Basisfall im Analyse-Tab. None ohne zugeordneten Sensor oder ohne Historie."
+    "Ist-Verbrauch des Haushalts (kWh) im Intervall [start, end) aus dem Sensor 'Haushalt: Aktuelle Leistung' (photovoltaic_powerflow_load) - vergleichbar mit geplant/Basisfall im Analyse-Tab. None ohne zugeordneten Sensor oder ohne Historie."
     usage_kwh, _ = _sensor_history_kwh("photovoltaic_powerflow_load", start, end, config)
     return usage_kwh
 

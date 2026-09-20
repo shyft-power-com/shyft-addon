@@ -28,22 +28,22 @@ let actionTestStatusMap = {};
 const helpinformation = {
     'electricity_grid_power_sensors': {
         label: 'Aktueller Strom - Netz',
-        description: ' Die aktuelle Leistung, die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist. Du kannst mehrere Entitäten auswählen. Auch vom Wechselrichter kannst du den Sensor "Aktueller Strom - Netz" messen lassen. Shyft wählt jeweils den aktuellsten Wert aus.'
+        description: ' Die aktuelle Leistung, die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist. Du kannst mehrere Entitäten auswählen. Auch vom Wechselrichter kannst du den Sensor "Netz: Aktuelle Leistung" messen lassen. Shyft wählt jeweils den aktuellsten Wert aus.'
     },
     'photovoltaic_powerflow_load': {
-        label: 'Aktueller Strom - Haushalt',
+        label: 'Haushalt: Aktuelle Leistung',
         description: ' Die Leistung (in kW), die dein Haushalt aktuell verbraucht.'
     },
     'photovoltaic_powerflow_pv': {
-        label: 'Aktueller Strom - PV',
+        label: 'PV: Aktuelle Leistung',
         description: ' Die aktuelle Leistung (in kW) deiner PV-Anlage.'
     },
     'photovoltaic_powerflow_grid': {
-        label: 'Aktueller Strom - Netz',
+        label: 'Netz: Aktuelle Leistung',
         description: ' Die aktuelle Leistung (in kW), die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist. Du kannst den Wechselrichter-Sensor zusätzlich zu einem optional in der "Strom-Kachel" hinterlegten Sensor angeben - Shyft wählt jeweils den aktuellsten Wert aus.'
     },
     'photovoltaic_powerflow_battery': {
-        label: 'Aktueller Strom - Batterie',
+        label: 'Batterie: Aktuelle Leistung',
         description: ' Die aktuelle Leistung (in kW), mit dem deine Batterie geladen (positiver Wert) oder entladen (negativer Wert) wird.'
     },
     'battery_state_of_charge': {

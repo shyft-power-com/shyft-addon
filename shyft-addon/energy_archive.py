@@ -161,7 +161,7 @@ def finalize_hour(hour_start_utc, hour_end_at, actual_import_kwh, actual_export_
     hour_end_at nach, bildet geplant/Basisfall als zeitgewichteten Mittelwert ueber ALLE Laeufe
     dieser Stunde, verrechnet actual_import_kwh/actual_export_kwh mit dem zuletzt bekannten
     Strompreis dieser Stunde und schreibt das Ergebnis nach hourly_archive. actual_usage_kwh ist der
-    Ist-VERBRAUCH des Haushalts (Sensor "Aktueller Strom - Haushalt", siehe app._household_usage_kwh) -
+    Ist-VERBRAUCH des Haushalts (Sensor "Haushalt: Aktuelle Leistung", siehe app._household_usage_kwh) -
     vergleichbar mit geplant/Basisfall; die KOSTEN dagegen entstehen aus dem Netzbezug/der Einspeisung.
     None = nicht ermittelbar (Zeile wird spaeter nachberechnet, siehe hours_needing_usage_backfill).
 
