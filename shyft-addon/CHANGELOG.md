@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.157
+
+* **Strom-Kachel: Netz-Sensorfeld heißt jetzt ebenfalls "Netz: Aktuelle Leistung"** (vorher "Aktueller Strom - Netz"), passend zu den vier Wechselrichter-Sensoren.
+
 ## 0.0.45.156
 
 * **Wechselrichter-Sensoren umbenannt:** "Aktueller Strom - PV/Haushalt/Netz/Batterie" heißen jetzt "PV: Aktuelle Leistung", "Haushalt: Aktuelle Leistung", "Netz: Aktuelle Leistung" und "Batterie: Aktuelle Leistung" (Konfiguration, Tooltips und Problemmeldungen). Das Feld "Aktueller Strom - Netz" in der Strom-Kachel behält seinen Namen.

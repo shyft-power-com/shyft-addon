@@ -27,7 +27,7 @@ let actionTestStatusMap = {};
 
 const helpinformation = {
     'electricity_grid_power_sensors': {
-        label: 'Aktueller Strom - Netz',
+        label: 'Netz: Aktuelle Leistung',
         description: ' Die aktuelle Leistung, die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist. Du kannst mehrere Entitäten auswählen. Auch vom Wechselrichter kannst du den Sensor "Netz: Aktuelle Leistung" messen lassen. Shyft wählt jeweils den aktuellsten Wert aus.'
     },
     'photovoltaic_powerflow_load': {

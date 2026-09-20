@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 # How long a single Websocket connection is kept open before it's deliberately dropped and
 # re-established - not just resilience against silent disconnects, but also the mechanism by
-# which a changed sensorMappings entry (e.g. the user re-points "Aktueller Strom - Netz" at a
+# which a changed sensorMappings entry (e.g. the user re-points "Netz: Aktuelle Leistung" at a
 # different entity) takes effect without an addon restart, since the entity list is re-resolved
 # from the current config on every (re)connect.
 MAX_CONNECTION_SECONDS = 1800

@@ -45,7 +45,7 @@ Was shyft-power macht:
 
 Konfiguration:
 - "Strom": Tarif (Fixer Tarif, Hoch-/Niedertarif, Dynamischer Tarif), Einspeisevergütung und optional
-  "Aktueller Strom - Netz" (mehrere Sensoren moeglich, der aktuellste Wert gewinnt; ein Sensor, dessen Name
+  "Netz: Aktuelle Leistung" (mehrere Sensoren moeglich, der aktuellste Wert gewinnt; ein Sensor, dessen Name
   "Einspeise" enthaelt, wird automatisch mit umgekehrtem Vorzeichen behandelt).
 - Geraetekacheln: Wechselrichter, Batterie, Waermepumpe, Auto, Wallbox, Raumtemperatur, Sonstiger Verbraucher.
   Pro Kachel waehlt man die Home-Assistant-Integration/das Geraet und ordnet dann Sensoren zu.
