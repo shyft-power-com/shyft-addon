@@ -4,7 +4,7 @@
 
 const PLACEHOLDER_AI_AVAILABLE = 'Frage die KI um Hilfe';
 const PLACEHOLDER_AI_MISSING = 'Nutze deine KI, um nach Hilfe zu fragen. Binde hierfür die Integration "Google -> Google Gemini" in Home Assistant ein.';
-const PRIVACY_NOTICE = 'Hinweis: Bei der Nutzung der Hilfe-Funktion teilst du deine Sensorzustände mit deinem KI-Anbieter.';
+const PRIVACY_NOTICE = 'Hinweis: Bei der Nutzung der Hilfe-Funktion teilst du deine Sensorzustände sowie einen Auszug aus dem Add-on-Log (nur Fehler- und Warnzeilen, ohne Zugangsdaten) mit deinem KI-Anbieter.';
 const TEAM_NOTICE_TEXT = 'Bei Fragen an das Shyft-Team schreibe bitte an ';
 const TEAM_MAIL = 'info@shyft-power.com';
 const MAX_HISTORY_SENT = 3;

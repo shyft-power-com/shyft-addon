@@ -279,6 +279,24 @@ class HomeAssistantAdapter:
         except ValueError:
             return {}
 
+    def get_addon_log_text(self, lines=500, timeout=15):
+        """Die letzten `lines` Zeilen des eigenen Add-on-Logs als Text (Supervisor-API
+        /addons/self/logs, gehoert zu den Selbstverwaltungs-Endpunkten, die jedes Add-on mit
+        hassio_api nutzen darf). Der Range-Header waehlt die letzten Eintraege (Supervisor-Syntax
+        entries=<cursor>:<skip>:<anzahl>; ohne ihn liefert Supervisor nur ca. 100 Zeilen), Accept
+        text/x-log liefert die Zeilen mit Zeitstempel (Format der Add-on-Log-Ansicht in Home Assistant).
+        Lehnt der Supervisor diese Kombination ab, folgt ein einfacher Abruf (text/plain, ohne Range);
+        wirft, wenn auch der fehlschlaegt."""
+        base_headers = {"Authorization": f"Bearer {self._token()}"}
+        uri = self.SUPERVISOR_API_URI + "/addons/self/logs"
+        attempts = [{"Accept": "text/x-log", "Range": f"entries=:-{lines - 1}:{lines}"}, {"Accept": "text/plain"}]
+        response = None
+        for extra_headers in attempts:
+            response = requests.get(uri, headers={**base_headers, **extra_headers}, timeout=timeout)
+            if response.ok:
+                return response.text
+        raise Exception(f"GET /addons/self/logs failed: {response.status_code} {response.text[:200]}")
+
     def delete_from_homeassistant(self, path):
         headers = {"Authorization": f"Bearer {self._token()}"}
         completeUri = self.homeassistant_uri + path

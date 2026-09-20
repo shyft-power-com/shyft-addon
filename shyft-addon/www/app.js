@@ -28,7 +28,7 @@ let actionTestStatusMap = {};
 const helpinformation = {
     'electricity_grid_power_sensors': {
         label: 'Netz: Aktuelle Leistung',
-        description: ' Die aktuelle Leistung, die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist. Du kannst mehrere Entitäten auswählen. Auch vom Wechselrichter kannst du den Sensor "Netz: Aktuelle Leistung" messen lassen. Shyft wählt jeweils den aktuellsten Wert aus.'
+        description: ' Die aktuelle Leistung, die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist. Du kannst mehrere Entitäten auswählen. Auch vom Wechselrichter kannst du den Sensor "Netz: Aktuelle Leistung" messen lassen. Bei mehreren Sensoren (z. B. getrennte Sensoren für Bezug und Einspeisung) betrachtet Shyft nur die, die gerade aktuell melden (Aktualisierung höchstens eine Minute hinter dem aktuellsten), und nimmt davon den Wert mit dem größten Betrag - ein träger Sensor wie der des Wechselrichters zählt dann nicht mit. Ein Sensor, dessen Name "Einspeise" enthält, wird automatisch als Einspeisung (negatives Vorzeichen) gewertet.'
     },
     'photovoltaic_powerflow_load': {
         label: 'Haushalt: Aktuelle Leistung',
@@ -40,7 +40,7 @@ const helpinformation = {
     },
     'photovoltaic_powerflow_grid': {
         label: 'Netz: Aktuelle Leistung',
-        description: ' Die aktuelle Leistung (in kW), die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist. Du kannst den Wechselrichter-Sensor zusätzlich zu einem optional in der "Strom-Kachel" hinterlegten Sensor angeben - Shyft wählt jeweils den aktuellsten Wert aus.'
+        description: ' Die aktuelle Leistung (in kW), die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist. Du kannst den Wechselrichter-Sensor zusätzlich zu einem optional in der "Strom-Kachel" hinterlegten Sensor angeben. Sind mehrere Sensoren hinterlegt, betrachtet Shyft nur die, die gerade aktuell melden (Aktualisierung höchstens eine Minute hinter dem aktuellsten), und nimmt davon den Wert mit dem größten Betrag - ein träger Sensor wie der des Wechselrichters zählt dann nicht mit.'
     },
     'photovoltaic_powerflow_battery': {
         label: 'Batterie: Aktuelle Leistung',
@@ -1815,7 +1815,7 @@ function renderGeneralConfigSection() {
 
     // Optional: zusaetzliche(r) Netzleistungs-Sensor(en) unabhaengig vom (ebenfalls optionalen)
     // Wechselrichter-Sensor "photovoltaic_powerflow_grid" - siehe read_grid_power_kw in app.py, das
-    // von allen konfigurierten Quellen den jeweils aktuellsten Wert verwendet. Mehrfachauswahl, da
+    // von den gerade aktuell meldenden Quellen den betragsmaessig groessten Wert verwendet. Mehrfachauswahl, da
     // manche Integrationen (z.B. Tibber Pulse) Netzbezug und Einspeisung als zwei getrennte Sensoren
     // liefern statt eines einzigen vorzeichenbehafteten.
     bodyDiv.appendChild(buildElectricitySubheading('Netzsensor (optional)'));

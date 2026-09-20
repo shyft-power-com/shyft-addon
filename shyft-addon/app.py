@@ -304,6 +304,20 @@ def assistantStatusEndpoint():
         return jsonify({"enabled": True, "aiAvailable": False})
 
 
+def _assistant_log_excerpt():
+    """Fehler-/Warnzeilen der letzten Add-on-Log-Zeilen fuer den Hilfe-Assistenten (siehe
+    assistant.extract_error_lines) - Zugangsdaten (Supervisor-Token, shyft_access_key samt Teilen)
+    werden vorher geschwaerzt. None, wenn das Log nicht abrufbar ist (die KI erfaehrt das im Prompt);
+    ein Fehler hier darf die Anfrage nie scheitern lassen."""
+    try:
+        log_text = homeassistant_adapter.get_addon_log_text(assistant.MAX_LOG_SOURCE_LINES)
+        secrets = [homeassistant_adapter._token(), shyft_adapter.bubble_token, globals().get("SHYFT_ACCESS_KEY")]
+        return assistant.extract_error_lines(log_text, secrets)
+    except Exception as e:
+        print("[Shyft] Hilfe-Assistent: Add-on-Log konnte nicht gelesen werden:", repr(e))
+        return None
+
+
 @app.route("/assistant/ask", methods=["POST"])
 def assistantAskEndpoint():
     """Beantwortet eine Nutzerfrage ueber Home Assistants ai_task.generate_data. Body: {question,
@@ -320,7 +334,7 @@ def assistantAskEndpoint():
             return jsonify({"status": "error", "message": "In Home Assistant ist keine KI eingerichtet."}), 400
         prompt = assistant.build_prompt(
             question, body.get("history"), body.get("uiHelp"), _read_current_config(),
-            problem_registry.active_problems(), states)
+            problem_registry.active_problems(), states, _assistant_log_excerpt())
         response = homeassistant_adapter.call_service_with_response(
             "ai_task", "generate_data",
             {"task_name": "shyft_hilfe", "instructions": prompt, "entity_id": ai_entity})

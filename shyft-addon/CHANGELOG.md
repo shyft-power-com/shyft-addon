@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.162
+
+* **Hilfe-Assistent bekommt einen Auszug aus dem Add-on-Log.** Bei jeder Frage holt das Add-on die letzten 2000 Logzeilen (Supervisor-API `/addons/self/logs`) und reicht nur die Fehler- und Warnzeilen an die KI weiter (Stichwörter wie „Fehler“, „failed“, „Exception“, „Invalid“, „not found“, Traceback-Blöcke, HTTP-5xx). Gleiche Zeilen werden zusammengefasst („(x50)“), es bleiben höchstens 40 Einträge bzw. 8000 Zeichen, die neuesten zuerst. Zugangsdaten (Supervisor-Token, Zugangsschlüssel samt Teilen, „Bearer …“, „token=…“/„password: …“) werden vorher geschwärzt. Ist das Log nicht abrufbar, erfährt die KI das und die Anfrage läuft trotzdem. Der Hinweis im Assistenten nennt die Weitergabe jetzt ausdrücklich: „Sensorzustände sowie einen Auszug aus dem Add-on-Log (nur Fehler- und Warnzeilen, ohne Zugangsdaten)“.
+* **Texte zu „Netz: Aktuelle Leistung“ korrigiert.** Die beiden Tooltips (Strom-Kachel und Wechselrichter) und die Wissensbasis der KI sagten noch „Shyft wählt jeweils den aktuellsten Wert aus“. Seit 0.0.45.146 gilt: Unter den Sensoren, die gerade aktuell melden (höchstens eine Minute hinter dem aktuellsten), gewinnt der mit dem größten Betrag; ein träger Sensor zählt nicht mit. Der Tooltip erklärt zusätzlich, dass ein Sensor mit „Einspeise“ im Namen automatisch als Einspeisung (negatives Vorzeichen) gewertet wird.
+
 ## 0.0.45.161
 
 * **Tarif-Zeitfenster: "bis" muss nach "von" liegen.** Die Auswahl der Endzeit beginnt eine Stunde nach dem gewählten Start (Start 6 Uhr → bis ab 7 Uhr) und passt sich an, wenn der Start geändert wird; eine noch gültige Endzeit bleibt erhalten. Fenster über Mitternacht (z.B. 22 - 6 Uhr) lassen sich damit nicht mehr in einem Schritt eingeben - stattdessen zwei Fenster (bis 24 Uhr und ab 0 Uhr des Folgetags).
