@@ -3941,7 +3941,20 @@ function buildAutoManagedNumberControl(control) {
     valueDisplay.className = 'autoActionValue';
     valueDisplay.textContent = 'Aktueller Wert: –';
 
+    // Fehlermeldung des Tests (control.onlyIncrement), die stehen bleiben soll, bis die Seite verlassen/neu
+    // geladen wird - jeder refreshStatus()-Lauf (Nachlade-Timer, Aktualisierung von aussen) wuerde sie sonst mit
+    // "Aktueller Wert: ..." ueberschreiben.
+    let pinnedTestError = null;
+
     async function refreshStatus() {
+        await refreshStatusInner();
+        if (pinnedTestError) {
+            valueDisplay.textContent = pinnedTestError;
+            valueDisplay.className = 'autoActionValue';
+        }
+    }
+
+    async function refreshStatusInner() {
         try {
             const result = await getJson(insideHomeAssistant + '/actions/' + control.key + '/status');
             if (!result.configured) {
@@ -3996,6 +4009,7 @@ function buildAutoManagedNumberControl(control) {
         // (siehe /actions/heating_target_temp/test) - kann daher spuerbar laenger dauern als der
         // generische Delta-Test.
         valueDisplay.textContent = control.onlyIncrement ? 'Teste... (kann bis zu 10 min dauern)' : 'Teste...';
+        pinnedTestError = null;
         try {
             const response = await fetch(insideHomeAssistant + '/actions/' + control.key + '/test', {
                 method: 'POST',
@@ -4009,12 +4023,15 @@ function buildAutoManagedNumberControl(control) {
                     valueDisplay.textContent = `Erfolgreich: ${result.originalValue}${unitSuffix} → ${result.boostedValue}${unitSuffix} → zurückgesetzt.`;
                     valueDisplay.className = 'autoActionValue testSuccess';
                 } else {
-                    valueDisplay.textContent = 'Fehler: ' + (result.message || 'unbekannt');
+                    // Fehler bleiben stehen (siehe pinnedTestError), auch bei spaeteren refreshStatus()-Laeufen
+                    pinnedTestError = 'Fehler: ' + (result.message || 'unbekannt');
+                    valueDisplay.textContent = pinnedTestError;
                     valueDisplay.className = 'autoActionValue';
                 }
                 // Backend hat das Zuruecksetzen schon synchron abgewartet - kein sofortiges
                 // refreshStatus() (das wuerde die obige Meldung direkt wieder ueberschreiben),
-                // sondern wie ueberall sonst erst nach einer kurzen Anzeigedauer.
+                // sondern wie ueberall sonst erst nach einer kurzen Anzeigedauer. Bei einem Fehler
+                // ist der Timer harmlos: refreshStatus() stellt die angepinnte Meldung wieder her.
                 setTimeout(refreshStatus, 4000);
             } else if (result.success) {
                 if (variant === 'ha_automation') {
@@ -4035,6 +4052,7 @@ function buildAutoManagedNumberControl(control) {
             if (readyKey) applyTestGate(readyKey, checkmark, hint, true);
         } catch (err) {
             console.log(err);
+            if (control.onlyIncrement) pinnedTestError = 'Fehler beim Testen';
             valueDisplay.textContent = 'Fehler beim Testen';
             valueDisplay.className = 'autoActionValue';
         } finally {

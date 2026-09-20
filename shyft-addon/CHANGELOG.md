@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.166
+
+* **Heizungs-Test: Fehlermeldungen bleiben stehen.** Die Fehlermeldung nach dem Klick auf "Test: +1 °C" verschwand nach wenigen Sekunden wieder (der Status wurde neu geladen und hat sie überschrieben). Sie bleibt jetzt stehen, bis die Seite verlassen/neu geladen oder ein neuer Test gestartet wird.
+
 ## 0.0.45.165
 
 * **Fix: Die Meldung "Es fehlen aktuell die grundlegenden Stromfluss-Werte (PV, Haushalt, Netz)" blieb stehen, obwohl die Sensoren längst wieder lesbar waren.** Sie wurde nur beim stündlichen Sync (:55) neu bewertet. Jetzt wird sie sofort nach dem Speichern der Konfiguration und danach alle 5 Minuten (nur solange sie aktiv ist) neu geprüft und verschwindet von selbst, sobald ein Sensor wieder Werte liefert.
