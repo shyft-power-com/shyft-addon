@@ -7419,8 +7419,10 @@ function buildFlowDots(d, kw, {reversed = false, thresholdKw = FLOW_DOT_THRESHOL
     return g;
 }
 
+// Fehlt der Messwert (kw null/undefined, z.B. Sensor gerade nicht lesbar), bleibt die graue Leitung
+// trotzdem stehen - nur ohne wandernde Punkte (buildFlowDots wertet null wie 0 kW). Sonst verschwaenden
+// die Leitungen Wolke-Haus bzw. Haus-Batterie, sobald PV-/Batterie-Leistung kurz nicht verfuegbar ist.
 function buildFlowLineFromPath(d, kw, options = {}) {
-    if (kw === null || kw === undefined) return null;
     return buildFlowDots(d, kw, options);
 }
 

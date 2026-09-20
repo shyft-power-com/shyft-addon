@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.154
+
+* **Fix: Energiefluss-Widget - die grauen Leitungen Wolke-Haus und Haus-Batterie verschwanden**, sobald PV- bzw. Batterie-Leistung gerade nicht lesbar war (Anzeige "–"). Die graue Leitung bleibt jetzt immer stehen, sobald das Gerät konfiguriert ist - nur ohne wandernde Punkte, solange kein Messwert vorliegt.
+
 ## 0.0.45.153
 
 * **Analyse-Tab: "Verbrauch Ist" zeigt jetzt den Haushaltsverbrauch** (Sensor "Aktueller Strom - Haushalt") statt des Netto-Netzbezugs - damit ist er mit "Verbrauch geplant" und "Verbrauch Basisfall" vergleichbar. Die Kosten und Ersparnisse werden weiterhin aus Netzbezug und Einspeisung berechnet. Bereits archivierte Stunden der letzten ca. 9 Tage werden im Hintergrund automatisch neu berechnet (je Lauf bis zu 72 Stunden, neueste zuerst); ältere Stunden behalten ihren bisherigen Wert.
