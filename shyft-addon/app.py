@@ -495,11 +495,13 @@ _last_site_data_submit = {"at": None}
 #                         zusammen als ein Wert ab ("Dynamischer Tarif + fixe Netzentgelte")
 #   - "dynamic_variable": §14a-Modul-3 ("Dynamischer Tarif + variable Netzentgelte") - EPEX-
 #                         Boersenpreis + zeitvariables Netzentgelt (deckt ebenfalls Abgaben/Steuer/
-#                         Marge mit ab): electricityNetzentgeltHtCent in den
-#                         electricityNetzentgeltWindows-Zeitfenstern, sonst electricityNetzentgeltNtCent
-#                         - beides nur in den per electricityNetzentgeltQuarters gewaehlten
-#                         Kalenderquartalen (1=Jan-Mrz, 2=Apr-Jun, 3=Jul-Sep, 4=Okt-Dez, LOKALE Zeit),
-#                         ausserhalb davon durchgehend electricityNetzentgeltStandardCent
+#                         Marge mit ab): in den per electricityNetzentgeltQuarters gewaehlten
+#                         Kalenderquartalen (1=Jan-Mrz, 2=Apr-Jun, 3=Jul-Sep, 4=Okt-Dez, LOKALE Zeit)
+#                         gilt in den electricityNetzentgeltWindows-Zeitfenstern mit tariff "ht"
+#                         (fehlt tariff: aeltere Eintraege, gelten als "ht") electricityNetzentgeltHtCent,
+#                         in denen mit tariff "nt" electricityNetzentgeltNtCent, in allen uebrigen
+#                         Stunden (und ausserhalb der gewaehlten Quartale durchgehend)
+#                         electricityNetzentgeltStandardCent; ueberlappen sich HT- und NT-Fenster, gewinnt HT
 # Ergebnis geht als NEUES Feld "p_buy_addon" (";"-joined) in liveValues - der bestehende
 # staticConfig-Wert "Electricity Price Buy" bleibt unangetastet, bis der Server umgestellt ist.
 # ============================================================================
@@ -634,6 +636,19 @@ def _resolve_fallback_price(h, by_hour, bubble_by_hour):
     return None
 
 
+def _netzentgelt_window_tariff(local_dt, windows):
+    """'ht' / 'nt' / None (kein Fenster) fuer eine Stunde im Modul-3-Fensterlisting: je Fenster
+    {weekday, from, to, tariff}. tariff fehlt (aeltere Konfiguration) = 'ht'. Ueberlappen sich ein HT- und ein
+    NT-Fenster, gewinnt HT."""
+    ht_windows = [w for w in windows or [] if (w or {}).get("tariff", "ht") != "nt"]
+    nt_windows = [w for w in windows or [] if (w or {}).get("tariff", "ht") == "nt"]
+    if _hour_in_ht_windows(local_dt, ht_windows):
+        return "ht"
+    if _hour_in_ht_windows(local_dt, nt_windows):
+        return "nt"
+    return None
+
+
 def _hour_in_ht_windows(local_dt, windows):
     "True, wenn local_dt (lokale Zeit) in einem der HT-Zeitfenster liegt. Fenster: {weekday 0=Mo, from 0-23, to 1-24}; to<=from = ueber Mitternacht."
     wd, hour = local_dt.weekday(), local_dt.hour
@@ -742,7 +757,8 @@ def compute_price_buy_array(config, base_time_utc, hours):
             local_dt = h.astimezone(get_ha_timezone())
             quarter = (local_dt.month - 1) // 3 + 1
             if quarter in quarters:
-                netzentgelt = ht if _hour_in_ht_windows(local_dt, windows) else nt
+                window_tariff = _netzentgelt_window_tariff(local_dt, windows)
+                netzentgelt = ht if window_tariff == "ht" else (nt if window_tariff == "nt" else standard)
             else:
                 netzentgelt = standard
             out.append(round(raw_price + netzentgelt, 5))

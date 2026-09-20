@@ -1913,18 +1913,19 @@ function buildElectricityTariffControl() {
         } else if (m === 'dynamic_variable') {
             const note = document.createElement('p');
             note.className = 'electricityHint';
-            note.textContent = 'Die Börsenpreise (Brutto, EPEX Day-Ahead) werden automatisch von der Strombörse abgerufen. Das Netzentgelt (deckt zugleich Abgaben, Steuer und Lieferantenmarge mit ab) ist zeitvariabel (§14a, Modul 3): in den unten gewählten Quartalen gilt zu den definierten Zeitfenstern der Hochtarif, sonst der Niedertarif - außerhalb der gewählten Quartale durchgehend der Standardtarif.';
+            note.textContent = 'Die Börsenpreise (Brutto, EPEX Day-Ahead) werden automatisch von der Strombörse abgerufen. Das Netzentgelt (deckt zugleich Abgaben, Steuer und Lieferantenmarge mit ab) ist zeitvariabel (§14a, Modul 3): in den unten gewählten Quartalen gilt in den Hochtarif-Zeitfenstern der Hochtarif, in den Niedertarif-Zeitfenstern der Niedertarif und zu allen übrigen Zeiten der Standardtarif - außerhalb der gewählten Quartale durchgehend der Standardtarif. Überlappen sich zwei Zeitfenster, gilt der Hochtarif.';
             panels.appendChild(note);
+            panels.appendChild(centField('Netzentgelte, Niedertarif (brutto)',
+                'Netzentgelt (inkl. Abgaben/Steuer/Marge) in den Niedertarif-Zeitfenstern, in den gewählten Quartalen.',
+                'electricity_netzentgelt_nt_cent', 'electricityNetzentgeltNtCent', 'z.B. 7'));
             panels.appendChild(centField('Netzentgelte, Hochtarif (brutto)',
-                'Netzentgelt (inkl. Abgaben/Steuer/Marge) in den unten definierten Zeitfenstern, in den gewählten Quartalen.',
+                'Netzentgelt (inkl. Abgaben/Steuer/Marge) in den Hochtarif-Zeitfenstern, in den gewählten Quartalen.',
                 'electricity_netzentgelt_ht_cent', 'electricityNetzentgeltHtCent', 'z.B. 18'));
             panels.appendChild(buildHtWindowEditor('electricityNetzentgeltWindows',
-                'Noch keine Hochtarif-Zeitfenster - ohne Fenster gilt in den gewählten Quartalen durchgehend der Niedertarif.'));
-            panels.appendChild(centField('Netzentgelte, Niedertarif (brutto)',
-                'Netzentgelt (inkl. Abgaben/Steuer/Marge) außerhalb der Hochtarif-Zeitfenster, in den gewählten Quartalen.',
-                'electricity_netzentgelt_nt_cent', 'electricityNetzentgeltNtCent', 'z.B. 7'));
+                'Noch keine Zeitfenster - ohne Fenster gilt durchgehend der Standardtarif.',
+                {withTariff: true}));
             panels.appendChild(centField('Standardtarif (brutto)',
-                'Netzentgelt (inkl. Abgaben/Steuer/Marge) außerhalb der gewählten Quartale, ganztägig.',
+                'Netzentgelt (inkl. Abgaben/Steuer/Marge) zu allen Zeiten ohne Hoch-/Niedertarif-Zeitfenster sowie außerhalb der gewählten Quartale.',
                 'electricity_netzentgelt_standard_cent', 'electricityNetzentgeltStandardCent', 'z.B. 14'));
             panels.appendChild(buildNetzentgeltQuarterField());
         } else {
@@ -1956,10 +1957,13 @@ function buildElectricityTariffControl() {
     return wrap;
 }
 
-// Wochentag/Stundenfenster-Editor fuer Hochtarif-Zeitfenster - von 'ht_nt' und 'dynamic_variable'
+// Wochentag/Stundenfenster-Editor fuer Tarif-Zeitfenster - von 'ht_nt' und 'dynamic_variable'
 // geteilt (je eigener configKey: electricityHtWindows bzw. electricityNetzentgeltWindows), da beide
 // Tarifarten eigene, unabhaengige Zeitfenster brauchen koennen (unterschiedliche Vertraege).
-function buildHtWindowEditor(configKey, emptyHint) {
+// withTariff (nur Modul 3): jedes Fenster gehoert zusaetzlich zum Hoch- oder Niedertarif (Feld "tariff":
+// 'ht' | 'nt'); ohne withTariff sind es reine Hochtarif-Fenster (kein tariff-Feld). Aeltere Modul-3-
+// Eintraege ohne tariff gelten als Hochtarif.
+function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
     const wrap = document.createElement('div');
     wrap.className = 'htWindowEditor';
 
@@ -2000,7 +2004,27 @@ function buildHtWindowEditor(configKey, emptyHint) {
         s.textContent = t;
         return s;
     };
-    form.append(wdSel, lbl('von'), fromSel, lbl('bis'), toSel, addBtn);
+    let tariffSel = null;
+    if (withTariff) {
+        tariffSel = document.createElement('select');
+        tariffSel.className = 'sensorInput';
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'Tarifoption';
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        tariffSel.appendChild(placeholder);
+        for (const [value, label] of [['nt', 'Niedertarif'], ['ht', 'Hochtarif']]) {
+            const o = document.createElement('option');
+            o.value = value;
+            o.textContent = label;
+            tariffSel.appendChild(o);
+        }
+        tariffSel.addEventListener('change', () => tariffSel.classList.remove('status-error'));
+        form.append(wdSel, lbl('von'), fromSel, lbl('bis'), toSel, lbl('gilt der'), tariffSel, addBtn);
+    } else {
+        form.append(wdSel, lbl('von'), fromSel, lbl('bis'), toSel, addBtn);
+    }
     wrap.appendChild(form);
 
     const list = document.createElement('div');
@@ -2021,7 +2045,8 @@ function buildHtWindowEditor(configKey, emptyHint) {
             const chip = document.createElement('div');
             chip.className = 'htWindowChip';
             const text = document.createElement('span');
-            text.textContent = `${WEEKDAY_NAMES[w.weekday] || '?'}: ${w.from} - ${w.to} Uhr`;
+            const tariffSuffix = withTariff ? `, ${w.tariff === 'nt' ? 'NT' : 'HT'}` : '';
+            text.textContent = `${WEEKDAY_NAMES[w.weekday] || '?'}: ${w.from} - ${w.to} Uhr${tariffSuffix}`;
             const del = document.createElement('button');
             del.type = 'button';
             del.className = 'htWindowDelete';
@@ -2040,6 +2065,16 @@ function buildHtWindowEditor(configKey, emptyHint) {
     addBtn.addEventListener('click', () => {
         const w = {weekday: parseInt(wdSel.value, 10), from: parseInt(fromSel.value, 10), to: parseInt(toSel.value, 10)};
         if (w.to === w.from) return;
+        if (tariffSel) {
+            if (!tariffSel.value) {
+                // ohne Tarifoption kein Fenster - Auswahlfeld kurz hervorheben statt stumm zu ignorieren
+                tariffSel.focus();
+                tariffSel.classList.add('status-error');
+                return;
+            }
+            tariffSel.classList.remove('status-error');
+            w.tariff = tariffSel.value;
+        }
         configData[configKey] = configData[configKey] || [];
         configData[configKey].push(w);
         render();
