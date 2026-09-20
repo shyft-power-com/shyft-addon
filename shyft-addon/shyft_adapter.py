@@ -92,7 +92,7 @@ class ShyftAdapter:
     # Dashboard-Refresh den creation_date des zuletzt gecachten Laufs).
     DEFAULT_SINCE_LOOKBACK_HOURS = 5
 
-    def get_input_output_csv(self, user_id: str, since: datetime = None):
+    def get_input_output_csv(self, user_id: str, since: datetime = None, since_ms: int = None):
         """Pulls the optimizer's latest input/output CSV data (used to build the addon's
         Dashboard-tab charts, and as the basis for the addon-side action computation, see
         recompute_actions_from_optimizer_run in app.py) for user_id from shyft-power. Unlike
@@ -102,8 +102,13 @@ class ShyftAdapter:
         Unix-Millisekunden und parst ISO-8601-Strings mit Sekundenbruchteilen/Offset im API-
         Workflow unzuverlaessig (behandelt sie teils als leeren String) - deshalb wird
         creation_date als Millisekunden-Integer uebertragen, nicht als isoformat()-String."""
-        since = since or (datetime.now(timezone.utc) - timedelta(hours=self.DEFAULT_SINCE_LOOKBACK_HOURS))
-        creation_date_ms = int(since.timestamp() * 1000)
+        # since_ms (exakte Unix-Millisekunden) hat Vorrang - noetig, um "strikt neuer als Lauf X" zu
+        # fragen (X + 1 ms), ohne dass die Float-Umrechnung ueber datetime die Millisekunde verschluckt.
+        if since_ms is not None:
+            creation_date_ms = int(since_ms)
+        else:
+            since = since or (datetime.now(timezone.utc) - timedelta(hours=self.DEFAULT_SINCE_LOOKBACK_HOURS))
+            creation_date_ms = int(since.timestamp() * 1000)
         try:
             headers = {
                 "Content-Type": "application/json",

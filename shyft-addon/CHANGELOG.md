@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.155
+
+* **Fix: Dashboard/Aktionen hingen stundenlang an einem alten Optimierungslauf, obwohl in Bubble längst neuere existierten.** Zwei Ursachen: (1) Der stündliche Dashboard-Sync fragte mit `since` = Erstellzeit des bereits gecachten Laufs (`creation_date >= since`) - liefert Bubble bei mehreren Treffern den ältesten, kam dabei immer wieder der gecachte Lauf selbst zurück. Jetzt wird strikt nach neueren Läufen gefragt (+1 ms) und so lange nachgeholt, bis der neueste erreicht ist (egal ob Bubble den ältesten oder neuesten Treffer liefert). (2) Der Optimierer braucht mit ca. 10 Minuten so lange wie das Warte-Fenster nach dem Absenden (:55 + 10 Min), der Lauf wurde knapp verpasst und erst zum nächsten vollen Stundenwechsel abgeholt. Zusätzliche Nachhol-Abfragen laufen jetzt um :05, :10, :15, :20 und :30 sowie einmalig kurz nach dem Add-on-Start.
+
 ## 0.0.45.154
 
 * **Fix: Energiefluss-Widget - die grauen Leitungen Wolke-Haus und Haus-Batterie verschwanden**, sobald PV- bzw. Batterie-Leistung gerade nicht lesbar war (Anzeige "–"). Die graue Leitung bleibt jetzt immer stehen, sobald das Gerät konfiguriert ist - nur ohne wandernde Punkte, solange kein Messwert vorliegt.

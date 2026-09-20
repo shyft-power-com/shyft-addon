@@ -7720,7 +7720,7 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
     _record_household_savings_snapshot()
 
 
-# Kaltstart-Fallback fuer _dashboard_sync_since, wenn noch gar kein Lauf gecacht ist - danach
+# Kaltstart-Fallback fuer _fetch_newest_optimizer_run, wenn noch gar kein Lauf gecacht ist - danach
 # zaehlt immer der creation_date des zuletzt gecachten Laufs.
 DASHBOARD_SYNC_FALLBACK_LOOKBACK_HOURS = 3
 
@@ -7734,19 +7734,47 @@ def _optimizer_run_creation_ms(optimizer_run):
     return optimizer_run.get("creation_date") or optimizer_run.get("Created Date")
 
 
-def _dashboard_sync_since():
-    """Untere Zeitgrenze fuer den stuendlichen Dashboard-Refresh: der creation_date des zuletzt
-    gecachten Optimierungslaufs. Alles Aeltere haben wir bereits, und ein Output kann ohnehin nur
-    nach seinem Input entstehen - vor diesem Zeitpunkt gibt es also nichts Neues zu holen. Nur beim
-    allerersten Lauf (noch kein Cache) greift eine knappe Rueckschau."""
+def _cached_dashboard_creation_ms():
+    "creation_date (Unix-ms) des zuletzt gecachten Optimierungslaufs, None ohne (lesbaren) Cache."
     try:
         with open(DASHBOARD_CACHE_PATH, "r") as f:
-            cached_ms = json.load(f).get("creation_date")
-        if cached_ms:
-            return datetime.fromtimestamp(cached_ms / 1000, tz=timezone.utc)
+            return int(json.load(f).get("creation_date") or 0) or None
     except Exception:
-        pass
-    return datetime.now(timezone.utc) - timedelta(hours=DASHBOARD_SYNC_FALLBACK_LOOKBACK_HOURS)
+        return None
+
+
+# Wie viele Laeufe ein einzelner Dashboard-Sync hoechstens nacheinander nachholt (siehe
+# _fetch_newest_optimizer_run) - reicht fuer einen Tag Rueckstand, verhindert aber eine Endlosschleife.
+DASHBOARD_SYNC_MAX_CATCHUP_FETCHES = 12
+
+
+def _fetch_newest_optimizer_run(user_id, cached_ms):
+    """Holt den NEUESTEN Optimierungslauf, der juenger ist als der gecachte (cached_ms, None = kein
+    Cache -> knappe Rueckschau). Fragt dazu STRIKT nach Laeufen neuer als cached_ms (+1 ms) und wiederholt
+    das, solange ein noch neuerer Lauf zurueckkommt. Das ist unabhaengig davon, ob provide_input_output_csv
+    bei "creation_date >= since" den neuesten oder den aeltesten Treffer liefert: Mit dem alten
+    since=cached_ms (>=) lieferte ein "aeltester Treffer" immer wieder den bereits gecachten Lauf selbst -
+    das Dashboard blieb stehen (Symptom: stundenlang der Lauf von 07:00, obwohl Bubble laengst neuere hatte).
+    Gibt den optimizer_run zurueck oder None, wenn es nichts Neueres gibt."""
+    newest, newest_ms = None, cached_ms
+    for _ in range(DASHBOARD_SYNC_MAX_CATCHUP_FETCHES):
+        if newest_ms is not None:
+            since_ms = int(newest_ms) + 1
+        else:
+            since_ms = int((datetime.now(timezone.utc) - timedelta(hours=DASHBOARD_SYNC_FALLBACK_LOOKBACK_HOURS)).timestamp() * 1000)
+        result = shyft_adapter.get_input_output_csv(user_id, since_ms=since_ms)
+        run = ((result or {}).get("response") or {}).get("optimizer_run") or {}
+        if not run:
+            break  # nichts (Neueres) vorhanden
+        run_ms = _optimizer_run_creation_ms(run)
+        if not run.get("input_csv") or run_ms is None:
+            print("[Shyft] Dashboard-Chart-Daten: input_csv oder creation_date fehlt in der Antwort von shyft-power.")
+            break
+        run_ms = int(run_ms)
+        if newest_ms is not None and run_ms <= newest_ms:
+            break  # nicht neuer als das, was wir schon haben - Schleife beenden
+        newest, newest_ms = run, run_ms
+    return newest
 
 
 def sync_dashboard_chart_data():
@@ -7760,18 +7788,12 @@ def sync_dashboard_chart_data():
     user_id = extract_shyft_user_id(shyft_adapter.bubble_token)
     if not user_id:
         return
-    result = shyft_adapter.get_input_output_csv(user_id, since=_dashboard_sync_since())
-    response_data = (result or {}).get("response") or {}
-    # response_data enthaelt jetzt das ganze "Optimizer Run"-Bubble-Objekt unter "optimizer_run"
-    # statt input_csv/output_csv/creation_date direkt auf oberster Ebene.
-    optimizer_run = response_data.get("optimizer_run") or {}
-    input_csv = optimizer_run.get("input_csv")
-    output_csv = optimizer_run.get("output_csv")
-    creation_date_ms = _optimizer_run_creation_ms(optimizer_run)
-    if not input_csv or creation_date_ms is None:
-        print("[Shyft] Dashboard-Chart-Daten: input_csv oder creation_date fehlt in der Antwort von shyft-power.")
+    # provide_input_output_csv liefert das ganze "Optimizer Run"-Bubble-Objekt unter "optimizer_run"
+    optimizer_run = _fetch_newest_optimizer_run(user_id, _cached_dashboard_creation_ms())
+    if optimizer_run is None:
         return
-    _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_run.get("_id"))
+    _write_dashboard_cache(optimizer_run.get("input_csv"), optimizer_run.get("output_csv"),
+                           int(_optimizer_run_creation_ms(optimizer_run)), optimizer_run.get("_id"))
 
 
 # ============================================================================
@@ -8242,6 +8264,12 @@ scheduler.add_job(sync_pv_history_periodically, 'cron', hour="21", minute="0")
 # same tick as process_shyft_actions_periodically's on-the-hour run, but only hourly - the
 # Dashboard tab's chart data doesn't change more often than that
 scheduler.add_job(sync_dashboard_chart_data_periodically, 'cron', minute="0")
+# Der Optimierer braucht laenger als die Minuten zwischen Absenden (:55) und Stundenwechsel - ein Lauf
+# ist oft erst um :05 (oder spaeter) fertig und wird vom Warte-Poll (siehe OPTIMIZER_WAIT_POLL_DELAYS_MINUTES)
+# knapp verpasst. Ohne diese Nachholer kaeme er erst zum naechsten vollen Stundenwechsel im Dashboard an.
+scheduler.add_job(sync_dashboard_chart_data_periodically, 'cron', minute="5,10,15,20,30")
+# einmal kurz nach dem Start nachholen, was waehrend eines Neustarts/Updates verpasst wurde
+scheduler.add_job(sync_dashboard_chart_data_periodically, 'date', run_date=datetime.now(timezone.utc) + timedelta(seconds=75))
 # on the hour and every 15 min after - actions can be created mid-hour for the current hour
 # and start immediately, so a coarser schedule would miss those until the next hour
 scheduler.add_job(process_shyft_actions_periodically, 'cron', minute="0,15,30,45")
