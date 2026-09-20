@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.161
+
+* **Tarif-Zeitfenster: "bis" muss nach "von" liegen.** Die Auswahl der Endzeit beginnt eine Stunde nach dem gewählten Start (Start 6 Uhr → bis ab 7 Uhr) und passt sich an, wenn der Start geändert wird; eine noch gültige Endzeit bleibt erhalten. Fenster über Mitternacht (z.B. 22 - 6 Uhr) lassen sich damit nicht mehr in einem Schritt eingeben - stattdessen zwei Fenster (bis 24 Uhr und ab 0 Uhr des Folgetags).
+
 ## 0.0.45.160
 
 * **Wichtiger Fix: Sensor-Zuordnungen wurden beim Speichern zerstört (seit 0.0.45.141).** Das neue Anzeigeformat "Anzeigename (entity_id, Wert Einheit)" wurde beim Speichern an der ersten Leerstelle abgeschnitten - aus "E3 Vitocal 16 ... (sensor.xyz, 45 °C)" wurde das Mapping "E3", aus "PV Leistung ..." wurde "PV". Home Assistant kennt solche Entitäten nicht, dadurch erschienen Sensor-Fehlermeldungen ("liefert keinen Wert") und "aktueller Wert nicht lesbar". Jetzt wird die entity_id aus der Klammer gelesen (Frontend UND Backend, ältere Formate funktionieren weiter). Zusätzlich behält das Backend ein bestehendes gültiges Mapping, wenn ein Wert ohne gültige entity_id (kein "domain.objekt") ankommt. **Bereits beschädigte Zuordnungen (Werte wie "E3", "PV", "Batterie") lassen sich nicht automatisch wiederherstellen - bitte in der Konfiguration die betroffenen Sensoren neu auswählen.**

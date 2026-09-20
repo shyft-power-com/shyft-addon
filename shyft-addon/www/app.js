@@ -2011,13 +2011,24 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
     }
     const toSel = document.createElement('select');
     toSel.className = 'sensorInput';
-    for (let h = 1; h <= 24; h++) {
-        const o = document.createElement('option');
-        o.value = String(h);
-        o.textContent = h + ' Uhr';
-        toSel.appendChild(o);
+    // "bis" muss spaeter liegen als "von": die Auswahl beginnt eine Stunde nach dem Startwert (Start 6 Uhr ->
+    // bis ab 7 Uhr) und wird bei jeder Aenderung von "von" neu aufgebaut; eine bereits gewaehlte, noch gueltige
+    // Endzeit bleibt erhalten. Fenster ueber Mitternacht gibt es damit nicht mehr - sie werden als zwei Fenster
+    // (z.B. 22-24 Uhr und 0-6 Uhr des Folgetags) eingegeben.
+    function refreshToOptions() {
+        const fromHour = parseInt(fromSel.value, 10);
+        const previous = parseInt(toSel.value, 10);
+        toSel.innerHTML = '';
+        for (let h = fromHour + 1; h <= 24; h++) {
+            const o = document.createElement('option');
+            o.value = String(h);
+            o.textContent = h + ' Uhr';
+            toSel.appendChild(o);
+        }
+        toSel.value = String(previous > fromHour ? previous : fromHour + 1);
     }
-    toSel.value = '1';
+    fromSel.addEventListener('change', refreshToOptions);
+    refreshToOptions();
     const addBtn = document.createElement('button');
     addBtn.type = 'button';
     addBtn.className = 'htWindowAddButton';
