@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.159
+
+* **Tarif-Zeitfenster (Hoch-/Niedertarif und §14a Modul 3): Fenster dürfen sich nicht mehr überschneiden.** Beim Hinzufügen wird geprüft, ob das neue Fenster am selben Wochentag mindestens eine Stunde mit einem bestehenden teilt (auch bei Fenstern über Mitternacht, z.B. 22 - 6 Uhr); dann wird es nicht übernommen und eine Meldung nennt das kollidierende Fenster. Direkt aneinander anschließende Fenster (z.B. 0 - 5 und 5 - 9 Uhr) sind erlaubt. Bereits gespeicherte, sich überlappende Fenster bleiben unverändert.
+
 ## 0.0.45.158
 
 * **§14a Modul 3: Zeitfenster gibt es jetzt für Hoch- UND Niedertarif.** Beim Hinzufügen eines Zeitfensters wählst du zusätzlich per Dropdown "gilt der Niedertarif / Hochtarif"; in der Liste steht das Kürzel (HT/NT) hinter jedem Fenster. In den gewählten Quartalen gilt in den Hochtarif-Fenstern das Hochtarif-Netzentgelt, in den Niedertarif-Fenstern das Niedertarif-Netzentgelt und **zu allen übrigen Zeiten der Standardtarif** (vorher: Niedertarif) - ebenso außerhalb der gewählten Quartale. Überlappen sich zwei Fenster, gilt der Hochtarif. Bereits gespeicherte Fenster ohne Tarifangabe gelten weiter als Hochtarif; wer bisher "alle übrigen Zeiten = Niedertarif" gerechnet hat, legt dafür jetzt Niedertarif-Fenster an oder trägt den Niedertarif-Wert auch als Standardtarif ein. Die Felder sind jetzt in der Reihenfolge Niedertarif, Hochtarif, Zeitfenster, Standardtarif angeordnet.

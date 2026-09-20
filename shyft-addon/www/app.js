@@ -1957,6 +1957,30 @@ function buildElectricityTariffControl() {
     return wrap;
 }
 
+// Belegte Stunden (0-23) eines Zeitfensters an SEINEM Wochentag - to <= from = ueber Mitternacht,
+// wird (wie in _hour_in_ht_windows in app.py) an demselben Wochentag ausgewertet: from-24 plus 0-to.
+function htWindowHours(w) {
+    const hours = new Set();
+    if (w.to > w.from) {
+        for (let h = w.from; h < w.to; h++) hours.add(h);
+    } else {
+        for (let h = w.from; h < 24; h++) hours.add(h);
+        for (let h = 0; h < w.to; h++) hours.add(h);
+    }
+    return hours;
+}
+
+// Zwei Zeitfenster ueberschneiden sich, wenn sie am selben Wochentag mindestens eine Stunde gemeinsam
+// belegen (direkt aneinander anschliessende Fenster, z.B. 0-5 und 5-9, tun das nicht).
+function htWindowsOverlap(a, b) {
+    if (a.weekday !== b.weekday) return false;
+    const hoursA = htWindowHours(a);
+    for (const h of htWindowHours(b)) {
+        if (hoursA.has(h)) return true;
+    }
+    return false;
+}
+
 // Wochentag/Stundenfenster-Editor fuer Tarif-Zeitfenster - von 'ht_nt' und 'dynamic_variable'
 // geteilt (je eigener configKey: electricityHtWindows bzw. electricityNetzentgeltWindows), da beide
 // Tarifarten eigene, unabhaengige Zeitfenster brauchen koennen (unterschiedliche Vertraege).
@@ -2027,9 +2051,22 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
     }
     wrap.appendChild(form);
 
+    // Fehlermeldung, wenn ein neues Fenster ein bestehendes ueberschneidet (siehe htWindowsOverlap)
+    const errorEl = document.createElement('p');
+    errorEl.className = 'htWindowError';
+    errorEl.hidden = true;
+    wrap.appendChild(errorEl);
+    const clearError = () => { errorEl.hidden = true; errorEl.textContent = ''; };
+    form.addEventListener('change', clearError);
+
     const list = document.createElement('div');
     list.className = 'htWindowList';
     wrap.appendChild(list);
+
+    function describeWindow(w) {
+        const tariffSuffix = withTariff ? `, ${w.tariff === 'nt' ? 'NT' : 'HT'}` : '';
+        return `${WEEKDAY_NAMES[w.weekday] || '?'}: ${w.from} - ${w.to} Uhr${tariffSuffix}`;
+    }
 
     function render() {
         list.innerHTML = '';
@@ -2045,8 +2082,7 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
             const chip = document.createElement('div');
             chip.className = 'htWindowChip';
             const text = document.createElement('span');
-            const tariffSuffix = withTariff ? `, ${w.tariff === 'nt' ? 'NT' : 'HT'}` : '';
-            text.textContent = `${WEEKDAY_NAMES[w.weekday] || '?'}: ${w.from} - ${w.to} Uhr${tariffSuffix}`;
+            text.textContent = describeWindow(w);
             const del = document.createElement('button');
             del.type = 'button';
             del.className = 'htWindowDelete';
@@ -2076,6 +2112,13 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
             w.tariff = tariffSel.value;
         }
         configData[configKey] = configData[configKey] || [];
+        const conflict = configData[configKey].find(existing => htWindowsOverlap(existing, w));
+        if (conflict) {
+            errorEl.textContent = `Dieses Zeitfenster überschneidet sich mit "${describeWindow(conflict)}". Zeitfenster dürfen sich nicht überschneiden - passe von/bis an oder entferne das andere Fenster zuerst.`;
+            errorEl.hidden = false;
+            return;
+        }
+        clearError();
         configData[configKey].push(w);
         render();
         autoSave();
