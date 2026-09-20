@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.163
+
+* **"Heizung aktiviert?" und "Wärmepumpe an/aus" bieten jetzt auch Heizungs-Entitäten mit Betriebsmodi an** (z.B. `climate.vicare_heating` mit "auto"/"heat"/"off", auch `select`/`water_heater`). Bisher zeigte die Auswahl nur Entitäten, die gerade genau "on" oder "off" melden - eine Heizung im Modus "auto" fehlte. Jeder Zustand außer "off" zählt als "an"; an shyft-power gehen für diese beiden Sensoren nur "on"/"off" (Betriebsmodus → "on").
+
 ## 0.0.45.162
 
 * **Hilfe-Assistent bekommt einen Auszug aus dem Add-on-Log.** Bei jeder Frage holt das Add-on die letzten 2000 Logzeilen (Supervisor-API `/addons/self/logs`) und reicht nur die Fehler- und Warnzeilen an die KI weiter (Stichwörter wie „Fehler“, „failed“, „Exception“, „Invalid“, „not found“, Traceback-Blöcke, HTTP-5xx). Gleiche Zeilen werden zusammengefasst („(x50)“), es bleiben höchstens 40 Einträge bzw. 8000 Zeichen, die neuesten zuerst. Zugangsdaten (Supervisor-Token, Zugangsschlüssel samt Teilen, „Bearer …“, „token=…“/„password: …“) werden vorher geschwärzt. Ist das Log nicht abrufbar, erfährt die KI das und die Anfrage läuft trotzdem. Der Hinweis im Assistenten nennt die Weitergabe jetzt ausdrücklich: „Sensorzustände sowie einen Auszug aus dem Add-on-Log (nur Fehler- und Warnzeilen, ohne Zugangsdaten)“.

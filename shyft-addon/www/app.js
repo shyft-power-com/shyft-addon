@@ -84,7 +84,7 @@ const helpinformation = {
     },
     'heatpump_heating_activated': {
         label: 'Heizung aktiviert?',
-        description: ' Ja / Nein, je nachdem, ob du die Heizung an deiner Wärmepumpe aktiviert hast oder nicht.'
+        description: ' Ja / Nein, je nachdem, ob du die Heizung an deiner Wärmepumpe aktiviert hast oder nicht. Jeder Zustand außer "off" zählt als "an" (z.B. auch Betriebsmodi wie "auto" oder "heat" einer Heizungs-Entität).'
     },
     'heatpump_current_power_elect': {
         label: 'Aktuelle Leistung Wärmepumpe (elektrisch)',
@@ -192,9 +192,9 @@ const SENSOR_ENTITY_FILTERS = {
     'heatpump_dhw_activated': {type: 'state_on_off'},
     'heatpump_dhw_on_off': {type: 'state_on_off'},
     'heatpump_heating_target_temp_normal': {type: 'device_class', value: 'temperature'},
-    'heatpump_heating_activated': {type: 'state_on_off'},
+    'heatpump_heating_activated': {type: 'state_on_off_or_mode'},
     'heatpump_current_power_elect': {type: 'device_class', value: 'power'},
-    'heatpump_on_off': {type: 'state_on_off'},
+    'heatpump_on_off': {type: 'state_on_off_or_mode'},
     'heatpump_supply_temp_hp': {type: 'device_class', value: 'temperature'},
     'heatpump_temp_indoor_measured': {type: 'device_class', value: 'temperature'},
     'electronicvehicle_state_of_charge': {type: 'device_class', value: 'battery'},
@@ -1282,6 +1282,15 @@ function matchesOnOffState(entity) {
     return isAmbiguousState(entity.state);
 }
 
+// Entitaeten, deren Zustand ein Betriebsmodus statt on/off ist (z.B. climate.* mit "auto"/"heat"/"off",
+// select.*, water_heater.*) - fuer "Heizung aktiviert?"/"Waermepumpe an/aus", wo jeder Zustand ausser "off"
+// als "an" zaehlt (siehe _read_mapped_bool_on/anything_but_off in app.py und normalize_mode_to_on_off in
+// sync_service.py). Reine Zustands-Pruefung wie matchesOnOffState reicht dafuer nicht: "auto" ist weder on noch off.
+const MODE_STATE_DOMAINS = ['climate', 'select', 'input_select', 'water_heater'];
+function matchesOnOffOrModeState(entity) {
+    return matchesOnOffState(entity) || MODE_STATE_DOMAINS.includes(entity.entity_id.split('.')[0]);
+}
+
 // Fuer Felder, ueber die das Addon tatsaechlich einen Wert SCHREIBT (z.B. Lade-/Entladeleistung
 // begrenzen) statt ihn nur abzulesen - ein reiner Anzeige-Sensor (sensor.*) waere hier nutzlos, auch
 // wenn Geraeteklasse/Einheit passen. Die Domaene ist immer aus der entity_id ablesbar (nie vom
@@ -1321,6 +1330,7 @@ function entityMatchesSensorFilter(entity, filter) {
     if (!filter || filter.type === 'none') return true;
     if (filter.type === 'device_class') return matchesDeviceClass(entity, filter.value);
     if (filter.type === 'state_on_off') return matchesOnOffState(entity);
+    if (filter.type === 'state_on_off_or_mode') return matchesOnOffOrModeState(entity);
     if (filter.type === 'writable_power') return matchesWritablePower(entity);
     if (filter.type === 'writable_temperature') return matchesWritableTemperature(entity);
     if (filter.type === 'readonly_temperature') return matchesReadonlyTemperature(entity);
@@ -1350,6 +1360,7 @@ function scoreSensorEntityForField(entity, key, historySignal) {
         if (filter.type === 'device_class' && entity.device_class === filter.value) score += 4;
         else if (filter.type === 'power_unit' && (entity.unit === 'W' || entity.unit === 'kW')) score += 4;
         else if (filter.type === 'state_on_off' && ['on', 'off'].includes((entity.state || '').toLowerCase())) score += 4;
+        else if (filter.type === 'state_on_off_or_mode' && (['on', 'off'].includes((entity.state || '').toLowerCase()) || MODE_STATE_DOMAINS.includes(entity.entity_id.split('.')[0]))) score += 4;
         else if (filter.type === 'writable_power' && (entity.unit === 'W' || entity.unit === 'kW')) score += 4;
         else if (filter.type === 'domain' && filter.values.includes(entity.entity_id.split('.')[0])) score += 4;
         else if (filter.type === 'writable_temperature' && (entity.entity_id.startsWith('climate.') || entity.device_class === 'temperature' || entity.unit === '°C')) score += 4;

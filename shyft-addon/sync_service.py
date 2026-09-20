@@ -204,6 +204,21 @@ def compute_wallbox_max_kw(config):
 
 
 # does the mapping between homeassistant and shyft/ bubble
+# Sensoren, bei denen jeder Zustand ausser "off" als "an" gilt (siehe app._read_mapped_bool_on/anything_but_off):
+# eine zugeordnete Heizungs-Entitaet (z.B. climate.*) meldet Betriebsmodi wie "auto"/"heat" statt "on".
+ANYTHING_BUT_OFF_SENSOR_KEYS = ("heatpump_heating_activated", "heatpump_on_off")
+
+
+def normalize_mode_to_on_off(sensor_key, value):
+    """An shyft-power gehen fuer diese Sensoren nur "on"/"off": ein Betriebsmodus ("auto", "heat", ...) wird zu
+    "on", "off" bleibt "off". Werte wie "on"/"unavailable"/"unknown" und alle anderen Sensoren bleiben unveraendert."""
+    if sensor_key not in ANYTHING_BUT_OFF_SENSOR_KEYS or not isinstance(value, str):
+        return value
+    if value.strip().lower() in ("on", "off", "unavailable", "unknown", ""):
+        return value
+    return "on"
+
+
 class SyncService:
 
     def __init__(self,
@@ -307,6 +322,7 @@ class SyncService:
                     value = round(float(value) / 100, 4)
                 except (TypeError, ValueError):
                     pass
+            value = normalize_mode_to_on_off(key, value)
             live_values[entry["sensor"]] = value
         # "heatpump_heating_activated" ist bewusst kein Pflichtfeld (siehe REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS
         # in app.js) - fehlt die Zuordnung, wird "HP - Heating Activated" oben uebersprungen (entry == "").
