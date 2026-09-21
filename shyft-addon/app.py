@@ -7421,6 +7421,36 @@ def _log_plan_costlier_than_base(base, input_rows, output_rows, net_profit_base,
         print("[Shyft] Diagnose-Log 'Plan teurer als Base Case' fehlgeschlagen:", repr(e))
 
 
+def log_cached_plan_diagnostic():
+    """Beim Add-on-Start: wertet den zuletzt gecachten Optimierungslauf noch einmal fuer den Diagnose-Log aus. Die
+    eigentliche Diagnose (_log_plan_costlier_than_base) laeuft sonst nur, wenn ein FRISCHER Lauf eintrifft - ein Neustart
+    (z.B. Update) leert aber das Container-Log, und bleibt danach ein neuer Lauf aus, stuende die Diagnose zum
+    angezeigten Lauf nirgends mehr. Immer eine kurze Zusammenfassungszeile (base/opt/Differenz), damit erkennbar ist,
+    dass die Auswertung lief - ist der Plan teurer als der Base Case, folgt zusaetzlich die ausfuehrliche Zeile."""
+    try:
+        with open(DASHBOARD_CACHE_PATH, "r") as f:
+            cache = json.load(f)
+        input_csv, output_csv, creation_date_ms = cache.get("input_csv"), cache.get("output_csv"), cache.get("creation_date")
+        if not input_csv or not output_csv or creation_date_ms is None:
+            print("[Shyft] Plan-vs-Base-Diagnose: kein vollstaendiger gecachter Lauf vorhanden.")
+            return
+        start = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+        input_rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
+        output_rows = list(csv.DictReader(io.StringIO(output_csv)))
+        net_profit_base = cache.get("netProfitBase48HoursSum")
+        net_profit_opt = sum(_safe_float(r.get("profits_net_opt")) for r in output_rows) if output_rows else None
+        x_sum_total = sum(_safe_float(r.get("X_sum")) for r in output_rows) if output_rows else None
+        if net_profit_base is None or net_profit_opt is None:
+            print(f"[Shyft] Plan-vs-Base-Diagnose (gecachter Lauf {start.isoformat()}): Base-Case- oder Optimierer-Summe fehlt (base={net_profit_base!r}, opt={net_profit_opt!r}).")
+            return
+        print(f"[Shyft] Plan-vs-Base-Diagnose (gecachter Lauf {start.isoformat()}, optimizer_run={cache.get('optimizer_run_id')!r}): "
+              f"base48={net_profit_base:.4f}, opt48={net_profit_opt:.4f}, diff(opt-base)={net_profit_opt - net_profit_base:.4f}")
+        _log_plan_costlier_than_base(cache, input_rows, output_rows, net_profit_base, net_profit_opt, x_sum_total,
+                                     cache.get("optimizer_run_id"), start)
+    except Exception as e:
+        print("[Shyft] Plan-vs-Base-Diagnose beim Start fehlgeschlagen:", repr(e))
+
+
 def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id, base=None):
     """Wird bei jedem frischen Optimierungslauf aufgerufen (siehe _write_dashboard_cache) - berechnet und reconciled alle addon-seitigen Aktionstypen neu: 'Auto laden', 'Warmwasser', 'Heizung Soll-Temperatur', 'Verbraucher an', 'Batterie-Entladen verschieben', 'Batterie netzladen' und 'Batterie-Laden verschieben (PV-Ueberschuss)' - alle sieben bisher geplanten Aktionstypen sind damit umgesetzt.
 
@@ -8659,6 +8689,8 @@ if __name__ == "__main__":
         sync_dashboard_chart_data()
     except Exception as e:
         print("Failed to sync dashboard chart data at startup:", repr(e))
+
+    log_cached_plan_diagnostic()
 
     try:
         resume_pending_optimizer_wait_if_any()

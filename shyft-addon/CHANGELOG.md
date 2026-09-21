@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.171
+
+* **Diagnose „Plan teurer als Base Case“ läuft jetzt auch beim Add-on-Start.** Der ausführliche Log-Eintrag `[Shyft] Optimierer-Plan teurer als Base Case …` entstand bisher nur, wenn ein *frischer* Optimierungslauf verarbeitet wurde. Ein Neustart (z. B. Update) leert das Container-Log, und kam danach kein neuer Lauf, fehlte die Diagnose zu der Karte „Ersparnis Haushaltsstrom / Batterie“ komplett. Jetzt wertet das Add-on beim Start den zuletzt gecachten Lauf noch einmal aus: immer mit einer kurzen Zeile `[Shyft] Plan-vs-Base-Diagnose (gecachter Lauf …): base48=…, opt48=…, diff(opt-base)=…` (zeigt, dass die Auswertung lief), und ist der Plan teurer als der Base Case, folgt zusätzlich die ausführliche Zeile.
+
 ## 0.0.45.170
 
 * **PV-Überschussladen: Die Session läuft über die volle Stunde hinaus weiter, statt jede Stunde zu enden und neu zu starten.** Bisher wurde die Session zur vollen Stunde mit „Stunde abgelaufen“ beendet (samt Stopp-Kommando an die Wallbox, einer „beendet“- und einer „gestartet“-Benachrichtigung) und unmittelbar als neue Karte wieder eröffnet. Jetzt wird sie zur vollen Stunde um eine weitere Stunde verlängert (Log: „Stunde verlängert“) - eine Karte, keine Wallbox-Unterbrechung, keine doppelten Benachrichtigungen. Voraussetzung sind dieselben Bedingungen wie für einen Neustart: Auto ladebereit, Heimspeicher-SOC über der Stoppgrenze, Auto-Ladestand unter dem Limit und weiterhin PV-Überschuss. Der Überschuss wird dabei ohne die eigene Last der Session beurteilt (Netz-Leistung minus Wallbox-Leistung), denn solange die Wallbox lädt, ist der Netz-Sensor ausgeregelt und zeigt selbst bei reichlich PV keine Einspeisung. Ist die Bedingung nicht erfüllt, endet die Session wie bisher mit „Stunde abgelaufen“.
