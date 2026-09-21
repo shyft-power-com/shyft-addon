@@ -1550,7 +1550,17 @@ def _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, s
     Optimizer-Runs (Anzahl output_csv-Zeilen), UND zusaetzlich getrennt fuer "heute" (restliche
     Stunden inkl. der gerade laufenden) und "morgen" (jeweils in der lokalen Zeitzone) - "übermorgen"
     wird bewusst nicht ausgewiesen, da der Zeitraum dafuer nie vollstaendig abgedeckt ist. Gibt None
-    zurueck (Karte bleibt im Frontend verborgen), wenn output_csv (noch) leer ist."""
+    zurueck (Karte bleibt im Frontend verborgen), wenn output_csv (noch) leer ist.
+
+    Der Lauf beginnt an der Stunde seiner Erstellung; ist er schon ein paar Stunden alt, sind die ersten
+    Zeilen laengst Vergangenheit. Die Kennzahlen zaehlen deshalb nur noch die Stunden ab der aktuellen
+    Stunde (inkl. der laufenden), und "hours" ist genau diese verbleibende Stundenzahl (nicht mehr pauschal
+    die 48 h des Optimierungszeitraums) - das Frontend nennt sie im Text der Karte."""
+    elapsed = max(0, int((_hour_floor(datetime.now(timezone.utc)) - start).total_seconds() // 3600))
+    if elapsed:
+        output_rows = output_rows[elapsed:]
+        pv_generation = pv_generation[elapsed:]
+        start = start + timedelta(hours=elapsed)
     hours = len(output_rows)
     if hours == 0:
         return None

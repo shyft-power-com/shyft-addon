@@ -6353,12 +6353,14 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
     timeSpan.textContent = `Berechnet um ${formatShyftTime(einsatzplan.creation_date)} Uhr`;
     if (ageMs >= EINSATZPLAN_STALE_ERROR_MS) {
         timeSpan.className = 'einsatzplanLegendStaleError';
-        timeSpan.textContent += ' !';
+        timeSpan.textContent += '!';
     } else if (ageMs >= EINSATZPLAN_STALE_WARN_MS) {
         timeSpan.className = 'einsatzplanLegendStaleWarn';
     }
     legend.appendChild(timeSpan);
-    legend.appendChild(document.createTextNode(`, Kennzahlen jeweils für die nächsten ${einsatzplan.hours} Stunden (bzw. in Klammern für die restlichen heutigen Stunden | für morgen).`));
+    // einsatzplan.hours = die noch verbleibenden Stunden des Plans ab jetzt (siehe _compute_einsatzplan_summary)
+    const horizonText = einsatzplan.hours === 1 ? 'die nächste Stunde' : `die nächsten ${einsatzplan.hours} Stunden`;
+    legend.appendChild(document.createTextNode(`, Kennzahlen jeweils für ${horizonText} (bzw. in Klammern für die restlichen heutigen Stunden | für morgen).`));
     if (optimizerRunning) {
         const running = document.createElement('span');
         running.className = 'einsatzplanLegendRunning';

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.168
+
+* **Einsatzplan: Kennzahlen und Text zählen jetzt nur noch die Stunden ab jetzt.** Bisher stand immer "für die nächsten 48 Stunden", obwohl der Optimierungslauf schon Stunden alt sein konnte und die ersten Stunden längst vergangen waren - die Kennzahlen (Stromverbrauch, ø Netzstrom, Autarkie, Eigenverbrauch, Stromertrag) schlossen diese mit ein. Jetzt werden nur die verbleibenden Stunden (ab der aktuellen) gerechnet, und der Text nennt genau diese Anzahl ("für die nächsten 45 Stunden"). Außerdem steht bei einem veralteten Plan das Ausrufezeichen ohne Leerzeichen direkt hinter "Uhr" ("Berechnet um 19:58 Uhr!").
+
 ## 0.0.45.167
 
 * **Neu: Update-Hinweis auf dem Dashboard.** Steht eine neuere Version des Add-ons bereit und ist Auto-Update ausgeschaltet, erscheint oben auf dem Dashboard ein Hinweis mit Link zur Add-on-Seite in Home Assistant ("Jetzt aktualisieren"); er lässt sich pro Version wegklicken. Bei aktivem Auto-Update erscheint er nie (auch nicht, wenn die Abfrage nichts Eindeutiges liefert). Gilt auch im Demo-Modus. Die Angaben kommen vom Supervisor (`/addons/self/info`) und werden stündlich aktualisiert.
