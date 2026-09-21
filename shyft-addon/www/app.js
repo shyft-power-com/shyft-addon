@@ -4049,6 +4049,82 @@ function buildAutoManagedNumberControl(control) {
         }
     }
 
+    function handleTestResult(result) {
+        if (readyKey) markActionTested(readyKey, !!result.success);
+        if (control.onlyIncrement) {
+            if (result.success) {
+                valueDisplay.textContent = `Erfolgreich: ${result.originalValue}${unitSuffix} → ${result.boostedValue}${unitSuffix} → zurückgesetzt.`;
+                valueDisplay.className = 'autoActionValue testSuccess';
+            } else {
+                // Fehler bleiben stehen (siehe pinnedTestError), auch bei spaeteren refreshStatus()-Laeufen
+                pinnedTestError = 'Fehler: ' + (result.message || 'unbekannt');
+                valueDisplay.textContent = pinnedTestError;
+                valueDisplay.className = 'autoActionValue';
+            }
+            // Backend hat das Zuruecksetzen schon synchron abgewartet - kein sofortiges
+            // refreshStatus() (das wuerde die obige Meldung direkt wieder ueberschreiben),
+            // sondern wie ueberall sonst erst nach einer kurzen Anzeigedauer. Bei einem Fehler
+            // ist der Timer harmlos: refreshStatus() stellt die angepinnte Meldung wieder her.
+            setTimeout(refreshStatus, 4000);
+        } else if (result.success) {
+            if (variant === 'ha_automation') {
+                // fire-and-forget - there's no entity to poll back and confirm, unlike the
+                // direct variant's cloud-device round-trip
+                valueDisplay.textContent = 'Gesendet: ' + result.value + unitSuffix;
+            } else {
+                // devices reachable only via a manufacturer cloud API can take a while to
+                // report the new value back, so show what we sent right away, then confirm
+                valueDisplay.textContent = 'Gesendet: ' + result.value + unitSuffix + ' (wird geprüft...)';
+                setTimeout(refreshStatus, 4000);
+            }
+            valueDisplay.className = 'autoActionValue testSuccess';
+        } else {
+            valueDisplay.textContent = 'Fehler: ' + (result.message || 'unbekannt');
+            valueDisplay.className = 'autoActionValue';
+        }
+        if (readyKey) applyTestGate(readyKey, checkmark, hint, true);
+    }
+
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    // Fragt den Hintergrund-Test alle 3 s ab, zeigt den Fortschritt und liefert das Endergebnis. Einzelne
+    // fehlgeschlagene Abfragen (kurzer Verbindungsabbruch) werden toleriert, der Test laeuft serverseitig weiter.
+    async function pollTestUntilDone() {
+        let consecutiveFailures = 0;
+        for (let attempt = 0; attempt < 400; attempt++) {
+            await sleep(3000);
+            try {
+                const status = await getJson(insideHomeAssistant + '/actions/' + control.key + '/test/status');
+                consecutiveFailures = 0;
+                if (status.state === 'done' && status.result) return status.result;
+                if (status.state === 'idle') return {success: false, message: 'Der Test läuft nicht mehr (Add-on neu gestartet?)'};
+                if (status.progress) valueDisplay.textContent = 'Teste … ' + status.progress;
+            } catch (err) {
+                console.log(err);
+                if (++consecutiveFailures >= 10) return {success: false, message: 'Verbindung zum Add-on verloren - der Test läuft im Hintergrund weiter, bitte Seite neu laden und das Ergebnis prüfen'};
+            }
+        }
+        return {success: false, message: 'Der Test dauert ungewöhnlich lange - bitte in der Wärmepumpen-App prüfen'};
+    }
+
+    // Beim Laden/Neuladen der Seite einen noch laufenden Test wieder aufgreifen
+    async function resumeRunningTest() {
+        try {
+            const status = await getJson(insideHomeAssistant + '/actions/' + control.key + '/test/status');
+            if (status.state !== 'running') return;
+            if (minusButton) minusButton.disabled = true;
+            plusButton.disabled = true;
+            valueDisplay.className = 'autoActionValue testing';
+            valueDisplay.textContent = 'Teste … ' + (status.progress || '');
+            handleTestResult(await pollTestUntilDone());
+        } catch (err) {
+            console.log(err);
+        } finally {
+            if (minusButton) minusButton.disabled = false;
+            plusButton.disabled = false;
+        }
+    }
+
     async function runTest(delta) {
         if (minusButton) minusButton.disabled = true;
         plusButton.disabled = true;
@@ -4057,7 +4133,7 @@ function buildAutoManagedNumberControl(control) {
         // serverseitig synchron erhoeht, auf Bestaetigung wartet UND danach IMMER zurueckstellt
         // (siehe /actions/heating_target_temp/test) - kann daher spuerbar laenger dauern als der
         // generische Delta-Test.
-        valueDisplay.textContent = control.onlyIncrement ? 'Teste... (kann bis zu 10 min dauern)' : 'Teste...';
+        valueDisplay.textContent = control.onlyIncrement ? 'Teste … (kann mehrere Minuten dauern)' : 'Teste...';
         pinnedTestError = null;
         try {
             const response = await fetch(insideHomeAssistant + '/actions/' + control.key + '/test', {
@@ -4065,40 +4141,11 @@ function buildAutoManagedNumberControl(control) {
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({delta})
             });
-            const result = await response.json();
-            if (readyKey) markActionTested(readyKey, !!result.success);
-            if (control.onlyIncrement) {
-                if (result.success) {
-                    valueDisplay.textContent = `Erfolgreich: ${result.originalValue}${unitSuffix} → ${result.boostedValue}${unitSuffix} → zurückgesetzt.`;
-                    valueDisplay.className = 'autoActionValue testSuccess';
-                } else {
-                    // Fehler bleiben stehen (siehe pinnedTestError), auch bei spaeteren refreshStatus()-Laeufen
-                    pinnedTestError = 'Fehler: ' + (result.message || 'unbekannt');
-                    valueDisplay.textContent = pinnedTestError;
-                    valueDisplay.className = 'autoActionValue';
-                }
-                // Backend hat das Zuruecksetzen schon synchron abgewartet - kein sofortiges
-                // refreshStatus() (das wuerde die obige Meldung direkt wieder ueberschreiben),
-                // sondern wie ueberall sonst erst nach einer kurzen Anzeigedauer. Bei einem Fehler
-                // ist der Timer harmlos: refreshStatus() stellt die angepinnte Meldung wieder her.
-                setTimeout(refreshStatus, 4000);
-            } else if (result.success) {
-                if (variant === 'ha_automation') {
-                    // fire-and-forget - there's no entity to poll back and confirm, unlike the
-                    // direct variant's cloud-device round-trip
-                    valueDisplay.textContent = 'Gesendet: ' + result.value + unitSuffix;
-                } else {
-                    // devices reachable only via a manufacturer cloud API can take a while to
-                    // report the new value back, so show what we sent right away, then confirm
-                    valueDisplay.textContent = 'Gesendet: ' + result.value + unitSuffix + ' (wird geprüft...)';
-                    setTimeout(refreshStatus, 4000);
-                }
-                valueDisplay.className = 'autoActionValue testSuccess';
-            } else {
-                valueDisplay.textContent = 'Fehler: ' + (result.message || 'unbekannt');
-                valueDisplay.className = 'autoActionValue';
-            }
-            if (readyKey) applyTestGate(readyKey, checkmark, hint, true);
+            let result = await response.json();
+            // Langer Heizungs-Test: der POST startet ihn nur, das Ergebnis kommt per Abfrage (siehe
+            // pollTestUntilDone) - eine einzige lange Anfrage brach an Proxys mit Zeitlimit ab.
+            if (control.onlyIncrement && result.running) result = await pollTestUntilDone();
+            handleTestResult(result);
         } catch (err) {
             console.log(err);
             if (control.onlyIncrement) pinnedTestError = 'Fehler beim Testen';
@@ -4112,6 +4159,7 @@ function buildAutoManagedNumberControl(control) {
 
     if (minusButton) minusButton.addEventListener('click', () => runTest(-control.step));
     plusButton.addEventListener('click', () => runTest(control.step));
+    if (control.onlyIncrement) resumeRunningTest();
 
     if (minusButton) controls.appendChild(minusButton);
     controls.appendChild(plusButton);

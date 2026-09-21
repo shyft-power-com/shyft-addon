@@ -5043,14 +5043,69 @@ def _write_and_verify_auto_managed_number(control_key, entity_id, target_value, 
         time.sleep(poll_interval_seconds)
 
 
+# Der Heizungs-Test dauert wegen der Cloud-Latenz der Waermepumpe mehrere Minuten (Erhoehen + Bestaetigen +
+# Zuruecksetzen + Bestaetigen). Als EINE HTTP-Anfrage brach das an Proxys mit Zeitlimit (Cloudflare-Tunnel ~100 s,
+# Nabu Casa) ab: das Frontend zeigte "Fehler beim Testen", obwohl der Test im Hintergrund erfolgreich durchlief.
+# Deshalb startet der POST den Test nur (Hintergrund-Thread) und das Frontend fragt den Fortschritt per GET ab.
+_heating_test_lock = threading.Lock()
+_heating_test_job = {"state": "idle", "progress": "", "result": None, "startedAt": None}
+
+
+def _set_heating_test_progress(text):
+    with _heating_test_lock:
+        _heating_test_job["progress"] = text
+
+
+def _run_heating_target_temp_test(control_key, entity_id, original_value, boosted_value):
+    """Der eigentliche (langsame) Test: erhoeht den Sollwert um HEATING_TARGET_TEMP_TEST_STEP_C, wartet auf die
+    Bestaetigung durch den zugeordneten Sensor und setzt DANACH immer den urspruenglichen Wert zurueck. Rueckgabe:
+    (success, Ergebnis-dict fuers Frontend)."""
+    _set_heating_test_progress(f"Erhöhung auf {boosted_value}°C gesendet, warte auf Bestätigung der Wärmepumpe …")
+    boost_status, boost_detail = _write_and_verify_auto_managed_number(
+        control_key, entity_id, boosted_value, HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS)
+    if boost_status == "call_failed":
+        # Der Befehl kam gar nicht erst beim Geraet an - es gibt nichts zurueckzusetzen (und das Warten aufs
+        # Bestaetigen bzw. der Rueckstell-Versuch waeren sinnlos).
+        return False, {"success": False, "message": f"Die Wärmepumpe konnte nicht angesteuert werden: {boost_detail}. Es wurde nichts geändert.",
+                       "originalValue": original_value, "boostedValue": boosted_value}
+    confirmed = boost_status == "confirmed"
+    _set_heating_test_progress(f"Zurücksetzen auf {original_value}°C, warte auf Bestätigung der Wärmepumpe …")
+    revert_status, revert_detail = _write_and_verify_auto_managed_number(
+        control_key, entity_id, original_value, HEATING_TARGET_TEMP_TEST_REVERT_TIMEOUT_SECONDS)
+    revert_ok = revert_status == "confirmed"
+
+    if confirmed and revert_ok:
+        return True, {"success": True, "originalValue": original_value, "boostedValue": boosted_value}
+
+    if not confirmed:
+        message = f"Erhöhung auf {boosted_value}°C nicht innerhalb von {HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS}s bestätigt - die Wärmepumpe kann trotzdem noch verzögert reagieren"
+    else:
+        message = "Zurücksetzen auf den ursprünglichen Wert nicht bestätigt"
+    if not revert_ok:
+        if revert_status == "call_failed":
+            message += f" - das Zurücksetzen auf {original_value}°C ist fehlgeschlagen ({revert_detail})"
+        message += " - bitte in der Wärmepumpen-App prüfen, ob wieder der ursprüngliche Wert eingestellt ist"
+    return False, {"success": False, "message": message, "originalValue": original_value, "boostedValue": boosted_value}
+
+
+def _heating_test_worker(control_key, entity_id, original_value, boosted_value):
+    try:
+        success, result = _run_heating_target_temp_test(control_key, entity_id, original_value, boosted_value)
+    except Exception as e:
+        print("[Shyft] Heizungs-Test fehlgeschlagen:", repr(e))
+        success, result = False, {"success": False, "message": f"Der Test ist unerwartet fehlgeschlagen: {e}",
+                                  "originalValue": original_value, "boostedValue": boosted_value}
+    _record_action_test_result("heating_target_temp", success)
+    with _heating_test_lock:
+        _heating_test_job["result"] = result
+        _heating_test_job["state"] = "done"
+
+
 @app.route("/actions/heating_target_temp/test", methods=["POST"])
-@_records_action_test("heating_target_temp")
 def testHeatingTargetTempBoost():
-    """Einziger Test fuer 'Heizung Soll-Temperatur' (ersetzt den frueheren, komplett unverifizierten
-    +/-Delta-Test ueber testAutoManagedControl): erhoeht den aktuellen Sollwert testweise um
-    HEATING_TARGET_TEMP_TEST_STEP_C, wartet bis zu HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS auf
-    Bestaetigung durch den zugeordneten Sensor und setzt DANACH IMMER (auch ohne Bestaetigung) den
-    urspruenglichen Wert zurueck."""
+    """Startet den Test fuer 'Heizung Soll-Temperatur' im Hintergrund (Ablauf siehe _run_heating_target_temp_test) und
+    antwortet sofort mit {"running": true}; den Fortschritt/das Ergebnis liefert /actions/heating_target_temp/test/status.
+    Vorab-Pruefungen (Variante, Entity, aktueller Wert) schlagen weiterhin direkt mit 4xx/5xx fehl."""
     control_key = "heating_target_temp"
     control = AUTO_MANAGED_CONTROLS[control_key]
     config = _read_current_config()
@@ -5062,33 +5117,24 @@ def testHeatingTargetTempBoost():
 
     original_value = _read_mapped_numeric(config, control["sensor_field"])
     if original_value is None:
+        _record_action_test_result(control_key, False)
         return jsonify({"success": False, "message": "Aktueller Wert nicht lesbar"}), 500
 
     boosted_value = original_value + HEATING_TARGET_TEMP_TEST_STEP_C
-    boost_status, boost_detail = _write_and_verify_auto_managed_number(
-        control_key, entity_id, boosted_value, HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS)
-    if boost_status == "call_failed":
-        # Der Befehl kam gar nicht erst beim Geraet an - es gibt nichts zurueckzusetzen (und das Warten aufs
-        # Bestaetigen bzw. der Rueckstell-Versuch waeren sinnlos).
-        return jsonify({"success": False, "message": f"Die Wärmepumpe konnte nicht angesteuert werden: {boost_detail}. Es wurde nichts geändert.",
-                        "originalValue": original_value, "boostedValue": boosted_value}), 500
-    confirmed = boost_status == "confirmed"
-    revert_status, revert_detail = _write_and_verify_auto_managed_number(
-        control_key, entity_id, original_value, HEATING_TARGET_TEMP_TEST_REVERT_TIMEOUT_SECONDS)
-    revert_ok = revert_status == "confirmed"
+    with _heating_test_lock:
+        if _heating_test_job["state"] == "running":
+            return jsonify({"running": True, "progress": _heating_test_job["progress"]}), 202
+        _heating_test_job.update({"state": "running", "progress": "Test startet …", "result": None, "startedAt": time.time()})
+    threading.Thread(target=_heating_test_worker, args=(control_key, entity_id, original_value, boosted_value), daemon=True).start()
+    return jsonify({"running": True}), 202
 
-    if confirmed and revert_ok:
-        return jsonify({"success": True, "originalValue": original_value, "boostedValue": boosted_value})
 
-    if not confirmed:
-        message = f"Erhöhung auf {boosted_value}°C nicht innerhalb von {HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS}s bestätigt - die Wärmepumpe kann trotzdem noch verzögert reagieren"
-    else:
-        message = "Zurücksetzen auf den ursprünglichen Wert nicht bestätigt"
-    if not revert_ok:
-        if revert_status == "call_failed":
-            message += f" - das Zurücksetzen auf {original_value}°C ist fehlgeschlagen ({revert_detail})"
-        message += " - bitte in der Wärmepumpen-App prüfen, ob wieder der ursprüngliche Wert eingestellt ist"
-    return jsonify({"success": False, "message": message, "originalValue": original_value, "boostedValue": boosted_value}), 500
+@app.route("/actions/heating_target_temp/test/status", methods=["GET"])
+def statusHeatingTargetTempTest():
+    "Fortschritt bzw. Ergebnis des im Hintergrund laufenden Heizungs-Tests: {state: idle|running|done, progress, result}."
+    with _heating_test_lock:
+        return jsonify({"state": _heating_test_job["state"], "progress": _heating_test_job["progress"],
+                        "result": _heating_test_job["result"] if _heating_test_job["state"] == "done" else None})
 
 
 @app.route("/actions/<control_key>/test", methods=["POST"])

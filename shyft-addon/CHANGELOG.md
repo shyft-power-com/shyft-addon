@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.169
+
+* **Fix: Heizungs-Test meldete "Fehler beim Testen", obwohl er erfolgreich durchlief.** Der Test dauert wegen der Cloud-Latenz der Wärmepumpe mehrere Minuten und lief bisher als EINE HTTP-Anfrage; Proxys mit Zeitlimit (z.B. Cloudflare-Tunnel, Nabu Casa) brachen sie ab, die Anzeige zeigte den Fehler, während der Test im Hintergrund weiterlief und die Temperatur tatsächlich verstellt und zurückgesetzt wurde. Jetzt startet ein Klick den Test nur noch (Hintergrund-Thread), die Seite zeigt den Fortschritt an ("Erhöhung auf 21 °C gesendet, warte auf Bestätigung …" / "Zurücksetzen …") und das Endergebnis. Nach einem Neuladen der Seite wird ein noch laufender Test wieder aufgegriffen; ein zweiter Klick startet keinen zweiten Test.
+
 ## 0.0.45.168
 
 * **Einsatzplan: Kennzahlen und Text zählen jetzt nur noch die Stunden ab jetzt.** Bisher stand immer "für die nächsten 48 Stunden", obwohl der Optimierungslauf schon Stunden alt sein konnte und die ersten Stunden längst vergangen waren - die Kennzahlen (Stromverbrauch, ø Netzstrom, Autarkie, Eigenverbrauch, Stromertrag) schlossen diese mit ein. Jetzt werden nur die verbleibenden Stunden (ab der aktuellen) gerechnet, und der Text nennt genau diese Anzahl ("für die nächsten 45 Stunden"). Außerdem steht bei einem veralteten Plan das Ausrufezeichen ohne Leerzeichen direkt hinter "Uhr" ("Berechnet um 19:58 Uhr!").
