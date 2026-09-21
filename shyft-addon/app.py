@@ -3926,7 +3926,7 @@ def _find_active_pv_surplus_session(actions):
 
 
 def _next_full_hour_ms(now_ms):
-    "Millisekunden-Timestamp der naechsten vollen Stunde nach now_ms - die geplante Endzeit einer neu eroeffneten PV-Ueberschussladen-Session (siehe planned_end_ms)."
+    "Millisekunden-Timestamp der naechsten vollen Stunde nach now_ms - die geplante Endzeit einer neu eroeffneten bzw. verlaengerten PV-Ueberschussladen-Session (siehe planned_end_ms)."
     now = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc)
     next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
     return next_hour.timestamp() * 1000
@@ -3942,22 +3942,61 @@ def _append_pv_surplus_log(session, target_kw, note=None):
     session["log"] = session["log"][-100:]
 
 
-def _pv_surplus_session_energy_kwh(session):
-    "Flaeche unter der stufenweisen Ladeleistung ueber die Zeit (siehe 'power_history'-Stuetzstellen, angelegt bei Session-Start und bei jeder erfolgreichen Regelungs-Aktualisierung, siehe _run_pv_surplus_charging_tick_impl) - die insgesamt ueber diese Fallback-Session geladene Energiemenge. 0.0, wenn (noch) keine Stuetzstellen vorliegen (z.B. sehr alte, vor dieser Funktion angelegte Sessions)."
+def _hour_start_ms(ms):
+    "Beginn der UTC-Stunde, in der ms liegt (Millisekunden) - dieselbe Stundenteilung wie in der input.csv."
+    return int(ms // 3600000) * 3600000
+
+
+def _pv_surplus_session_energy_by_hour(session):
+    """{hour_start_ms: kWh} - Flaeche unter der stufenweisen Ladeleistung ueber die Zeit (siehe
+    'power_history'-Stuetzstellen, angelegt bei Session-Start und bei jeder erfolgreichen
+    Regelungs-Aktualisierung, siehe _run_pv_surplus_charging_tick_impl), an den UTC-Stundengrenzen
+    aufgeteilt: eine ueber mehrere Stunden verlaengerte Session (siehe
+    _try_extend_pv_surplus_session) wird je Stunde mit deren eigenem Preis bewertet. Leer, wenn (noch)
+    keine Stuetzstellen vorliegen (z.B. sehr alte, vor dieser Funktion angelegte Sessions)."""
     history = session.get("power_history") or []
     if not history:
-        return 0.0
+        return {}
     end_ms = session.get("end_ms") if not session.get("active") else None
     if end_ms is None:
         end_ms = int(time.time() * 1000)
-    energy = 0.0
+    by_hour = {}
     for i, point in enumerate(history):
         seg_start = point.get("at_ms")
         seg_end = history[i + 1].get("at_ms") if i + 1 < len(history) else end_ms
         if seg_start is None or seg_end is None or seg_end <= seg_start:
             continue
-        energy += (point.get("kw") or 0) * (seg_end - seg_start) / 3600000.0
-    return energy
+        kw = point.get("kw") or 0
+        t = seg_start
+        while t < seg_end:
+            hour_ms = _hour_start_ms(t)
+            chunk_end = min(seg_end, hour_ms + 3600000)
+            by_hour[hour_ms] = by_hour.get(hour_ms, 0.0) + kw * (chunk_end - t) / 3600000.0
+            t = chunk_end
+    return by_hour
+
+
+def _pv_surplus_session_energy_kwh(session):
+    "Die insgesamt ueber diese Fallback-Session geladene Energiemenge (Summe von _pv_surplus_session_energy_by_hour) - 0.0, wenn (noch) keine Stuetzstellen vorliegen."
+    return float(sum(_pv_surplus_session_energy_by_hour(session).values()))
+
+
+def _capture_pv_surplus_hour_prices(session, hour_start_ms):
+    """Haelt p_buy/p_sell der Stunde hour_start_ms in der Session fest ('hour_prices', Schluessel =
+    Stundenbeginn in ms als String), solange der Dashboard-Cache diese Stunde noch enthaelt - der
+    Cache enthaelt nur den JEWEILS LETZTEN Optimierungslauf (ab dessen Startstunde); eine schon
+    vergangene Stunde laesst sich nach dem naechsten Lauf nicht mehr nachschlagen. Deshalb wird der
+    Preis einer Stunde bei ihrem Beginn festgehalten (Session-Start bzw. Verlaengerung), nicht erst bei
+    Session-Ende. Kein-Op, wenn schon vorhanden oder nicht ermittelbar."""
+    prices = session.setdefault("hour_prices", {})
+    key = str(int(hour_start_ms))
+    if key in prices:
+        return
+    hour_start_utc = datetime.fromtimestamp(hour_start_ms / 1000, tz=timezone.utc)
+    p_buy = _input_csv_value_for_hour(hour_start_utc, "p_buy")
+    p_sell = _input_csv_value_for_hour(hour_start_utc, "p_sell")
+    if p_buy is not None and p_sell is not None:
+        prices[key] = {"p_buy": p_buy, "p_sell": p_sell}
 
 
 def _input_csv_value_for_hour(hour_start_utc, column):
@@ -3986,29 +4025,42 @@ def _pv_surplus_session_value(session, config):
     """Ersparnis der PV-Ueberschussladen-Fallback-Session (eigene, vom Optimierer unabhaengige
     Regelschleife, siehe _run_pv_surplus_charging_tick_impl - kommt im Optimierer-Modell gar nicht
     vor, deshalb bewusst NICHT ueber die Verbrauchsanteils-Formel/X_sum gerechnet). Nutzer-Vorgabe:
-    tatsaechlich geladene Energiemenge mal (Preis_EVStrom - Einspeiseverguetung_PVStrom):
-      CostsBase = energy_kwh * p_buy   (p_buy der Start-Stunde aus input.csv - der volle Bezugspreis
-                  inkl. Netzentgelte/Abgaben, nicht der reine Boersenpreis)
-      CostsOpt  = energy_kwh * feed_in (p_sell der Start-Stunde aus input.csv)
+    tatsaechlich geladene Energiemenge mal (Preis_EVStrom - Einspeiseverguetung_PVStrom), je UTC-Stunde
+    mit deren eigenem Preis bewertet und aufsummiert (eine Session kann ueber mehrere Stunden laufen,
+    siehe _try_extend_pv_surplus_session):
+      CostsBase = sum(energy_kwh_h * p_buy_h)   (p_buy: voller Bezugspreis inkl. Netzentgelte/Abgaben,
+                  nicht der reine Boersenpreis)
+      CostsOpt  = sum(energy_kwh_h * p_sell_h)  (Einspeiseverguetung)
       Savings   = CostsBase - CostsOpt
+    Die Preise stammen aus session['hour_prices'] (bei Stundenbeginn festgehalten, siehe
+    _capture_pv_surplus_hour_prices), sonst aus dem aktuellen Dashboard-Cache.
     Fruehrer wurde CostsBase stattdessen aus der letzten regulaeren 'Auto laden'-Aktion abgeleitet
     (CostsBase/Energy(electr) dieser Aktion) - jetzt immer einheitlich ueber p_buy, einfacher und
     unabhaengig davon, ob/wann zuletzt eine reguläre Ladeaktion lief (Nutzer-Vorgabe).
-    (None, None, None), wenn keine Energie geladen wurde oder einer der Preise nicht ermittelbar
-    ist (z.B. noch kein Dashboard-Cache vorhanden)."""
-    energy_kwh = _pv_surplus_session_energy_kwh(session)
+    (None, None, None), wenn keine Energie geladen wurde oder ein Preis nicht ermittelbar ist (z.B.
+    noch kein Dashboard-Cache vorhanden)."""
+    energy_by_hour = _pv_surplus_session_energy_by_hour(session)
+    energy_kwh = sum(energy_by_hour.values())
     if not energy_kwh:
         return None, None, None
     start_ms = session.get("start_ms")
     if start_ms is None:
         return None, None, None
-    hour_start_utc = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
-    ev_price = _input_csv_value_for_hour(hour_start_utc, "p_buy")
-    feed_in = _input_csv_value_for_hour(hour_start_utc, "p_sell")
-    if ev_price is None or feed_in is None:
-        return None, None, None
-    costsbase = energy_kwh * ev_price
-    costsopt = energy_kwh * feed_in
+    stored_prices = session.get("hour_prices") or {}
+    costsbase = 0.0
+    costsopt = 0.0
+    for hour_ms, hour_energy in sorted(energy_by_hour.items()):
+        prices = stored_prices.get(str(hour_ms))
+        if prices:
+            ev_price, feed_in = prices.get("p_buy"), prices.get("p_sell")
+        else:
+            hour_start_utc = datetime.fromtimestamp(hour_ms / 1000, tz=timezone.utc)
+            ev_price = _input_csv_value_for_hour(hour_start_utc, "p_buy")
+            feed_in = _input_csv_value_for_hour(hour_start_utc, "p_sell")
+        if ev_price is None or feed_in is None:
+            return None, None, None
+        costsbase += hour_energy * ev_price
+        costsopt += hour_energy * feed_in
     # Diagnose-Log (Nutzer-Vorgabe): energy_kwh/ev_price/feed_in sollten strukturell nie negativ
     # sein (power_history-Leistungswerte sind immer auf PV_SURPLUS_MIN_KW nach unten gekappt) - ein
     # negatives costsbase/costsopt ist also unerwartet. Bisher liessen sich weder die Rohwerte noch
@@ -4016,8 +4068,8 @@ def _pv_surplus_session_value(session, config):
     # war (Nutzer-Beobachtung: costsbase/costsopt widersprachen sich, Ursache nicht mehr nachweisbar).
     if costsbase < 0 or costsopt < 0:
         print(f"[Shyft] PV-Überschussladen-Bewertung unerwartet negativ - energy_kwh={energy_kwh!r}, "
-              f"hour_start_utc={hour_start_utc.isoformat()}, ev_price(p_buy)={ev_price!r}, "
-              f"feed_in(p_sell)={feed_in!r}, costsbase={costsbase!r}, costsopt={costsopt!r}, "
+              f"energy_by_hour={energy_by_hour!r}, hour_prices={stored_prices!r}, "
+              f"costsbase={costsbase!r}, costsopt={costsopt!r}, "
               f"session_start_ms={start_ms!r}, power_history={session.get('power_history')!r}")
     return costsbase - costsopt, costsbase, costsopt
 
@@ -4033,7 +4085,7 @@ def _pv_surplus_session_to_action(session, config):
         "Execution Status": "yes, started",
         "Target Value": target_kw,
         "Energy (electr)": _pv_surplus_session_energy_kwh(session),
-        "Subtitle": f"PV-Überschussladen ({target_kw:.1f} kW)",
+        "Subtitle": f"PV-Überschussladen ({_pv_surplus_session_energy_kwh(session):.1f} kWh)",
         "Date Start": session.get("start_ms"),
         "Date End": session.get("end_ms") if not is_active else session.get("planned_end_ms"),
         "Savings": savings,
@@ -4041,6 +4093,55 @@ def _pv_surplus_session_to_action(session, config):
         "costsopt": costsopt,
         "Log": "\n".join(session.get("log", [])),
     }
+
+
+def _can_extend_pv_surplus_session(session, config):
+    """Darf die Session zur vollen Stunde in die naechste Stunde verlaengert werden? Ja, wenn
+    dieselben Bedingungen erfuellt sind, unter denen nach einem Stopp sofort eine neue Session
+    eroeffnet wuerde (siehe else-Zweig in _run_pv_surplus_charging_tick_impl): Auto ladebereit,
+    Heimspeicher-SOC ueber PV_SURPLUS_BATTERY_STOP_SOC, Auto-Ladestand unter dem Limit und weiterhin
+    PV-Ueberschuss. Der Ueberschuss wird OHNE die eigene Last der Session beurteilt: waehrend die
+    Wallbox laedt, ist der Netz-Sensor ausgeregelt (~0 kW) und zeigt keinen Ueberschuss - erst
+    Netz-Leistung minus Wallbox-Leistung (Wallbox-Sensor, sonst das Ziel der Session) ist der Wert, den
+    ein Neustart nach einem Stopp sehen wuerde. Nur so bleibt die Stundenverlaengerung gleichwertig zu
+    'Stopp + sofortiger Neustart', ohne die Wallbox tatsaechlich zu unterbrechen. Ohne Netz-Messwert
+    keine Verlaengerung (wie beim Neustart)."""
+    if not is_car_ready_to_charge(config):
+        return False
+    battery_soc = read_home_battery_soc(config)
+    has_battery = battery_soc is not None
+    if has_battery and battery_soc <= PV_SURPLUS_BATTERY_STOP_SOC:
+        return False
+    ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
+    max_ev_soc = config.get("evSocMaxPvSurplus")
+    if ev_soc is not None and max_ev_soc is not None and ev_soc >= float(max_ev_soc):
+        return False
+    grid_kw = read_grid_power_kw(config)
+    if grid_kw is None:
+        return False
+    car_kw = _read_mapped_numeric(config, "wallbox_current_charging_power")
+    if car_kw is None:
+        car_kw = session.get("target_kw") or 0
+    grid_without_car_kw = grid_kw - max(0.0, car_kw)
+    threshold = PV_SURPLUS_START_THRESHOLD_KW if has_battery else PV_SURPLUS_START_THRESHOLD_NO_BATTERY_KW
+    return grid_without_car_kw <= threshold
+
+
+def _try_extend_pv_surplus_session(session, actions, config, now_ms):
+    """Verlaengert die abgelaufene Session um die naechste volle Stunde (statt Stopp + Neustart: eine
+    Karte, keine Wallbox-Unterbrechung, keine doppelten Benachrichtigungen), falls
+    _can_extend_pv_surplus_session zutrifft. True bei Verlaengerung. Haelt dabei die Preise der neuen
+    Stunde fest (siehe _capture_pv_surplus_hour_prices) - auch versaeumte Zwischenstunden, falls
+    ausnahmsweise mehr als eine Stunde seit der letzten Verlaengerung vergangen ist."""
+    if not _can_extend_pv_surplus_session(session, config):
+        return False
+    start_hour_ms = _hour_start_ms(session.get("start_ms") or now_ms)
+    for hour_ms in range(start_hour_ms, _hour_start_ms(now_ms) + 1, 3600000):
+        _capture_pv_surplus_hour_prices(session, hour_ms)
+    session["planned_end_ms"] = _next_full_hour_ms(now_ms)
+    _append_pv_surplus_log(session, session.get("target_kw", 0), note="Stunde verlängert")
+    _write_pv_surplus_actions(actions)
+    return True
 
 
 def stop_pv_surplus_charging(actions, session, config, reason=None):
@@ -4102,14 +4203,17 @@ def _run_pv_surplus_charging_tick_impl():
         return
 
     # Jede Session ist auf die volle Stunde befristet (planned_end_ms, siehe Session-Eroeffnung
-    # unten) - laeuft diese Frist ab, wird die Session explizit beendet statt implizit
-    # weiterzulaufen. Der naechste Tick eroeffnet bei Bedarf eine GENUIN NEUE Session (siehe unten,
-    # "else"-Zweig) - eine abgelaufene Session wird nie wieder aktiv genommen, sondern bleibt als
-    # beendeter Eintrag stehen.
+    # unten) - laeuft diese Frist ab, wird die Session bei fortbestehendem PV-Ueberschuss um eine
+    # weitere Stunde verlaengert (_try_extend_pv_surplus_session, ohne Wallbox-Unterbrechung), sonst
+    # explizit beendet statt implizit weiterzulaufen (mit Heimspeicher wuerde die Regelung sonst auch
+    # ohne Ueberschuss endlos auf Minimalleistung weiterladen). Der naechste Tick eroeffnet bei Bedarf
+    # eine GENUIN NEUE Session (siehe unten, "else"-Zweig) - eine beendete Session wird nie wieder
+    # aktiv genommen, sondern bleibt als beendeter Eintrag stehen.
     now_ms = time.time() * 1000
     if session and session.get("planned_end_ms") is not None and now_ms >= session["planned_end_ms"]:
-        stop_pv_surplus_charging(actions, session, config, reason="Stunde abgelaufen")
-        return
+        if not _try_extend_pv_surplus_session(session, actions, config, now_ms):
+            stop_pv_surplus_charging(actions, session, config, reason="Stunde abgelaufen")
+            return
 
     car_ready = is_car_ready_to_charge(config)
     battery_soc = read_home_battery_soc(config)
@@ -4242,6 +4346,7 @@ def _run_pv_surplus_charging_tick_impl():
                         "last_regulation_grid_kw": grid_kw,
                         "power_history": [{"at_ms": int(now_ms), "kw": target_kw}]}
         _append_pv_surplus_log(new_session, target_kw)
+        _capture_pv_surplus_hour_prices(new_session, _hour_start_ms(now_ms))
         actions.append(new_session)
         _write_pv_surplus_actions(actions)
         notify_action_event(config, _pv_surplus_session_to_action(new_session, config), "gestartet")
@@ -6473,6 +6578,7 @@ def _recheck_active_pv_surplus_optimizer_action(config):
     session = {"active": True, "target_kw": target_kw, "has_battery": read_home_battery_soc(config) is not None,
                "start_ms": int(now_ms), "planned_end_ms": _next_full_hour_ms(now_ms), "log": []}
     _append_pv_surplus_log(session, target_kw, note="von Optimierer-Aktion übernommen")
+    _capture_pv_surplus_hour_prices(session, _hour_start_ms(now_ms))
     actions.append(session)
     _write_pv_surplus_actions(actions)
 
