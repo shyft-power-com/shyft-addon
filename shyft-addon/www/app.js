@@ -879,6 +879,55 @@ function applyAssistantWidget() {
     initAssistantWidget({getJson, baseUri: insideHomeAssistant, buildUiHelp: buildAssistantUiHelp});
 }
 
+// "Neue Version verfuegbar"-Hinweis ganz oben auf dem Dashboard - nur wenn ein Update bereitsteht und
+// Auto-Update AUS ist (entscheidet /addon-update-status, auch im Demo-Modus). Pro Version wegklickbar (merkt
+// sich der Browser); bei der naechsten neueren Version erscheint er wieder.
+const UPDATE_BANNER_DISMISSED_KEY = 'shyftUpdateBannerDismissedVersion';
+const UPDATE_BANNER_REFRESH_INTERVAL_MS = 3600 * 1000;
+
+async function renderUpdateBanner() {
+    const banner = document.getElementById('dashboardUpdateBanner');
+    if (!banner) return;
+    let status;
+    try {
+        status = await getJson(insideHomeAssistant + '/addon-update-status');
+    } catch (err) {
+        console.log(err);
+        banner.hidden = true;
+        return;
+    }
+    let dismissedVersion = null;
+    try { dismissedVersion = localStorage.getItem(UPDATE_BANNER_DISMISSED_KEY); } catch (err) { /* Browser-Speicher nicht verfuegbar */ }
+    if (!status.show || !status.latest || dismissedVersion === status.latest) {
+        banner.hidden = true;
+        return;
+    }
+    banner.innerHTML = '';
+    const text = document.createElement('span');
+    text.className = 'dashboardUpdateBannerText';
+    text.appendChild(document.createTextNode(`Es gibt eine neue Version von shyft-power (${status.latest}, installiert: ${status.installed || '?'}). `));
+    if (status.slug) {
+        const link = document.createElement('a');
+        link.href = `/hassio/addon/${status.slug}/info`;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = 'Jetzt aktualisieren';
+        text.appendChild(link);
+    }
+    banner.appendChild(text);
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'dashboardUpdateBannerClose';
+    close.textContent = '×';
+    close.setAttribute('aria-label', 'Hinweis schließen');
+    close.addEventListener('click', () => {
+        try { localStorage.setItem(UPDATE_BANNER_DISMISSED_KEY, status.latest); } catch (err) { /* egal */ }
+        banner.hidden = true;
+    });
+    banner.appendChild(close);
+    banner.hidden = false;
+}
+
 async function renderSystemHealth() {
     applyTriggerButtonDemoState();
     const container = document.getElementById('systemHealthCard');
@@ -8939,6 +8988,7 @@ if (document.readyState === 'complete') {
     syncTopBarHeightVar();
     applyAnalyseTabVisibility();
     applyAssistantWidget();
+    renderUpdateBanner();
 } else {
     window.addEventListener('load', () => {
         loadConfiguration().then(loadShyftActions);
@@ -8947,8 +8997,11 @@ if (document.readyState === 'complete') {
         syncTopBarHeightVar();
         applyAnalyseTabVisibility();
         applyAssistantWidget();
+        renderUpdateBanner();
     });
 }
+
+setInterval(renderUpdateBanner, UPDATE_BANNER_REFRESH_INTERVAL_MS);
 
 setInterval(refreshLiveSensorValues, LIVE_VALUE_REFRESH_INTERVAL_MS);
 

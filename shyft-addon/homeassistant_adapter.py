@@ -292,6 +292,14 @@ class HomeAssistantAdapter:
     # constant rather than reusing homeassistant_uri, though both use the same supervisor_token.
     SUPERVISOR_API_URI = "http://supervisor"
 
+    def get_from_supervisor(self, path, timeout=10):
+        "Wie post_to_supervisor, aber GET gegen die Supervisor-API (http://supervisor/...), z.B. /addons/self/info fuer Version/Update-Status dieses Add-ons."
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        response = requests.get(self.SUPERVISOR_API_URI + path, headers=headers, timeout=timeout)
+        if not response.ok:
+            raise Exception(f"GET {path} failed: {response.status_code} {response.text}")
+        return response.json()
+
     def post_to_supervisor(self, path, json_body=None):
         "Like post_to_homeassistant, but against the Supervisor API itself (http://supervisor/...) rather than HA Core's API - e.g. /addons/self/options to persist this addon's own Supervisor-managed config options (see _persist_shyft_access_key in app.py)."
         headers = {

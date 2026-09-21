@@ -1370,6 +1370,40 @@
         .dashboardProblemBanner[hidden] {
             display: none;
         }
+        /* "Neue Version verfuegbar"-Hinweis (siehe renderUpdateBanner) - nur bei ausgeschaltetem Auto-Update */
+        .dashboardUpdateBanner {
+            display: flex;
+            align-items: center;
+            gap: 0.6em;
+            margin-bottom: 1em;
+            padding: 0.7em 1em;
+            border-radius: 8px;
+            border-left: 4px solid var(--color-accent);
+            background: var(--color-bg-card);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            font-size: 0.95em;
+            color: var(--color-text);
+        }
+        .dashboardUpdateBanner[hidden] {
+            display: none;
+        }
+        .dashboardUpdateBanner a {
+            color: var(--color-text);
+            font-weight: 600;
+        }
+        .dashboardUpdateBannerText {
+            flex: 1 1 auto;
+        }
+        .dashboardUpdateBannerClose {
+            flex: 0 0 auto;
+            background: none;
+            border: none;
+            color: var(--color-text-secondary);
+            font-size: 1.3em;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0 0.2em;
+        }
         .dashboardProblemBanner:hover {
             background: var(--color-input-bg);
         }
@@ -2240,6 +2274,7 @@
 </div>
 
 <div id="tab-dashboard" class="tabPanel active">
+    <div id="dashboardUpdateBanner" class="dashboardUpdateBanner" hidden></div>
     <div id="dashboardProblemBanner" class="dashboardProblemBanner" hidden></div>
     <div id="dashboardBody"></div>
 </div>

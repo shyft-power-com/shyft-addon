@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.167
+
+* **Neu: Update-Hinweis auf dem Dashboard.** Steht eine neuere Version des Add-ons bereit und ist Auto-Update ausgeschaltet, erscheint oben auf dem Dashboard ein Hinweis mit Link zur Add-on-Seite in Home Assistant ("Jetzt aktualisieren"); er lässt sich pro Version wegklicken. Bei aktivem Auto-Update erscheint er nie (auch nicht, wenn die Abfrage nichts Eindeutiges liefert). Gilt auch im Demo-Modus. Die Angaben kommen vom Supervisor (`/addons/self/info`) und werden stündlich aktualisiert.
+
 ## 0.0.45.166
 
 * **Heizungs-Test: Fehlermeldungen bleiben stehen.** Die Fehlermeldung nach dem Klick auf "Test: +1 °C" verschwand nach wenigen Sekunden wieder (der Status wurde neu geladen und hat sie überschrieben). Sie bleibt jetzt stehen, bis die Seite verlassen/neu geladen oder ein neuer Test gestartet wird.

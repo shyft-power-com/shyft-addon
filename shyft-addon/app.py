@@ -292,6 +292,41 @@ def accountStatusEndpoint():
     return jsonify({"isDemo": is_demo_mode(), "isTestEnvironment": shyft_adapter.development_mode})
 
 
+ADDON_UPDATE_STATUS_CACHE_SECONDS = 300
+_addon_update_status_cache = {"at": 0.0, "value": {"show": False}}
+
+
+def compute_addon_update_status(info_data):
+    """Update-Hinweis fuers Dashboard aus der Supervisor-Antwort /addons/self/info (data-Teil): nur wenn ein Update
+    verfuegbar ist UND Auto-Update ausdruecklich AUS ist (auto_update is False) - bei aktivem Auto-Update, fehlendem
+    Feld oder unklarer Antwort gibt es bewusst keinen Hinweis."""
+    info_data = info_data or {}
+    show = info_data.get("update_available") is True and info_data.get("auto_update") is False
+    return {
+        "show": show,
+        "installed": info_data.get("version"),
+        "latest": info_data.get("version_latest"),
+        "slug": info_data.get("slug"),
+    }
+
+
+@app.route("/addon-update-status", methods=["GET"])
+def addonUpdateStatusEndpoint():
+    "Zeigt das Dashboard einen 'neue Version verfuegbar'-Hinweis? Siehe compute_addon_update_status; auch im Demo-Modus. Kurz gecacht (der Supervisor selbst aktualisiert seine Repository-Infos nur alle paar Stunden)."
+    now = time.time()
+    if now - _addon_update_status_cache["at"] < ADDON_UPDATE_STATUS_CACHE_SECONDS:
+        return jsonify(_addon_update_status_cache["value"])
+    try:
+        info = homeassistant_adapter.get_from_supervisor("/addons/self/info")
+        value = compute_addon_update_status((info or {}).get("data"))
+    except Exception as e:
+        print("[Shyft] Update-Status des Add-ons nicht abrufbar:", repr(e))
+        value = {"show": False}
+    _addon_update_status_cache["at"] = now
+    _addon_update_status_cache["value"] = value
+    return jsonify(value)
+
+
 @app.route("/assistant/status", methods=["GET"])
 def assistantStatusEndpoint():
     """Hilfe-Assistent (KI-Chat): ist in Home Assistant eine KI (ai_task-Entitaet, z.B. Google Gemini)
