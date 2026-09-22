@@ -8413,7 +8413,9 @@ live_entity_watcher.register("battery_state_of_charge", _on_battery_soc_live_upd
 
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(sync_sensors_periodically, 'cron', minute="55")
+# id gesetzt, damit dieser Job unten (siehe set_access_key/development_mode weiter unten im
+# __main__-Block) gezielt auf eine andere Minute umgeplant werden kann - fuer Testumgebungs-Installs.
+scheduler.add_job(sync_sensors_periodically, 'cron', minute="55", id="sync_sensors_periodically")
 scheduler.add_job(sync_pv_history_periodically, 'cron', hour="21", minute="0")
 # same tick as process_shyft_actions_periodically's on-the-hour run, but only hourly - the
 # Dashboard tab's chart data doesn't change more often than that
@@ -8482,6 +8484,13 @@ if __name__ == "__main__":
     # jeder Nutzer in der Addon-Konfiguration haette umschalten koennen.
     shyft_adapter.set_access_key(SHYFT_ACCESS_KEY)
     shyft_adapter.detailed_logging = DETAILED_LOGGING;
+
+    # Testumgebungs-Installs (development_mode, siehe DEV_ACCESS_KEY_PREFIX) stossen den stuendlichen
+    # Optimierungslauf sonst zur selben Minute (:55) an wie alle Prod-Installs - Test und Prod laufen
+    # bei Bubble aber auf derselben Server-Kapazitaet, sodass sich beide Lasten ueberlagern und der
+    # Optimierer in einen Rueckstau laeuft. Testumgebung deshalb zeitversetzt (:25) statt gleichzeitig.
+    if shyft_adapter.development_mode:
+        scheduler.reschedule_job("sync_sensors_periodically", trigger="cron", minute="25")
 
     homeassistant_adapter.detailed_logging = DETAILED_LOGGING
     print("TOKEN FOR HAOS_API", mask_secret(SUPERVISOR_TOKEN))
