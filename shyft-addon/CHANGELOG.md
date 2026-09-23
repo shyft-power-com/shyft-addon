@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.175
+
+* **Fix: „Noch nicht erfolgreich getestet“ blieb nach dem Entfernen eines Geräts stehen.** Wird das Gerät einer Kachel (z. B. „Sonstiger Verbraucher“) wieder gelöscht, bleiben seine Sensor-/Aktions-Zuordnungen in der Konfiguration erhalten und ließen den Aktionstyp weiterhin als „vollständig eingerichtet, aber nicht getestet“ erscheinen - das Problem-Banner zeigte „1 Problem“ für ein Gerät, das es gar nicht mehr gibt. Die Test-Warnung erscheint jetzt nur noch für Kacheln, denen aktuell ein Gerät zugeordnet ist (gilt für alle Aktionstypen: Verbraucher, Heizung, Warmwasser, Auto laden, Batterie).
+
 ## 0.0.45.174
 
 * **Neu: „Sonstiger Verbraucher“ kann mehrere Geräte umfassen.** Statt einer einzelnen Entität wählst du jetzt wie beim Wechselrichter mehrere Schalt-Entitäten aus (Chips + durchsuchbare Liste). Die Steuerung schaltet dann alle ausgewählten Entitäten gemeinsam an bzw. aus (ein einziger `homeassistant.turn_on`/`turn_off`-Aufruf mit der ganzen Liste). Beim Test listet „Aktueller Status“ jedes Gerät einzeln (`Zweitkühlschrank: An`, `Poolpumpe: Aus`, …); „Test: Ende“ wird angeboten, sobald alle an sind, sonst „Test: Start“. Für das Dashboard zählt der Verbraucher nur als „an“, wenn alle lesbaren Geräte an sind, und die Staleness-Anzeige richtet sich nach dem am längsten nicht aktualisierten Gerät; der Geräteverhalten-Abgleich meldet eine Abweichung auch bei nur teilweise eingeschalteten Geräten. Ein bereits gespeicherter einzelner Verbraucher wird automatisch als Auswahl übernommen. Kommt ein Gerät hinzu, muss die Steuerung neu getestet werden (Test-Fingerprint enthält jetzt die Geräteliste).

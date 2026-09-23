@@ -1857,7 +1857,13 @@ def _action_not_ready_warnings(config):
     (Nutzer-Feedback: die "Alle Systeme laufen"-Karte stimmte nicht, es waren noch Tests ausstehend)."""
     out = []
     passed = config.get("actionTestPassed", {}) or {}
+    integration_mappings = config.get("integrationMappings", {}) or {}
     for ready_key, (label, section_key) in _READY_KEY_TO_LABEL_SECTION.items():
+        # Geraet der Kachel wieder entfernt: die Sensor-/Aktions-Zuordnungen bleiben dabei stehen (und lassen
+        # den Aktionstyp "vollstaendig eingerichtet" wirken), es gibt aber nichts mehr zu testen (Nutzer-Feedback:
+        # "Verbraucher nicht getestet", obwohl der Verbraucher schon wieder geloescht war).
+        if not integration_mappings.get(section_key):
+            continue
         state = _action_type_config_state(config, ready_key)
         if not all(state["flags"].values()):
             continue  # noch nicht vollstaendig eingerichtet - dafuer gibt es die Pflichtfeld-Warnung
