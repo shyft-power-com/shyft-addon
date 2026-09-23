@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.174
+
+* **Neu: „Sonstiger Verbraucher“ kann mehrere Geräte umfassen.** Statt einer einzelnen Entität wählst du jetzt wie beim Wechselrichter mehrere Schalt-Entitäten aus (Chips + durchsuchbare Liste). Die Steuerung schaltet dann alle ausgewählten Entitäten gemeinsam an bzw. aus (ein einziger `homeassistant.turn_on`/`turn_off`-Aufruf mit der ganzen Liste). Beim Test listet „Aktueller Status“ jedes Gerät einzeln (`Zweitkühlschrank: An`, `Poolpumpe: Aus`, …); „Test: Ende“ wird angeboten, sobald alle an sind, sonst „Test: Start“. Für das Dashboard zählt der Verbraucher nur als „an“, wenn alle lesbaren Geräte an sind, und die Staleness-Anzeige richtet sich nach dem am längsten nicht aktualisierten Gerät; der Geräteverhalten-Abgleich meldet eine Abweichung auch bei nur teilweise eingeschalteten Geräten. Ein bereits gespeicherter einzelner Verbraucher wird automatisch als Auswahl übernommen. Kommt ein Gerät hinzu, muss die Steuerung neu getestet werden (Test-Fingerprint enthält jetzt die Geräteliste).
+* **„Sonstiger Verbraucher“: Texte und Felder überarbeitet.** Der Hilfetext der Entitäten-Auswahl lautet jetzt „An/Aus-Zustand des bzw. der sonstigen Verbraucher(s), die du über shyft-power schalten möchtest.“; die Strompreis-Grenze lässt sich in ganzen Cent hoch- und runterklicken (vorher 0,5-Schritte) und erklärt, dass Shyft den gewichteten Durchschnittspreis aus PV- und Netzstrom verwendet; „Leistung des Geräts“ heißt jetzt „Geräteleistung“ (Hilfetext: „Ungefähre Dauerleistung des Geräts bzw. der Geräte. Angabe wird für die Shyft-Optimierung benötigt.“).
+* **Konfigurationsseite: Toggles größer und einheitlich rechtsbündig, Eingabefelder kürzer.** Die Schalter zum Aktivieren/Simulieren der Geräteaktionen sind etwas größer und sitzen in jeder Titelzeile ganz rechts am Rand. Dafür enden Eingabefelder auf breiten Bildschirmen nach höchstens 420 px (wie die Geräteauswahl) statt am rechten Kartenrand; mobil bleibt es bei voller Breite.
+
 ## 0.0.45.173
 
 * **Fix: Link "Jetzt aktualisieren" im Update-Hinweis führte auf eine 404-Seite.** Der Link zeigte auf `/hassio/addon/<slug>/info` - die Home-Assistant-Oberfläche für die Add-on-Detailseite liegt aber unter `/hassio/addon/<slug>` (ohne `/info`).

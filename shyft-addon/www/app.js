@@ -114,9 +114,9 @@ const helpinformation = {
         label: 'Wallbox: Auto verbunden?',
         description: 'Ja / Nein, je nachdem ob der Ladestecker deiner Wallbox im Auto eingesteckt ist oder nicht.'
     },
-    'sonstiger_verbraucher_switch_entity': {
+    'sonstiger_verbraucher_switch_entities': {
         label: 'Sonstiger Verbraucher (aktuell)',
-        description: 'Die Home-Assistant-Entity (switch), über die shyft-power den sonstigen Verbraucher direkt ein-/ausschaltet - keine eigene Automation nötig.'
+        description: 'An/Aus-Zustand des bzw. der sonstigen Verbraucher(s), die du über shyft-power schalten möchtest.'
     },
 
 }
@@ -204,7 +204,7 @@ const SENSOR_ENTITY_FILTERS = {
     // kein schaltbares Element - ein binary_sensor mit on/off bleibt aber gueltig.
     'wallbox_plugged': {type: 'exclude_units', values: ['kWh', 'kW', 'W', 'A', 'V', '°C', '%', 'Wh'],
         excludeDomains: ['switch', 'input_boolean', 'button', 'input_button', 'number', 'input_number', 'select', 'input_select', 'input_text']},
-    'sonstiger_verbraucher_switch_entity': {type: 'state_on_off'},
+    'sonstiger_verbraucher_switch_entities': {type: 'state_on_off'},
 }
 
 // Namens-Hinweise je sensorMappings-Feld - wie SECTION_MATCH_KEYWORDS beim Geraete-Picker, nur eine
@@ -231,7 +231,7 @@ const SENSOR_MATCH_KEYWORDS = {
     'electronicvehicle_state_of_charge': ['soc', 'ladestand', 'akkustand', 'battery', 'charge_level'],
     'wallbox_current_charging_power': ['ladeleist', 'charging_power', 'charge_power', 'wallbox'],
     'wallbox_plugged': ['status', 'verbunden', 'connected', 'plugged', 'stecker', 'plug'],
-    'sonstiger_verbraucher_switch_entity': ['switch', 'schalter', 'steckdose', 'plug', 'relay'],
+    'sonstiger_verbraucher_switch_entities': ['switch', 'schalter', 'steckdose', 'plug', 'relay'],
 }
 
 // Synthetischer integrationMappings-Eintrag (["demo"]) statt einer echten HA-Integration - siehe
@@ -296,7 +296,7 @@ const INTEGRATION_SECTIONS = [
     {
         key: 'sonstiger_verbraucher',
         label: 'Sonstiger Verbraucher',
-        sensors: ['sonstiger_verbraucher_switch_entity'],
+        sensors: ['sonstiger_verbraucher_switch_entities'],
         actions: ['consumer_on', 'consumer_off'],
         description: 'Du kannst ein beliebiges Gerät, das du an- bzw. ausschalten möchtest, in die Shyft-Optimierungen integrieren. Du kannst einstellen, unterhalb welcher Preisschwelle das Gerät angeschaltet werden soll: Shyft berücksichtigt hierbei nicht nur den Preis deines Netzstroms, sondern bei selbst erzeugtem Strom auch deine PV-Einspeisevergütung und Ladeverluste deiner Batterie. Für die Shyft-Optimierungen musst du deshalb die ungefähre Dauerleistung des Geräts angeben.'
     },
@@ -412,7 +412,7 @@ const AUTO_MANAGED_CONTROLS = [
         tooltip: 'Diese Automation kannst du in Verbindung mit einem SPiNE EnergyLink One Gateway nutzen, um nach §9 EEG die PV-Einspeiseleistung zu begrenzen.'},
     {key: 'consumption_limit_14a', type: 'number', actionKeys: ['consumption_limit_14a'], titleLabel: 'Verbrauch begrenzen §14a', unit: '', step: 1, automationOnly: true,
         tooltip: 'Diese Automation kannst du in Verbindung mit einem SPiNE EnergyLink One Gateway nutzen, um nach §14a EnWG den Stromnetzbezug zu begrenzen.'},
-    {key: 'consumer_on_off', type: 'switch', sensorField: 'sonstiger_verbraucher_switch_entity', actionKeys: ['consumer_on', 'consumer_off'], titleLabel: 'Sonstiger Verbraucher (aktuell)', hasAutomationVariant: true},
+    {key: 'consumer_on_off', type: 'switch', sensorField: 'sonstiger_verbraucher_switch_entities', actionKeys: ['consumer_on', 'consumer_off'], titleLabel: 'Sonstiger Verbraucher (aktuell)', hasAutomationVariant: true},
 ];
 const AUTO_MANAGED_ACTION_KEYS = new Set(AUTO_MANAGED_CONTROLS.flatMap(c => c.actionKeys));
 
@@ -570,7 +570,9 @@ async function saveConfigurationNow() {
 
         for (const key of section.sensors) {
             const element = document.getElementById(key + VALUE_POSTFIX);
-            if (element) {
+            // Nur echte Eingabefelder: Mehrfachauswahlen (buildMultiSensorField) tragen dieselbe Id an ihrem
+            // Container-<div>, halten ihre Liste aber direkt in configData - nicht aus dem DOM ueberschreiben.
+            if (element && typeof element.value === 'string') {
                 sensorValues[key] = extractEntityId(element.value);
             }
         }
@@ -1598,6 +1600,13 @@ document.addEventListener('mousedown', (event) => {
     }
 });
 
+// Ist eine sensorMappings-Zuordnung leer? Einzelfelder halten einen String, Mehrfachfelder (siehe
+// buildMultiSensorField, z.B. "Sonstiger Verbraucher") eine Liste - und eine leere Liste ist in JS truthy,
+// ein simples !mapping wuerde sie faelschlich als "gesetzt" werten.
+function isEntityMappingEmpty(value) {
+    return Array.isArray(value) ? value.length === 0 : !value;
+}
+
 // Whether a device tile has everything filled in yet, checked from configData alone (no need to
 // wait for any live status fetch) - an empty sensor/action mapping, an unconfigured auto-managed
 // control, or an incomplete "Auto laden" recipe all count as incomplete. A section with no
@@ -1616,7 +1625,7 @@ function isSectionComplete(section, currentIds) {
         // Geraet als unvollstaendig gilt - sonst bliebe die Kachel (z.B. Waermepumpe ohne Vorlauftemperatur)
         // aufgeklappt/mit "!" markiert, obwohl kein einziges Pflichtfeld rot markiert ist.
         if (REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS.has(key)) continue;
-        if (!sensorMappings[key]) return false;
+        if (isEntityMappingEmpty(sensorMappings[key])) return false;
     }
 
     for (const control of AUTO_MANAGED_CONTROLS) {
@@ -1636,7 +1645,7 @@ function isSectionComplete(section, currentIds) {
             } else if (!actorMappings['consumer_on'] || !actorMappings['consumer_off']) {
                 return false;
             }
-        } else if (!sensorMappings[control.sensorField]) {
+        } else if (isEntityMappingEmpty(sensorMappings[control.sensorField])) {
             return false;
         }
     }
@@ -1715,7 +1724,7 @@ function computeMissingRequiredFieldsWarnings() {
 
         for (const key of section.sensors) {
             if (REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS.has(key)) continue;
-            if (!sensorMappings[key]) missing.push({label: (helpinformation[key] || {}).label || key, fieldId: key + VALUE_POSTFIX});
+            if (isEntityMappingEmpty(sensorMappings[key])) missing.push({label: (helpinformation[key] || {}).label || key, fieldId: key + VALUE_POSTFIX});
         }
 
         for (const control of AUTO_MANAGED_CONTROLS) {
@@ -1731,7 +1740,7 @@ function computeMissingRequiredFieldsWarnings() {
                         fieldId: !actorMappings['consumer_on'] ? 'consumer_on_ha_automation_entity' : 'consumer_off_ha_automation_entity',
                     });
                 }
-            } else if (!sensorMappings[control.sensorField]) {
+            } else if (isEntityMappingEmpty(sensorMappings[control.sensorField])) {
                 missing.push({label: control.titleLabel, fieldId: control.sensorField + VALUE_POSTFIX});
             }
         }
@@ -2873,7 +2882,10 @@ function renderSectionBody(bodyDiv, section, entryIds) {
             ? section.sensors.filter(k => k !== 'wallbox_plugged')
             : section.key === 'waermepumpe'
                 ? section.sensors.filter(k => k !== 'heatpump_dhw_tank_temp')
-                : section.sensors;
+                : section.key === 'sonstiger_verbraucher'
+                    // Mehrfachauswahl (Liste) statt der Einzelzeile - siehe buildMultiSensorField unten.
+                    ? section.sensors.filter(k => k !== 'sonstiger_verbraucher_switch_entities')
+                    : section.sensors;
         bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, helpinformation, VALUE_POSTFIX, key => sensorDatalistIds[key], true));
 
         if (section.key === 'wallbox') {
@@ -2902,6 +2914,7 @@ function renderSectionBody(bodyDiv, section, entryIds) {
             bodyDiv.appendChild(buildEvSocMaxPvSurplusField());
         }
         if (section.key === 'sonstiger_verbraucher') {
+            bodyDiv.appendChild(buildMultiSensorField('sonstiger_verbraucher_switch_entities'));
             bodyDiv.appendChild(buildOdPriceThresholdField());
             bodyDiv.appendChild(buildOdPowerField());
         }
@@ -3438,19 +3451,19 @@ function buildEvSocMaxPvSurplusField() {
 function buildOdPriceThresholdField() {
     return buildConfigNumberField({
         label: 'Strompreis-Grenze (Ein-/Ausschalten)',
-        tooltip: 'Schalte das Gerät unterhalb dieses Strompreises ein.',
+        tooltip: 'Schalte das Gerät unterhalb dieses Strompreises ein. Shyft berechnet den korrekt gewichteten Durchschnittsstrompreis aus PV- und Netzstrom.',
         id: 'od_price_threshold',
         configKey: 'odPriceThresholdCent',
         placeholder: 'z.B. 15',
-        step: '0.5',
+        step: '1',
         unit: 'Cent/kWh',
     });
 }
 
 function buildOdPowerField() {
     return buildConfigNumberField({
-        label: 'Leistung des Geräts',
-        tooltip: 'Ungefähre Dauerleistung des Geräts, während es eingeschaltet ist.',
+        label: 'Geräteleistung',
+        tooltip: 'Ungefähre Dauerleistung des Geräts bzw. der Geräte. Angabe wird für die Shyft-Optimierung benötigt.',
         id: 'od_power_kw',
         configKey: 'odPowerKw',
         placeholder: 'z.B. 2',
@@ -4182,6 +4195,21 @@ function buildAutoManagedNumberControl(control) {
     return wrapper;
 }
 
+// Anzeigename einer Entitaet fuer kompakte Statuslisten: friendly_name aus HA, sonst die entity_id.
+function entityFriendlyName(entityId) {
+    const option = allSensorIdOptions.find(e => e.entity_id === entityId);
+    return (option && option.friendly_name) || entityId;
+}
+
+// "Aktueller Status" der Schalt-Entitaeten einer Steuerung: bei einem Geraet wie bisher "Aktueller Status: An",
+// bei mehreren je Geraet eine Zeile "Name: An/Aus". Erwartet die Eintraege {entity_id, value, error} aus
+// /actions/<key>/status.
+function describeSwitchStatuses(entities) {
+    const label = e => e.error ? 'nicht lesbar' : (e.value === 'on' ? 'An' : 'Aus');
+    if (entities.length === 1) return 'Aktueller Status: ' + label(entities[0]);
+    return 'Aktueller Status:\n' + entities.map(e => entityFriendlyName(e.entity_id) + ': ' + label(e)).join('\n');
+}
+
 function buildAutoManagedSwitchControl(control) {
     const wrapper = document.createElement('div');
     wrapper.className = 'autoActionControl';
@@ -4235,6 +4263,7 @@ function buildAutoManagedSwitchControl(control) {
 
     const valueDisplay = document.createElement('span');
     valueDisplay.className = 'autoActionValue';
+    valueDisplay.style.whiteSpace = 'pre-line';  // eine Zeile je Geraet bei mehreren Verbrauchern
     valueDisplay.textContent = 'Aktueller Status: –';
 
     // Single button instead of a toggle - it alternates Start/Ende on each click rather than
@@ -4267,19 +4296,24 @@ function buildAutoManagedSwitchControl(control) {
                 status.className = 'autoActionStatus status-ok';
                 return;
             }
-            if (result.error) {
-                status.textContent = 'Eingerichtet, aktueller Status aber nicht lesbar: ' + result.error;
+            // Mehrere Verbraucher moeglich (siehe buildMultiSensorField): der Server liefert je Entitaet einen Eintrag.
+            const entities = result.entities || [];
+            const readable = entities.filter(e => !e.error);
+            if (entities.length > 0 && readable.length === 0) {
+                status.textContent = 'Eingerichtet, aktueller Status aber nicht lesbar: ' + entities[0].error;
                 status.className = 'autoActionStatus status-error';
                 valueDisplay.textContent = 'Aktueller Status: –';
                 valueDisplay.className = 'autoActionValue';
             } else {
-                status.textContent = '';
-                status.className = 'autoActionStatus status-ok';
-                const isOn = result.value === 'on';
-                valueDisplay.textContent = 'Aktueller Status: ' + (isOn ? 'An' : 'Aus');
+                status.textContent = entities.length > readable.length
+                    ? 'Der Status von ' + (entities.length - readable.length) + ' Gerät(en) ist nicht lesbar.' : '';
+                status.className = entities.length > readable.length ? 'autoActionStatus status-error' : 'autoActionStatus status-ok';
+                valueDisplay.textContent = describeSwitchStatuses(entities);
                 valueDisplay.className = 'autoActionValue';
-                // next click should do the opposite of whatever the entity actually reports
-                nextPhase = isOn ? 'stop' : 'start';
+                // next click should do the opposite of whatever the entities actually report: all on -> Ende,
+                // otherwise (all off or mixed) -> Start, which switches every device on.
+                const allOn = readable.length > 0 && readable.every(e => e.value === 'on');
+                nextPhase = allOn ? 'stop' : 'start';
                 testButton.textContent = nextPhase === 'start' ? 'Test: Start' : 'Test: Ende';
             }
         } catch (err) {
@@ -5530,6 +5564,10 @@ function wrapEntityInputWithClear(dropdownEl, input) {
 function buildMultiSensorField(sensorKey) {
     const container = document.createElement('div');
     container.className = 'configField multiSensorField';
+    // Gleiche Id-Konvention wie die Einzelfelder (siehe buildMappingRow) - damit der rote Rahmen bei fehlendem
+    // Pflichtfeld und das gezielte Nachscrollen (applyConfigFieldErrorHighlights/scrollToIntegrationSection)
+    // auch hier greifen.
+    container.id = sensorKey + VALUE_POSTFIX;
 
     const labelRow = document.createElement('div');
     labelRow.className = 'multiSensorFieldLabel';
@@ -5576,7 +5614,9 @@ function buildMultiSensorField(sensorKey) {
     wrapper.appendChild(panel);
 
     const existing = (configData['sensorMappings'] || {})[sensorKey];
-    let selectedIds = Array.isArray(existing) ? existing.filter(Boolean) : [];
+    // Altbestand: vor der Umstellung auf Mehrfachauswahl (z.B. "Sonstiger Verbraucher") hielt der Schluessel eine
+    // einzelne Entitaet als String - die wird hier als einzelne Auswahl uebernommen, nicht verworfen.
+    let selectedIds = Array.isArray(existing) ? existing.filter(Boolean) : (typeof existing === 'string' && existing ? [existing] : []);
 
     const filter = SENSOR_ENTITY_FILTERS[sensorKey];
     const candidates = allSensorIdOptions
@@ -5760,7 +5800,7 @@ async function refreshLiveSensorValues() {
         for (const key of section.sensors) {
             const input = document.getElementById(key + VALUE_POSTFIX);
             // skip fields the user is currently typing in so we don't interrupt them
-            if (!input || document.activeElement === input) {
+            if (!input || typeof input.value !== 'string' || document.activeElement === input) {
                 continue;
             }
             input.value = formatEntityDisplay(extractEntityId(input.value));

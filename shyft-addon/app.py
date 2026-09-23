@@ -956,7 +956,16 @@ def readConfig():
     # config.json (siehe _read_current_config-Docstring) auch hier automatisch repariert statt roh
     # samt Muell-Restbytes an den Client durchgereicht wird (der haette daran ebenfalls seinen
     # eigenen JSON.parse verschluckt).
-    return jsonify(_read_current_config())
+    config = _read_current_config()
+    # "Sonstiger Verbraucher" ist seit 0.0.45.173 eine Mehrfachauswahl (Liste): einen frueher gespeicherten
+    # Einzelwert dem Frontend als Ein-Element-Liste anbieten, damit die Auswahl dort erhalten bleibt. Die Datei
+    # selbst wird erst beim naechsten Speichern umgestellt.
+    sensor_mappings = config.get("sensorMappings")
+    if isinstance(sensor_mappings, dict) and SONSTIGER_VERBRAUCHER_ENTITIES_KEY not in sensor_mappings:
+        legacy = sensor_mappings.get(SONSTIGER_VERBRAUCHER_LEGACY_ENTITY_KEY)
+        if legacy:
+            sensor_mappings[SONSTIGER_VERBRAUCHER_ENTITIES_KEY] = [legacy]
+    return jsonify(config)
 
 
 @app.route("/sensorids", methods=["GET"])
@@ -2946,6 +2955,66 @@ def _script_failure_reason(script_id, error):
     return text
 
 
+# "Sonstiger Verbraucher" kann mehrere Schalt-Entities umfassen (Mehrfachauswahl, siehe buildMultiSensorField in
+# app.js): die Steuerung schaltet dann ALLE zusammen. Der Schluessel haelt eine Liste; bis 0.0.45.172 hielt
+# sonstiger_verbraucher_switch_entity genau eine Entity als String - solche Configs bleiben lesbar.
+SONSTIGER_VERBRAUCHER_ENTITIES_KEY = "sonstiger_verbraucher_switch_entities"
+SONSTIGER_VERBRAUCHER_LEGACY_ENTITY_KEY = "sonstiger_verbraucher_switch_entity"
+
+
+def _sonstiger_verbraucher_entity_ids(config):
+    "Alle zugeordneten Schalt-Entities des 'Sonstiger Verbraucher' als Liste (leer, wenn keine zugeordnet ist) - liest die neue Listen-Zuordnung, ersatzweise den alten Einzelwert."
+    sensor_mappings = config.get("sensorMappings") or {}
+    value = sensor_mappings.get(SONSTIGER_VERBRAUCHER_ENTITIES_KEY)
+    if value is None:
+        value = sensor_mappings.get(SONSTIGER_VERBRAUCHER_LEGACY_ENTITY_KEY)
+    if isinstance(value, list):
+        return [v for v in value if v]
+    return [value] if value else []
+
+
+def _control_entity_ids(control, config):
+    "Zugeordnete Entity-IDs einer AUTO_MANAGED_CONTROLS-Steuerung als Liste: 'switch'-Steuerungen (aktuell nur 'consumer_on_off') koennen mehrere haben, 'number'-Steuerungen hoechstens eine."
+    if control["type"] == "switch":
+        return _sonstiger_verbraucher_entity_ids(config)
+    entity_id = (config.get("sensorMappings") or {}).get(control["sensor_field"], "")
+    return [entity_id] if entity_id else []
+
+
+def _load_entity_state_or_none(entity_id):
+    "Live-Zustand einer Entity direkt per ID (statt ueber einen sensorMappings-Schluessel wie _read_mapped_entity_state) - None bei unavailable/unknown/nicht lesbar."
+    if not entity_id:
+        return None
+    try:
+        state = homeassistant_adapter.load_entity_state(entity_id)
+    except Exception:
+        return None
+    if state.state in (None, "unknown", "unavailable", ""):
+        return None
+    return state
+
+
+def _sonstiger_verbraucher_status(config):
+    """Live-Status aller 'Sonstiger Verbraucher'-Entities in einem Rutsch: 'on' ist True, wenn ALLE lesbaren
+    Entities an sind (ein Teil-An zaehlt als 'nicht an' - die Steuerung schaltet immer alle zusammen, ein
+    Teil-An ist also eine Abweichung, siehe check_device_status_deviation), None wenn keine lesbar ist.
+    'updatedAt' ist der AELTESTE last_updated aller Entities (Staleness-Anzeige im Energiefluss-Widget: der
+    am laengsten nicht aktualisierte Wert bestimmt, ob der Block als veraltet gilt)."""
+    on_values = []
+    oldest_updated = None
+    for entity_id in _sonstiger_verbraucher_entity_ids(config):
+        state = _load_entity_state_or_none(entity_id)
+        if state is None:
+            continue
+        on_values.append(state.state.lower() == "on")
+        if state.last_updated is not None and (oldest_updated is None or state.last_updated < oldest_updated):
+            oldest_updated = state.last_updated
+    return {
+        "on": all(on_values) if on_values else None,
+        "updatedAt": oldest_updated.isoformat() if oldest_updated else None,
+    }
+
+
 def execute_auto_managed_action(control_key, phase, target_value):
     """Executes the concrete Start/Ende-Verhalten for an AUTO_MANAGED_CONTROLS Aktionstyp - either
     "direct" (the addon writes the mapped entity itself, the original/default behavior) or
@@ -2970,11 +3039,12 @@ def execute_auto_managed_action(control_key, phase, target_value):
             trigger_ha_automation(actor_mappings.get(actor_key), phase, target_value)
         return None
 
-    entity_id = config.get("sensorMappings", {}).get(control["sensor_field"], "")
-    if not entity_id:
+    entity_ids = _control_entity_ids(control, config)
+    if not entity_ids:
         raise Exception(f"Keine Entity für '{control_key}' zugeordnet")
 
     if control["type"] == "number":
+        entity_id = entity_ids[0]
         if phase != "start":
             return None  # no Ende-Verhalten defined yet for direct-value controls - a later step may add one
         if target_value is None:
@@ -2987,7 +3057,8 @@ def execute_auto_managed_action(control_key, phase, target_value):
         return clamp_note
     elif control["type"] == "switch":
         service = "turn_on" if phase == "start" else "turn_off"
-        homeassistant_adapter.call_service("homeassistant", service, {"entity_id": entity_id})
+        # homeassistant.turn_on/turn_off nehmen eine Liste von Entities - alle zugeordneten Verbraucher zusammen.
+        homeassistant_adapter.call_service("homeassistant", service, {"entity_id": entity_ids})
     return None
 
 
@@ -3889,10 +3960,11 @@ def compute_energy_flow_data():
     }
 
     sonstiger_verbraucher_configured = configured("sonstiger_verbraucher")
+    sonstiger_verbraucher_status = _sonstiger_verbraucher_status(config) if sonstiger_verbraucher_configured else {"on": None, "updatedAt": None}
     result["sonstigerVerbraucher"] = {
         "configured": sonstiger_verbraucher_configured,
-        "on": _read_mapped_bool_on(config, "sonstiger_verbraucher_switch_entity") if sonstiger_verbraucher_configured else None,
-        "updatedAt": _read_mapped_last_updated_iso(config, "sonstiger_verbraucher_switch_entity") if sonstiger_verbraucher_configured else None,
+        "on": sonstiger_verbraucher_status["on"],
+        "updatedAt": sonstiger_verbraucher_status["updatedAt"],
     }
 
     return result
@@ -4593,8 +4665,11 @@ def _action_type_config_state(config, ready_key):
         return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
     if ready_key == "consumer_on_off":
         variant = resolve_control_variant("consumer_on_off", config)
-        entity_ok = (bool(am.get("consumer_on")) and bool(am.get("consumer_off"))) if variant == "ha_automation" else bool(sm.get("sonstiger_verbraucher_switch_entity"))
-        return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
+        consumer_entity_ids = _sonstiger_verbraucher_entity_ids(config)
+        entity_ok = (bool(am.get("consumer_on")) and bool(am.get("consumer_off"))) if variant == "ha_automation" else bool(consumer_entity_ids)
+        # Die Entity-Liste geht in den Fingerprint: kommt ein Verbraucher hinzu, muss neu getestet werden.
+        return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok,
+                                                       "entities": sorted(consumer_entity_ids) if variant != "ha_automation" else []}}
     if ready_key in BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS:
         variant = cv.get(ready_key, "ha_automation")
         entity_ok = bool(am.get(ready_key)) if variant == "ha_automation" else bool(sm.get(BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[ready_key]))
@@ -5077,11 +5152,12 @@ def statusAutoManagedControl(control_key):
             configured = bool(actor_mappings.get("consumer_on")) and bool(actor_mappings.get("consumer_off"))
         return jsonify({"configured": configured})
 
-    entity_id = config.get("sensorMappings", {}).get(control["sensor_field"], "")
-    if not entity_id:
+    entity_ids = _control_entity_ids(control, config)
+    if not entity_ids:
         return jsonify({"configured": False})
 
     if control["type"] == "number":
+        entity_id = entity_ids[0]
         script_entity_id = f"script.{control['script_id']}"
         script_state = homeassistant_adapter.get_from_homeassistant(f"/api/states/{script_entity_id}")
         if not isinstance(script_state, dict) or "state" not in script_state:
@@ -5096,14 +5172,17 @@ def statusAutoManagedControl(control_key):
             return jsonify({"configured": True, "entity_id": entity_id, "value": value})
         except Exception as e:
             return jsonify({"configured": True, "entity_id": entity_id, "value": None, "error": str(e)})
-    else:  # switch
-        try:
-            state = homeassistant_adapter.get_from_homeassistant(f"/api/states/{entity_id}")
-            if not isinstance(state, dict) or "state" not in state:
-                raise Exception(f"{entity_id} liefert keinen Status")
-            return jsonify({"configured": True, "entity_id": entity_id, "value": state["state"]})
-        except Exception as e:
-            return jsonify({"configured": True, "entity_id": entity_id, "value": None, "error": str(e)})
+    else:  # switch - je zugeordneter Entity ein Eintrag (mehrere Verbraucher moeglich)
+        entities = []
+        for entity_id in entity_ids:
+            try:
+                state = homeassistant_adapter.get_from_homeassistant(f"/api/states/{entity_id}")
+                if not isinstance(state, dict) or "state" not in state:
+                    raise Exception(f"{entity_id} liefert keinen Status")
+                entities.append({"entity_id": entity_id, "value": state["state"], "error": None})
+            except Exception as e:
+                entities.append({"entity_id": entity_id, "value": None, "error": str(e)})
+        return jsonify({"configured": True, "entities": entities})
 
 
 # "Heizung Soll-Temperatur" schreibt (anders als Batterie/Warmwasser) ueber ein HA-Skript statt
@@ -5276,11 +5355,12 @@ def testAutoManagedControl(control_key):
                                     service_called="automation.trigger", data_sent={"phase": phase})
                 return jsonify({"success": False, "message": str(e)}), 500
 
-    entity_id = config.get("sensorMappings", {}).get(control["sensor_field"], "")
-    if not entity_id:
+    entity_ids = _control_entity_ids(control, config)
+    if not entity_ids:
         return jsonify({"success": False, "message": "Keine Entity zugeordnet"}), 400
 
     if control["type"] == "number":
+        entity_id = entity_ids[0]
         delta = body.get("delta", 0)
         try:
             current_value = homeassistant_adapter.read_entity_numeric_value(entity_id)
@@ -5299,12 +5379,13 @@ def testAutoManagedControl(control_key):
         phase = body.get("phase", "start")
         turn_on = phase == "start"
         try:
-            homeassistant_adapter.call_service("homeassistant", "turn_on" if turn_on else "turn_off", {"entity_id": entity_id})
+            # alle zugeordneten Verbraucher gemeinsam schalten (der Status je Geraet kommt danach aus /status)
+            homeassistant_adapter.call_service("homeassistant", "turn_on" if turn_on else "turn_off", {"entity_id": entity_ids})
             return jsonify({"success": True, "value": "on" if turn_on else "off", "confirmed": False})
         except Exception as e:
             log_error_to_shyft(f"{control_key}_test", classify_error(str(e)), str(e),
                                 service_called="homeassistant.turn_on" if turn_on else "homeassistant.turn_off",
-                                data_sent={"entity_id": entity_id})
+                                data_sent={"entity_id": entity_ids})
             return jsonify({"success": False, "message": str(e)}), 500
 
 
@@ -5714,7 +5795,7 @@ AUTO_MANAGED_CONTROLS = {
     },
     "consumer_on_off": {
         "type": "switch",
-        "sensor_field": "sonstiger_verbraucher_switch_entity",
+        "sensor_field": SONSTIGER_VERBRAUCHER_ENTITIES_KEY,
         "actor_keys": ["consumer_on", "consumer_off"],
     },
 }
@@ -5983,8 +6064,9 @@ def check_device_status_deviation(config):
                 expected_switch_state = "on"
         elif baseline_ok((OD_ACTION_NAME,)):
             expected_switch_state = "off"
-        live_switch_state = _read_mapped_raw_state(config, "sonstiger_verbraucher_switch_entity")
-        live_switch_state = live_switch_state.lower() if live_switch_state is not None else None
+        # Alle Verbraucher zusammen: "on" nur, wenn ALLE an sind (siehe _sonstiger_verbraucher_status).
+        live_on = _sonstiger_verbraucher_status(config)["on"]
+        live_switch_state = None if live_on is None else ("on" if live_on else "off")
         _check_raw_state_deviation(
             "sonstiger_verbraucher", expected_switch_state, live_switch_state,
             f"'Sonstiger Verbraucher' weicht ab: Shyft erwartet '{expected_switch_state}', gemessen wird '{live_switch_state}'.",

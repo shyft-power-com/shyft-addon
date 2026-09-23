@@ -106,6 +106,12 @@
             border-color: var(--color-error) !important;
             border-width: 2px !important;
         }
+        /* Mehrfachauswahl (buildMultiSensorField): die Markierung landet auf dem Container, der Rahmen sitzt
+           aber am Auswahlfeld darin. */
+        .multiSensorField.configFieldError .integrationPickerButton {
+            border-color: var(--color-error);
+            border-width: 2px;
+        }
 
         /* Batterie-Steuerung: eine Entitaet, die schon an anderer Stelle in "Steuerung" zugeordnet
            wurde, wird hier nur noch schreibgeschuetzt angezeigt statt erneut editierbar zu sein
@@ -138,6 +144,25 @@
         .configNumberUnit {
             color: var(--color-text-secondary);
             white-space: nowrap;
+        }
+
+        /* Auf breiten Bildschirmen reichen Eingabefelder nicht mehr bis an den rechten Kartenrand (wirkte
+           unproportional lang und liess die Toggles am Rand untergehen) - gleiche Maximalbreite wie die
+           Geraeteauswahl (.integrationPicker). Mobil bleibt es bei voller Breite (siehe Stapel-Layout unten). */
+        @media (min-width: 601px) {
+            #config .sensorInput,
+            #deviceSections .sensorInput,
+            #notificationSection .sensorInput,
+            #config .configNumberFieldWrap,
+            #deviceSections .configNumberFieldWrap {
+                max-width: 420px;
+            }
+            #config .configNumberFieldWrap .sensorInput,
+            #deviceSections .configNumberFieldWrap .sensorInput,
+            #config .htWindowForm .sensorInput,
+            #deviceSections .htWindowForm .sensorInput {
+                max-width: none;
+            }
         }
 
         /* Die nativen Auf/Ab-Pfeile eines <input type="number"> sind winzig und schwer zu treffen
@@ -1936,9 +1961,10 @@
         .toggleSwitch {
             position: relative;
             display: inline-block;
-            width: 2.6em;
-            height: 1.5em;
+            width: 3.2em;
+            height: 1.85em;
             vertical-align: middle;
+            flex-shrink: 0;
         }
         .toggleSwitch input {
             opacity: 0;
@@ -1959,10 +1985,10 @@
         .toggleSlider::before {
             position: absolute;
             content: "";
-            height: 1.1em;
-            width: 1.1em;
-            left: 0.2em;
-            bottom: 0.2em;
+            height: 1.4em;
+            width: 1.4em;
+            left: 0.225em;
+            bottom: 0.225em;
             background-color: var(--color-bg);
             border-radius: 50%;
             transition: transform 0.15s ease;
@@ -1971,7 +1997,13 @@
             background-color: var(--color-accent);
         }
         .toggleSwitch input:checked + .toggleSlider::before {
-            transform: translateX(1.1em);
+            transform: translateX(1.35em);
+        }
+        /* Toggles der Aktionstypen sitzen einheitlich ganz rechts in ihrer Titelzeile (statt direkt hinter
+           dem Titel) - Tabellenzeilen (.toggleCell) und die Batterie-Steuerung (margin-left:auto, siehe
+           app.js) tun das ohnehin. */
+        .autoActionTitle .toggleSwitch {
+            margin-left: auto;
         }
         .toggleSwitch input:focus-visible + .toggleSlider {
             box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.35);
