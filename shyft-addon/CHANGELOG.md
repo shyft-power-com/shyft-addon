@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.173
+
+* **Fix: Link "Jetzt aktualisieren" im Update-Hinweis führte auf eine 404-Seite.** Der Link zeigte auf `/hassio/addon/<slug>/info` - die Home-Assistant-Oberfläche für die Add-on-Detailseite liegt aber unter `/hassio/addon/<slug>` (ohne `/info`).
+
 ## 0.0.45.172
 
 * **Fix: Log-Eintrag bei geändertem Zielwert nannte bei „Heizung Soll-Temperatur“ und „Warmwasser“ fälschlich „kW“ statt „°C“.** Die Zeile „HH:MM Uhr: neuer Zielwert X kW“ im Aktions-Log verwendete für alle Aktionstypen pauschal „kW“ - bei den beiden Temperatur-Aktionen stand dort z. B. „neuer Zielwert 25.0 kW“ statt „25.0 °C“. Jetzt richtet sich die Einheit nach dem Aktionstyp.

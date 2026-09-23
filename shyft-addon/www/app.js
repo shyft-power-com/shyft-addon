@@ -908,7 +908,7 @@ async function renderUpdateBanner() {
     text.appendChild(document.createTextNode(`Es gibt eine neue Version von shyft-power (${status.latest}, installiert: ${status.installed || '?'}). `));
     if (status.slug) {
         const link = document.createElement('a');
-        link.href = `/hassio/addon/${status.slug}/info`;
+        link.href = `/hassio/addon/${status.slug}`;
         link.target = '_blank';
         link.rel = 'noopener';
         link.textContent = 'Jetzt aktualisieren';
