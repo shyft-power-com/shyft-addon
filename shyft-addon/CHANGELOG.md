@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.172
+
+* **Fix: Log-Eintrag bei geändertem Zielwert nannte bei „Heizung Soll-Temperatur“ und „Warmwasser“ fälschlich „kW“ statt „°C“.** Die Zeile „HH:MM Uhr: neuer Zielwert X kW“ im Aktions-Log verwendete für alle Aktionstypen pauschal „kW“ - bei den beiden Temperatur-Aktionen stand dort z. B. „neuer Zielwert 25.0 kW“ statt „25.0 °C“. Jetzt richtet sich die Einheit nach dem Aktionstyp.
+
 ## 0.0.45.171
 
 * **Diagnose „Plan teurer als Base Case“ läuft jetzt auch beim Add-on-Start.** Der ausführliche Log-Eintrag `[Shyft] Optimierer-Plan teurer als Base Case …` entstand bisher nur, wenn ein *frischer* Optimierungslauf verarbeitet wurde. Ein Neustart (z. B. Update) leert das Container-Log, und kam danach kein neuer Lauf, fehlte die Diagnose zu der Karte „Ersparnis Haushaltsstrom / Batterie“ komplett. Jetzt wertet das Add-on beim Start den zuletzt gecachten Lauf noch einmal aus: immer mit einer kurzen Zeile `[Shyft] Plan-vs-Base-Diagnose (gecachter Lauf …): base48=…, opt48=…, diff(opt-base)=…` (zeigt, dass die Auswertung lief), und ist der Plan teurer als der Base Case, folgt zusätzlich die ausführliche Zeile.

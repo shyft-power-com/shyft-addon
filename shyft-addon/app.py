@@ -7255,6 +7255,15 @@ def compute_battery_charge_shift_actions(config, output_rows, input_rows, start,
     return result
 
 
+# Einheit fuer die "neuer Zielwert"-Log-Zeile in _reconcile_computed_actions - je nach Aktionstyp
+# ist "Target Value" eine Leistung (kW) oder eine Temperatur (°C, Warmwasser/Heizung), siehe die
+# jeweiligen compute_*_actions-Funktionen. Alles nicht Gelistete gilt als kW (Default).
+TARGET_VALUE_UNIT_BY_ACTION_NAME = {
+    HEIZUNG_ACTION_NAME: "°C",
+    DHW_ACTION_NAME: "°C",
+}
+
+
 def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour, start, hour_window=EV_CHARGE_HOUR_WINDOW, replace_running=False):
     """Ersetzt alle vorhandenen Aktionen vom Typ action_name im lokalen Store, deren Stundenfenster
     zum aktuellen Lauf gehoert (Stunden 0..hour_window-1 ab start), durch die frisch berechneten
@@ -7306,7 +7315,8 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
             new_target = computed_by_hour[0]["Target Value"]
             if hour0_existing.get("Target Value") != new_target:
                 timestamp = _local_now().strftime("%H:%M Uhr")
-                note = f"{timestamp}: neuer Zielwert {new_target:.1f} kW"
+                unit = TARGET_VALUE_UNIT_BY_ACTION_NAME.get(action_name, "kW")
+                note = f"{timestamp}: neuer Zielwert {new_target:.1f} {unit}"
                 hour0_existing["Log"] = (hour0_existing.get("Log") + "\n" + note) if hour0_existing.get("Log") else note
                 hour0_existing["Target Value"] = new_target
             kept.append(hour0_existing)
