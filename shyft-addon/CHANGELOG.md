@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.176
+
+* **„Auto laden“: Toggle sitzt rechts neben der großen Überschrift.** Die zusätzliche kleine Titelzeile (mit Haken und Toggle) über der gleichlautenden großen Überschrift entfällt - Haken und Toggle stehen jetzt in der großen Überschrift „Auto laden“, der Toggle ganz rechts. Bei „Heizung Soll-Temperatur“, „Warmwasserbereitung“ und den übrigen Steuerungen steht der Toggle ebenfalls rechts in der Titelzeile; die Titelzeile ist dafür ausdrücklich auf volle Breite gesetzt, damit die Ausrichtung nicht vom umgebenden Layout abhängt.
+
 ## 0.0.45.175
 
 * **Fix: „Noch nicht erfolgreich getestet“ blieb nach dem Entfernen eines Geräts stehen.** Wird das Gerät einer Kachel (z. B. „Sonstiger Verbraucher“) wieder gelöscht, bleiben seine Sensor-/Aktions-Zuordnungen in der Konfiguration erhalten und ließen den Aktionstyp weiterhin als „vollständig eingerichtet, aber nicht getestet“ erscheinen - das Problem-Banner zeigte „1 Problem“ für ein Gerät, das es gar nicht mehr gibt. Die Test-Warnung erscheint jetzt nur noch für Kacheln, denen aktuell ein Gerät zugeordnet ist (gilt für alle Aktionstypen: Verbraucher, Heizung, Warmwasser, Auto laden, Batterie).

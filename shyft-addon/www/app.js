@@ -4661,6 +4661,9 @@ function buildCarChargeControl() {
     wrapper.className = 'autoActionControl';
 
     const {title, checkmark} = buildAutoActionTitle({titleLabel: 'Auto laden'}, 'car_charge_start');
+    // Die Titelzeile IST die grosse Ueberschrift "Auto laden" (Haken + Toggle rechts daneben) - frueher folgte
+    // nach einer eigenen kleinen Titelzeile mit dem Toggle noch eine zweite, gleichlautende Ueberschrift.
+    title.classList.add('sectionSubHeading');
     wrapper.appendChild(title);
 
     const recipe = configData['carChargeRecipe'] || {};
@@ -4675,11 +4678,6 @@ function buildCarChargeControl() {
     applyTestGate('car_charge_start', checkmark, carChargeHint, carChargeConfigured);
 
     const candidateServices = allServiceOptions.filter(s => getIntegrationServiceDomains('wallbox').has(s.service.split('.')[0]));
-
-    const variantsHeading = document.createElement('div');
-    variantsHeading.className = 'sectionSubHeading';
-    variantsHeading.textContent = 'Auto laden';
-    wrapper.appendChild(variantsHeading);
 
     const recipeTable = document.createElement('table');
     const recipeTbody = document.createElement('tbody');
