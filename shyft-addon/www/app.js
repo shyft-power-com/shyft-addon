@@ -4891,13 +4891,14 @@ function buildCarChargeControl() {
         let startedCharging = false;
         let ok = true;
         let failMessage = '';
+        let unverifiedSteps = 0;
         try {
             for (const targetKw of [2.3, 6.9]) {
                 const kwLabel = targetKw.toFixed(1).replace('.', ',');
                 // three sequential HA calls with a 10s pause between each (see
                 // CHARGING_STAGE_DELAY_SECONDS in app.py) add up to a noticeable wait - let the
                 // user know it's not stuck
-                status.textContent = `Teste: mit ${kwLabel} kW laden (ca. 30s...)`;
+                status.textContent = `Teste: mit ${kwLabel} kW laden (ca. 30 s bis 1,5 min - es wird geprüft, ob die Wallbox wirklich lädt...)`;
                 status.className = 'autoActionStatus';
                 const response = await fetch(insideHomeAssistant + '/actions/car_charge_start/test', {
                     method: 'POST',
@@ -4905,11 +4906,15 @@ function buildCarChargeControl() {
                     body: JSON.stringify({targetKw})
                 });
                 const result = await response.json();
+                // commandsSent: die Befehle sind rausgegangen (auch wenn die Wallbox danach nicht laedt) - "Laden
+                // beenden" muss dann trotzdem folgen.
+                if (result.commandsSent) startedCharging = true;
                 if (!result.success) {
                     ok = false;
                     failMessage = `Fehler bei ${kwLabel} kW: ` + (result.message || 'unbekannt');
                     break;
                 }
+                if (result.verified === false) unverifiedSteps++;
                 startedCharging = true;
                 refreshWallboxStatus();
                 await new Promise(resolve => setTimeout(resolve, WALLBOX_TEST_STEP_PAUSE_MS));
@@ -4929,7 +4934,8 @@ function buildCarChargeControl() {
             markActionTested('car_charge_start', ok);
             applyTestGate('car_charge_start', checkmark, carChargeHint, true);
             if (ok) {
-                status.textContent = 'Erfolgreich: 2,3 kW → 6,9 kW → Laden beendet.';
+                status.textContent = 'Erfolgreich: 2,3 kW → 6,9 kW → Laden beendet.'
+                    + (unverifiedSteps > 0 ? ' (Ladeleistung konnte nicht geprüft werden - Sensor "Wallbox: Ladestrom" nicht lesbar.)' : ' Die Wallbox hat nachweislich geladen.');
                 status.className = 'autoActionStatus status-ok';
                 wallboxStatusDisplay.className = 'autoActionValue testSuccess';
             } else {

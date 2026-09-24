@@ -4745,11 +4745,13 @@ def _record_action_test_result(ready_key, ok):
         print("[Shyft] actionTestPassed konnte nicht aktualisiert werden:", repr(e))
 
 
-def _records_action_test(ready_key=None):
+def _records_action_test(ready_key=None, record_success=True):
     """Decorator fuer die /actions/**/test-Handler: liest 'success' aus der JSON-Antwort und
     aktualisiert darueber config['actionTestPassed']. ready_key=None -> das (einzige) URL-Argument
     des Handlers ist der Schluessel (testAutoManagedControl/testBatteryDirectControl; Flask uebergibt
-    Routen-Parameter als kwargs)."""
+    Routen-Parameter als kwargs). record_success=False: nur Fehlschlaege werden festgehalten, ein Erfolg
+    aendert nichts (fuer Hilfsschritte wie "Laden beenden", die einen zuvor fehlgeschlagenen Start-Test
+    sonst faelschlich wieder als bestanden markieren wuerden)."""
     def deco(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
@@ -4760,6 +4762,8 @@ def _records_action_test(ready_key=None):
                 ok = bool((body.get_json(silent=True) or {}).get("success"))
             except Exception:
                 ok = False
+            if ok and not record_success:
+                return resp
             _record_action_test_result(key, ok)
             return resp
         return wrapper
@@ -4928,6 +4932,53 @@ def readServices():
     return jsonify(result)
 
 
+# Der Lade-Test prueft nach dem Start-Befehl, ob die Wallbox wirklich laedt: der Befehl kann von Home Assistant
+# fehlerfrei angenommen und trotzdem von Wallbox/Integration ignoriert werden (Auto nicht eingesteckt/ladebereit,
+# Freigabe ausstehend, Lastmanagement ...) - Nutzer-Meldung: Ampere geaendert, Laden nicht gestartet, Test trotzdem
+# als erfolgreich angezeigt. Grundlage ist der zugeordnete Sensor "Wallbox: Ladestrom" (wallbox_current_charging_power).
+CAR_CHARGE_TEST_VERIFY_TIMEOUT_SECONDS = 60
+CAR_CHARGE_TEST_VERIFY_INTERVAL_SECONDS = 5
+CAR_CHARGE_TEST_MIN_CHARGING_KW = 0.3
+
+
+def _verify_car_charging_started(config):
+    """Wartet bis CAR_CHARGE_TEST_VERIFY_TIMEOUT_SECONDS darauf, dass die Wallbox-Ladeleistung ueber
+    CAR_CHARGE_TEST_MIN_CHARGING_KW steigt. Rueckgabe (status, letzter kW-Wert): 'charging' (laedt), 'not_charging'
+    (Sensor lesbar, aber keine Ladeleistung) oder 'unverifiable' (kein Sensor zugeordnet bzw. nie lesbar - dann
+    bleibt es bei der bisherigen Bewertung ohne Pruefung)."""
+    if not (config.get("sensorMappings") or {}).get("wallbox_current_charging_power"):
+        return "unverifiable", None
+    deadline = time.time() + CAR_CHARGE_TEST_VERIFY_TIMEOUT_SECONDS
+    last_kw = None
+    while True:
+        kw = _read_mapped_numeric(config, "wallbox_current_charging_power")
+        if kw is not None:
+            last_kw = kw
+            if kw >= CAR_CHARGE_TEST_MIN_CHARGING_KW:
+                return "charging", kw
+        if time.time() >= deadline:
+            break
+        time.sleep(CAR_CHARGE_TEST_VERIFY_INTERVAL_SECONDS)
+    return ("not_charging" if last_kw is not None else "unverifiable"), last_kw
+
+
+def _car_charge_verification_response(config, extra=None):
+    """Antwort des Start-Tests nach abgesendeten Befehlen: Erfolg nur, wenn die Wallbox nachweislich laedt (oder nicht
+    pruefbar ist). 'commandsSent' sagt dem Frontend, dass in jedem Fall noch "Laden beenden" folgen muss."""
+    status, kw = _verify_car_charging_started(config)
+    if status == "not_charging":
+        kw_text = f"{kw:.1f}".replace(".", ",")
+        return jsonify({"success": False, "commandsSent": True, "verified": False,
+                        "message": (f"Home Assistant hat die Befehle angenommen, die Wallbox lädt aber nicht (Ladeleistung {kw_text} kW "
+                                    f"nach {CAR_CHARGE_TEST_VERIFY_TIMEOUT_SECONDS} s). Ist das Auto eingesteckt und ladebereit "
+                                    f"(keine Freigabe/RFID ausstehend)?")}), 500
+    body = {"success": True, "verified": status == "charging"}
+    if kw is not None:
+        body["chargingKw"] = kw
+    body.update(extra or {})
+    return jsonify(body)
+
+
 @app.route("/actions/car_charge_start/test", methods=["POST"])
 @_records_action_test("car_charge_start")
 def testCarChargeStart():
@@ -4944,10 +4995,10 @@ def testCarChargeStart():
     if recipe_type == "ha_automation":
         try:
             trigger_ha_automation_recipe(recipe, "start", target_kw)
-            return jsonify({"success": True})
         except Exception as e:
             log_error_to_shyft("car_charge_start_test", classify_error(str(e)), str(e))
             return jsonify({"success": False, "message": str(e)}), 500
+        return _car_charge_verification_response(config)
 
     try:
         if needs_stop_before_phase_change(target_kw):
@@ -4966,7 +5017,7 @@ def testCarChargeStart():
         time.sleep(CHARGING_STAGE_DELAY_SECONDS)
 
         call_recipe_stage(recipe.get("control", {}), branch_key="start")
-        return jsonify({"success": True, "phaseCount": phase_count, "amps": amps})
+        return _car_charge_verification_response(config, {"phaseCount": phase_count, "amps": amps})
     except RecipeCallError as e:
         log_error_to_shyft("car_charge_start_test", "service_call_failed", str(e), service_called=e.service, data_sent=e.data)
         return jsonify({"success": False, "message": str(e)}), 500
@@ -4976,7 +5027,7 @@ def testCarChargeStart():
 
 
 @app.route("/actions/car_charge_stop/test", methods=["POST"])
-@_records_action_test("car_charge_start")
+@_records_action_test("car_charge_start", record_success=False)
 def testCarChargeStop():
     config = _read_current_config()
     recipe = config.get("carChargeRecipe", {})
