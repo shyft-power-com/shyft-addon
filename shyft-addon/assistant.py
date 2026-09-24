@@ -12,6 +12,7 @@ Kontext, den die KI bekommt (sie kennt shyft-power nicht und kann keine Webseite
 6. die letzten Frage/Antwort-Paare (ai_task.generate_data ist Einzelaufruf, kein Chat-Verlauf)."""
 import json
 import re
+from datetime import datetime, timedelta
 
 AI_TASK_DOMAIN = "ai_task"
 
@@ -72,6 +73,15 @@ Haeufige Fehlerbilder:
 Add-on-Log: Du bekommst unten einen Auszug der Fehler- und Warnzeilen aus dem Add-on-Log (nicht das komplette
 Log; Zeilen tragen das Praefix "[Shyft]"). Nutze ihn, um Ursachen zu erklaeren, und zitiere nur die relevanten
 Zeilen. Steht dort nichts Passendes, sag das offen, statt eine Ursache zu raten.
+
+Support-Angebot: Geht es um ein Integrationsproblem oder einen Fehler, den du mit den vorliegenden Angaben nicht
+sicher loesen kannst (z.B. ein Sensor oder Geraet liefert dauerhaft keine Werte, eine Steuerung schlaegt auch nach
+den beschriebenen Schritten weiter fehl, das Log zeigt einen unklaren Fehler), haenge als LETZTE Zeile deiner Antwort
+genau einmal die Markierung [[SUPPORT_ANGEBOT: <ein bis zwei Saetze auf Deutsch: was ist das Problem, welches
+Geraet/welche Integration, welche Fehlermeldung>]] an. Die Oberflaeche zeigt dem Nutzer daraufhin ein Formular, mit
+dem er Log und Problembeschreibung an das Shyft-Team senden kann. Erwaehne die Markierung nicht im Text und biete das
+Senden nicht selbst an. Lass sie bei reinen Bedienfragen, bei bereits geloesten Problemen und dann weg, wenn dir
+mitgeteilt wird, dass das Angebot schon gemacht wurde.
 
 Grenzen: Du kannst nichts am System aendern, nur erklaeren und anleiten. Bei Fragen an das Shyft-Team
 verweise auf info@shyft-power.com. Verweise nicht auf GitHub oder den Quellcode.
@@ -270,8 +280,8 @@ def _clip(text, limit):
     return text if len(text) <= limit else text[:limit] + " ...(gekuerzt)"
 
 
-def build_prompt(question, history, ui_help, config, problems, states, log_lines=None):
-    "log_lines: Fehler-/Warnzeilen aus dem Add-on-Log (siehe extract_error_lines) - None = Log nicht abrufbar, [] = nichts Auffaelliges."
+def build_prompt(question, history, ui_help, config, problems, states, log_lines=None, support_offered=False):
+    "log_lines: Fehler-/Warnzeilen aus dem Add-on-Log (siehe extract_error_lines) - None = Log nicht abrufbar, [] = nichts Auffaelliges. support_offered: das Support-Angebot (siehe KNOWLEDGE) wurde in diesem Chat schon gemacht."
     states_by_id = {s.get("entity_id"): s for s in states}
     problem_lines = [f"- {p.get('message')}" for p in (problems or [])[:MAX_PROBLEMS]] or ["(keine)"]
     history_blocks = []
@@ -296,6 +306,8 @@ def build_prompt(question, history, ui_help, config, problems, states, log_lines
     ]
     if history_blocks:
         parts.append("=== Bisheriger Gespraechsverlauf ===\n" + "\n\n".join(history_blocks))
+    if support_offered:
+        parts.append("=== Hinweis ===\nDas Support-Angebot wurde in diesem Chat bereits gemacht - haenge KEINE Markierung [[SUPPORT_ANGEBOT: ...]] mehr an.")
     parts.append("=== Neue Frage des Nutzers ===\n" + _clip(question, MAX_QUESTION_CHARS))
     return "\n\n".join(parts)
 
@@ -308,3 +320,90 @@ def extract_answer(response):
     if isinstance(data, str) and data.strip():
         return data.strip()
     return None
+
+
+# --- Support-Anfrage (Log + Problembeschreibung an shyft-power) --------------------------------
+# Der Nutzer loest sie ueber das Formular unter einer KI-Antwort mit [[SUPPORT_ANGEBOT: ...]] aus (siehe KNOWLEDGE,
+# www/assistant.js). Gesendet wird das Log der letzten SUPPORT_LOG_MINUTES Minuten, bei Bedarf auf
+# MAX_SUPPORT_LOG_BYTES gekappt und ohne Zugangsdaten.
+SUPPORT_LOG_MINUTES = 5
+SUPPORT_LOG_SOURCE_LINES = 8000
+MAX_SUPPORT_LOG_BYTES = 1_000_000
+SUPPORT_LOG_MAX_LINE_CHARS = 2000
+SUPPORT_LOG_FALLBACK_LINES = 3000
+MAX_SUPPORT_SUMMARY_CHARS = 1000
+SUPPORT_ERROR_TYPE = "service_request"
+
+_LOG_TIMESTAMP_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})")
+_EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s.]{2,}$")
+
+
+def _line_timestamp(line):
+    match = _LOG_TIMESTAMP_RE.match(line)
+    if not match:
+        return None
+    try:
+        return datetime(*(int(g) for g in match.groups()))
+    except ValueError:
+        return None
+
+
+def select_recent_log(log_text, minutes=SUPPORT_LOG_MINUTES, max_bytes=MAX_SUPPORT_LOG_BYTES,
+                      max_line_chars=SUPPORT_LOG_MAX_LINE_CHARS, secrets=()):
+    """Log der letzten `minutes` Minuten (gemessen am juengsten Zeitstempel im Log - der Supervisor stempelt jede Zeile
+    im Format text/x-log, das Add-on loggt staendig, der juengste Zeitstempel entspricht also "jetzt" und die
+    Zeitzone spielt keine Rolle). Zeilen ohne Zeitstempel (Traceback-Fortsetzungen) folgen der Entscheidung der
+    Zeile davor. Ohne einen einzigen Zeitstempel: die letzten SUPPORT_LOG_FALLBACK_LINES Zeilen. Danach Zugangsdaten
+    schwaerzen (siehe redact_secrets), einzelne Zeilen auf max_line_chars kuerzen und den Text auf max_bytes (UTF-8)
+    begrenzen - dabei bleiben die NEUESTEN Zeilen erhalten, eine Kopfzeile nennt die Zahl der ausgelassenen.
+    Rueckgabe: (Text, {"lines": Anzahl enthaltener Zeilen, "dropped": wegen der Groessenbegrenzung ausgelassen})."""
+    lines = _ANSI_RE.sub("", str(log_text or "")).splitlines()
+    stamps = [_line_timestamp(l) for l in lines]
+    known = [t for t in stamps if t is not None]
+    if not known:
+        kept = lines[-SUPPORT_LOG_FALLBACK_LINES:]
+    else:
+        cutoff = known[-1] - timedelta(minutes=minutes)
+        kept, keep = [], False
+        for line, stamp in zip(lines, stamps):
+            if stamp is not None:
+                keep = stamp >= cutoff
+            if keep:
+                kept.append(line)
+    kept = redact_secrets("\n".join(kept), secrets).split("\n") if kept else []
+    kept = [l if len(l) <= max_line_chars else l[:max_line_chars] + " ...(gekürzt)" for l in kept]
+    budget = max(0, max_bytes - 300)  # Platz fuer die Kopfzeile
+    out, used = [], 0
+    for line in reversed(kept):
+        size = len(line.encode("utf-8")) + 1
+        if used + size > budget:
+            break
+        out.append(line)
+        used += size
+    out.reverse()
+    dropped = len(kept) - len(out)
+    if dropped:
+        out.insert(0, f"[... {dropped} ältere Zeilen wegen der Größenbegrenzung ({max_bytes // 1000} KB) ausgelassen ...]")
+    return "\n".join(out), {"lines": len(out) - (1 if dropped else 0), "dropped": dropped}
+
+
+def normalize_support_input(summary, email):
+    """Prueft/bereinigt die Formulareingaben: Rueckgabe (summary, email, Fehlertext oder None). Die Zusammenfassung ist
+    Pflicht (gekappt auf MAX_SUPPORT_SUMMARY_CHARS), die E-Mail-Adresse optional (leer -> ""), aber wenn angegeben
+    syntaktisch plausibel."""
+    summary = str(summary or "").strip()[:MAX_SUPPORT_SUMMARY_CHARS]
+    email = str(email or "").strip()
+    if not summary:
+        return "", "", "Bitte beschreibe kurz das Problem."
+    if email and not _EMAIL_RE.match(email):
+        return summary, email, "Die E-Mail-Adresse ist nicht gültig - lass das Feld leer oder korrigiere sie."
+    return summary, email, None
+
+
+def build_support_payload(user_id, summary, email, version, log_text):
+    """Struktur wie beim bestehenden Fehlerreport (ha_addon_error_logging): user, meta, error_type, error_message.
+    meta = Zusammenfassung, Leerzeile, Add-on-Version, ggf. E-Mail-Adresse; error_message = das Log."""
+    meta = f"{summary}\n\naddon_version={version}"
+    if email:
+        meta += f"\nemail={email}"
+    return {"user": user_id, "meta": meta, "error_type": SUPPORT_ERROR_TYPE, "error_message": log_text}

@@ -14,6 +14,33 @@ const MAX_HISTORY_SENT = 3;
 const GEMINI_SETUP_URL = '/config/integrations/dashboard/add?domain=google_generative_ai_conversation';
 const GEMINI_API_KEY_URL = 'https://aistudio.google.com/app/apikey';
 
+// Support-Angebot: die KI haengt am Ende ihrer Antwort [[SUPPORT_ANGEBOT: kurze Problembeschreibung]] an (siehe
+// KNOWLEDGE in assistant.py). Die Markierung wird nie angezeigt; stattdessen erscheint ein Formular, mit dem der Nutzer
+// Log + Beschreibung an das Shyft-Team senden kann (siehe /assistant/support/* in app.py).
+const SUPPORT_MARKER_RE = /\[\[SUPPORT_ANGEBOT:?([\s\S]*?)\]\]/;
+const SUPPORT_MARKER_OPEN_RE = /\[\[SUPPORT_ANGEBOT[\s\S]*$/;
+const SUPPORT_LOGGING_MINUTES_TEXT = '5';
+const SUPPORT_STATUS_POLL_MS = 4000;
+
+// Trennt die Markierung vom Antworttext: {text: Antwort ohne Markierung, summary: Beschreibung oder null}.
+// Auch eine abgeschnittene Markierung (ohne schliessende Klammern) wird entfernt.
+export function splitSupportOffer(answer) {
+    const text = String(answer || '');
+    const match = text.match(SUPPORT_MARKER_RE);
+    if (match) {
+        return {text: text.replace(SUPPORT_MARKER_RE, '').trim(), summary: match[1].trim()};
+    }
+    if (SUPPORT_MARKER_OPEN_RE.test(text)) {
+        return {text: text.replace(SUPPORT_MARKER_OPEN_RE, '').trim(), summary: null, malformed: true};
+    }
+    return {text: text.trim(), summary: null};
+}
+
+function formatCountdown(ms) {
+    const total = Math.max(0, Math.ceil(ms / 1000));
+    return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
+}
+
 const CHAT_ICON_SVG = '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z"/></svg>';
 
 // Anders als postJson in app.js wird der JSON-Body auch bei HTTP-Fehlerstatus gelesen - das Backend
@@ -128,6 +155,7 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
 
     let aiAvailable = false;
     let busy = false;
+    let supportOffered = false;  // das Support-Angebot erscheint hoechstens einmal pro Chat
     const history = [];
 
     function addMessage(text, kind) {
@@ -137,6 +165,155 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
         messages.appendChild(bubble);
         messages.scrollTop = messages.scrollHeight;
         return bubble;
+    }
+
+    // Support-Formular unter einer KI-Antwort: Beschreibung (bearbeitbar), optionale E-Mail, Hinweis auf die gesendeten
+    // Daten, Countdown des ausfuehrlichen Loggings und der Senden-Button. Beim Anzeigen wird das ausfuehrliche Logging
+    // fuer 5 Minuten aktiviert (der Nutzer soll das Problem nachstellen); gesendet wird erst nach Ablauf.
+    function addSupportForm(summaryText) {
+        const card = document.createElement('div');
+        card.className = 'assistantSupport';
+
+        const heading = document.createElement('div');
+        heading.className = 'assistantSupportHeading';
+        heading.textContent = 'Problem an das Shyft-Team senden?';
+        card.appendChild(heading);
+
+        const summaryLabel = document.createElement('label');
+        summaryLabel.textContent = 'Kurze Beschreibung des Problems';
+        const summary = document.createElement('textarea');
+        summary.className = 'assistantSupportField';
+        summary.rows = 3;
+        summary.maxLength = 1000;
+        summary.value = summaryText || '';
+        summaryLabel.appendChild(summary);
+        card.appendChild(summaryLabel);
+
+        const emailLabel = document.createElement('label');
+        emailLabel.textContent = 'E-Mail-Adresse (optional, falls du eine Rückmeldung wünschst)';
+        const email = document.createElement('input');
+        email.type = 'email';
+        email.className = 'assistantSupportField';
+        email.autocomplete = 'email';
+        email.maxLength = 254;
+        emailLabel.appendChild(email);
+        card.appendChild(emailLabel);
+
+        const sentInfo = document.createElement('div');
+        sentInfo.className = 'assistantNotice';
+        sentInfo.textContent = 'Gesendet werden: deine Beschreibung, die Add-on-Version, deine E-Mail-Adresse (falls angegeben) und das '
+            + 'Add-on-Log der letzten ' + SUPPORT_LOGGING_MINUTES_TEXT + ' Minuten (höchstens 1 MB). Zugangsdaten werden geschwärzt, '
+            + 'das Log kann aber Entity-IDs, Gerätenamen und Sensorwerte enthalten.';
+        card.appendChild(sentInfo);
+
+        const loggingInfo = document.createElement('div');
+        loggingInfo.className = 'assistantNotice assistantSupportLogging';
+        loggingInfo.textContent = 'Detailliertes Logging wird aktiviert ...';
+        card.appendChild(loggingInfo);
+
+        const sendSupport = document.createElement('button');
+        sendSupport.type = 'button';
+        sendSupport.className = 'assistantSend assistantSupportSend';
+        sendSupport.textContent = 'An shyft-power senden';
+        card.appendChild(sendSupport);
+
+        const result = document.createElement('div');
+        result.className = 'assistantSupportResult';
+        result.hidden = true;
+        card.appendChild(result);
+
+        let loggingUntilMs = 0;
+        let sendAtMs = 0;
+        let ticker = null;
+        let poller = null;
+
+        function showResult(text, isError) {
+            result.hidden = false;
+            result.textContent = text;
+            result.classList.toggle('assistantSupportResult--error', !!isError);
+        }
+
+        function stopTimers() {
+            clearInterval(ticker);
+            clearInterval(poller);
+        }
+
+        function tick() {
+            const now = Date.now();
+            if (loggingUntilMs > now) {
+                loggingInfo.textContent = 'Detailliertes Logging ist für die nächsten ' + SUPPORT_LOGGING_MINUTES_TEXT
+                    + ' Minuten aktiviert (noch ' + formatCountdown(loggingUntilMs - now) + '). Bitte stelle das Problem jetzt noch einmal nach. '
+                    + 'Das Log wird nach Ablauf der ' + SUPPORT_LOGGING_MINUTES_TEXT + ' Minuten gesendet.';
+            } else if (loggingUntilMs) {
+                loggingInfo.textContent = 'Das detaillierte Logging ist beendet.';
+            }
+            if (sendAtMs && sendAtMs > now) {
+                showResult('Das Log wird automatisch gesendet, sobald die ' + SUPPORT_LOGGING_MINUTES_TEXT + ' Minuten um sind (in '
+                    + formatCountdown(sendAtMs - now) + '). Du kannst den Chat schließen.', false);
+            }
+        }
+
+        async function poll() {
+            try {
+                const status = await getJson(baseUri + '/assistant/support/status');
+                if (status.state === 'done') {
+                    stopTimers();
+                    showResult(status.message, false);
+                } else if (status.state === 'error') {
+                    stopTimers();
+                    sendSupport.disabled = false;
+                    showResult(status.message, true);
+                } else if (status.state === 'idle') {
+                    // Add-on wurde inzwischen neu gestartet - der wartende Versand ist verloren
+                    stopTimers();
+                    sendSupport.disabled = false;
+                    showResult('Die Anfrage ist nicht mehr aktiv (Add-on neu gestartet?). Bitte sende sie erneut.', true);
+                } else if (status.state === 'sending') {
+                    sendAtMs = 0;
+                    showResult(status.message || 'Das Log wird gesendet ...', false);
+                }
+            } catch (err) {
+                console.log(err);
+            }
+        }
+
+        sendSupport.addEventListener('click', async () => {
+            sendSupport.disabled = true;
+            result.hidden = true;
+            try {
+                const response = await postAsk(baseUri + '/assistant/support/send', {summary: summary.value, email: email.value});
+                if (response.status !== 'success') {
+                    sendSupport.disabled = false;
+                    showResult(response.message || 'Das Senden ist fehlgeschlagen.', true);
+                    return;
+                }
+                sendAtMs = response.sendAtMs || 0;
+                if (!sendAtMs) showResult('Das Log wird gesendet ...', false);
+                tick();
+                clearInterval(poller);
+                poller = setInterval(poll, SUPPORT_STATUS_POLL_MS);
+            } catch (err) {
+                console.log(err);
+                sendSupport.disabled = false;
+                showResult('Das Senden ist fehlgeschlagen. Bitte versuche es später erneut.', true);
+            }
+        });
+
+        messages.appendChild(card);
+        messages.scrollTop = messages.scrollHeight;
+
+        postAsk(baseUri + '/assistant/support/start', {}).then(response => {
+            if (response.loggingUntilMs) {
+                loggingUntilMs = response.loggingUntilMs;
+                tick();
+                ticker = setInterval(tick, 1000);
+            } else {
+                loggingInfo.textContent = 'Das detaillierte Logging konnte nicht aktiviert werden - gesendet wird das normale Log.';
+            }
+        }).catch(err => {
+            console.log(err);
+            loggingInfo.textContent = 'Das detaillierte Logging konnte nicht aktiviert werden - gesendet wird das normale Log.';
+        });
     }
 
     function applyAvailability() {
@@ -178,11 +355,18 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
                 question,
                 history: history.slice(-MAX_HISTORY_SENT),
                 uiHelp: buildUiHelp(),
+                supportOffered,
             });
             pending.remove();
             if (result.status === 'success') {
-                addMessage(result.answer, 'answer');
-                history.push({question, answer: result.answer});
+                // Die Markierung wird nie angezeigt; das Formular erscheint nur beim ersten Angebot pro Chat.
+                const offer = splitSupportOffer(result.answer);
+                if (offer.text) addMessage(offer.text, 'answer');
+                history.push({question, answer: offer.text || result.answer});
+                if (offer.summary !== null && !supportOffered) {
+                    supportOffered = true;
+                    addSupportForm(offer.summary);
+                }
             } else {
                 addMessage(result.message || 'Die Anfrage ist fehlgeschlagen.', 'error');
             }

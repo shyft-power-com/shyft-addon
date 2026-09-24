@@ -2294,6 +2294,55 @@
         .assistantNotice a {
             color: inherit;
         }
+        /* Support-Formular unter einer KI-Antwort (siehe addSupportForm in assistant.js) */
+        .assistantSupport {
+            align-self: stretch;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5em;
+            padding: 0.7em 0.8em;
+            border: 1px solid var(--color-accent);
+            border-radius: 10px;
+            background: var(--color-input-bg);
+            font-size: 0.85em;
+        }
+        .assistantSupportHeading {
+            font-weight: 700;
+        }
+        .assistantSupport label {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25em;
+            color: var(--color-text-secondary);
+            font-size: 0.9em;
+        }
+        .assistantSupportField {
+            box-sizing: border-box;
+            width: 100%;
+            font-family: var(--font-body);
+            font-size: 1em;
+            color: var(--color-text);
+            background: var(--color-bg);
+            border: 1px solid var(--color-input-border);
+            border-radius: 8px;
+            padding: 0.45em 0.6em;
+            resize: vertical;
+        }
+        .assistantSupport .assistantNotice {
+            padding: 0;
+        }
+        .assistantSupportLogging {
+            color: var(--color-text);
+        }
+        .assistantSupportSend {
+            align-self: flex-start;
+        }
+        .assistantSupportResult {
+            color: var(--color-accent);
+        }
+        .assistantSupportResult--error {
+            color: var(--color-error);
+        }
 </style>
     <title>shyft addon</title>
 </head>

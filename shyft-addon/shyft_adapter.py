@@ -60,6 +60,17 @@ class ShyftAdapter:
         "Best-effort error report to shyft-power, sent whenever a Test-Button click in the addon returns an error (see log_error_to_shyft in app.py for how the payload is assembled)."
         return self._call_workflow("ha_addon_error_logging", json.dumps(payload))
 
+    def send_support_request(self, payload: dict, timeout=90):
+        """Support-Anfrage aus dem Hilfe-Assistenten (Log + Problembeschreibung, siehe assistant.build_support_payload)
+        an denselben Workflow wie send_error_log. Anders als _call_workflow: wirft bei Netzwerkfehler ODER HTTP-Fehlerstatus
+        (der Nutzer soll erfahren, ob es geklappt hat) und protokolliert den Payload nicht - er enthaelt das komplette Log
+        (bis 1 MB), das sich sonst bei aktivem detailed_logging selbst ins Log schriebe."""
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.bubble_token}"}
+        response = requests.post(self._create_complete_uri("ha_addon_error_logging"), headers=headers,
+                                 data=json.dumps(payload), timeout=timeout)
+        if not response.ok:
+            raise Exception(f"shyft-power hat die Anfrage abgelehnt (HTTP {response.status_code}).")
+
     # get_actions (return_actions_to_addon) wurde entfernt - die Aktionsberechnung laeuft jetzt
     # komplett lokal im Addon (siehe recompute_actions_from_optimizer_run in app.py), Bubble wird
     # dafuer weder gelesen noch beschrieben.

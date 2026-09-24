@@ -369,7 +369,8 @@ def assistantAskEndpoint():
             return jsonify({"status": "error", "message": "In Home Assistant ist keine KI eingerichtet."}), 400
         prompt = assistant.build_prompt(
             question, body.get("history"), body.get("uiHelp"), _read_current_config(),
-            problem_registry.active_problems(), states, _assistant_log_excerpt())
+            problem_registry.active_problems(), states, _assistant_log_excerpt(),
+            support_offered=bool(body.get("supportOffered")))
         response = homeassistant_adapter.call_service_with_response(
             "ai_task", "generate_data",
             {"task_name": "shyft_hilfe", "instructions": prompt, "entity_id": ai_entity})
@@ -380,6 +381,118 @@ def assistantAskEndpoint():
     except Exception as e:
         print("[Shyft] Hilfe-Assistent: Anfrage fehlgeschlagen:", repr(e))
         return jsonify({"status": "error", "message": f"Die Anfrage an die KI ist fehlgeschlagen: {e}"}), 502
+
+
+# --- Hilfe-Assistent: Support-Anfrage (Log an shyft-power) ---------------------------------------
+# Ablauf (siehe www/assistant.js): Zeigt der Chat das Support-Formular, ruft er /assistant/support/start - das schaltet
+# fuer SUPPORT_LOGGING_MINUTES Minuten das ausfuehrliche Logging ein (unabhaengig von der Add-on-Option
+# detailed_logging, danach wieder auf deren Wert), damit der Nutzer das Problem nachstellen kann. Der Klick auf
+# "An shyft-power senden" (/assistant/support/send) stellt die Anfrage ein: nach Ablauf des Logging-Fensters holt
+# der Server das Log der letzten SUPPORT_LOG_MINUTES Minuten, schwaerzt Zugangsdaten und sendet es (Struktur siehe
+# assistant.build_support_payload) an den Bubble-Workflow ha_addon_error_logging. Der Fortschritt steht unter
+# /assistant/support/status. Alles nur im Speicher: ein Add-on-Neustart bricht einen wartenden Versand ab.
+SUPPORT_LOGGING_MINUTES = 5
+SUPPORT_SEND_DELAY_AFTER_WINDOW_SECONDS = 3  # letzte Logzeilen noch beim Supervisor ankommen lassen
+SUPPORT_MIN_SECONDS_BETWEEN_SENDS = 60
+_support_lock = threading.Lock()
+_support_logging_until = 0.0
+_support_job = {"state": "idle", "message": "", "sendAt": None, "finishedAt": 0.0}
+
+
+def _set_runtime_detailed_logging(enabled):
+    shyft_adapter.detailed_logging = enabled
+    homeassistant_adapter.detailed_logging = enabled
+
+
+def _end_support_logging_window(expected_until):
+    "Timer-Ziel: schaltet das ausfuehrliche Logging wieder auf den Wert der Add-on-Option zurueck - nur, wenn das Fenster nicht inzwischen neu gestartet wurde."
+    global _support_logging_until
+    with _support_lock:
+        if _support_logging_until != expected_until:
+            return
+        _set_runtime_detailed_logging(DETAILED_LOGGING)
+        _support_logging_until = 0.0
+    print("[Shyft] Support-Anfrage: temporäres ausführliches Logging beendet.")
+
+
+@app.route("/assistant/support/start", methods=["POST"])
+def assistantSupportStart():
+    """Startet (bzw. meldet das laufende) ausfuehrliche Logging fuer SUPPORT_LOGGING_MINUTES Minuten. Antwort:
+    {"loggingUntilMs", "seconds"}. Ein bereits laufendes Fenster wird nicht verlaengert."""
+    global _support_logging_until
+    with _support_lock:
+        now = time.time()
+        if now >= _support_logging_until:
+            _support_logging_until = now + SUPPORT_LOGGING_MINUTES * 60
+            _set_runtime_detailed_logging(True)
+            timer = threading.Timer(SUPPORT_LOGGING_MINUTES * 60, _end_support_logging_window, args=(_support_logging_until,))
+            timer.daemon = True
+            timer.start()
+            print(f"[Shyft] Support-Anfrage: ausführliches Logging für {SUPPORT_LOGGING_MINUTES} Minuten aktiviert.")
+        until = _support_logging_until
+        return jsonify({"loggingUntilMs": int(until * 1000), "seconds": max(0, int(until - now))})
+
+
+def _support_set_job(**fields):
+    with _support_lock:
+        _support_job.update(fields)
+
+
+def _support_send_worker(summary, email):
+    _support_set_job(state="sending", message="Das Log wird gesendet ...", sendAt=None)
+    try:
+        log_text = homeassistant_adapter.get_addon_log_text(assistant.SUPPORT_LOG_SOURCE_LINES, timeout=60)
+        secrets = [homeassistant_adapter._token(), shyft_adapter.bubble_token, globals().get("SHYFT_ACCESS_KEY")]
+        recent_log, info = assistant.select_recent_log(log_text, secrets=secrets)
+        user_id = extract_shyft_user_id(shyft_adapter.bubble_token)
+        payload = assistant.build_support_payload(user_id, summary, email, VERSION, recent_log)
+        shyft_adapter.send_support_request(payload)
+        print(f"[Shyft] Support-Anfrage gesendet ({info['lines']} Logzeilen, {len(recent_log.encode('utf-8'))} Bytes, {info['dropped']} ausgelassen).")
+        _support_set_job(state="done", message="Gesendet. Danke - das Shyft-Team schaut sich das an.", finishedAt=time.time())
+    except Exception as e:
+        print("[Shyft] Support-Anfrage fehlgeschlagen:", repr(e))
+        _support_set_job(state="error", message=f"Das Senden ist fehlgeschlagen: {e}", finishedAt=time.time())
+
+
+@app.route("/assistant/support/send", methods=["POST"])
+def assistantSupportSend():
+    """Stellt die Support-Anfrage ein. Body: {summary, email?}. Laeuft das Logging-Fenster noch, wird nach dessen
+    Ende gesendet (Antwort state=waiting, sendAtMs), sonst sofort (state=sending)."""
+    body = request.get_json(force=True, silent=True) or {}
+    summary, email, error = assistant.normalize_support_input(body.get("summary"), body.get("email"))
+    if error:
+        return jsonify({"status": "error", "message": error}), 400
+    if not extract_shyft_user_id(shyft_adapter.bubble_token):
+        return jsonify({"status": "error", "message": "Ohne shyft-power-Konto (Demomodus) kann keine Anfrage gesendet werden. Schreibe uns bitte an info@shyft-power.com."}), 400
+    with _support_lock:
+        now = time.time()
+        if _support_job["state"] in ("waiting", "sending"):
+            return jsonify({"status": "error", "message": "Es läuft bereits eine Anfrage."}), 409
+        if _support_job["state"] == "done" and now - _support_job["finishedAt"] < SUPPORT_MIN_SECONDS_BETWEEN_SENDS:
+            return jsonify({"status": "error", "message": "Die Anfrage wurde gerade erst gesendet."}), 429
+        delay = max(0.0, _support_logging_until - now)
+        if delay > 0:
+            delay += SUPPORT_SEND_DELAY_AFTER_WINDOW_SECONDS
+            _support_job.update({"state": "waiting", "message": "Wird nach Ablauf des Logging-Zeitraums gesendet.", "sendAt": now + delay})
+        else:
+            _support_job.update({"state": "sending", "message": "Das Log wird gesendet ...", "sendAt": None})
+        send_at = _support_job["sendAt"]
+    timer = threading.Timer(delay, _support_send_worker, args=(summary, email))
+    timer.daemon = True
+    timer.start()
+    return jsonify({"status": "success", "state": "waiting" if delay > 0 else "sending",
+                    "sendAtMs": int(send_at * 1000) if send_at else None})
+
+
+@app.route("/assistant/support/status", methods=["GET"])
+def assistantSupportStatus():
+    "Stand der Support-Anfrage: {state: idle|waiting|sending|done|error, message, sendAtMs, loggingUntilMs}."
+    with _support_lock:
+        job = dict(_support_job)
+        until = _support_logging_until
+    return jsonify({"state": job["state"], "message": job["message"],
+                    "sendAtMs": int(job["sendAt"] * 1000) if job["sendAt"] else None,
+                    "loggingUntilMs": int(until * 1000) if until > time.time() else None})
 
 
 @app.route("/analysis/summary", methods=["GET"])
