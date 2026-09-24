@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.177
+
+* **Warmwasserbereitung: `number.set_value` ist kein wählbarer Befehl mehr.** `number.set_value` setzt nur einen Zahlenwert und aktiviert keine Warmwasserbereitung; dennoch stand er in der Befehlsauswahl und blendete ein Feld „value“ mit einem festen Wert ein. Die Solltemperatur setzt Shyft ohnehin selbst dynamisch: während einer „Warmwasser“-Aktion aus deren Zielwert (Sensorfeld „Warmwasser: Solltemperatur“), beim Test 5 °C über dem aktuellen Sollwert. Der Befehl wird deshalb aus der Auswahl entfernt. Ein bereits gespeicherter `number.set_value`-Befehl wird beim Laden verworfen (Befehlsfeld leer, Warmwasser gilt bis zur Auswahl eines echten Aktivierungsbefehls als nicht vollständig eingerichtet) und in der Ausführung nicht mehr aufgerufen (klare Fehlermeldung statt stillem Setzen eines festen Werts).
+
 ## 0.0.45.176
 
 * **„Auto laden“: Toggle sitzt rechts neben der großen Überschrift.** Die zusätzliche kleine Titelzeile (mit Haken und Toggle) über der gleichlautenden großen Überschrift entfällt - Haken und Toggle stehen jetzt in der großen Überschrift „Auto laden“, der Toggle ganz rechts. Bei „Heizung Soll-Temperatur“, „Warmwasserbereitung“ und den übrigen Steuerungen steht der Toggle ebenfalls rechts in der Titelzeile; die Titelzeile ist dafür ausdrücklich auf volle Breite gesetzt, damit die Ausrichtung nicht vom umgebenden Layout abhängt.

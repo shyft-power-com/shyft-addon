@@ -4430,6 +4430,12 @@ def _run_pv_surplus_charging_tick_impl():
         notify_action_event(config, _pv_surplus_session_to_action(new_session, config), "gestartet")
 
 
+# number.set_value setzt nur einen Zahlenwert und aktiviert keine Warmwasserbereitung - die Solltemperatur kommt
+# dynamisch aus dem Target Value der Aktion (siehe _start_dhw_target_temp_boost). Als "Befehl" der
+# Warmwasserbereitung gilt er deshalb nicht (auch nicht aus einer aelteren Config).
+HOT_WATER_FORBIDDEN_SERVICES = {"number.set_value"}
+
+
 def execute_hot_water_activate():
     """"Warmwasserbereitung" is a single fixed action (e.g. a Wärmepumpe-integration's "one-time
     DHW charge" service) rather than a multi-stage recipe like "Auto laden" - there's no computed
@@ -4441,6 +4447,8 @@ def execute_hot_water_activate():
     if recipe.get("type") == "ha_automation":
         trigger_ha_automation(recipe.get("haAutomationEntityId"), "start", None)
         return
+    if recipe.get("service") in HOT_WATER_FORBIDDEN_SERVICES:
+        raise Exception(f"'{recipe.get('service')}' ist kein Befehl zum Aktivieren der Warmwasserbereitung - bitte in der Konfiguration einen anderen Befehl wählen.")
     call_recipe_stage(recipe, integration_key="waermepumpe")
 
 
@@ -4660,7 +4668,8 @@ def _action_type_config_state(config, ready_key):
                        "recipe": recipe_ok, "recipeType": recipe.get("type")}}
     if ready_key == "hot_water":
         recipe = config.get("hotWaterRecipe", {}) or {}
-        recipe_ok = bool(recipe.get("haAutomationEntityId")) if recipe.get("type") == "ha_automation" else bool(recipe.get("service"))
+        recipe_ok = bool(recipe.get("haAutomationEntityId")) if recipe.get("type") == "ha_automation" else (
+            bool(recipe.get("service")) and recipe.get("service") not in HOT_WATER_FORBIDDEN_SERVICES)
         entity_ok = bool(_dhw_target_temp_entity(config))
         return {"flags": {"waermepumpe": bool(im.get("waermepumpe")), "recipe": recipe_ok, "dhwTargetEntity": entity_ok},
                 "fp": {"waermepumpe": bool(im.get("waermepumpe")), "recipe": recipe_ok,

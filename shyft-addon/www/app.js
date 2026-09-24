@@ -442,6 +442,18 @@ const CAR_CHARGE_ACTION_KEYS = new Set(['car_charge_start', 'car_charge_stop']);
 // unlike those, it's a single fixed action (no branches, no computed value, no Ende-Verhalten).
 const HOT_WATER_ACTION_KEYS = new Set(['hot_water']);
 
+// Kein Befehl zum AKTIVIEREN der Warmwasserbereitung: number.set_value setzt nur einen Zahlenwert (die Solltemperatur
+// dafuer kommt ohnehin dynamisch aus dem Target Value der Warmwasser-Aktion, siehe "Warmwasser: Solltemperatur").
+// Wird in der Befehlsauswahl ausgeblendet; ein aelter gespeicherter Eintrag wird beim Laden verworfen (siehe
+// dropForbiddenHotWaterService) - sonst erschiene wieder das "value"-Feld dieses Befehls.
+const HOT_WATER_FORBIDDEN_SERVICES = new Set(['number.set_value']);
+function dropForbiddenHotWaterService() {
+    const recipe = configData['hotWaterRecipe'];
+    if (recipe && HOT_WATER_FORBIDDEN_SERVICES.has(recipe.service)) {
+        configData['hotWaterRecipe'] = {...recipe, service: '', sharedFields: {}, branchFields: {}};
+    }
+}
+
 // The branches each "Auto laden" recipe stage splits its enum fields into (see
 // buildBranchedStageFields) - phaseCount by computed phase count, control by start vs. stop.
 // amperage has no branches: its Ampere value is always the same computed number regardless of
@@ -1243,6 +1255,7 @@ const loadConfiguration = async (event) => {
     try {
         console.log("loadConfiguration called");
         configData = await getJson(configUri);
+        dropForbiddenHotWaterService();
         // /sensorids und /integrations brauchen die Home-Assistant-API. Schlaegt die fehl (z.B.
         // fehlender/ungueltiger Supervisor-Token, gerade fuer den Demomodus ein realistischer Fall),
         // darf die Konfigurationsseite trotzdem laden - configData (aus der lokalen config.json)
@@ -4936,7 +4949,8 @@ function buildHotWaterControl() {
     variantTable.appendChild(variantTbody);
     wrapper.appendChild(variantTable);
 
-    const candidateServices = allServiceOptions.filter(s => getIntegrationServiceDomains('waermepumpe').has(s.service.split('.')[0]));
+    const candidateServices = allServiceOptions.filter(s => getIntegrationServiceDomains('waermepumpe').has(s.service.split('.')[0])
+        && !HOT_WATER_FORBIDDEN_SERVICES.has(s.service));
     const stageWrapper = buildBranchedStageFields('hot_water_', 'hotWater', 'Befehl',
         'Befehl, mit dem die (einmalige) Warmwasserbereitung an deiner Wärmepumpe aktiviert wird.',
         candidateServices, recipe, [], [], 'z.B. activate_onetimecharge', undefined, false, 'waermepumpe');
