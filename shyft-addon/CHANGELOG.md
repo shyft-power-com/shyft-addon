@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.182
+
+* **Wallbox-Test: Erfolgsmeldung ehrlicher formuliert.** Ob das Laden nach „Laden beenden“ wirklich aufhört (Ladeleistung zurück auf 0), prüft der Test nicht. Die Meldung lautet deshalb jetzt „Die Wallbox hat erfolgreich geladen. Bitte prüfe kurz in deiner Wallbox-App, ob das Laden auch erfolgreich beendet wurde.“ statt „… nachweislich geladen.“
+
 ## 0.0.45.181
 
 * **Wallbox-Test prüft jetzt, ob die Wallbox wirklich lädt.** Bisher galt „Laden starten“ als erfolgreich, sobald Home Assistant alle Befehle (Phasen, Ampere, Start) fehlerfrei angenommen hatte - eine Wallbox, die den Start ignoriert (Auto nicht eingesteckt/ladebereit, Freigabe ausstehend, Lastmanagement), wurde trotzdem als „erfolgreich“ gemeldet, obwohl sich nur die Ampere-Zahl geändert hatte. Jetzt wartet der Test nach jedem Start-Schritt (2,3 kW und 6,9 kW) bis zu 60 s darauf, dass der zugeordnete Sensor „Wallbox: Ladestrom“ mindestens 0,3 kW meldet. Bleibt die Ladeleistung aus, schlägt der Test mit einer verständlichen Meldung fehl („Home Assistant hat die Befehle angenommen, die Wallbox lädt aber nicht … Ist das Auto eingesteckt und ladebereit?“); „Laden beenden“ wird trotzdem noch gesendet. Gilt für „Dreistufig“ und „HA-Automation“. Ist der Sensor nicht lesbar, bleibt es bei der bisherigen Bewertung, mit Hinweis im Ergebnis. Die Meldung an shyft-power bei Fehlern bleibt unverändert (dieser Fall wird nicht gemeldet). Der Test dauert dadurch im Fehlerfall bis zu ca. 1,5 min je Schritt länger.

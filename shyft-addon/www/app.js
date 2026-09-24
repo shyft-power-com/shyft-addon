@@ -4935,7 +4935,7 @@ function buildCarChargeControl() {
             applyTestGate('car_charge_start', checkmark, carChargeHint, true);
             if (ok) {
                 status.textContent = 'Erfolgreich: 2,3 kW → 6,9 kW → Laden beendet.'
-                    + (unverifiedSteps > 0 ? ' (Ladeleistung konnte nicht geprüft werden - Sensor "Wallbox: Ladestrom" nicht lesbar.)' : ' Die Wallbox hat nachweislich geladen.');
+                    + (unverifiedSteps > 0 ? ' (Ladeleistung konnte nicht geprüft werden - Sensor "Wallbox: Ladestrom" nicht lesbar.)' : ' Die Wallbox hat erfolgreich geladen. Bitte prüfe kurz in deiner Wallbox-App, ob das Laden auch erfolgreich beendet wurde.');
                 status.className = 'autoActionStatus status-ok';
                 wallboxStatusDisplay.className = 'autoActionValue testSuccess';
             } else {
