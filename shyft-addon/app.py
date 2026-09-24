@@ -1846,6 +1846,10 @@ _READY_KEY_TO_LABEL_SECTION = {
 }
 
 
+# ready_key -> Schluessel in config['actionTypeEnabled'] (nur der Verbraucher weicht ab, siehe ACTION_TYPE_TOGGLE_KEYS in www/app.js)
+_READY_KEY_TO_TOGGLE_KEY = {"consumer_on_off": "consumer_on"}
+
+
 def _action_not_ready_warnings(config):
     """Je vollstaendig eingerichtetem Aktionstyp, der aktuell NICHT als erfolgreich getestet gilt
     (egal ob noch nie getestet oder der letzte Test fehlgeschlagen ist - dieselbe Bedingung wie in
@@ -1863,6 +1867,9 @@ def _action_not_ready_warnings(config):
         # den Aktionstyp "vollstaendig eingerichtet" wirken), es gibt aber nichts mehr zu testen (Nutzer-Feedback:
         # "Verbraucher nicht getestet", obwohl der Verbraucher schon wieder geloescht war).
         if not integration_mappings.get(section_key):
+            continue
+        # Steuerung per Toggle deaktiviert (Aktion wird nur simuliert): keine Warnung, auch wenn sie noch nicht getestet ist.
+        if (config.get("actionTypeEnabled", {}) or {}).get(_READY_KEY_TO_TOGGLE_KEY.get(ready_key, ready_key), True) is False:
             continue
         state = _action_type_config_state(config, ready_key)
         if not all(state["flags"].values()):

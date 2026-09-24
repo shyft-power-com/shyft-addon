@@ -1613,6 +1613,12 @@ document.addEventListener('mousedown', (event) => {
     }
 });
 
+// Steuerung per Toggle deaktiviert? Dann gibt es weder Fehlermeldungen (Dashboard/Konfigurationsseite) noch ein
+// Aufklappen der Kachel wegen fehlender Einrichtung oder ausstehender Tests - die Aktion wird ja nur simuliert.
+function isActionToggleOff(toggleKey) {
+    return (configData['actionTypeEnabled'] || {})[toggleKey] === false;
+}
+
 // Ist eine sensorMappings-Zuordnung leer? Einzelfelder halten einen String, Mehrfachfelder (siehe
 // buildMultiSensorField, z.B. "Sonstiger Verbraucher") eine Liste - und eine leere Liste ist in JS truthy,
 // ein simples !mapping wuerde sie faelschlich als "gesetzt" werten.
@@ -1638,11 +1644,14 @@ function isSectionComplete(section, currentIds) {
         // Geraet als unvollstaendig gilt - sonst bliebe die Kachel (z.B. Waermepumpe ohne Vorlauftemperatur)
         // aufgeklappt/mit "!" markiert, obwohl kein einziges Pflichtfeld rot markiert ist.
         if (REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS.has(key)) continue;
+        // Sensor gehoert zu einer per Toggle deaktivierten Steuerung: nicht Pflicht
+        if (AUTO_MANAGED_CONTROLS.some(c => c.sensorField === key && isActionToggleOff(c.actionKeys[0]))) continue;
         if (isEntityMappingEmpty(sensorMappings[key])) return false;
     }
 
     for (const control of AUTO_MANAGED_CONTROLS) {
         if (!control.actionKeys.some(k => section.actions.includes(k))) continue;
+        if (isActionToggleOff(control.actionKeys[0])) continue;
         // Seltene Zusatzfunktionen ohne "Direkt steuern"-Modus (automationOnly, kein sensorField) -
         // gelten wie in computeMissingRequiredFieldsWarnings als optional, keine Voraussetzung fuer
         // "vollstaendig konfiguriert". Ohne diesen Ausschluss fiel die Variante hier mangels
@@ -1666,10 +1675,11 @@ function isSectionComplete(section, currentIds) {
     const manualActions = section.actions.filter(key => !AUTO_MANAGED_ACTION_KEYS.has(key) && !CAR_CHARGE_ACTION_KEYS.has(key) && !HOT_WATER_ACTION_KEYS.has(key) && !BATTERY_DIRECT_ACTION_KEYS.has(key));
     for (const key of manualActions) {
         if (REQUIRED_FIELD_OPTIONAL_ACTION_KEYS.has(key)) continue;
+        if (isActionToggleOff(key)) continue;
         if (!actorMappings[key]) return false;
     }
 
-    for (const key of section.actions.filter(k => BATTERY_DIRECT_ACTION_KEYS.has(k))) {
+    for (const key of section.actions.filter(k => BATTERY_DIRECT_ACTION_KEYS.has(k) && !isActionToggleOff(k))) {
         const variant = (configData['controlVariant'] || {})[key] || 'direct';
         if (variant === 'ha_automation') {
             if (!actorMappings[key]) return false;
@@ -1678,7 +1688,7 @@ function isSectionComplete(section, currentIds) {
         }
     }
 
-    if (section.actions.some(k => CAR_CHARGE_ACTION_KEYS.has(k))) {
+    if (section.actions.some(k => CAR_CHARGE_ACTION_KEYS.has(k)) && !isActionToggleOff('car_charge_start')) {
         const recipe = configData['carChargeRecipe'] || {};
         const amperageStage = recipe.amperage || {};
         const isThreeStageComplete = recipe.type === 'three_stage' && (recipe.phaseCount || {}).service
@@ -1689,7 +1699,7 @@ function isSectionComplete(section, currentIds) {
         }
     }
 
-    if (section.actions.some(k => HOT_WATER_ACTION_KEYS.has(k))) {
+    if (section.actions.some(k => HOT_WATER_ACTION_KEYS.has(k)) && !isActionToggleOff('hot_water')) {
         const recipe = configData['hotWaterRecipe'] || {};
         const isComplete = recipe.type === 'ha_automation' ? !!recipe.haAutomationEntityId : !!recipe.service;
         if (!isComplete) return false;
@@ -1737,12 +1747,14 @@ function computeMissingRequiredFieldsWarnings() {
 
         for (const key of section.sensors) {
             if (REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS.has(key)) continue;
+            if (AUTO_MANAGED_CONTROLS.some(c => c.sensorField === key && isActionToggleOff(c.actionKeys[0]))) continue;
             if (isEntityMappingEmpty(sensorMappings[key])) missing.push({label: (helpinformation[key] || {}).label || key, fieldId: key + VALUE_POSTFIX});
         }
 
         for (const control of AUTO_MANAGED_CONTROLS) {
             if (!control.actionKeys.some(k => section.actions.includes(k))) continue;
             if (control.actionKeys.every(k => REQUIRED_FIELD_OPTIONAL_ACTION_KEYS.has(k))) continue;
+            if (isActionToggleOff(control.actionKeys[0])) continue;
             const variant = control.hasAutomationVariant ? ((configData['controlVariant'] || {})[control.key] || 'direct') : 'direct';
             if (variant === 'ha_automation') {
                 if (control.type === 'number') {
@@ -1761,10 +1773,11 @@ function computeMissingRequiredFieldsWarnings() {
         const manualActions = section.actions.filter(key => !AUTO_MANAGED_ACTION_KEYS.has(key) && !CAR_CHARGE_ACTION_KEYS.has(key) && !HOT_WATER_ACTION_KEYS.has(key) && !BATTERY_DIRECT_ACTION_KEYS.has(key));
         for (const key of manualActions) {
             if (REQUIRED_FIELD_OPTIONAL_ACTION_KEYS.has(key)) continue;
+            if (isActionToggleOff(key)) continue;
             if (!actorMappings[key]) missing.push({label: (actorHelpInformation[key] || {}).label || key, fieldId: key + ACTOR_VALUE_POSTFIX});
         }
 
-        for (const key of section.actions.filter(k => BATTERY_DIRECT_ACTION_KEYS.has(k))) {
+        for (const key of section.actions.filter(k => BATTERY_DIRECT_ACTION_KEYS.has(k) && !isActionToggleOff(k))) {
             const variant = (configData['controlVariant'] || {})[key] || 'direct';
             const label = (actorHelpInformation[key] || {}).label || key;
             if (variant === 'ha_automation') {
@@ -1774,7 +1787,7 @@ function computeMissingRequiredFieldsWarnings() {
             }
         }
 
-        if (section.actions.some(k => CAR_CHARGE_ACTION_KEYS.has(k))) {
+        if (section.actions.some(k => CAR_CHARGE_ACTION_KEYS.has(k)) && !isActionToggleOff('car_charge_start')) {
             const recipe = configData['carChargeRecipe'] || {};
             const amperageStage = recipe.amperage || {};
             const isThreeStageComplete = recipe.type === 'three_stage' && (recipe.phaseCount || {}).service
@@ -1785,7 +1798,7 @@ function computeMissingRequiredFieldsWarnings() {
             }
         }
 
-        if (section.actions.some(k => HOT_WATER_ACTION_KEYS.has(k))) {
+        if (section.actions.some(k => HOT_WATER_ACTION_KEYS.has(k)) && !isActionToggleOff('hot_water')) {
             const recipe = configData['hotWaterRecipe'] || {};
             const isComplete = recipe.type === 'ha_automation' ? !!recipe.haAutomationEntityId : !!recipe.service;
             if (!isComplete) missing.push({label: 'Warmwasser', fieldId: recipe.type === 'ha_automation' ? 'hot_water_ha_automation_entity' : null});
@@ -3718,11 +3731,23 @@ function buildTestGateHint() {
 // Steuerung/Zuordnung dieses Aktionstyps aendert. readyKey === null bedeutet "nicht gegatet" (z.B.
 // PV-Einspeisung/§14a-Verbrauchsbegrenzung/Batterie-Aktion beenden) - dort bleibt hint immer
 // versteckt und der Aufrufer setzt checkmark.hidden selbst (alte "ist konfiguriert"-Logik).
+// ready_key -> Schluessel des Toggles (siehe actionTypeEnabled): nur der Verbraucher weicht ab.
+const READY_KEY_TO_TOGGLE_KEY = {consumer_on_off: 'consumer_on'};
+
 function applyTestGate(readyKey, checkmark, hint, configured) {
     if (readyKey === null) return;
+    // Argumente merken, damit ein Umschalten des Toggles den Hinweis neu bewerten kann (siehe reapplyTestGates)
+    hint.__gate = {readyKey, checkmark, configured};
     const passed = !!actionTestStatusMap[readyKey];
     checkmark.hidden = !passed;
-    hint.hidden = !configured || passed;
+    // Deaktivierte Steuerung (Toggle aus): kein roter "Bitte testen"-Hinweis
+    hint.hidden = !configured || passed || isActionToggleOff(READY_KEY_TO_TOGGLE_KEY[readyKey] || readyKey);
+}
+
+function reapplyTestGates() {
+    for (const hint of document.querySelectorAll('.autoActionStatus')) {
+        if (hint.__gate) applyTestGate(hint.__gate.readyKey, hint.__gate.checkmark, hint, hint.__gate.configured);
+    }
 }
 
 // Nach einem abgeschlossenen Testklick: lokalen Cache sofort aktualisieren (kein erneuter Fetch
@@ -4037,6 +4062,11 @@ function buildAutoManagedNumberControl(control) {
                     ? 'Wähle eine Automation für "' + control.titleLabel + '"'
                     : 'Befülle den Sensor "' + control.titleLabel + '"';
                 status.className = 'autoActionStatus status-missing';
+                // Deaktivierte Steuerung (Toggle aus): keine Fehlermeldung, auch wenn nichts eingerichtet ist
+                if (isActionToggleOff(control.actionKeys[0])) {
+                    status.textContent = '';
+                    status.className = 'autoActionStatus';
+                }
                 checkmark.hidden = true;
                 hint.hidden = true;
                 if (minusButton) minusButton.disabled = true;
@@ -4295,6 +4325,11 @@ function buildAutoManagedSwitchControl(control) {
                     ? 'Befülle beide Automationsfelder für "' + control.titleLabel + '"'
                     : 'Befülle den Sensor "' + control.titleLabel + '"';
                 status.className = 'autoActionStatus status-missing';
+                // Deaktivierte Steuerung (Toggle aus): keine Fehlermeldung, auch wenn nichts eingerichtet ist
+                if (isActionToggleOff(control.actionKeys[0])) {
+                    status.textContent = '';
+                    status.className = 'autoActionStatus';
+                }
                 checkmark.hidden = true;
                 hint.hidden = true;
                 testButton.disabled = true;
@@ -5101,6 +5136,15 @@ function buildToggleSwitch(id, checked) {
     const label = buildBareToggleSwitch(checked);
     const input = label.querySelector('input');
     input.id = id;
+    // Aktions-Toggles sofort in configData uebernehmen (nicht erst nach dem Speichern), damit Hinweise/Warnungen
+    // einer deaktivierten Steuerung gleich verschwinden bzw. wieder erscheinen (Benachrichtigungs-Toggles nicht).
+    if (id.endsWith(ACTION_TOGGLE_POSTFIX) && !id.startsWith('notification_')) {
+        const toggleKey = id.slice(0, -ACTION_TOGGLE_POSTFIX.length);
+        input.addEventListener('change', () => {
+            configData['actionTypeEnabled'] = {...(configData['actionTypeEnabled'] || {}), [toggleKey]: input.checked};
+            reapplyTestGates();
+        });
+    }
     input.addEventListener('change', autoSave);
     return label;
 }

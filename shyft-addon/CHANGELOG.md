@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.178
+
+* **Deaktivierte Steuerungen melden keine Fehler mehr.** Steht der Toggle einer Steuerung (Verbraucher, Heizung Soll-Temperatur, Warmwasser, Auto laden, Batterie-Aktionen, PV-Einspeisung/§14a) auf „inaktiv“, erscheint weder auf dem Dashboard noch auf der Konfigurationsseite eine Meldung, wenn die Steuerung nicht eingerichtet oder nicht getestet ist: keine „Noch nicht erfolgreich getestet“-Warnung, kein „… noch nicht vollständig konfiguriert“-Eintrag für diese Steuerung, kein roter Hinweis „Bitte Gerätesteuerung testen“ bzw. „Befülle den Sensor …“, und die Kachel klappt deswegen nicht mehr auf. Das Umschalten wirkt sofort (ohne Neuladen), auch beim Wieder-Aktivieren.
+
 ## 0.0.45.177
 
 * **Warmwasserbereitung: `number.set_value` ist kein wählbarer Befehl mehr.** `number.set_value` setzt nur einen Zahlenwert und aktiviert keine Warmwasserbereitung; dennoch stand er in der Befehlsauswahl und blendete ein Feld „value“ mit einem festen Wert ein. Die Solltemperatur setzt Shyft ohnehin selbst dynamisch: während einer „Warmwasser“-Aktion aus deren Zielwert (Sensorfeld „Warmwasser: Solltemperatur“), beim Test 5 °C über dem aktuellen Sollwert. Der Befehl wird deshalb aus der Auswahl entfernt. Ein bereits gespeicherter `number.set_value`-Befehl wird beim Laden verworfen (Befehlsfeld leer, Warmwasser gilt bis zur Auswahl eines echten Aktivierungsbefehls als nicht vollständig eingerichtet) und in der Ausführung nicht mehr aufgerufen (klare Fehlermeldung statt stillem Setzen eines festen Werts).
