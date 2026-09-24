@@ -773,13 +773,24 @@ let saveStatusTimeout = null;
 // zusaetzlich (nur so weit wie noetig) bis zu genau diesem Feld nachgescrollt.
 function scrollToIntegrationSection(sectionKey, fieldId) {
     const konfigButton = document.querySelector('.tabButton[data-tab="konfiguration"]');
-    if (konfigButton && !konfigButton.classList.contains('active')) konfigButton.click();
+    const cameFromOtherTab = !!konfigButton && !konfigButton.classList.contains('active');
+    if (cameFromOtherTab) konfigButton.click();
     const sectionDiv = document.querySelector(`.integrationSection[data-section-key="${sectionKey}"]`);
-    if (!sectionDiv) return;
+    if (!sectionDiv) {
+        if (cameFromOtherTab) window.scrollTo({top: 0, behavior: 'instant'});
+        return;
+    }
     const bodyDiv = document.getElementById('section_body_' + sectionKey);
     if (bodyDiv && bodyDiv.style.display === 'none') {
         const toggleButton = sectionDiv.querySelector('.sectionToggleButton');
         if (toggleButton) toggleButton.click();
+    }
+    if (cameFromOtherTab) {
+        // Kommt man z.B. aus einer Dashboard-Fehlermeldung, soll die Konfigurationsseite GANZ OBEN beginnen - dort
+        // steht die Fehlerkarte mit der Meldung samt "zu den Einstellungen"-Link. Die alte Scrollposition der
+        // Konfigurationsseite (bzw. ein Sprung zur Kachel) wuerde sie aus dem Bild schieben.
+        window.scrollTo({top: 0, behavior: 'instant'});
+        return;
     }
     requestAnimationFrame(() => {
         sectionDiv.scrollIntoView({behavior: 'smooth', block: 'start'});
@@ -1219,6 +1230,9 @@ async function renderDashboardProblemBanner() {
     banner.onclick = () => {
         const konfigButton = document.querySelector('.tabButton[data-tab="konfiguration"]');
         if (konfigButton) konfigButton.click();
+        // Die Konfigurationsseite beginnt ganz oben, dort steht die Fehlerkarte - sonst bliebe die alte
+        // Scrollposition (die Seite teilt sich einen Scrollbereich mit dem Dashboard) und die Meldung laege ausserhalb.
+        window.scrollTo({top: 0, behavior: 'instant'});
     };
 }
 

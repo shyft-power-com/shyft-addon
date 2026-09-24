@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.179
+
+* **Fehlermeldung auf dem Dashboard führt nach ganz oben auf der Konfigurationsseite.** Bisher blieb beim Wechsel vom Dashboard über den Problem-Banner (oder einen „zu den Einstellungen“-Link von einem anderen Tab aus) die Scrollposition der Konfigurationsseite erhalten - war man dort vorher heruntergescrollt, lag die Fehlerkarte mit der Meldung außerhalb des Bildes. Die Konfigurationsseite beginnt in diesem Fall jetzt immer ganz oben. Innerhalb der Konfigurationsseite springt „zu den Einstellungen“ weiterhin zur betroffenen Kachel.
+
 ## 0.0.45.178
 
 * **Deaktivierte Steuerungen melden keine Fehler mehr.** Steht der Toggle einer Steuerung (Verbraucher, Heizung Soll-Temperatur, Warmwasser, Auto laden, Batterie-Aktionen, PV-Einspeisung/§14a) auf „inaktiv“, erscheint weder auf dem Dashboard noch auf der Konfigurationsseite eine Meldung, wenn die Steuerung nicht eingerichtet oder nicht getestet ist: keine „Noch nicht erfolgreich getestet“-Warnung, kein „… noch nicht vollständig konfiguriert“-Eintrag für diese Steuerung, kein roter Hinweis „Bitte Gerätesteuerung testen“ bzw. „Befülle den Sensor …“, und die Kachel klappt deswegen nicht mehr auf. Das Umschalten wirkt sofort (ohne Neuladen), auch beim Wieder-Aktivieren.
