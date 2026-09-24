@@ -143,9 +143,19 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
     team.appendChild(mail);
     team.appendChild(document.createTextNode('.'));
 
+    // Immer sichtbar, auch ohne eingerichtete KI: oeffnet dasselbe Support-Formular wie das Angebot der KI.
+    const supportLinkRow = document.createElement('div');
+    supportLinkRow.className = 'assistantNotice';
+    const supportLink = document.createElement('button');
+    supportLink.type = 'button';
+    supportLink.className = 'assistantSupportLink';
+    supportLink.textContent = 'Problem an das Shyft-Team melden (Log senden)';
+    supportLinkRow.appendChild(supportLink);
+
     panel.appendChild(header);
     panel.appendChild(messages);
     panel.appendChild(inputRow);
+    panel.appendChild(supportLinkRow);
     panel.appendChild(setupBox);
     panel.appendChild(privacy);
     panel.appendChild(team);
@@ -156,6 +166,7 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
     let aiAvailable = false;
     let busy = false;
     let supportOffered = false;  // das Support-Angebot erscheint hoechstens einmal pro Chat
+    let supportCard = null;
     const history = [];
 
     function addMessage(text, kind) {
@@ -301,6 +312,7 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
 
         messages.appendChild(card);
         messages.scrollTop = messages.scrollHeight;
+        supportCard = card;
 
         postAsk(baseUri + '/assistant/support/start', {}).then(response => {
             if (response.loggingUntilMs) {
@@ -314,6 +326,24 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
             console.log(err);
             loggingInfo.textContent = 'Das detaillierte Logging konnte nicht aktiviert werden - gesendet wird das normale Log.';
         });
+    }
+
+    // Oeffnet das Support-Formular ueber den Link (ohne Angebot der KI): Beschreibung mit den aktuell aktiven Problemen
+    // vorbelegt (bearbeitbar). Pro Chat gibt es nur ein Formular - ein zweiter Klick springt zu ihm.
+    async function openSupportForm() {
+        if (supportCard) {
+            messages.scrollTop = supportCard.offsetTop - messages.offsetTop;
+            return;
+        }
+        supportOffered = true;
+        let summary = '';
+        try {
+            const health = await getJson(baseUri + '/system-health');
+            summary = (health.problems || []).slice(0, 3).map(p => p.message).join('\n');
+        } catch (err) {
+            console.log(err);
+        }
+        if (!supportCard) addSupportForm(summary);
     }
 
     function applyAvailability() {
@@ -391,6 +421,7 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
     launcher.addEventListener('click', () => setOpen(panel.hidden));
     closeButton.addEventListener('click', () => { setOpen(false); launcher.focus(); });
     sendButton.addEventListener('click', send);
+    supportLink.addEventListener('click', openSupportForm);
     input.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
