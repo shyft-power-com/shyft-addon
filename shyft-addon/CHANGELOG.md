@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.180
+
+* **Fix: „Aktuelle Leistung Wärmepumpe (elektrisch)“ bot Buttons und Schalter an.** Die Auswahl ließ jede Entität durch, deren Zustand „unknown“/„unavailable“ war und die keine Einheit meldet (dort lässt sich Einheit/Geräteklasse nicht prüfen) - dadurch erschien z. B. `button.e3_vitocal_16_einmalige_ladung_deaktivieren`. Jetzt werden nur Sensoren mit der Einheit W/kW angeboten; die Ausnahme für nicht prüfbare Entitäten gilt nur noch für Messwert-Domains (`sensor`, `number`, `input_number`, `climate`, `water_heater`) - Buttons, Schalter, Szenen usw. erscheinen in keinem Sensorfeld mehr als „nicht prüfbar“. Betrifft auch die Leistungsfelder des Wechselrichters und alle Geräteklassen-Felder.
+* **„Aktuelle Leistung Wärmepumpe“ löst keine Fehlermeldung mehr aus.** Der Sensor fließt nicht in die Optimierung ein (nur Anzeige im Energiefluss-Widget); fehlt er oder ist er „unavailable“, erscheint kein Problem mehr. Eine bereits offene Meldung dazu wird beim nächsten Add-on-Start automatisch abgeräumt.
+
 ## 0.0.45.179
 
 * **Fehlermeldung auf dem Dashboard führt nach ganz oben auf der Konfigurationsseite.** Bisher blieb beim Wechsel vom Dashboard über den Problem-Banner (oder einen „zu den Einstellungen“-Link von einem anderen Tab aus) die Scrollposition der Konfigurationsseite erhalten - war man dort vorher heruntergescrollt, lag die Fehlerkarte mit der Meldung außerhalb des Bildes. Die Konfigurationsseite beginnt in diesem Fall jetzt immer ganz oben. Innerhalb der Konfigurationsseite springt „zu den Einstellungen“ weiterhin zur betroffenen Kachel.

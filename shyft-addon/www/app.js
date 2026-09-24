@@ -193,7 +193,8 @@ const SENSOR_ENTITY_FILTERS = {
     'heatpump_dhw_on_off': {type: 'state_on_off'},
     'heatpump_heating_target_temp_normal': {type: 'device_class', value: 'temperature'},
     'heatpump_heating_activated': {type: 'state_on_off_or_mode'},
-    'heatpump_current_power_elect': {type: 'device_class', value: 'power'},
+    // Nur Leistungssensoren in W/kW (device_class 'power' liess z.B. auch Einheiten-lose Entitaeten durch)
+    'heatpump_current_power_elect': {type: 'power_unit'},
     'heatpump_on_off': {type: 'state_on_off_or_mode'},
     'heatpump_supply_temp_hp': {type: 'device_class', value: 'temperature'},
     'heatpump_temp_indoor_measured': {type: 'device_class', value: 'temperature'},
@@ -1341,17 +1342,23 @@ function isAmbiguousState(state) {
 
 function matchesDeviceClass(entity, deviceClass) {
     if (entity.device_class === deviceClass) return true;
-    // give the benefit of the doubt only when we genuinely have no class info to check
-    return isAmbiguousState(entity.state) && !entity.device_class;
+    // give the benefit of the doubt only when we genuinely have no class info to check - and only for entities
+    // that can be a measurement at all (a button/switch in state "unknown" is never a sensor)
+    return isAmbiguousState(entity.state) && !entity.device_class && MEASUREMENT_DOMAINS.includes(entity.entity_id.split('.')[0]);
 }
+
+// Domains, die einen Messwert/Sollwert liefern koennen - Schalter, Buttons, Szenen usw. nie (auch nicht im Zustand
+// "unknown"/"unavailable", wo Einheit und device_class nicht pruefbar sind).
+const MEASUREMENT_DOMAINS = ['sensor', 'number', 'input_number', 'climate', 'water_heater'];
 
 // Unlike matchesDeviceClass('power'), this also excludes binary_sensor entities that carry HA's
 // (legitimate, but here irrelevant) binary_sensor device_class "power" (on/off "is drawing power",
 // not a numeric W/kW reading) - those were showing up in the Wechselrichter sensor dropdowns.
 function matchesPowerUnit(entity) {
     if (entity.unit === 'W' || entity.unit === 'kW') return true;
-    // give the benefit of the doubt only when we genuinely have no unit info to check
-    return isAmbiguousState(entity.state) && !entity.unit;
+    // give the benefit of the doubt only when we genuinely have no unit info to check - nur fuer Messwert-Domains
+    // (ein button.* in Zustand "unknown" wurde sonst als Leistungssensor angeboten)
+    return isAmbiguousState(entity.state) && !entity.unit && MEASUREMENT_DOMAINS.includes(entity.entity_id.split('.')[0]);
 }
 
 function matchesOnOffState(entity) {

@@ -1905,14 +1905,14 @@ def readConfigWarnings():
 # input.csv des Optimizers) einfliesst - Schluessel wie in sync_service.LIST_OF_SENSORS, Wert ist
 # die deutsche Klartext-Bezeichnung fuer die Fehlerkarte. Nur fuer diese Sensoren meldet
 # _read_mapped_entity_state ein "unavailable" als Problem; rein optionale Sensoren duerfen
-# unauffaellig fehlen.
+# unauffaellig fehlen (z.B. "Aktuelle Leistung Waermepumpe": nur Anzeige im Energiefluss-Widget, kein
+# Optimierer-Eingang).
 HEALTH_MONITORED_SENSOR_KEYS = {
     "photovoltaic_powerflow_pv": "PV: Aktuelle Leistung",
     "photovoltaic_powerflow_load": "Haushalt: Aktuelle Leistung",
     "photovoltaic_powerflow_grid": "Netz: Aktuelle Leistung",
     "photovoltaic_powerflow_battery": "Batterie: Aktuelle Leistung",
     "battery_state_of_charge": "Ladestand Heimspeicher",
-    "heatpump_current_power_elect": "Aktuelle Leistung Waermepumpe",
     "heatpump_temp_indoor_measured": "Innenraumtemperatur (gemessen)",
     "electronicvehicle_state_of_charge": "Auto - Ladestand",
     "wallbox_current_charging_power": "Wallbox - Ladestrom",
@@ -3562,8 +3562,13 @@ def _reconcile_orphaned_sensor_problems():
     # .values() kann fuer 'electricity_grid_power_sensors' eine LISTE statt eines einzelnen
     # entity_id-Strings enthalten (siehe _grid_power_entity_ids) - ein blosses set(...) darueber
     # wuerde mit "unhashable type: list" abstuerzen, deshalb hier explizit abflachen.
+    # Nur Entities ueberwachter Felder zaehlen: fuer ein (inzwischen) nicht mehr ueberwachtes Feld - z.B.
+    # "Aktuelle Leistung Waermepumpe", seit 0.0.45.180 optional - bleibt ein frueher gemeldetes Problem sonst
+    # ewig stehen, weil _note_sensor_health es nicht mehr loescht. Die Netz-Mehrfachauswahl gehoert dazu.
     current_entity_ids = set()
-    for value in (config.get("sensorMappings") or {}).values():
+    for key, value in (config.get("sensorMappings") or {}).items():
+        if key not in HEALTH_MONITORED_SENSOR_KEYS and key != "electricity_grid_power_sensors":
+            continue
         if isinstance(value, list):
             current_entity_ids.update(v for v in value if v)
         elif value:
