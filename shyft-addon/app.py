@@ -1556,7 +1556,7 @@ def _opt_end_value_terms(input_rows, output_rows):
         d_ev_last = _safe_float(input_rows[n - 1].get("d_ev_kwh")) if n - 1 < len(input_rows) else 0.0
         plugged = _safe_float(last.get("ev_plugged"))
         ev_end = (_safe_float(last.get("SOC_EV")) * ev_size * (1 - base_case.EV_LOSS)
-                  + base_case.EV_ETA * _ev_sum_kw(last) * plugged
+                  + base_case.EV_ETA * _safe_float(last.get("EV_sum")) * plugged
                   - base_case.EV_FIXED_LOSS_KWH * plugged - d_ev_last)
         return {
             "soc_b_kwh_start": round(b_start, 4), "soc_b_kwh_target": round(max(0.9 * b_start, b_min), 4),
@@ -6546,17 +6546,6 @@ EV_PV_SURPLUS_PV_GR_MAX_KW = 1.0
 EV_PV_SURPLUS_B_EV_MAX_KW = 0.3
 EV_PV_SURPLUS_GR_EV_MAX_KW = 0.3
 
-# Obergrenze fuer plausible EV_sum-Werte (kW) aus output_csv. Der Optimierer liefert gelegentlich
-# fehlerhafte Werte (beobachtet: 100000 kW bei stark negativem Strompreis, zusammen mit SOC_EV weit
-# ueber 100 %) - solche Werte werden ignoriert, als stuende dort eine 0.
-EV_SUM_MAX_PLAUSIBLE_KW = 100
-
-
-def _ev_sum_kw(output_row):
-    "EV_sum (kW) aus einer output_csv-Zeile; unplausible Werte (> EV_SUM_MAX_PLAUSIBLE_KW) zaehlen als 0."
-    ev_sum = _safe_float(output_row.get("EV_sum"))
-    return 0.0 if ev_sum > EV_SUM_MAX_PLAUSIBLE_KW else ev_sum
-
 
 def _read_computed_actions():
     try:
@@ -6699,7 +6688,7 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
         input_row = input_rows[i] if i < len(input_rows) else {}
         is_current_hour = (i == 0)
 
-        ev_sum = _ev_sum_kw(output_row)
+        ev_sum = _safe_float(output_row.get("EV_sum"))
         if ev_sum <= EV_SUM_TRIGGER_KW:
             continue
 

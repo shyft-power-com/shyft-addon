@@ -1,9 +1,5 @@
 # Changelog
 
-## 0.0.45.192
-
-* **Behoben: unplausible Ladeleistung aus der Optimierung.** Liefert die Optimierung für „Auto laden“ eine Ladeleistung über 100 kW (beobachtet: 100000 kW mit Ziel-Ladestand 124750 % bei stark negativem Strompreis), wird dieser Wert jetzt ignoriert und wie 0 behandelt – es entsteht keine „Auto laden“-Aktion mehr mit solchen Werten.
-
 ## 0.0.45.191
 
 * **Fehlerkarte: Link zum Sensor in Home Assistant.** Meldet die Karte, dass ein Sensor keinen Wert liefert (unavailable) oder veraltet ist, steht dahinter jetzt „Integration in Home Assistant öffnen“ – der Link führt direkt zur Integration, zu der der Sensor gehört. Gehört der Sensor zu keiner Integration (z. B. Template-/YAML-Sensor), heißt der Link „Sensor in Home Assistant öffnen“ und öffnet die Entitätenliste, gefiltert auf den Sensor.
