@@ -6735,6 +6735,10 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
         # handle_shyft_action_start), nicht schon hier bei der Berechnung. Zwischen Berechnung und
         # tatsaechlichem Start (naechster process_shyft_actions-Poll) koennen mehrere Minuten
         # liegen, in denen sich die PV-Leistung schon geaendert haben kann.
+        # Auf die maximale Wallbox-Leistung (Phasen x Stromstaerke aus der Konfiguration) begrenzt -
+        # der Optimierer liefert gelegentlich unplausible Werte (beobachtet: 100000 kW bei stark
+        # negativem Strompreis, zusammen mit SOC_EV weit ueber 100 %).
+        ev_sum = min(ev_sum, compute_wallbox_max_kw(config))
         target_value = round(ev_sum, 1)
 
         if pv_surplus:
@@ -6743,7 +6747,7 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
             avg_price = _hourly_average_price(output_row, input_row)
             next_row = output_rows[i + 1] if i + 1 < len(output_rows) else output_row
             soc_next_raw = next_row.get("SOC_EV")
-            soc_next = float(soc_next_raw) * 100 if soc_next_raw else soc_now
+            soc_next = min(100.0, float(soc_next_raw) * 100) if soc_next_raw else soc_now
             subtitle = (f"Laden mit {ev_sum:.1f} kW (von {round(soc_now)} % "
                         f"auf {round(soc_next)} %) | Preis: {avg_price * 100:.1f} C/kWh")
 
@@ -6917,6 +6921,8 @@ DHW_ACTION_NAME = "Warmwasser"
 DHW_ID_PREFIX = "warmwasser"
 DHW_HOUR_WINDOW = 10
 HP_HW_TRIGGER_KW = 0.2
+# Default wie im Konfigurationsfeld "Max. Vorlauftemperatur (°C)" (hpMaxSupplyTempC, www/app.js).
+HP_MAX_SUPPLY_TEMP_DEFAULT_C = 55
 
 
 def _is_heatpump_configured(config):
@@ -6950,6 +6956,8 @@ def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id
         t_hw = _safe_float(output_row.get("T_HW"))
         next_row = output_rows[i + 1] if i + 1 < len(output_rows) else output_row
         target_t_hw = float(next_row.get("T_HW") or t_hw)
+        # Nie ueber die in der Konfiguration hinterlegte Max. Vorlauftemperatur hinaus.
+        target_t_hw = min(target_t_hw, float(config.get("hpMaxSupplyTempC") or HP_MAX_SUPPLY_TEMP_DEFAULT_C))
 
         date_start_ms = int(datetime.now(timezone.utc).timestamp() * 1000) if is_current_hour else int(hour_start.timestamp() * 1000)
         date_end_ms = int((hour_start + timedelta(hours=1)).timestamp() * 1000)
@@ -6988,6 +6996,9 @@ def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id
 HEIZUNG_ACTION_NAME = "Heizung Soll-Temperatur"
 HEIZUNG_ID_PREFIX = "heizung_soll"
 HEIZUNG_HOUR_WINDOW = 10
+# Plausibler Bereich fuer den Heizungs-Sollwert (°C) - der Optimierer-Wert T_i_Target wird darauf begrenzt.
+HEIZUNG_TARGET_MIN_C = 17
+HEIZUNG_TARGET_MAX_C = 25
 
 
 def _heizung_action_id(hour_start):
@@ -7022,13 +7033,13 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
         is_current_hour = (i == 0)
 
         t_i_target = _safe_float(output_row.get("T_i_Target"))
-        if round(t_i_target) == round(current_target):
+        target_value = max(HEIZUNG_TARGET_MIN_C, min(HEIZUNG_TARGET_MAX_C, round(t_i_target)))
+        if target_value == round(current_target):
             continue
 
         hour_start = start + timedelta(hours=i)
         t_i = _safe_float(output_row.get("T_i"))
         hp_fh = _safe_float(output_row.get("HP_FH"))
-        target_value = round(t_i_target)
 
         date_start_ms = int(datetime.now(timezone.utc).timestamp() * 1000) if is_current_hour else int(hour_start.timestamp() * 1000)
         date_end_ms = int((hour_start + timedelta(hours=1)).timestamp() * 1000)

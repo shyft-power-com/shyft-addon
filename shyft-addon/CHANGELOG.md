@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.45.192
+
+* **Zielwerte der Aktionen werden jetzt auf plausible Grenzen begrenzt.** Die Optimierung liefert gelegentlich unplausible Werte (beobachtet: „Auto laden“ mit 100000 kW und Ziel-Ladestand 124750 % bei stark negativem Strompreis). Beim Erzeugen der Aktionen gilt jetzt:
+  * **Auto laden:** höchstens die maximale Wallbox-Leistung aus „Max. Anzahl an Phasen“ × „Max. Stromstärke (pro Phase)“ × 230 V; der angezeigte Ziel-Ladestand höchstens 100 %.
+  * **Heizung Soll-Temperatur:** zwischen 17 °C und 25 °C.
+  * **Warmwasser:** höchstens die „Max. Vorlauftemperatur (°C)“ aus der Konfiguration (Standard 55 °C).
+
 ## 0.0.45.191
 
 * **Fehlerkarte: Link zum Sensor in Home Assistant.** Meldet die Karte, dass ein Sensor keinen Wert liefert (unavailable) oder veraltet ist, steht dahinter jetzt „Integration in Home Assistant öffnen“ – der Link führt direkt zur Integration, zu der der Sensor gehört. Gehört der Sensor zu keiner Integration (z. B. Template-/YAML-Sensor), heißt der Link „Sensor in Home Assistant öffnen“ und öffnet die Entitätenliste, gefiltert auf den Sensor.
