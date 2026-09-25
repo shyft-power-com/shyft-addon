@@ -242,7 +242,7 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
         const sendSupport = document.createElement('button');
         sendSupport.type = 'button';
         sendSupport.className = 'assistantSend assistantSupportSend';
-        sendSupport.textContent = 'An shyft-power senden';
+        sendSupport.textContent = 'Log senden';
         card.appendChild(sendSupport);
 
         const result = document.createElement('div');
@@ -270,8 +270,8 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
             const now = Date.now();
             if (loggingUntilMs > now) {
                 loggingInfo.textContent = 'Detailliertes Logging ist für die nächsten ' + SUPPORT_LOGGING_MINUTES_TEXT
-                    + ' Minuten aktiviert (noch ' + formatCountdown(loggingUntilMs - now) + '). Bitte stelle das Problem jetzt noch einmal nach. '
-                    + 'Das Log wird nach Ablauf der ' + SUPPORT_LOGGING_MINUTES_TEXT + ' Minuten gesendet.';
+                    + ' Minuten aktiviert (noch ' + formatCountdown(loggingUntilMs - now) + '). Bitte stelle das Problem jetzt noch einmal nach '
+                    + 'und klicke danach „Log senden“.';
             } else if (loggingUntilMs) {
                 loggingInfo.textContent = 'Das detaillierte Logging ist beendet.';
             }

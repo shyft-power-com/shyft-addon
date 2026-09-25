@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.187
+
+* **Hilfe-Assistent: Support-Formular klarer formuliert.** Der Logging-Hinweis sagte „Das Log wird nach Ablauf der 5 Minuten gesendet.“ - das klang, als würde automatisch gesendet. Gesendet wird aber erst nach dem Klick auf den Button. Der Hinweis lautet jetzt „… Bitte stelle das Problem jetzt noch einmal nach und klicke danach „Log senden“.“, der Button heißt „Log senden“ statt „An shyft-power senden“.
+
 ## 0.0.45.186
 
 * **Hilfe-Assistent: Chat bleibt beim Nachstellen des Problems offen.** Solange das Support-Formular („Log senden“) angezeigt wird, schließt ein Klick irgendwo im Add-on den Chat nicht mehr - man kann das Problem also nachstellen, während der Countdown läuft. Schließen geht weiterhin über × oder Esc.

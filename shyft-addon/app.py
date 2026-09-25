@@ -387,7 +387,7 @@ def assistantAskEndpoint():
 # Ablauf (siehe www/assistant.js): Zeigt der Chat das Support-Formular, ruft er /assistant/support/start - das schaltet
 # fuer SUPPORT_LOGGING_MINUTES Minuten das ausfuehrliche Logging ein (unabhaengig von der Add-on-Option
 # detailed_logging, danach wieder auf deren Wert), damit der Nutzer das Problem nachstellen kann. Der Klick auf
-# "An shyft-power senden" (/assistant/support/send) stellt die Anfrage ein: nach Ablauf des Logging-Fensters holt
+# "Log senden" (/assistant/support/send) stellt die Anfrage ein: nach Ablauf des Logging-Fensters holt
 # der Server das Log der letzten SUPPORT_LOG_MINUTES Minuten, schwaerzt Zugangsdaten und sendet es (Struktur siehe
 # assistant.build_support_payload) an den Bubble-Workflow ha_addon_error_logging. Der Fortschritt steht unter
 # /assistant/support/status. Alles nur im Speicher: ein Add-on-Neustart bricht einen wartenden Versand ab.
