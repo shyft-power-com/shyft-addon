@@ -6997,7 +6997,10 @@ HEIZUNG_ACTION_NAME = "Heizung Soll-Temperatur"
 HEIZUNG_ID_PREFIX = "heizung_soll"
 HEIZUNG_HOUR_WINDOW = 10
 # Plausibler Bereich fuer den Heizungs-Sollwert (°C) - der Optimierer-Wert T_i_Target wird darauf begrenzt.
-HEIZUNG_TARGET_MIN_C = 17
+# Untergrenze wie im Optimierer (run_SHEMS.jl): T_i_min - 4, mit T_i_min = "Gewuenschte Raumtemperatur
+# (mindestens)" (hpHeatingTargetTempMin, Default wie im Konfigurationsfeld in www/app.js).
+HEIZUNG_T_I_MIN_DEFAULT_C = 21
+HEIZUNG_TARGET_MIN_OFFSET_C = 4
 HEIZUNG_TARGET_MAX_C = 25
 
 
@@ -7027,13 +7030,16 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
     if current_target is None:
         return result
 
+    t_i_min = _safe_float(config.get("hpHeatingTargetTempMin"), HEIZUNG_T_I_MIN_DEFAULT_C)
+    target_min = round(t_i_min - HEIZUNG_TARGET_MIN_OFFSET_C)
+
     row_count = min(HEIZUNG_HOUR_WINDOW, len(output_rows))
     for i in range(row_count):
         output_row = output_rows[i]
         is_current_hour = (i == 0)
 
         t_i_target = _safe_float(output_row.get("T_i_Target"))
-        target_value = max(HEIZUNG_TARGET_MIN_C, min(HEIZUNG_TARGET_MAX_C, round(t_i_target)))
+        target_value = max(target_min, min(HEIZUNG_TARGET_MAX_C, round(t_i_target)))
         if target_value == round(current_target):
             continue
 

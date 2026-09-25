@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.193
+
+* **Heizung Soll-Temperatur: Untergrenze wie im Optimierer.** Statt fix 17 °C gilt jetzt „Gewünschte Raumtemperatur (mindestens)“ minus 4 °C als Untergrenze (z. B. 17 °C bei 21 °C); die Obergrenze bleibt 25 °C.
+
 ## 0.0.45.192
 
 * **Zielwerte der Aktionen werden jetzt auf plausible Grenzen begrenzt.** Die Optimierung liefert gelegentlich unplausible Werte (beobachtet: „Auto laden“ mit 100000 kW und Ziel-Ladestand 124750 % bei stark negativem Strompreis). Beim Erzeugen der Aktionen gilt jetzt:
