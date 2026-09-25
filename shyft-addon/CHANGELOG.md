@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.185
+
+* **Hilfe-Assistent: Aufgeräumtes Layout.** Unter der KI-Eingabe steht jetzt direkt der Datenschutzhinweis, darunter (durch Trennlinien abgesetzt) der Text „Du kannst uns bei einem Problem deine Log-Dateien senden. Wir schauen uns das Problem dann an und versuchen es zu beheben.“ mit dem Link „Log senden“ und ganz unten der Hinweis auf info@shyft-power.com. Öffnet man das Support-Formular über „Log senden“, werden KI-Eingabe und Datenschutzhinweis ausgeblendet, sodass nur noch das Formular im Blick ist.
+
 ## 0.0.45.184
 
 * **Hilfe-Assistent: „Problem an das Shyft-Team melden (Log senden)“ auch ohne KI.** Unter dem Eingabefeld steht jetzt immer ein Link, der dasselbe Support-Formular öffnet wie das Angebot der KI - auch wenn in Home Assistant keine KI (z. B. Google Gemini) eingerichtet ist. Die Beschreibung ist mit den aktuell aktiven Problemen aus der Fehlerkarte vorbelegt (bis zu drei, bearbeitbar); das 5-Minuten-Logging startet wie gehabt mit dem Formular. Pro Chat gibt es weiterhin nur ein Formular, ein zweiter Klick springt zu ihm.

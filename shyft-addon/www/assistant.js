@@ -5,7 +5,8 @@
 const PLACEHOLDER_AI_AVAILABLE = 'Frage die KI um Hilfe';
 const PLACEHOLDER_AI_MISSING = 'Nutze deine KI, um nach Hilfe zu fragen. Binde hierfür die Integration "Google -> Google Gemini" in Home Assistant ein.';
 const PRIVACY_NOTICE = 'Hinweis: Bei der Nutzung der Hilfe-Funktion teilst du deine Sensorzustände sowie einen Auszug aus dem Add-on-Log (nur Fehler- und Warnzeilen, ohne Zugangsdaten) mit deinem KI-Anbieter.';
-const TEAM_NOTICE_TEXT = 'Bei Fragen an das Shyft-Team schreibe bitte an ';
+const SUPPORT_LINK_INTRO = 'Du kannst uns bei einem Problem deine Log-Dateien senden. Wir schauen uns das Problem dann an und versuchen es zu beheben. ';
+const TEAM_NOTICE_TEXT ='Bei Fragen an das Shyft-Team schreibe bitte an ';
 const TEAM_MAIL = 'info@shyft-power.com';
 const MAX_HISTORY_SENT = 3;
 // Oeffnet Home Assistants eigenen "Integration hinzufuegen"-Dialog fuer Google Gemini (dort wird auch der
@@ -146,18 +147,34 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
     // Immer sichtbar, auch ohne eingerichtete KI: oeffnet dasselbe Support-Formular wie das Angebot der KI.
     const supportLinkRow = document.createElement('div');
     supportLinkRow.className = 'assistantNotice';
+    supportLinkRow.appendChild(document.createTextNode(SUPPORT_LINK_INTRO));
     const supportLink = document.createElement('button');
     supportLink.type = 'button';
     supportLink.className = 'assistantSupportLink';
-    supportLink.textContent = 'Problem an das Shyft-Team melden (Log senden)';
+    supportLink.textContent = 'Log senden';
     supportLinkRow.appendChild(supportLink);
+
+    // KI-Bereich (Eingabe, Einrichtungshinweis, Datenschutzhinweis) - wird ausgeblendet, sobald der Nutzer ueber den
+    // Link das Support-Formular oeffnet, damit nur noch das Formular im Blick ist.
+    const aiSection = document.createElement('div');
+    aiSection.className = 'assistantAiSection';
+    aiSection.appendChild(inputRow);
+    aiSection.appendChild(setupBox);
+    aiSection.appendChild(privacy);
+
+    function divider() {
+        const line = document.createElement('hr');
+        line.className = 'assistantDivider';
+        return line;
+    }
+    const aiDivider = divider();
 
     panel.appendChild(header);
     panel.appendChild(messages);
-    panel.appendChild(inputRow);
+    panel.appendChild(aiSection);
+    panel.appendChild(aiDivider);
     panel.appendChild(supportLinkRow);
-    panel.appendChild(setupBox);
-    panel.appendChild(privacy);
+    panel.appendChild(divider());
     panel.appendChild(team);
     root.appendChild(panel);
     root.appendChild(launcher);
@@ -331,6 +348,8 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
     // Oeffnet das Support-Formular ueber den Link (ohne Angebot der KI): Beschreibung mit den aktuell aktiven Problemen
     // vorbelegt (bearbeitbar). Pro Chat gibt es nur ein Formular - ein zweiter Klick springt zu ihm.
     async function openSupportForm() {
+        aiSection.hidden = true;
+        aiDivider.hidden = true;
         if (supportCard) {
             messages.scrollTop = supportCard.offsetTop - messages.offsetTop;
             return;
