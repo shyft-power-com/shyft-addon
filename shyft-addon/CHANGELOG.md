@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.191
+
+* **Fehlerkarte: Link zum Sensor in Home Assistant.** Meldet die Karte, dass ein Sensor keinen Wert liefert (unavailable) oder veraltet ist, steht dahinter jetzt „Integration in Home Assistant öffnen“ – der Link führt direkt zur Integration, zu der der Sensor gehört. Gehört der Sensor zu keiner Integration (z. B. Template-/YAML-Sensor), heißt der Link „Sensor in Home Assistant öffnen“ und öffnet die Entitätenliste, gefiltert auf den Sensor.
+
 ## 0.0.45.190
 
 * **Warmwasser-Test: Hinweis zum Beenden.** Hat der Test die Warmwasserbereitung ausgelöst (bei Erfolg, aber auch wenn der Status nicht rechtzeitig umgesprungen ist), steht in der Meldung jetzt zusätzlich „Der Test beendet die Warmwasserbereitung nicht. Bitte manuell beenden!“

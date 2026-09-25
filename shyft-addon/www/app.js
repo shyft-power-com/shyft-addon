@@ -811,9 +811,43 @@ function scrollToIntegrationSection(sectionKey, fieldId) {
 // Ein <li> fuer die Problemliste in renderSystemHealth - Text plus optionaler "zu den
 // Einstellungen"-Link, wenn ein sectionKey bekannt ist (gemeinsam fuer System-Health-Probleme und
 // Konfigurations-Warnungen genutzt, die den Link auf unterschiedlichen Wegen ermitteln).
-function buildProblemListItem(message, sectionKey, fieldId) {
+// Fuer "sensor_unavailable:<entity_id>"/"sensor_stale:<entity_id>"-Probleme: Link in die HA-Oberflaeche
+// zur Integration, zu der der Sensor gehoert (aus den ohnehin geladenen integrationsData) - dort sieht
+// der Nutzer, ob die Integration selbst einen Fehler hat, und kommt ueber die Entitaetenliste an die
+// Sensor-Einstellungen. Gehoert der Sensor zu keiner bekannten Integration (z.B. YAML-/Template-Sensor
+// ohne Config-Entry), die Entitaetenliste gefiltert auf den Sensor. null fuer alle anderen Problem-IDs.
+function sensorProblemHaLink(problemId) {
+    const prefix = ['sensor_unavailable:', 'sensor_stale:'].find(p => (problemId || '').startsWith(p));
+    if (!prefix) return null;
+    const entityId = problemId.slice(prefix.length);
+    const entryId = Object.keys(integrationsData.entityMap || {})
+        .find(id => (integrationsData.entityMap[id] || []).includes(entityId));
+    const integration = entryId && integrationsData.integrations.find(i => i.id === entryId);
+    if (integration && integration.domain) {
+        return {
+            href: `/config/integrations/integration/${encodeURIComponent(integration.domain)}`,
+            label: 'Integration in Home Assistant öffnen',
+        };
+    }
+    return {
+        href: `/config/entities?search=${encodeURIComponent(entityId)}`,
+        label: 'Sensor in Home Assistant öffnen',
+    };
+}
+
+function buildProblemListItem(message, sectionKey, fieldId, haLink) {
     const item = document.createElement('li');
     item.appendChild(document.createTextNode(message));
+    if (haLink) {
+        const link = document.createElement('a');
+        link.href = haLink.href;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.className = 'systemHealthProblemLink';
+        link.textContent = haLink.label;
+        item.appendChild(document.createTextNode(' '));
+        item.appendChild(link);
+    }
     if (sectionKey) {
         const link = document.createElement('a');
         link.href = '#';
@@ -1013,7 +1047,7 @@ async function renderSystemHealth() {
     for (const problem of problems) {
         const fieldId = actionFailedFieldId(problem.id);
         if (fieldId) errorFieldIds.push(fieldId);
-        list.appendChild(buildProblemListItem(problem.message, actionFailedProblemSectionKey(problem.id), fieldId));
+        list.appendChild(buildProblemListItem(problem.message, actionFailedProblemSectionKey(problem.id), fieldId, sensorProblemHaLink(problem.id)));
     }
     for (const warning of warnings) {
         errorFieldIds.push(...(warning.fieldIds || (warning.fieldId ? [warning.fieldId] : [])));
