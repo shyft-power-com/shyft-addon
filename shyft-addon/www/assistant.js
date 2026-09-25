@@ -230,7 +230,7 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
         const sentInfo = document.createElement('div');
         sentInfo.className = 'assistantNotice';
         sentInfo.textContent = 'Gesendet werden: deine Beschreibung, die Add-on-Version, deine E-Mail-Adresse (falls angegeben) und das '
-            + 'Add-on-Log der letzten ' + SUPPORT_LOGGING_MINUTES_TEXT + ' Minuten (höchstens 1 MB). Zugangsdaten werden geschwärzt, '
+            + 'Add-on-Log (höchstens 1 MB, höchstens die letzten ' + SUPPORT_LOGGING_MINUTES_TEXT + ' Minuten). Zugangsdaten werden geschwärzt, '
             + 'das Log kann aber Entity-IDs, Gerätenamen und Sensorwerte enthalten.';
         card.appendChild(sentInfo);
 
@@ -450,9 +450,10 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && !panel.hidden) setOpen(false);
     });
-    // Klick ausserhalb des Assistenten schliesst das Popup (Klicks auf Icon/Panel selbst nicht).
+    // Klick ausserhalb des Assistenten schliesst das Popup (Klicks auf Icon/Panel selbst nicht). Mit offenem
+    // Support-Formular bleibt es offen - der Nutzer soll das Problem im Add-on nachstellen koennen.
     document.addEventListener('pointerdown', (event) => {
-        if (!panel.hidden && !root.contains(event.target)) setOpen(false);
+        if (!panel.hidden && !supportCard && !root.contains(event.target)) setOpen(false);
     });
 
     applyAvailability();

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.186
+
+* **Hilfe-Assistent: Chat bleibt beim Nachstellen des Problems offen.** Solange das Support-Formular („Log senden“) angezeigt wird, schließt ein Klick irgendwo im Add-on den Chat nicht mehr - man kann das Problem also nachstellen, während der Countdown läuft. Schließen geht weiterhin über × oder Esc.
+* **Hilfe-Assistent: Hinweistext im Support-Formular angepasst:** „… und das Add-on-Log (höchstens 1 MB, höchstens die letzten 5 Minuten).“
+
 ## 0.0.45.185
 
 * **Hilfe-Assistent: Aufgeräumtes Layout.** Unter der KI-Eingabe steht jetzt direkt der Datenschutzhinweis, darunter (durch Trennlinien abgesetzt) der Text „Du kannst uns bei einem Problem deine Log-Dateien senden. Wir schauen uns das Problem dann an und versuchen es zu beheben.“ mit dem Link „Log senden“ und ganz unten der Hinweis auf info@shyft-power.com. Öffnet man das Support-Formular über „Log senden“, werden KI-Eingabe und Datenschutzhinweis ausgeblendet, sodass nur noch das Formular im Blick ist.
