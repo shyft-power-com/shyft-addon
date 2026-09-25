@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.188
+
+* **Hilfe-Assistent: Aufforderung nach Ende des Loggings.** Ist das 5-Minuten-Logging abgelaufen und wurde noch nicht auf „Log senden“ geklickt, lautet der Hinweis jetzt „Das detaillierte Logging ist beendet. Bitte die Logs jetzt senden.“
+
 ## 0.0.45.187
 
 * **Hilfe-Assistent: Support-Formular klarer formuliert.** Der Logging-Hinweis sagte „Das Log wird nach Ablauf der 5 Minuten gesendet.“ - das klang, als würde automatisch gesendet. Gesendet wird aber erst nach dem Klick auf den Button. Der Hinweis lautet jetzt „… Bitte stelle das Problem jetzt noch einmal nach und klicke danach „Log senden“.“, der Button heißt „Log senden“ statt „An shyft-power senden“.

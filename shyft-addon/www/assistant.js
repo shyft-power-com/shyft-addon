@@ -273,7 +273,9 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
                     + ' Minuten aktiviert (noch ' + formatCountdown(loggingUntilMs - now) + '). Bitte stelle das Problem jetzt noch einmal nach '
                     + 'und klicke danach „Log senden“.';
             } else if (loggingUntilMs) {
-                loggingInfo.textContent = 'Das detaillierte Logging ist beendet.';
+                // Die Aufforderung nur, solange noch nicht auf "Log senden" geklickt wurde (Button dann deaktiviert).
+                loggingInfo.textContent = 'Das detaillierte Logging ist beendet.'
+                    + (sendSupport.disabled ? '' : ' Bitte die Logs jetzt senden.');
             }
             if (sendAtMs && sendAtMs > now) {
                 showResult('Das Log wird automatisch gesendet, sobald die ' + SUPPORT_LOGGING_MINUTES_TEXT + ' Minuten um sind (in '
