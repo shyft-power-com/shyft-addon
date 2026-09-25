@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.190
+
+* **Hilfe-Assistent: Support-Anfrage neu geregelt - Logging startet erst per Klick.** Bisher startete das 5-Minuten-Logging schon beim Anzeigen des Formulars, und der Button „Log senden“ war missverständlich. Jetzt steht im Formular „Bitte klicke „Logging starten“ und stelle das Problem dann noch einmal nach. Das Log wird nach Ablauf von 5 Minuten an shyft-power gesendet.“ Der Button „Logging starten“ ist erst klickbar, wenn eine Problembeschreibung eingetragen ist - Logs ohne Beschreibung gibt es nicht mehr. Der Klick aktiviert das ausführliche Logging für 5 Minuten (mit Countdown), sperrt Beschreibung und E-Mail und sendet danach immer automatisch Log und Beschreibung an shyft-power, auch bei geschlossenem Chat. Ein bereits laufendes Logging-Fenster wird dabei auf volle 5 Minuten neu gestartet. Der Endpunkt `/assistant/support/start` entfällt; `/assistant/support/send` startet das Logging selbst.
+
 ## 0.0.45.189
 
 * **Warmwasser-Test: wartet jetzt bis zu 3 Minuten und fragt den Status aktiv nach.** Cloud-Integrationen wie ViCare pollen nur alle paar Minuten – bei der Vitocal sprang „Einmalige Ladung“ erst ~2 Minuten nach dem Aktivieren auf An, der Test gab aber schon nach 90 s auf. Der Test wartet jetzt bis zu 3 Minuten und stößt alle 30 s per `homeassistant.update_entity` eine Aktualisierung des Status-Sensors an.

@@ -384,13 +384,13 @@ def assistantAskEndpoint():
 
 
 # --- Hilfe-Assistent: Support-Anfrage (Log an shyft-power) ---------------------------------------
-# Ablauf (siehe www/assistant.js): Zeigt der Chat das Support-Formular, ruft er /assistant/support/start - das schaltet
-# fuer SUPPORT_LOGGING_MINUTES Minuten das ausfuehrliche Logging ein (unabhaengig von der Add-on-Option
-# detailed_logging, danach wieder auf deren Wert), damit der Nutzer das Problem nachstellen kann. Der Klick auf
-# "Log senden" (/assistant/support/send) stellt die Anfrage ein: nach Ablauf des Logging-Fensters holt
-# der Server das Log der letzten SUPPORT_LOG_MINUTES Minuten, schwaerzt Zugangsdaten und sendet es (Struktur siehe
-# assistant.build_support_payload) an den Bubble-Workflow ha_addon_error_logging. Der Fortschritt steht unter
-# /assistant/support/status. Alles nur im Speicher: ein Add-on-Neustart bricht einen wartenden Versand ab.
+# Ablauf (siehe www/assistant.js): Der Klick auf "Logging starten" im Support-Formular (/assistant/support/send, mit
+# Pflicht-Beschreibung) schaltet fuer SUPPORT_LOGGING_MINUTES Minuten das ausfuehrliche Logging ein (unabhaengig von der
+# Add-on-Option detailed_logging, danach wieder auf deren Wert), damit der Nutzer das Problem nachstellen kann, und
+# stellt die Anfrage ein: nach Ablauf des Logging-Fensters holt der Server das Log der letzten SUPPORT_LOG_MINUTES
+# Minuten, schwaerzt Zugangsdaten und sendet es (Struktur siehe assistant.build_support_payload) an den Bubble-Workflow
+# ha_addon_error_logging. Der Fortschritt steht unter /assistant/support/status. Alles nur im Speicher: ein
+# Add-on-Neustart bricht einen wartenden Versand ab.
 SUPPORT_LOGGING_MINUTES = 5
 SUPPORT_SEND_DELAY_AFTER_WINDOW_SECONDS = 3  # letzte Logzeilen noch beim Supervisor ankommen lassen
 SUPPORT_MIN_SECONDS_BETWEEN_SENDS = 60
@@ -415,22 +415,15 @@ def _end_support_logging_window(expected_until):
     print("[Shyft] Support-Anfrage: temporäres ausführliches Logging beendet.")
 
 
-@app.route("/assistant/support/start", methods=["POST"])
-def assistantSupportStart():
-    """Startet (bzw. meldet das laufende) ausfuehrliche Logging fuer SUPPORT_LOGGING_MINUTES Minuten. Antwort:
-    {"loggingUntilMs", "seconds"}. Ein bereits laufendes Fenster wird nicht verlaengert."""
+def _start_support_logging_window(now):
+    "Startet ein frisches Logging-Fenster ab jetzt (ein laufendes wird ersetzt). Aufruf nur mit _support_lock."
     global _support_logging_until
-    with _support_lock:
-        now = time.time()
-        if now >= _support_logging_until:
-            _support_logging_until = now + SUPPORT_LOGGING_MINUTES * 60
-            _set_runtime_detailed_logging(True)
-            timer = threading.Timer(SUPPORT_LOGGING_MINUTES * 60, _end_support_logging_window, args=(_support_logging_until,))
-            timer.daemon = True
-            timer.start()
-            print(f"[Shyft] Support-Anfrage: ausführliches Logging für {SUPPORT_LOGGING_MINUTES} Minuten aktiviert.")
-        until = _support_logging_until
-        return jsonify({"loggingUntilMs": int(until * 1000), "seconds": max(0, int(until - now))})
+    _support_logging_until = now + SUPPORT_LOGGING_MINUTES * 60
+    _set_runtime_detailed_logging(True)
+    timer = threading.Timer(SUPPORT_LOGGING_MINUTES * 60, _end_support_logging_window, args=(_support_logging_until,))
+    timer.daemon = True
+    timer.start()
+    print(f"[Shyft] Support-Anfrage: ausführliches Logging für {SUPPORT_LOGGING_MINUTES} Minuten aktiviert.")
 
 
 def _support_set_job(**fields):
@@ -456,8 +449,8 @@ def _support_send_worker(summary, email):
 
 @app.route("/assistant/support/send", methods=["POST"])
 def assistantSupportSend():
-    """Stellt die Support-Anfrage ein. Body: {summary, email?}. Laeuft das Logging-Fenster noch, wird nach dessen
-    Ende gesendet (Antwort state=waiting, sendAtMs), sonst sofort (state=sending)."""
+    """Startet das Logging-Fenster und stellt die Support-Anfrage ein. Body: {summary, email?}. Gesendet wird immer
+    nach Ablauf des Fensters (SUPPORT_LOGGING_MINUTES Minuten). Antwort: {status, state=waiting, sendAtMs, loggingUntilMs}."""
     body = request.get_json(force=True, silent=True) or {}
     summary, email, error = assistant.normalize_support_input(body.get("summary"), body.get("email"))
     if error:
@@ -470,18 +463,16 @@ def assistantSupportSend():
             return jsonify({"status": "error", "message": "Es läuft bereits eine Anfrage."}), 409
         if _support_job["state"] == "done" and now - _support_job["finishedAt"] < SUPPORT_MIN_SECONDS_BETWEEN_SENDS:
             return jsonify({"status": "error", "message": "Die Anfrage wurde gerade erst gesendet."}), 429
-        delay = max(0.0, _support_logging_until - now)
-        if delay > 0:
-            delay += SUPPORT_SEND_DELAY_AFTER_WINDOW_SECONDS
-            _support_job.update({"state": "waiting", "message": "Wird nach Ablauf des Logging-Zeitraums gesendet.", "sendAt": now + delay})
-        else:
-            _support_job.update({"state": "sending", "message": "Das Log wird gesendet ...", "sendAt": None})
-        send_at = _support_job["sendAt"]
+        _start_support_logging_window(now)
+        delay = SUPPORT_LOGGING_MINUTES * 60 + SUPPORT_SEND_DELAY_AFTER_WINDOW_SECONDS
+        send_at = now + delay
+        _support_job.update({"state": "waiting", "message": "Wird nach Ablauf des Logging-Zeitraums gesendet.", "sendAt": send_at})
+        until = _support_logging_until
     timer = threading.Timer(delay, _support_send_worker, args=(summary, email))
     timer.daemon = True
     timer.start()
-    return jsonify({"status": "success", "state": "waiting" if delay > 0 else "sending",
-                    "sendAtMs": int(send_at * 1000) if send_at else None})
+    return jsonify({"status": "success", "state": "waiting", "sendAtMs": int(send_at * 1000),
+                    "loggingUntilMs": int(until * 1000)})
 
 
 @app.route("/assistant/support/status", methods=["GET"])

@@ -195,9 +195,9 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
         return bubble;
     }
 
-    // Support-Formular unter einer KI-Antwort: Beschreibung (bearbeitbar), optionale E-Mail, Hinweis auf die gesendeten
-    // Daten, Countdown des ausfuehrlichen Loggings und der Senden-Button. Beim Anzeigen wird das ausfuehrliche Logging
-    // fuer 5 Minuten aktiviert (der Nutzer soll das Problem nachstellen); gesendet wird erst nach Ablauf.
+    // Support-Formular unter einer KI-Antwort: Beschreibung (Pflicht, bearbeitbar), optionale E-Mail, Hinweis auf die
+    // gesendeten Daten und der Button "Logging starten". Erst der Klick aktiviert das ausfuehrliche Logging fuer 5 Minuten
+    // (der Nutzer soll das Problem nachstellen); danach sendet das Add-on das Log automatisch.
     function addSupportForm(summaryText) {
         const card = document.createElement('div');
         card.className = 'assistantSupport';
@@ -236,24 +236,37 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
 
         const loggingInfo = document.createElement('div');
         loggingInfo.className = 'assistantNotice assistantSupportLogging';
-        loggingInfo.textContent = 'Detailliertes Logging wird aktiviert ...';
+        loggingInfo.textContent = 'Bitte klicke „Logging starten“ und stelle das Problem dann noch einmal nach. Das Log wird nach Ablauf von '
+            + SUPPORT_LOGGING_MINUTES_TEXT + ' Minuten an shyft-power gesendet.';
         card.appendChild(loggingInfo);
 
-        const sendSupport = document.createElement('button');
-        sendSupport.type = 'button';
-        sendSupport.className = 'assistantSend assistantSupportSend';
-        sendSupport.textContent = 'Log senden';
-        card.appendChild(sendSupport);
+        const startSupport = document.createElement('button');
+        startSupport.type = 'button';
+        startSupport.className = 'assistantSend assistantSupportSend';
+        startSupport.textContent = 'Logging starten';
+        card.appendChild(startSupport);
 
         const result = document.createElement('div');
         result.className = 'assistantSupportResult';
         result.hidden = true;
         card.appendChild(result);
 
-        let loggingUntilMs = 0;
+        let started = false;
         let sendAtMs = 0;
         let ticker = null;
         let poller = null;
+
+        // Ohne Beschreibung kein Log: der Button ist erst mit Text klickbar und nach dem Start gesperrt.
+        function updateStartButton() {
+            startSupport.disabled = started || !summary.value.trim();
+        }
+
+        function setStarted(value) {
+            started = value;
+            summary.readOnly = value;
+            email.readOnly = value;
+            updateStartButton();
+        }
 
         function showResult(text, isError) {
             result.hidden = false;
@@ -266,20 +279,19 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
             clearInterval(poller);
         }
 
+        function fail(text) {
+            stopTimers();
+            setStarted(false);
+            showResult(text, true);
+        }
+
         function tick() {
             const now = Date.now();
-            if (loggingUntilMs > now) {
-                loggingInfo.textContent = 'Detailliertes Logging ist für die nächsten ' + SUPPORT_LOGGING_MINUTES_TEXT
-                    + ' Minuten aktiviert (noch ' + formatCountdown(loggingUntilMs - now) + '). Bitte stelle das Problem jetzt noch einmal nach '
-                    + 'und klicke danach „Log senden“.';
-            } else if (loggingUntilMs) {
-                // Die Aufforderung nur, solange noch nicht auf "Log senden" geklickt wurde (Button dann deaktiviert).
-                loggingInfo.textContent = 'Das detaillierte Logging ist beendet.'
-                    + (sendSupport.disabled ? '' : ' Bitte die Logs jetzt senden.');
-            }
-            if (sendAtMs && sendAtMs > now) {
-                showResult('Das Log wird automatisch gesendet, sobald die ' + SUPPORT_LOGGING_MINUTES_TEXT + ' Minuten um sind (in '
-                    + formatCountdown(sendAtMs - now) + '). Du kannst den Chat schließen.', false);
+            if (sendAtMs > now) {
+                loggingInfo.textContent = 'Detailliertes Logging läuft (noch ' + formatCountdown(sendAtMs - now) + '). Bitte stelle das '
+                    + 'Problem jetzt noch einmal nach. Danach wird das Log automatisch an shyft-power gesendet - du kannst den Chat auch schließen.';
+            } else if (sendAtMs) {
+                loggingInfo.textContent = 'Das detaillierte Logging ist beendet.';
             }
         }
 
@@ -288,18 +300,14 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
                 const status = await getJson(baseUri + '/assistant/support/status');
                 if (status.state === 'done') {
                     stopTimers();
+                    tick();
                     showResult(status.message, false);
                 } else if (status.state === 'error') {
-                    stopTimers();
-                    sendSupport.disabled = false;
-                    showResult(status.message, true);
+                    fail(status.message);
                 } else if (status.state === 'idle') {
                     // Add-on wurde inzwischen neu gestartet - der wartende Versand ist verloren
-                    stopTimers();
-                    sendSupport.disabled = false;
-                    showResult('Die Anfrage ist nicht mehr aktiv (Add-on neu gestartet?). Bitte sende sie erneut.', true);
+                    fail('Die Anfrage ist nicht mehr aktiv (Add-on neu gestartet?). Bitte starte das Logging erneut.');
                 } else if (status.state === 'sending') {
-                    sendAtMs = 0;
                     showResult(status.message || 'Das Log wird gesendet ...', false);
                 }
             } catch (err) {
@@ -307,44 +315,33 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
             }
         }
 
-        sendSupport.addEventListener('click', async () => {
-            sendSupport.disabled = true;
+        startSupport.addEventListener('click', async () => {
+            if (!summary.value.trim()) return;
+            setStarted(true);
             result.hidden = true;
             try {
                 const response = await postAsk(baseUri + '/assistant/support/send', {summary: summary.value, email: email.value});
                 if (response.status !== 'success') {
-                    sendSupport.disabled = false;
-                    showResult(response.message || 'Das Senden ist fehlgeschlagen.', true);
+                    fail(response.message || 'Das Logging konnte nicht gestartet werden.');
                     return;
                 }
-                sendAtMs = response.sendAtMs || 0;
-                if (!sendAtMs) showResult('Das Log wird gesendet ...', false);
+                sendAtMs = response.sendAtMs || Date.now();
                 tick();
+                clearInterval(ticker);
+                ticker = setInterval(tick, 1000);
                 clearInterval(poller);
                 poller = setInterval(poll, SUPPORT_STATUS_POLL_MS);
             } catch (err) {
                 console.log(err);
-                sendSupport.disabled = false;
-                showResult('Das Senden ist fehlgeschlagen. Bitte versuche es später erneut.', true);
+                fail('Das Logging konnte nicht gestartet werden. Bitte versuche es später erneut.');
             }
         });
+        summary.addEventListener('input', updateStartButton);
+        updateStartButton();
 
         messages.appendChild(card);
         messages.scrollTop = messages.scrollHeight;
         supportCard = card;
-
-        postAsk(baseUri + '/assistant/support/start', {}).then(response => {
-            if (response.loggingUntilMs) {
-                loggingUntilMs = response.loggingUntilMs;
-                tick();
-                ticker = setInterval(tick, 1000);
-            } else {
-                loggingInfo.textContent = 'Das detaillierte Logging konnte nicht aktiviert werden - gesendet wird das normale Log.';
-            }
-        }).catch(err => {
-            console.log(err);
-            loggingInfo.textContent = 'Das detaillierte Logging konnte nicht aktiviert werden - gesendet wird das normale Log.';
-        });
     }
 
     // Oeffnet das Support-Formular ueber den Link (ohne Angebot der KI): Beschreibung mit den aktuell aktiven Problemen
