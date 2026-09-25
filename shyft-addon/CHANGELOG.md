@@ -2,6 +2,10 @@
 
 ## 0.0.45.190
 
+* **Warmwasser-Test: Hinweis zum Beenden.** Hat der Test die Warmwasserbereitung ausgelöst (bei Erfolg, aber auch wenn der Status nicht rechtzeitig umgesprungen ist), steht in der Meldung jetzt zusätzlich „Der Test beendet die Warmwasserbereitung nicht. Bitte manuell beenden!“
+
+## 0.0.45.190
+
 * **Hilfe-Assistent: Support-Anfrage neu geregelt - Logging startet erst per Klick.** Bisher startete das 5-Minuten-Logging schon beim Anzeigen des Formulars, und der Button „Log senden“ war missverständlich. Jetzt steht im Formular „Bitte klicke „Logging starten“ und stelle das Problem dann noch einmal nach. Das Log wird nach Ablauf von 5 Minuten an shyft-power gesendet.“ Der Button „Logging starten“ ist erst klickbar, wenn eine Problembeschreibung eingetragen ist - Logs ohne Beschreibung gibt es nicht mehr. Der Klick aktiviert das ausführliche Logging für 5 Minuten (mit Countdown), sperrt Beschreibung und E-Mail und sendet danach immer automatisch Log und Beschreibung an shyft-power, auch bei geschlossenem Chat. Ein bereits laufendes Logging-Fenster wird dabei auf volle 5 Minuten neu gestartet. Der Endpunkt `/assistant/support/start` entfällt; `/assistant/support/send` startet das Logging selbst.
 
 ## 0.0.45.189

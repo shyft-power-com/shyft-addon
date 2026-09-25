@@ -4949,7 +4949,7 @@ def testHotWaterTargetTemp():
 
     if activate_error is None and heating_confirmed and revert_ok:
         _note_action_outcome(DHW_ACTION_NAME, "getestet", None)
-        return jsonify({"success": True, "originalValue": original_value, "boostedValue": boosted_value})
+        return jsonify({"success": True, "activated": True, "originalValue": original_value, "boostedValue": boosted_value})
 
     if activate_error is not None:
         message = f"Warmwasserbereitung fehlgeschlagen: {activate_error}"
@@ -4959,7 +4959,10 @@ def testHotWaterTargetTemp():
         message = "Solltemperatur konnte nach dem Test nicht zurückgesetzt werden"
     if not revert_ok and (activate_error is not None or not heating_confirmed):
         message += " - Solltemperatur konnte außerdem nicht zurückgesetzt werden"
-    return jsonify({"success": False, "message": message, "originalValue": original_value, "boostedValue": boosted_value}), 500
+    # activated: die Aktivierung wurde ausgeloest (auch wenn der Status nicht rechtzeitig umsprang) -
+    # das Frontend weist dann darauf hin, dass der Test die Warmwasserbereitung nicht wieder beendet.
+    return jsonify({"success": False, "message": message, "activated": activate_error is None,
+                    "originalValue": original_value, "boostedValue": boosted_value}), 500
 
 
 def extract_select_options(field_info):

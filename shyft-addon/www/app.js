@@ -5108,6 +5108,9 @@ function buildHotWaterControl() {
                 status.textContent = 'Fehler: ' + (result.message || 'unbekannt');
                 status.className = 'autoActionStatus status-error';
             }
+            if (result.activated) {
+                status.textContent += ' Der Test beendet die Warmwasserbereitung nicht. Bitte manuell beenden!';
+            }
             applyTestGate('hot_water', checkmark, hotWaterHint, true);
         } catch (err) {
             console.log(err);
