@@ -4747,7 +4747,12 @@ def _end_dhw_target_temp_restore(action, config):
 
 
 DHW_ACTIVATION_TEST_POLL_INTERVAL_SECONDS = 5
-DHW_ACTIVATION_TEST_POLL_TIMEOUT_SECONDS = 90
+# Cloud-Integrationen wie ViCare pollen nur alle paar Minuten - nach dem Aktivieren-Button stand
+# "Einmalige Ladung" erst ~2 min spaeter auf An, laenger als die frueheren 90s. Deshalb laengeres
+# Fenster UND alle DHW_ACTIVATION_TEST_REFRESH_INTERVAL_SECONDS ein homeassistant.update_entity auf
+# den Status-Sensor, damit die Integration aktiv nachfragt statt auf ihren naechsten Poll zu warten.
+DHW_ACTIVATION_TEST_POLL_TIMEOUT_SECONDS = 180
+DHW_ACTIVATION_TEST_REFRESH_INTERVAL_SECONDS = 30
 
 
 # --- Aktions-Bereitschaft (vollstaendig eingerichtet + zuletzt erfolgreich getestet) -----------
@@ -4904,7 +4909,7 @@ def testHotWaterTargetTemp():
     Sollwert testweise um DHW_TARGET_TEMP_TEST_BOOST_C, loest dieselbe Aktivierung wie eine echte
     Aktion aus (execute_hot_water_activate) und prueft per Live-Status, ob "Warmwasser gerade
     erwärmt? An/Aus" (heatpump_dhw_on_off) daraufhin tatsaechlich auf An springt - bis zu
-    DHW_ACTIVATION_TEST_POLL_TIMEOUT_SECONDS lang. Setzt die Solltemperatur DANACH synchron auf den
+    DHW_ACTIVATION_TEST_POLL_TIMEOUT_SECONDS lang, mit periodischem update_entity. Setzt die Solltemperatur DANACH synchron auf den
     urspruenglichen Wert zurueck (kein spaeterer Hintergrund-Job mehr noetig, da der Testklick ohnehin
     schon auf das Umspringen wartet). Gilt nur als voller Erfolg, wenn Setzen, Aktivierung, das
     Umspringen auf An UND das Zuruecksetzen alle geklappt haben."""
@@ -4931,13 +4936,22 @@ def testHotWaterTargetTemp():
 
     heating_confirmed = False
     if activate_error is None:
+        status_entity_id = config.get("sensorMappings", {}).get("heatpump_dhw_on_off", "")
+        can_force_refresh = bool(status_entity_id) and not is_demo_sensor(config, "heatpump_dhw_on_off")
         deadline = time.time() + DHW_ACTIVATION_TEST_POLL_TIMEOUT_SECONDS
+        next_refresh = time.time() + DHW_ACTIVATION_TEST_REFRESH_INTERVAL_SECONDS
         while True:
             if _read_mapped_bool_on(config, "heatpump_dhw_on_off") is True:
                 heating_confirmed = True
                 break
             if time.time() >= deadline:
                 break
+            if can_force_refresh and time.time() >= next_refresh:
+                next_refresh = time.time() + DHW_ACTIVATION_TEST_REFRESH_INTERVAL_SECONDS
+                try:
+                    homeassistant_adapter.call_service("homeassistant", "update_entity", {"entity_id": status_entity_id})
+                except Exception as e:
+                    print(f"[Shyft] update_entity für {status_entity_id} fehlgeschlagen: {e}")
             time.sleep(DHW_ACTIVATION_TEST_POLL_INTERVAL_SECONDS)
 
     revert_ok = _write_and_verify_dhw_target_temp(entity_id, original_value, DHW_TARGET_TEMP_RETRY_TIMEOUT_SECONDS)

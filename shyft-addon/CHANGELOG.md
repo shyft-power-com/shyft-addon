@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.189
+
+* **Warmwasser-Test: wartet jetzt bis zu 3 Minuten und fragt den Status aktiv nach.** Cloud-Integrationen wie ViCare pollen nur alle paar Minuten – bei der Vitocal sprang „Einmalige Ladung“ erst ~2 Minuten nach dem Aktivieren auf An, der Test gab aber schon nach 90 s auf. Der Test wartet jetzt bis zu 3 Minuten und stößt alle 30 s per `homeassistant.update_entity` eine Aktualisierung des Status-Sensors an.
+* **Behoben: „Warmwasser gerade erwärmt?“-Status auf der Konfigurationsseite blieb veraltet.** Die Anzeige wurde nur beim Seitenladen bzw. Speichern aktualisiert – jetzt auch beim regelmäßigen Live-Refresh (alle 30 s) und direkt nach dem Test.
+
 ## 0.0.45.188
 
 * **Hilfe-Assistent: Aufforderung nach Ende des Loggings.** Ist das 5-Minuten-Logging abgelaufen und wurde noch nicht auf „Log senden“ geklickt, lautet der Hinweis jetzt „Das detaillierte Logging ist beendet. Bitte die Logs jetzt senden.“

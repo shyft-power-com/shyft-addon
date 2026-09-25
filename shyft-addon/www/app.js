@@ -5083,7 +5083,7 @@ function buildHotWaterControl() {
 
     // Ein einziger Test fuer die komplette Warmwasserbereitung (ersetzt die frueher getrennten
     // "Test: Warmwasserbereitung"/"Test: Solltemperatur"-Buttons): erhoeht die Solltemperatur um
-    // 5 °C, loest die Aktivierung aus, wartet serverseitig bis zu 90s darauf, dass "Warmwasser
+    // 5 °C, loest die Aktivierung aus, wartet serverseitig bis zu 3 min darauf, dass "Warmwasser
     // gerade erwärmt?" auf An springt, und setzt die Solltemperatur danach wieder zurueck (siehe
     // /actions/hot_water_target_temp/test) - kann deshalb spuerbar laenger dauern als ein normaler
     // Testklick.
@@ -5092,7 +5092,7 @@ function buildHotWaterControl() {
     testButton.textContent = 'Test: Warmwasserbereitung';
     testButton.addEventListener('click', async () => {
         testButton.disabled = true;
-        status.textContent = 'Teste... (kann bis zu 90s dauern)';
+        status.textContent = 'Teste... (kann bis zu 3 Minuten dauern)';
         status.className = 'autoActionStatus';
         statusDisplay.className = 'autoActionValue testing';
         let success = false;
@@ -5115,6 +5115,13 @@ function buildHotWaterControl() {
             status.className = 'autoActionStatus status-error';
         } finally {
             testButton.disabled = false;
+            // allSensorIdOptions ist vom Seitenladen/letzten Live-Refresh - nach dem Test frisch holen,
+            // sonst zeigt die Status-Zeile noch den Zustand von vor dem Test.
+            try {
+                allSensorIdOptions = await getJson(sensorIdsUri);
+            } catch (err) {
+                console.log(err);
+            }
             refreshHotWaterStatus();
             // refreshHotWaterStatus() setzt statusDisplay wieder auf Grau zurueck (Default) - bei
             // erfolgreichem Test erst DANACH auf Gruen ueberschreiben, siehe Anforderung "geänderten
@@ -5887,6 +5894,13 @@ async function refreshLiveSensorValues() {
                 continue;
             }
             input.value = formatEntityDisplay(extractEntityId(input.value));
+        }
+    }
+    // Status-Zeilen der Aktions-Kacheln (z.B. "Warmwasser gerade erwärmt?") lesen ebenfalls aus
+    // allSensorIdOptions - ohne diesen Aufruf blieben sie bis zum naechsten Speichern veraltet.
+    for (const control of document.querySelectorAll('.autoActionControl')) {
+        if (control.__refresh) {
+            control.__refresh();
         }
     }
 }
