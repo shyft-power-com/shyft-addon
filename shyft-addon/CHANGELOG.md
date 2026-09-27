@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.197
+
+* **PV-Historie: zeitgewichtetes Mittel statt erstem Messwert.** Für die PV-Historie, die an Shyft übertragen wird, und die Ist-Kurve im PV-Diagramm galt bisher der jeweils erste Messwert eines 20-Minuten-Abschnitts für den ganzen Abschnitt. Ein aus mehreren Werten berechneter PV-Sensor (z. B. Wechselrichter + Batterie über Modbus) zeigt beim Aktualisieren für wenige Millisekunden einen falschen Zwischenwert – der landete so als PV-Leistung für 20 Minuten in der Historie (beobachtet: 1,16 kW um 2 Uhr nachts). Jetzt zählt jeder Messwert nur so lange, wie er tatsächlich galt; kurze Ausreißer fallen nicht mehr ins Gewicht.
+
 ## 0.0.45.196
 
 * **Fix: „×“-Löschknopf an den Entitäts-Eingabefeldern schwebte abseits vom Feld.** Seit der Begrenzung der Eingabefelder auf 420 px Breite (0.0.45.176) blieb der Rahmen um Löschknopf und Dropdown-Pfeil auf voller Kartenbreite, während das sichtbare Eingabefeld selbst nur noch 420 px breit war - beide sahen dadurch aus wie losgelöst neben dem Feld (betraf u. a. die vier Sensorfelder der Wechselrichter-Kachel). Der Rahmen ist jetzt auf dieselbe Breite begrenzt wie das Feld, Löschknopf und Pfeil sitzen wieder direkt daran.

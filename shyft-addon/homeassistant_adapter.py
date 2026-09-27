@@ -2,7 +2,7 @@ from typing import Any
 
 from constants import HOMEASSISTANT_URI
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import os
 import requests
 import websocket
@@ -145,6 +145,62 @@ class HomeAssistantAdapter:
                 time_buckets[last_changed_bucket] = PeriodElement(self._calculate_state(state, unit),
                                                                   last_changed_bucket)
         return list(time_buckets.values())
+
+    def load_power_history(self, sensor_id: str,
+                           start_timestamp: datetime,
+                           end_timestamp: datetime) -> [PeriodElement]:
+        """Wie load_entity_history (gleiche 20-Minuten-Buckets, W -> kW), aber fuer Leistungssensoren:
+        Bucket-Wert ist das ZEITGEWICHTETE Mittel statt des ersten Messpunkts im Bucket. Ein aus
+        mehreren Quellen berechneter Template-Sensor (z.B. PV = Wechselrichter-DC + Batterie-DC) zeigt
+        fuer wenige Millisekunden einen Zwischenwert, wenn die Quellen nacheinander aktualisiert
+        werden - als erster Messpunkt eines Buckets stand der bisher fuer die vollen 20 Minuten
+        (beobachtet: 1,16 kW PV um 2 Uhr nachts). NUR fuer numerische Messwerte - Status-Entitaeten
+        (Wallbox-Status, Batterie-Modus) weiter ueber load_entity_history."""
+        events = self._fetch_history_events(sensor_id, start_timestamp, end_timestamp)
+        return self._time_weighted_buckets(events, datetime.now(timezone.utc))
+
+    def _time_weighted_buckets(self, events, now: datetime) -> [PeriodElement]:
+        """events: chronologische (last_changed, state, attributes)-Tupel. Jeder Messpunkt gilt bis zum
+        naechsten, hoechstens aber bis zum Ende seines Buckets (bzw. bis now) - bewusst KEIN Uebertrag
+        in den naechsten Bucket, wie bisher entstehen Buckets nur dort, wo auch Messpunkte liegen
+        (ein schlafender Wechselrichter meldet nachts evtl. gar nichts mehr, sein letzter Wert darf
+        dann nicht stundenlang fortgeschrieben werden). Nicht-numerische Zustaende (unavailable ...)
+        zaehlen nicht mit; hat ein Bucket gar keinen numerischen Anteil, bleibt wie bisher sein
+        erster Zustand stehen."""
+        unit = DEFAULT_UNIT_OF_MEASUREMENT
+        if events:
+            unit = events[0][2].get('unit_of_measurement') or DEFAULT_UNIT_OF_MEASUREMENT
+        bucket_size = timedelta(minutes=self._bucket_size_in_minutes)
+        buckets = {}  # bucket_start -> [first_state, weighted_sum, total_seconds, last_numeric]
+        for i, (last_changed, state, _attributes) in enumerate(events):
+            bucket_start = self._map_datetime_to_bucket_time(last_changed)
+            bucket = buckets.setdefault(bucket_start, [state, 0.0, 0.0, None])
+            segment_end = bucket_start + bucket_size
+            if i + 1 < len(events):
+                segment_end = min(segment_end, events[i + 1][0])
+            segment_end = min(segment_end, now)
+            try:
+                value = float(state)
+            except (ValueError, TypeError):
+                continue
+            bucket[3] = value
+            seconds = (segment_end - last_changed).total_seconds()
+            if seconds > 0:
+                bucket[1] += value * seconds
+                bucket[2] += seconds
+        result = []
+        for bucket_start, (first_state, weighted_sum, total_seconds, last_numeric) in buckets.items():
+            if total_seconds > 0:
+                average = weighted_sum / total_seconds
+            elif last_numeric is not None:
+                average = last_numeric  # z.B. einziger Messpunkt genau bei now
+            else:
+                result.append(PeriodElement(self._calculate_state(first_state, unit), bucket_start))
+                continue
+            if unit == UNIT_OF_MEASUREMENT_W:
+                average = average / 1000
+            result.append(PeriodElement(f"{average:.4f}", bucket_start))
+        return result
 
     def load_entity_history_raw(self, sensor_id: str,
                                 start_timestamp: datetime,

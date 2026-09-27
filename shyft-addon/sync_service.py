@@ -236,7 +236,7 @@ class SyncService:
         end_timestamp: datetime.datetime = calculated_dates["end_timestamp"]
         start_timestamp: datetime.datetime = calculated_dates["start_timestamp"]
 
-        pv_history = self.homeassistant_adapter.load_entity_history(pv_entity_id, start_timestamp, end_timestamp)
+        pv_history = self.homeassistant_adapter.load_power_history(pv_entity_id, start_timestamp, end_timestamp)
         return self.shyft_adapter.send_pv_history(pv_history)
 
     def collect_static_config(self, optimizer_periods_override=None):

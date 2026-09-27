@@ -130,3 +130,50 @@ def _read_to_period_element(file_path: str) -> PeriodElement:
 
 
 
+
+
+def _ev(iso, state, unit="kW"):
+    return (datetime.fromisoformat(iso), state, {"unit_of_measurement": unit})
+
+
+def test_time_weighted_buckets_ignores_millisecond_glitch():
+    # Beobachtet am 28.09.2026: PV-Template zeigt fuer 3 ms 1.163 kW (Wechselrichter-DC schon neu,
+    # Batterie-DC noch alt) - war als erster Messpunkt des Buckets bisher der Bucket-Wert.
+    sut = HomeAssistantAdapter(supervisor_token="xxx")
+    events = [
+        _ev("2026-09-28T00:00:11.303+00:00", "1.163"),
+        _ev("2026-09-28T00:00:11.306+00:00", "0.0"),
+    ]
+
+    actual = sut._time_weighted_buckets(events, datetime.fromisoformat("2026-09-28T01:00:00+00:00"))
+
+    assert actual == [PeriodElement("0.0000", datetime.fromisoformat("2026-09-28T00:00:00+00:00"))]
+
+
+def test_time_weighted_buckets_weights_by_duration_within_bucket_only():
+    sut = HomeAssistantAdapter(supervisor_token="xxx")
+    events = [
+        _ev("2026-09-28T10:00:00+00:00", "2.0"),
+        _ev("2026-09-28T10:15:00+00:00", "6.0"),  # gilt nur bis Bucket-Ende 10:20, nicht bis 11:05
+        _ev("2026-09-28T11:05:00+00:00", "unavailable"),
+    ]
+
+    actual = sut._time_weighted_buckets(events, datetime.fromisoformat("2026-09-28T12:00:00+00:00"))
+
+    assert actual == [
+        PeriodElement("3.0000", datetime.fromisoformat("2026-09-28T10:00:00+00:00")),  # (15*2 + 5*6) / 20
+        PeriodElement("unavailable", datetime.fromisoformat("2026-09-28T11:00:00+00:00")),
+    ]
+
+
+def test_time_weighted_buckets_converts_watts_and_stops_at_now():
+    sut = HomeAssistantAdapter(supervisor_token="xxx")
+    events = [
+        _ev("2026-09-28T10:00:00+00:00", "1000", unit="W"),
+        _ev("2026-09-28T10:05:00+00:00", "3000", unit="W"),
+    ]
+
+    # laufender Bucket: 3000 W gilt nur 5 Minuten bis now, nicht bis 10:20
+    actual = sut._time_weighted_buckets(events, datetime.fromisoformat("2026-09-28T10:10:00+00:00"))
+
+    assert actual == [PeriodElement("2.0000", datetime.fromisoformat("2026-09-28T10:00:00+00:00"))]

@@ -1769,7 +1769,7 @@ def readPvForecastVsActual():
         # Messpunkten gebildet und mit der Voll-Stunden-Prognose nicht vergleichbar.
         current_hour_key = _hour_floor(now_local)
         try:
-            events = homeassistant_adapter.load_entity_history(entity_id, midnight_local, now_local)
+            events = homeassistant_adapter.load_power_history(entity_id, midnight_local, now_local)
             sums, counts = {}, {}
             for event in events:
                 try:
