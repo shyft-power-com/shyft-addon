@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.196
+
+* **Fix: „×“-Löschknopf an den Entitäts-Eingabefeldern schwebte abseits vom Feld.** Seit der Begrenzung der Eingabefelder auf 420 px Breite (0.0.45.176) blieb der Rahmen um Löschknopf und Dropdown-Pfeil auf voller Kartenbreite, während das sichtbare Eingabefeld selbst nur noch 420 px breit war - beide sahen dadurch aus wie losgelöst neben dem Feld (betraf u. a. die vier Sensorfelder der Wechselrichter-Kachel). Der Rahmen ist jetzt auf dieselbe Breite begrenzt wie das Feld, Löschknopf und Pfeil sitzen wieder direkt daran.
+
 ## 0.0.45.195
 
 * **Sensor-Auswahl: Template-Helfer am Gerät werden jetzt angeboten.** Ein Template-Sensor, der in Home Assistant einem Gerät zugewiesen ist (z. B. eine selbst berechnete PV-Leistung am SolarEdge-Modbus-Wechselrichter), erscheint jetzt auch in der Sensor-Auswahl der Integration dieses Geräts. Bisher tauchte er nur auf, wenn man zusätzlich den Template-Helfer selbst als Gerät auswählte.
