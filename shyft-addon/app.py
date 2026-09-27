@@ -7655,6 +7655,32 @@ NEAR_HOUR_BOUNDARY_MINUTES = 5
 NEAR_HOUR_BOUNDARY_CONTINUATION_TOLERANCE_KW = 0.05
 
 
+def _skip_elapsed_hours(start, input_rows, output_rows):
+    """Kommt ein Optimierungslauf erst nach Ablauf seiner Startstunde an (z.B. um 12:55 erstellt,
+    Ergebnis erst um 13:03 abgeholt oder beim Dashboard-Sync nachgeholt), waere Stunde 0 (12:00-13:00)
+    schon vorbei - die compute_*_actions-Funktionen legten fuer sie trotzdem eine "aktive" Aktion mit
+    Date Start = jetzt (13:03) und Date End = 13:00 an (beobachtet als "Batterie-Laden verschieben
+    13:00 - 13:00, aktiv"). Aus abgelaufenen Stunden werden deshalb keine Aktionen mehr erzeugt: ihre
+    Zeilen fallen weg, start rueckt auf die laufende Stunde. Jede verbleibende Zeile behaelt dabei
+    ihre eigene Uhrzeit (Zeile fuer 13:00 bleibt 13:00) - es wird nichts zeitlich verschoben, die
+    laufende Stunde ist nur wieder Index 0 (Status "aktiv", Sonderbehandlung in
+    _reconcile_computed_actions)."""
+    current_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    elapsed = int((current_hour - start).total_seconds() // 3600)
+    if elapsed <= 0:
+        return start, input_rows, output_rows
+    return start + timedelta(hours=elapsed), input_rows[elapsed:], output_rows[elapsed:]
+
+
+def _drop_empty_window_actions(result):
+    "Absicherung: keine Aktion, deren Zeitfenster leer oder negativ ist (Date End <= Date Start)."
+    for i in [i for i, a in result.items()
+              if a.get("Date Start") is not None and a.get("Date End") is not None and a["Date End"] <= a["Date Start"]]:
+        print(f"[Shyft] Aktion '{result[i].get('Action Name')}' mit leerem Zeitfenster verworfen (Date Start={result[i]['Date Start']}, Date End={result[i]['Date End']}).")
+        del result[i]
+    return result
+
+
 def _suppress_near_boundary_singleton(result, start):
     """Verhindert ein Ergebnis wie "13:59 - 14:00": laeuft der Optimierungslauf (bzw. das Warten auf
     dessen Ergebnis, siehe schedule_optimizer_result_wait) so spaet ab, dass "jetzt" schon in den
@@ -7672,7 +7698,10 @@ def _suppress_near_boundary_singleton(result, start):
     bereits um 14:00 wieder endete, obwohl zum Berechnungszeitpunkt ebenfalls eine (letztlich nicht
     eingetretene) Aktion fuer die Folgestunde vorlag. Bei tatsaechlicher 1:1-Fortsetzung wird das
     kurze Startfenster ohnehin gleich beim naechsten stuendlichen Uebergang
-    (run_hourly_action_transition) auf eine volle Stunde ausgedehnt und ist unproblematisch."""
+    (run_hourly_action_transition) auf eine volle Stunde ausgedehnt und ist unproblematisch.
+
+    Verwirft vorab ausserdem jede Aktion mit leerem Zeitfenster (siehe _drop_empty_window_actions)."""
+    result = _drop_empty_window_actions(result)
     if 0 not in result:
         return result
     hour_end = start + timedelta(hours=1)
@@ -7779,6 +7808,12 @@ def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms
         net_profit_opt = sum(_safe_float(r.get("profits_net_opt")) for r in output_rows) if output_rows else None
         x_sum_total = sum(_safe_float(r.get("X_sum")) for r in output_rows) if output_rows else None
         _log_plan_costlier_than_base(base, input_rows, output_rows, net_profit_base, net_profit_opt, x_sum_total, optimizer_run_id, start)
+        # Bereits abgelaufene Stunden des Laufs verwerfen (siehe _skip_elapsed_hours) - net_profit_*/x_sum_total
+        # oben bleiben bewusst ueber den GESAMTEN Lauf summiert (Vergleichsbasis zu netProfitBase48HoursSum).
+        start, input_rows, output_rows = _skip_elapsed_hours(start, input_rows, output_rows)
+        if not output_rows:
+            print(f"[Shyft] Optimierungslauf {optimizer_run_id!r} enthaelt keine noch nicht abgelaufene Stunde mehr - keine Aktionen berechnet.")
+            return
         ev_actions = _suppress_near_boundary_singleton(compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
         _reconcile_computed_actions(config, EV_CHARGE_ACTION_NAME, EV_CHARGE_ID_PREFIX, ev_actions, start)
         dhw_actions = _suppress_near_boundary_singleton(compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)

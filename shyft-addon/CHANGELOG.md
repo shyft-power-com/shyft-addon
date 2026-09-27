@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.194
+
+* **Behoben: Aktionen mit Zeitfenster „13:00 – 13:00“, die trotzdem „aktiv“ waren.** Kam ein Optimierungslauf erst nach Ablauf seiner Startstunde an (z. B. um 12:55 erstellt, aber erst nach 13:00 abgeholt), wurde für die bereits vergangene Stunde noch eine „aktive“ Aktion angelegt – mit Beginn = jetzt und Ende = 13:00. Aus bereits abgelaufenen Stunden werden jetzt keine Aktionen mehr erzeugt; die übrigen Stunden des Laufs bleiben unverändert (die laufende Stunde startet wie gewohnt sofort).
+* **Zusätzliche Absicherung:** Aktionen, deren Ende nicht nach ihrem Beginn liegt, werden grundsätzlich nicht mehr angelegt.
+
 ## 0.0.45.193
 
 * **Heizung Soll-Temperatur: Untergrenze wie im Optimierer.** Statt fix 17 °C gilt jetzt „Gewünschte Raumtemperatur (mindestens)“ minus 4 °C als Untergrenze (z. B. 17 °C bei 21 °C); die Obergrenze bleibt 25 °C.
