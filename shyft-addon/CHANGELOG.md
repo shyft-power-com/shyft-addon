@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.195
+
+* **Sensor-Auswahl: Template-Helfer am Gerät werden jetzt angeboten.** Ein Template-Sensor, der in Home Assistant einem Gerät zugewiesen ist (z. B. eine selbst berechnete PV-Leistung am SolarEdge-Modbus-Wechselrichter), erscheint jetzt auch in der Sensor-Auswahl der Integration dieses Geräts. Bisher tauchte er nur auf, wenn man zusätzlich den Template-Helfer selbst als Gerät auswählte.
+
 ## 0.0.45.194
 
 * **Behoben: Aktionen mit Zeitfenster „13:00 – 13:00“, die trotzdem „aktiv“ waren.** Kam ein Optimierungslauf erst nach Ablauf seiner Startstunde an (z. B. um 12:55 erstellt, aber erst nach 13:00 abgeholt), wurde für die bereits vergangene Stunde noch eine „aktive“ Aktion angelegt – mit Beginn = jetzt und Ende = 13:00. Aus bereits abgelaufenen Stunden werden jetzt keine Aktionen mehr erzeugt; die übrigen Stunden des Laufs bleiben unverändert (die laufende Stunde startet wie gewohnt sofort).

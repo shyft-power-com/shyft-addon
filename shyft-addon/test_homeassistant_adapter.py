@@ -81,6 +81,7 @@ def test_build_integrations_and_entities():
         {"entry_id": "entry_1", "title": "Symo 8.2", "domain": "fronius"},
         {"entry_id": "entry_2", "title": "Meine Batterie", "domain": "sonnen"},
         {"entry_id": "entry_3", "title": "Unused Entry", "domain": "shelly"},
+        {"entry_id": "entry_4", "title": "PV Template", "domain": "template"},
     ]
     entities = [
         # linked directly via config_entry_id
@@ -88,6 +89,8 @@ def test_build_integrations_and_entities():
         # linked only via its device's config_entries (no config_entry_id on the entity itself)
         {"entity_id": "sensor.pv_load", "device_id": "device_1", "config_entry_id": None},
         {"entity_id": "sensor.battery_soc", "device_id": "device_2", "config_entry_id": "entry_2"},
+        # template helper attached to device_1: belongs to its own entry AND to the device's entries
+        {"entity_id": "sensor.pv_template", "device_id": "device_1", "config_entry_id": "entry_4"},
         {"entity_id": "sensor.no_entry", "device_id": None, "config_entry_id": None},
         {"entity_id": "sensor.unknown_entry", "device_id": None, "config_entry_id": "entry_does_not_exist"},
     ]
@@ -101,14 +104,16 @@ def test_build_integrations_and_entities():
 
     # then
     assert actual["integrations"] == [
-        {"id": "entry_2", "name": "Meine Batterie (sonnen)"},
-        {"id": "entry_1", "name": "Symo 8.2 (fronius)"},
-        {"id": "entry_3", "name": "Unused Entry (shelly)"},
+        {"id": "entry_2", "name": "Meine Batterie (sonnen)", "domain": "sonnen"},
+        {"id": "entry_4", "name": "PV Template (template)", "domain": "template"},
+        {"id": "entry_1", "name": "Symo 8.2 (fronius)", "domain": "fronius"},
+        {"id": "entry_3", "name": "Unused Entry (shelly)", "domain": "shelly"},
     ]
     assert actual["entityMap"] == {
-        "entry_1": ["sensor.pv_power", "sensor.pv_load"],
+        "entry_1": ["sensor.pv_power", "sensor.pv_load", "sensor.pv_template"],
         "entry_2": ["sensor.battery_soc"],
         "entry_3": [],
+        "entry_4": ["sensor.pv_template"],
     }
 
 

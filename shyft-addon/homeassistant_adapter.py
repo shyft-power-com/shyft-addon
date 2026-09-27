@@ -242,7 +242,11 @@ class HomeAssistantAdapter:
             entry_ids = []
             if entity.get("config_entry_id"):
                 entry_ids.append(entity["config_entry_id"])
-            elif entity.get("device_id"):
+            # Auch den Integrationen des Geraets zuordnen, nicht nur der eigenen: ein Template-Helfer,
+            # der in HA einem Geraet (z.B. dem SolarEdge-Modbus-Wechselrichter) zugewiesen ist, hat
+            # config_entry_id = sein eigener "template"-Eintrag und tauchte sonst nie in der
+            # Sensor-Auswahl der Integration auf, zu deren Geraet er gehoert.
+            if entity.get("device_id"):
                 entry_ids.extend(device_to_entries.get(entity["device_id"], []))
 
             for entry_id in entry_ids:
