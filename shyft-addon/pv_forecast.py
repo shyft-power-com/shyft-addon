@@ -339,13 +339,33 @@ def _hourly_measured_kw(history_pairs, day_local, hour):
     und wie ueberall sonst im Addon (Aktionen, ev_usage_h/hw_usage_h, readPvForecastVsActual): eine
     "Stunde H" ist H:00 bis (H+1):00, nicht auf H:00 zentriert. War frueher ein zentriertes +/-30-Min-
     Fenster (H-0:30 bis H+0:30) - das lag gegenueber der Bestrahlungsprognose um 30 Minuten daneben.
-    history_pairs: Liste (aware_datetime, kw). None, wenn keine Messpunkte im Fenster."""
+    history_pairs: chronologische Liste (aware_datetime, kw), kw=None fuer "unavailable"/"unknown".
+    None, wenn keine Messpunkte im Fenster.
+
+    ZEITGEWICHTET: jeder Messpunkt gilt bis zum naechsten, hoechstens bis Fensterende (kein Uebertrag
+    eines Werts von vor dem Fenster, wie bisher zaehlen nur Messpunkte im Fenster). Ein einfacher
+    Durchschnitt der Messpunkte zaehlte einen nur Millisekunden gueltigen Zwischenwert (aus zwei
+    Quellen berechneter PV-Template-Sensor, z.B. Wechselrichter-DC + Batterie-DC ueber Modbus)
+    genauso wie einen 5 Minuten gueltigen Wert - bei so einem Sensor war etwa jeder zweite
+    Messpunkt ein solcher Zwischenwert."""
     start = day_local.replace(hour=hour, minute=0, second=0, microsecond=0)
     end = start + timedelta(hours=1)
-    vals = [kw for (ts, kw) in history_pairs if start <= ts < end]
-    if not vals:
-        return None
-    return sum(vals) / len(vals)
+    in_window = [(ts, kw) for (ts, kw) in history_pairs if start <= ts < end]
+    weighted_sum = total_seconds = 0.0
+    numeric_vals = []
+    for i, (ts, kw) in enumerate(in_window):
+        if kw is None:
+            continue
+        numeric_vals.append(kw)
+        segment_end = in_window[i + 1][0] if i + 1 < len(in_window) else end
+        seconds = (segment_end - ts).total_seconds()
+        weighted_sum += kw * seconds
+        total_seconds += seconds
+    if total_seconds > 0:
+        return weighted_sum / total_seconds
+    if numeric_vals:
+        return sum(numeric_vals) / len(numeric_vals)
+    return None
 
 
 def _irr_avg_at(cache, day_local, hour):

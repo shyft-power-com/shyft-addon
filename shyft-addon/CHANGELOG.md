@@ -3,6 +3,7 @@
 ## 0.0.45.197
 
 * **PV-Historie: zeitgewichtetes Mittel statt erstem Messwert.** Für die PV-Historie, die an Shyft übertragen wird, und die Ist-Kurve im PV-Diagramm galt bisher der jeweils erste Messwert eines 20-Minuten-Abschnitts für den ganzen Abschnitt. Ein aus mehreren Werten berechneter PV-Sensor (z. B. Wechselrichter + Batterie über Modbus) zeigt beim Aktualisieren für wenige Millisekunden einen falschen Zwischenwert – der landete so als PV-Leistung für 20 Minuten in der Historie (beobachtet: 1,16 kW um 2 Uhr nachts). Jetzt zählt jeder Messwert nur so lange, wie er tatsächlich galt; kurze Ausreißer fallen nicht mehr ins Gewicht.
+* **PV-Prognose-Kalibrierung ebenfalls zeitgewichtet.** Die tägliche Anpassung des PV-Prognosemodells bildete pro Stunde den einfachen Durchschnitt aller Messpunkte – bei einem solchen Sensor war etwa jeder zweite Messpunkt ein kurzer Ausreißer und zählte genauso viel wie ein 5 Minuten gültiger Wert. Jetzt zählt auch hier jeder Messwert nur so lange, wie er galt; Zeiten, in denen der Sensor „nicht verfügbar“ war, zählen nicht mit.
 
 ## 0.0.45.196
 

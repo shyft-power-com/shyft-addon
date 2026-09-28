@@ -8579,7 +8579,7 @@ def push_pv_forecast_sensor():
 
 
 def _pv_power_history_pairs(pv_entity_id, days):
-    "Liste (aware_datetime, kW) der PV-Leistungs-Historie der letzten `days` Tage, in die von pv_forecast erwartete Einheit (kW) konvertiert."
+    "Liste (aware_datetime, kW) der PV-Leistungs-Historie der letzten `days` Tage, in die von pv_forecast erwartete Einheit (kW) konvertiert. kW=None fuer nicht-numerische Zustaende (unavailable ...) - beendet in pv_forecast._hourly_measured_kw die Gueltigkeit des vorherigen Messwerts, statt ihn ueber den Ausfall hinweg weiterzuzaehlen."
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
     try:
@@ -8593,7 +8593,7 @@ def _pv_power_history_pairs(pv_entity_id, days):
                 value, _ = convert_to_expected_unit("photovoltaic_powerflow_pv", state, unit)
                 pairs.append((last_changed, float(value)))
             except (TypeError, ValueError):
-                continue  # "unknown"/"unavailable" etc.
+                pairs.append((last_changed, None))  # "unknown"/"unavailable" etc.
     except Exception as e:
         print("[Shyft] PV-Leistungs-Historie konnte nicht geladen werden:", repr(e))
     return pairs
