@@ -908,11 +908,13 @@ async function applyTriggerButtonDemoState() {
     }
 }
 
-// Schraeger Eck-Sticker "Add-on: TESTUMGEBUNG" / "Bubble: TEST|LIVE" - erscheint AUSSCHLIESSLICH auf
-// einem vom "test"-Branch gebauten Add-on (accountStatus.isTestBuild, siehe /account-status), niemals
-// auf einem main-/PROD-Build. Die zweite Zeile ist unabhaengig davon, ob der hinterlegte
-// shyft_access_key ein test_-Praefix traegt (accountStatus.isTestEnvironment) - warnt insbesondere vor
-// der gefaehrlichen Kombination "Test-Branch-Add-on faelschlich mit einem echten/LIVE-Schluessel".
+// Schraeger Eck-Sticker "Add-on: TESTUMGEBUNG" / "vX.Y.Z.N" / "Bubble: TEST|LIVE" - erscheint
+// AUSSCHLIESSLICH auf einem vom "test"-Branch gebauten Add-on (accountStatus.isTestBuild, siehe
+// /account-status), niemals auf einem main-/PROD-Build. Die Versionszeile hilft beim Abgleich "laeuft
+// hier schon die erwartete Version" (Supervisor-Update kann verzoegert sein). Die letzte Zeile ist
+// unabhaengig davon, ob der hinterlegte shyft_access_key ein test_-Praefix traegt
+// (accountStatus.isTestEnvironment) - warnt insbesondere vor der gefaehrlichen Kombination
+// "Test-Branch-Add-on faelschlich mit einem echten/LIVE-Schluessel".
 async function renderEnvironmentBadge() {
     try {
         const status = await getJson(insideHomeAssistant + '/account-status');
@@ -924,9 +926,12 @@ async function renderEnvironmentBadge() {
         const line1 = document.createElement('span');
         line1.textContent = 'Add-on: TESTUMGEBUNG';
         const line2 = document.createElement('span');
-        line2.textContent = 'Bubble: ' + (status.isTestEnvironment ? 'TEST' : 'LIVE');
+        line2.textContent = 'v' + (status.version || '?');
+        const line3 = document.createElement('span');
+        line3.textContent = 'Bubble: ' + (status.isTestEnvironment ? 'TEST' : 'LIVE');
         badge.appendChild(line1);
         badge.appendChild(line2);
+        badge.appendChild(line3);
         document.body.appendChild(badge);
     } catch (err) {
         console.log(err);

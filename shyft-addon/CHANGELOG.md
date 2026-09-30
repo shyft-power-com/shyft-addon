@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.206
+
+* **TESTUMGEBUNG-Sticker: Versionsnummer ergänzt, Position korrigiert.** Der Sticker zeigt jetzt zusätzlich die laufende Add-on-Version (dritte Zeile), praktisch um abzugleichen, ob ein Supervisor-Update schon angekommen ist. Außerdem saß der Sticker noch zu hoch und war am oberen Rand nicht ganz lesbar - Position neu berechnet, damit er bei jeder Bildschirmgröße vollständig im sichtbaren Bereich liegt.
+
 ## 0.0.45.205
 
 * **Experimentell: „Letzter Planungsstand“ im Ladestand-Heimspeicher-Chart.** Zusaetzliche gepunktete Linie, die fuer bereits vergangene Stunden von heute zeigt, was der zu ihrer Zeit juengste Optimierungslauf fuer sie geplant hatte - macht sichtbar, wie stark der Batterie-Plan im Tagesverlauf durch Neuplanungen noch revidiert wird. Beeinflusst die normale Prognose-Anzeige nicht, ist auf Nutzer-Wunsch als Test gedacht. Die Aufzeichnung beginnt erst mit diesem Update - fruehere Stunden bleiben leer.

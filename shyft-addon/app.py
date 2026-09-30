@@ -316,7 +316,7 @@ def accountStatusEndpoint():
     Live-Umgebung von shyft-power spricht. Beide Kombinationen sind moeglich und sollen es auch
     bleiben (z.B. ein main-Build testweise mit einem test_-Schluessel)."""
     return jsonify({"isDemo": is_demo_mode(), "isTestEnvironment": shyft_adapter.development_mode,
-                    "isTestBuild": BUILD_BRANCH == "test"})
+                    "isTestBuild": BUILD_BRANCH == "test", "version": VERSION})
 
 
 ADDON_UPDATE_STATUS_CACHE_SECONDS = 300
