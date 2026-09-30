@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.208
+
+* **Fix: Ladestand Heimspeicher konnte für dieselbe Stunde gleichzeitig „Prognose“ und „Letzter Planungsstand“ zeigen.** Der gecachte Optimierungslauf ist an seine eigene Erstellzeit verankert - ist er veraltet (der nächste Lauf lässt auf sich warten), lag seine erste Zeile teils schon in der echten Vergangenheit, wurde dort aber trotzdem noch als „Prognose“ angezeigt (Nutzer-Beobachtung: Tooltip zeigte für eine Stunde Prognose, Ist UND Planungsstand gleichzeitig). „Prognose“ zeigt jetzt nur noch Stunden ab der echten aktuellen Stunde, „Letzter Planungsstand“ ausschließlich davor - beide Linien überschneiden sich für keine Stunde mehr.
+
 ## 0.0.45.207
 
 * **Fix: Aktions-Indikator im Ladestand-Heimspeicher-Chart zeigte nie eine normal beendete Batterie-Aktion an.** `_battery_action_hours` erkannte als "tatsächlich ausgeführt" bisher nur Execution Status "yes, started" - eine Batterie-Aktion wechselt beim normalen Beenden aber auf "yes, finished" (bzw. "yes, not finished" bei einem fehlgeschlagenen Beenden-Versuch), dieselbe Unterscheidung wie beim regulären Aktions-Ablauf. Jede bereits abgeschlossene Batterie-Aktion blieb dadurch im Chart unsichtbar, nur eine gerade laufende oder rein geplante wurde markiert (Nutzer-Beobachtung: "ich sehe noch keinen Indikator").

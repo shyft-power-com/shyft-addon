@@ -1890,7 +1890,10 @@ def readBatterySocForecastVsActual():
     """Wie readPvForecastVsActual, aber fuer 'Ladestand Heimspeicher' - bewusst OHNE eingefrorenen
     Prognose-Snapshot (Nutzer-Vorgabe: der SOC-Ladestand hat keine sich im Tagesverlauf systematisch
     aendernde Prognose wie eine Wetterprognose, die einfache Variante reicht hier). 'forecast' ist
-    SOC_B des zuletzt gecachten Optimierungslaufs (siehe _read_future_battery_soc_forecast_by_hour).
+    SOC_B des zuletzt gecachten Optimierungslaufs (siehe _read_future_battery_soc_forecast_by_hour),
+    abgeschnitten auf Stunden ab der ECHTEN aktuellen Stunde - der gecachte Lauf ist an seine EIGENE
+    Erstellzeit verankert und kann bei einem veralteten Cache bereits vergangene Stunden enthalten;
+    ohne dieses Abschneiden taucht so eine Stunde gleichzeitig in 'forecast' und 'plannedHistory' auf.
     'actual' ist per Forward-Filling (siehe _forward_fill_hourly) aus der echten Sensorhistorie des
     zugeordneten battery_state_of_charge-Sensors rekonstruiert - anders als bei PV (eine Leistung,
     deren Momentanwert fuer die laufende Stunde nicht repraesentativ waere) ist SOC ein Zustand, die
@@ -1945,7 +1948,13 @@ def readBatterySocForecastVsActual():
     for i in range(hour_count):
         hour = midnight_local + timedelta(hours=i)
         labels.append(hour.isoformat())
-        forecast.append(forecast_by_hour.get(hour))
+        # forecast_by_hour kommt aus dem zuletzt GECACHTEN Optimierungslauf und ist an dessen eigene
+        # Erstellzeit verankert (siehe _read_future_battery_soc_forecast_by_hour) - ist dieser Lauf
+        # veraltet (der naechste laesst z.B. eine Stunde auf sich warten), kann seine erste Zeile
+        # inzwischen schon in der echten Vergangenheit liegen. Ohne dieses Abschneiden wuerde so eine
+        # Stunde gleichzeitig in Prognose UND plannedHistory auftauchen (Nutzer-Beobachtung) - Prognose
+        # zeigt bewusst nur ab der ECHTEN aktuellen Stunde, plannedHistory deckt die Vergangenheit ab.
+        forecast.append(forecast_by_hour.get(hour) if hour >= current_hour_local else None)
         actual.append(actual_by_hour.get(hour))
         planned_history.append(planned_history_by_hour.get(hour) if hour < current_hour_local else None)
 
