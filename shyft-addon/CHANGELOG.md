@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.209
+
+* **Grundlast wird jetzt aus der Sensor-Historie geschätzt - das Dropdown „Grundlast (Ø Dauerleistung)“ entfällt.** Neues Modul `base_load.py`: stündlich werden die abgeschlossenen Stunden des Sensors „Haushalt: Aktuelle Leistung“ ausgewertet, aber nur Stunden, in denen Wallbox und Wärmepumpe (jeweils unter 50 W) und alle „Sonstiger Verbraucher“-Schalter (durchgehend „off“) aus waren; nicht zugeordnete Geräte gelten als aus. Stundenmittel unter 50 W oder über 3 kW gelten als unplausibel und werden verworfen. Das Profil ist der Median je lokaler Tagesstunde, getrennt nach Werktag und Wochenende (letzte 8 gültige Messwerte je Slot, SQLite `/data/base_load.db`). Weil die HA-Historie nur ~10 Tage reicht und die Wärmepumpe im Winter tagelang durchlaufen kann, bleibt ein älteres Profil (z.B. aus dem Sommer) gültig, bis neue gültige Stunden es Slot für Slot überschreiben; fehlt ein Slot, gilt der Gesamtmedian, ganz ohne Messung 500 W.
+* Der Wert geht als stündliche Liste `electkwh` (zusammen mit `baseTime`) in die `liveValues`; der Server schreibt sie je Zeile in die optimizer-input.csv (shyft-Server ab 0.46.20.0 - ältere Server ignorieren das Feld und nutzen weiter den festen Wert). `electricityBaseLoad` wird nicht mehr an den Server gesendet.
+
 ## 0.0.45.208
 
 * **Fix: Ladestand Heimspeicher konnte für dieselbe Stunde gleichzeitig „Prognose“ und „Letzter Planungsstand“ zeigen.** Der gecachte Optimierungslauf ist an seine eigene Erstellzeit verankert - ist er veraltet (der nächste Lauf lässt auf sich warten), lag seine erste Zeile teils schon in der echten Vergangenheit, wurde dort aber trotzdem noch als „Prognose“ angezeigt (Nutzer-Beobachtung: Tooltip zeigte für eine Stunde Prognose, Ist UND Planungsstand gleichzeitig). „Prognose“ zeigt jetzt nur noch Stunden ab der echten aktuellen Stunde, „Letzter Planungsstand“ ausschließlich davor - beide Linien überschneiden sich für keine Stunde mehr.

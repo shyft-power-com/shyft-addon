@@ -7,6 +7,7 @@ import assistant
 import pv_forecast
 import base_case
 import energy_archive
+import base_load
 
 import os
 from flask import Flask, send_from_directory, jsonify, request, Response
@@ -1045,6 +1046,17 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
             live_values["p_sell_addon"] = round(float(sell_cent) / 100.0, 5)
     except Exception as e:
         print("[Shyft] p_buy_addon/p_sell_addon konnte nicht berechnet werden:", repr(e))
+    # Stuendliche Grundlast (electkwh): NACH allen anderen Reihen, damit sie auf derselben
+    # "baseTime" aufsetzt, die der Server am Ende sieht (EV/Warmwasser/Preis setzen sie teils selbst).
+    try:
+        if "baseTime" in live_values:
+            base_utc = datetime.fromisoformat(live_values["baseTime"])
+        else:
+            base_utc = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+            live_values["baseTime"] = base_utc.isoformat()
+        live_values["electkwh"] = ";".join(f"{v:.3f}" for v in compute_base_load_array(base_utc, optimizer_period + 24))
+    except Exception as e:
+        print("[Shyft] Grundlast (electkwh) konnte nicht berechnet werden:", repr(e))
     wb_p_min = compute_wb_p_min()
     if wb_p_min is not None:
         live_values["WB - p_min"] = wb_p_min
@@ -7697,19 +7709,25 @@ def compute_battery_charge_shift_actions(config, output_rows, input_rows, start,
     return result
 
 
-# Aktions-Indikator im "Ladestand Heimspeicher"-Chart (Nutzer-Vorgabe): fuer jede Stunde, egal ob
-# Vergangenheit oder Zukunft, zaehlt EINE der drei Batterie-Aktionstypen als "Aktion" - welcher davon,
-# spielt fuer die Anzeige keine Rolle.
+# Aktions-Indikator in den Dashboard-Charts (Nutzer-Vorgabe): fuer jede Stunde, egal ob Vergangenheit
+# oder Zukunft, zaehlt EINE der Aktionstypen einer Kachel als "Aktion" - welcher davon genau, spielt
+# fuer die Anzeige keine Rolle. BATTERY_ACTION_NAMES war urspruenglich die einzige Gruppe (Ladestand
+# Heimspeicher); auf Nutzer-Wunsch jetzt auch fuer Raumtemperatur/Warmwasser/Ladestand Auto/Sonstiges
+# Geraet, siehe _action_hours_for.
 BATTERY_ACTION_NAMES = {BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_DISCHARGE_SHIFT_ACTION_NAME, BATTERY_CHARGE_SHIFT_ACTION_NAME}
+HEIZUNG_ACTION_NAMES = {HEIZUNG_ACTION_NAME}
+DHW_ACTION_NAMES = {DHW_ACTION_NAME}
+CAR_CHARGE_ACTION_NAMES = {"Auto laden"}
+CONSUMER_ACTION_NAMES = {OD_ACTION_NAME}
 
 
-def _battery_action_hours(midnight_local, hour_count):
-    """Je Stunde ab midnight_local (hour_count Stunden, lokale Zeitzone): True, wenn einer der drei
-    Batterie-Aktionstypen sie abdeckt - fuer bereits vergangene/laufende Stunden nur, wenn die Aktion
-    TATSAECHLICH ausgefuehrt wurde/wird (Execution Status "yes, started" waehrend sie laeuft, "yes,
-    finished" nach normalem Ende oder "yes, not finished" nach einem fehlgeschlagenen Beenden-Versuch
-    - dieselbe Bedingung wie "was_really_started" beim Ablauf einer Aktion; NICHT nur Status "aktiv",
-    das traegt eine Aktion der laufenden Stunde schon vor dem eigentlichen Ausfuehren, siehe
+def _action_hours_for(action_names, midnight_local, hour_count):
+    """Je Stunde ab midnight_local (hour_count Stunden, lokale Zeitzone): True, wenn eine Aktion mit
+    Action Name in action_names sie abdeckt - fuer bereits vergangene/laufende Stunden nur, wenn die
+    Aktion TATSAECHLICH ausgefuehrt wurde/wird (Execution Status "yes, started" waehrend sie laeuft,
+    "yes, finished" nach normalem Ende oder "yes, not finished" nach einem fehlgeschlagenen Beenden-
+    Versuch - dieselbe Bedingung wie "was_really_started" beim Ablauf einer Aktion; NICHT nur Status
+    "aktiv", das traegt eine Aktion der laufenden Stunde schon vor dem eigentlichen Ausfuehren, siehe
     compute_battery_charge_shift_actions), fuer kommende Stunden aus dem, was der letzte
     Optimierungslauf plant (Status "geplant"). Liest den vollstaendigen, nie beschnittenen lokalen
     Store (_read_computed_actions) - der haelt auch laengst beendete Aktionen weiterhin vor."""
@@ -7718,10 +7736,10 @@ def _battery_action_hours(midnight_local, hour_count):
     try:
         actions = _read_computed_actions()
     except Exception as e:
-        print("[Shyft] Batterie-Aktions-Indikator: Store konnte nicht gelesen werden:", repr(e))
+        print("[Shyft] Aktions-Indikator: Store konnte nicht gelesen werden:", repr(e))
         return covered
     for action in actions:
-        if action.get("Action Name") not in BATTERY_ACTION_NAMES:
+        if action.get("Action Name") not in action_names:
             continue
         really_ran_or_running = action.get("Execution Status") in ("yes, started", "yes, not finished", "yes, finished")
         planned = (action.get("Status") or "").lower() == "geplant"
@@ -7737,6 +7755,10 @@ def _battery_action_hours(midnight_local, hour_count):
             if start_dt < hour + timedelta(hours=1) and end_dt > hour:
                 covered[i] = True
     return covered
+
+
+def _battery_action_hours(midnight_local, hour_count):
+    return _action_hours_for(BATTERY_ACTION_NAMES, midnight_local, hour_count)
 
 
 # Einheit fuer die "neuer Zielwert"-Log-Zeile in _reconcile_computed_actions - je nach Aktionstyp
@@ -8581,6 +8603,53 @@ def backfill_household_usage_periodically():
         print("[Shyft] Energie-Archiv: Nachberechnung des Ist-Verbrauchs fehlgeschlagen:", repr(e))
 
 
+def _history_raw_converted_kw(sensor_key, start, end, config):
+    "Rohe HA-Historie (last_changed, state) eines kW-Sensors (sensorMappings-Eintrag sensor_key), Werte bereits in kW umgerechnet. None ohne zugeordneten Sensor, Ausnahme bei Ladefehler."
+    entity_id = config.get("sensorMappings", {}).get(sensor_key, "")
+    if not entity_id:
+        return None
+    try:
+        unit = homeassistant_adapter.load_entity_state(entity_id).unit
+    except Exception:
+        unit = ""
+    raw = homeassistant_adapter.load_entity_history_raw(entity_id, start, end)
+    return [(t, convert_to_expected_unit(sensor_key, state, unit)[0]) for t, state in raw]
+
+
+def update_base_load_periodically():
+    """Cron-Job (stündlich): wertet die seit dem letzten Lauf abgeschlossenen Stunden aus der
+    Haushalts-Sensor-Historie aus (siehe base_load.py) - nur Stunden ohne laufende Wallbox, Wärmepumpe
+    oder 'Sonstiger Verbraucher' zählen als Grundlast-Messung. Nicht zugeordnete Geräte gelten als aus."""
+    if is_demo_mode():
+        return
+    try:
+        now = datetime.now(timezone.utc)
+        config = _read_current_config()
+        start = base_load.first_hour(now)
+        end = now.replace(minute=0, second=0, microsecond=0)
+        if start >= end:
+            return
+        load_raw = _history_raw_converted_kw("photovoltaic_powerflow_load", start, end, config)
+        if not load_raw:
+            return  # Haushalts-Sensor fehlt/leer - nichts zu messen, nächster Lauf versucht es erneut
+        power_raws = []
+        for key in ("wallbox_current_charging_power", "heatpump_current_power_elect"):
+            raw = _history_raw_converted_kw(key, start, end, config)
+            if raw is not None:
+                power_raws.append(raw)
+        switch_raws = [homeassistant_adapter.load_entity_history_raw(entity_id, start, end)
+                       for entity_id in _sonstiger_verbraucher_entity_ids(config)]
+        stored = base_load.update_from_history(now, get_ha_timezone(), load_raw, power_raws, switch_raws)
+        print(f"[Shyft] Grundlast: {stored} gültige Stunde(n) aus {start.isoformat()} .. {end.isoformat()} übernommen.")
+    except Exception as e:
+        print("[Shyft] Grundlast: Auswertung der Historie fehlgeschlagen:", repr(e))
+
+
+def compute_base_load_array(base_utc, hours):
+    "Stündliche Grundlast (kWh je Stunde) ab base_utc für die 'hours' Stunden, siehe base_load.hourly_kwh_array - Werktag/Wochenende-Median, ersatzweise Gesamtmedian bzw. 0,5 kW."
+    return base_load.hourly_kwh_array(base_utc, hours, get_ha_timezone())
+
+
 def finalize_completed_hour_periodically():
     "Cron-Job (siehe Scheduler, wenige Minuten nach jedem Stundenwechsel): schliesst die GERADE ABGELAUFENE Stunde im Energie-Archiv ab - Ist-Verbrauch/-Einspeisung aus der Grid-Sensor-Historie (siehe _grid_import_export_kwh), verrechnet mit dem zuletzt bekannten Strompreis dieser Stunde (siehe energy_archive.finalize_hour)."
     if is_demo_mode():
@@ -9233,6 +9302,7 @@ scheduler.add_job(run_hourly_action_transition_periodically, 'cron', minute="0")
 # finalize_completed_hour_periodically/energy_archive.finalize_hour).
 scheduler.add_job(finalize_completed_hour_periodically, 'cron', minute="3")
 scheduler.add_job(refresh_input_csv_health_if_problem_active, 'interval', minutes=5)
+scheduler.add_job(update_base_load_periodically, 'cron', minute="7", next_run_time=datetime.now(timezone.utc) + timedelta(seconds=120))
 scheduler.add_job(backfill_household_usage_periodically, 'interval', minutes=30, next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90))
 # on the hour, alongside the other hourly syncs - one snapshot per hour is exactly the
 # resolution the Anwesenheitsprognose needs (see compute_car_presence_forecast)

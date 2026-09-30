@@ -728,7 +728,6 @@ async function saveConfigurationNow() {
         "odPriceThresholdCent": configData["odPriceThresholdCent"] ?? null,
         "odPowerKw": configData["odPowerKw"] ?? null,
         "optimizationPeriodsSite": configData["optimizationPeriodsSite"] ?? 48,
-        "electricityBaseLoad": configData["electricityBaseLoad"] ?? 'niedrig__2628',
         "electricityPriceBuy": configData["electricityPriceBuy"] ?? 'mittel (30 Cent)',
         "electricityPriceSell": configData["electricityPriceSell"] ?? 'mittel (10 Cent)',
         "electricityTariffMode": configData["electricityTariffMode"] ?? 'fixed',
@@ -1926,8 +1925,8 @@ function watchForErrorsToExpand(bodyDiv, onError) {
 const WEEKDAY_NAMES = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
 
 // Gilt die Strom-Kachel als vollstaendig ausgefuellt? Dann startet sie eingeklappt (wie die
-// Geraetekacheln, siehe isSectionComplete). Grundlast hat einen Default und zaehlt immer als
-// gesetzt; geprueft werden Tarif (je nach Modus) und Einspeiseverguetung.
+// Geraetekacheln, siehe isSectionComplete). Die Grundlast wird seit 0.0.45.209 aus der Sensor-Historie geschaetzt (kein Eingabefeld mehr);
+// geprueft werden Tarif (je nach Modus) und Einspeiseverguetung.
 function isElectricityConfigComplete() {
     const has = (k) => configData[k] !== undefined && configData[k] !== null && configData[k] !== '';
     const mode = configData['electricityTariffMode'] || 'fixed';
@@ -1984,9 +1983,6 @@ function renderGeneralConfigSection() {
     const bodyDiv = document.createElement('div');
     bodyDiv.id = 'section_body_strom';
 
-    bodyDiv.appendChild(buildElectricitySubheading('Stromverbrauch, Grundlast'));
-    bodyDiv.appendChild(buildElectricityBaseLoadField());
-
     bodyDiv.appendChild(buildElectricitySubheading('Stromtarif (Strombezug)'));
     bodyDiv.appendChild(buildElectricityTariffControl());
 
@@ -2002,7 +1998,7 @@ function renderGeneralConfigSection() {
     bodyDiv.appendChild(buildMultiSensorField('electricity_grid_power_sensors'));
     container.appendChild(bodyDiv);
 
-    // Ein nie bestaetigtes Default-Feld (z.B. Grundlast) haelt die Kachel offen (siehe
+    // Ein nie bestaetigtes Default-Feld haelt die Kachel offen (siehe
     // isUnconfirmedDefault) - wie bei den Geraetekacheln.
     if (bodyDiv.querySelector('.configFieldUnconfirmed')) expanded = true;
 
@@ -3605,32 +3601,6 @@ function buildOptimizationPeriodsField() {
         placeholder: 'z.B. 48',
         defaultValue: 48,
         step: '1',
-    });
-}
-
-// Unlike the other option-set fields (which Java matches via plain switch-statements, no Bubble
-// call needed), Electricity Base Load's options live in a dynamic Bubble table
-// (ElectricityBaseLoadValueRepository) - looking it up by label would mean a Bubble call even in
-// the new JSON-based flow. So the value (kWh/year) is embedded directly in "label__value" form
-// instead, same trick as buildHpHeatingBufferField/HpHeatingBuffer.java's extractValueFromName -
-// Java's future JSON parser needs the equivalent fallback for this field.
-function buildElectricityBaseLoadField() {
-    // value = "<Label>__<kWh/Jahr>"; die kWh/Jahr entsprechen exakt der Ø-Dauerleistung in Klammern
-    // (kWh/Jahr / 8760 h = W). Der Wert-Teil geht unveraendert an Bubble (collect_static_config).
-    return buildConfigSelectField({
-        label: 'Grundlast (Ø Dauerleistung)',
-        tooltip: 'Dein Grundverbrauch ohne Wärmepumpe/EV/Batterie (Haushaltsgeräte, Standby, Beleuchtung etc.) als durchschnittliche Dauerleistung über das Jahr.',
-        id: 'electricity_base_load',
-        configKey: 'electricityBaseLoad',
-        options: [
-            ['sehr niedrig__1314', 'sehr niedrig (150 W)'],
-            ['niedrig__2628', 'niedrig (300 W)'],
-            ['mittel__4380', 'mittel (500 W)'],
-            ['hoch__6570', 'hoch (750 W)'],
-            ['noch höher__8760', 'noch höher (1.000 W)'],
-            ['sehr hoch__13140', 'sehr hoch (1.500 W)'],
-        ],
-        defaultValue: 'niedrig__2628',
     });
 }
 

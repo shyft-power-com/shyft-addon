@@ -283,7 +283,6 @@ class SyncService:
             static_config["Optimization Periods Site"] = optimizer_periods_override
         else:
             add("Optimization Periods Site", "optimizationPeriodsSite")
-        add("Electricity Base Load (kWh, year)", "electricityBaseLoad")
         add("Electricity Price Buy", "electricityPriceBuy")
         add("Electricity Price Sell", "electricityPriceSell")
 
