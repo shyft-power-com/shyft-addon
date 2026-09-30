@@ -2,11 +2,17 @@ name: Build add-on images
 
 # Baut die Multi-Arch-Images des shyft-power-Add-ons und pusht sie nach
 # ghcr.io/shyft-power-com/<arch>-shyft-addon (siehe image: in shyft-addon/config.yaml).
-# Laeuft bei jeder Aenderung am Add-on auf main sowie manuell.
-
+# Laeuft bei jeder Aenderung am Add-on auf main und test sowie manuell.
+#
+# "test" ist der Vorabversion-Branch: Aenderungen gehen zuerst dorthin, werden im eigenen
+# Home-Assistant-Add-on (Repository-URL dort auf "...#test" umgestellt, siehe README) ausprobiert,
+# und erst nach "git merge test" in main auf PROD gepusht. Da slug/image in config.yaml auf beiden
+# Branches identisch bleiben, sehen Nutzer, deren Repository-Eintrag (ohne #-Branch) main verfolgt,
+# von test gebauten Versionen nichts - Supervisor vergleicht nur gegen die config.yaml des jeweils
+# verfolgten Branches, nie gegen "irgendeinen Tag in der Registry".
 on:
   push:
-    branches: [main]
+    branches: [main, test]
     paths:
       - "shyft-addon/**"
       - ".github/workflows/builder.yaml"
