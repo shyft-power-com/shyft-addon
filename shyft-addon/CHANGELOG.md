@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.45.210
+
+* **Dashboard-Charts: einheitliches Prognose-vs-Ist-Farbschema, fünf neue/erweiterte Karten, kräftigerer Aktions-Indikator.**
+  - **Ladestand Heimspeicher:** „Letzter Planungsstand“ heißt jetzt „Prognose“ und teilt sich deren Farbe - nur noch zwei Farben im Chart (Ist, Prognose), Alt (vergangene Stunden) durchgezogen, Neu (Zukunft) gestrichelt. Ist und Prognose sind jetzt zusätzlich grau/rot/grün nach Wertrichtung eingefärbt (gleichbleibend/fallend/steigend) statt fest grün/dunkel.
+  - **Raumtemperatur:** die „Innenraum“-Zweitkurve zeigt für die Vergangenheit jetzt die echte Sensorhistorie (`heatpump_temp_indoor_measured`) statt der bisherigen, rein simulierten Optimierer-Temperatur - die bleibt für die Zukunft als Prognose. „Heizung-Soll“ unverändert.
+  - **Warmwasser, Ladestand Auto:** wie beim Heimspeicher jetzt Ist (echte Sensorhistorie: Tanktemperatur bzw. EV-SOC) durchgezogen vs. Prognose gestrichelt, grau/rot/grün nach Wertrichtung.
+  - **Neu: Sonstiges Gerät.** Bisher gab es dafür nur ein Icon im Energiefluss-Widget - jetzt ein eigener Ein/Aus-Verlaufschart (Ist aus der Schalter-Historie, Prognose aus den geplanten „Verbraucher an“-Aktionsfenstern).
+  - **Außentemperatur:** bleibt durchgehend grün, bekommt aber ebenfalls die Historisch-durchgezogen/Prognose-gestrichelt-Aufteilung.
+  - **Strompreis:** unverändertes günstig/mittel/teuer-Farbschema, aber alle bereits von Awattar veröffentlichten (also bekannten, nicht vorhergesagten) Preise werden jetzt durchgezogen gezeichnet, auch wenn sie in der Zukunft liegen - erst danach beginnt die gestrichelte Prognose.
+  - **Aktions-Indikator** (Hintergrundfläche für Stunden mit aktiver/geplanter Aktion) ist jetzt auf allen Karten mit Prognose-vs-Ist deutlich kräftiger (Deckkraft 0,12 → 0,32, Nutzer-Feedback: bisher kaum erkennbar) und neu auch bei Raumtemperatur, Warmwasser, Ladestand Auto und Sonstiges Gerät vorhanden (vorher nur Ladestand Heimspeicher).
+  - Neue Endpunkte `/dashboard/raumtemperatur-forecast-vs-actual`, `/dashboard/warmwasser-forecast-vs-actual`, `/dashboard/ladestand-auto-forecast-vs-actual`, `/dashboard/sonstiges-geraet-forecast-vs-actual`; `_battery_action_hours` ist jetzt eine generische `_action_hours_for(action_names, ...)`, wiederverwendet für alle fünf Aktions-Indikatoren.
+
 ## 0.0.45.209
 
 * **Grundlast wird jetzt aus der Sensor-Historie geschätzt - das Dropdown „Grundlast (Ø Dauerleistung)“ entfällt.** Neues Modul `base_load.py`: stündlich werden die abgeschlossenen Stunden des Sensors „Haushalt: Aktuelle Leistung“ ausgewertet, aber nur Stunden, in denen Wallbox und Wärmepumpe (jeweils unter 50 W) und alle „Sonstiger Verbraucher“-Schalter (durchgehend „off“) aus waren; nicht zugeordnete Geräte gelten als aus. Stundenmittel unter 50 W oder über 3 kW gelten als unplausibel und werden verworfen. Das Profil ist der Median je lokaler Tagesstunde, getrennt nach Werktag und Wochenende (letzte 8 gültige Messwerte je Slot, SQLite `/data/base_load.db`). Weil die HA-Historie nur ~10 Tage reicht und die Wärmepumpe im Winter tagelang durchlaufen kann, bleibt ein älteres Profil (z.B. aus dem Sommer) gültig, bis neue gültige Stunden es Slot für Slot überschreiben; fehlt ein Slot, gilt der Gesamtmedian, ganz ohne Messung 500 W.

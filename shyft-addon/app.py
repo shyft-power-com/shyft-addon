@@ -1528,11 +1528,27 @@ def readDashboardChartData():
     base_t_i, base_t_hw, base_soc_b, base_soc_ev = base_t_i[skip:], base_t_hw[skip:], base_soc_b[skip:], base_soc_ev[skip:]
     opt_cost, opt_usage = opt_cost[skip:], opt_usage[skip:]
 
+    # Wie viele Stunden ab labels[0] echte, von Awattar veroeffentlichte Marktpreise sind (Nutzer-
+    # Vorgabe fuers Strompreis-Chart: diese IMMER durchgezogen zeichnen, auch wenn sie in der Zukunft
+    # liegen - "sie sind ja bekannt", anders als eine echte Prognose). Nur ein zusammenhaengender
+    # Praefix zaehlt (bricht an der ersten Luecke ab) - Awattar veroeffentlicht ein durchgehendes
+    # Fenster, keine einzelnen Stunden verstreut in der Zukunft.
+    try:
+        awattar_prices = _fetch_awattar_prices()
+    except Exception:
+        awattar_prices = {}
+    p_buy_known_hours = 0
+    for label in labels:
+        if int(datetime.fromisoformat(label).timestamp() * 1000) not in awattar_prices:
+            break
+        p_buy_known_hours += 1
+
     return jsonify({
         "status": "success",
         "labels": labels,
         "pv_generation": pv_generation,
         "p_buy": p_buy,
+        "p_buy_known_hours": p_buy_known_hours,
         "temperature": temperature,
         "output_labels": output_labels,
         "t_i_target": t_i_target,
@@ -1874,8 +1890,10 @@ def readPvForecastVsActual():
     return jsonify({"status": "success", "labels": labels, "forecast": forecast, "actual": actual})
 
 
-def _read_future_battery_soc_forecast_by_hour():
-    "Wie _read_future_pv_forecast_by_hour, aber SOC_B aus output_csv (nicht PV_generation aus input_csv) - die Prognose fuer 'Ladestand Heimspeicher: Prognose vs. Ist'."
+def _read_future_output_column_by_hour(column, scale=1.0):
+    """Wie _read_future_pv_forecast_by_hour, aber fuer eine beliebige output_csv-Spalte (SOC_B, T_i,
+    T_HW, SOC_EV, ...) - die Prognose fuer die jeweilige '<Kachel>: Prognose vs. Ist'-Karte. scale
+    multipliziert den Rohwert (z.B. 100 fuer SOC_EV, das im CSV als 0..1-Anteil steht, nicht als %)."""
     try:
         with open(DASHBOARD_CACHE_PATH, "r") as f:
             cache = json.load(f)
@@ -1893,7 +1911,161 @@ def _read_future_battery_soc_forecast_by_hour():
     result = {}
     for i, row in enumerate(rows):
         hour_local = _hour_floor((start_utc + timedelta(hours=i)).astimezone(get_ha_timezone()))
-        result[hour_local] = _safe_float(row.get("SOC_B"))
+        value = _safe_float(row.get(column))
+        result[hour_local] = value * scale if value is not None else None
+    return result
+
+
+def _read_future_battery_soc_forecast_by_hour():
+    return _read_future_output_column_by_hour("SOC_B")
+
+
+def _hourly_state_actual(entity_id, midnight_local, current_hour_local, scale=1.0):
+    """Reale Sensorhistorie eines Zustandssensors (Raumtemperatur, Warmwasser-Tank, Auto-SOC) als
+    {Stunde (lokal): Wert}, per Forward-Filling (siehe _forward_fill_hourly) inklusive der laufenden
+    Stunde - wie bei Ladestand Heimspeicher ist das hier immer ein ZUSTAND, kein Leistungswert, die
+    laufende Stunde bekommt deshalb bewusst schon einen Wert (der zuletzt bekannte Stand). scale
+    multipliziert den Rohwert (z.B. falls ein Sensor einen 0..1-Anteil statt Prozent liefert)."""
+    if not entity_id:
+        return {}
+    hours = []
+    cursor = midnight_local
+    while cursor <= current_hour_local:
+        hours.append(cursor)
+        cursor += timedelta(hours=1)
+    result = {}
+    try:
+        events = homeassistant_adapter.load_entity_history_raw(entity_id, midnight_local, current_hour_local + timedelta(hours=1))
+        for hour_dt, state in _forward_fill_hourly(events, hours).items():
+            try:
+                result[hour_dt] = float(state) * scale
+            except (TypeError, ValueError):
+                continue
+    except Exception as e:
+        print(f"[Shyft] Ist-Werte fuer {entity_id} konnten nicht geladen werden:", repr(e))
+    return result
+
+
+def _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=None):
+    """Gemeinsamer Response-Aufbau fuer die '<Kachel>: Prognose vs. Ist'-Endpunkte (siehe
+    readBatterySocForecastVsActual, die die einzige mit zusaetzlichem plannedHistory bleibt und
+    deshalb nicht hierueber laeuft): gemeinsame Stundenachse ab 0 Uhr lokal, 'forecast' erst AB DER
+    ECHTEN aktuellen Stunde (vermeidet Ueberschneidung mit einer historischen Auswertung, siehe
+    readBatterySocForecastVsActual-Fix), 'actual' unveraendert je Stunde. action_names (optional):
+    Aktions-Indikator (siehe _action_hours_for) unter demselben Schluessel wie bei Ladestand
+    Heimspeicher ('actionHours')."""
+    candidate_hours = set(forecast_by_hour) | set(actual_by_hour)
+    all_hours = {h for h in candidate_hours if h >= midnight_local}
+    if not all_hours:
+        payload = {"status": "success", "labels": [], "forecast": [], "actual": []}
+        if action_names is not None:
+            payload["actionHours"] = []
+        return payload
+    hour_count = int((max(all_hours) - midnight_local).total_seconds() // 3600) + 1
+    labels, forecast, actual = [], [], []
+    for i in range(hour_count):
+        hour = midnight_local + timedelta(hours=i)
+        labels.append(hour.isoformat())
+        forecast.append(forecast_by_hour.get(hour) if hour >= current_hour_local else None)
+        actual.append(actual_by_hour.get(hour))
+    payload = {"status": "success", "labels": labels, "forecast": forecast, "actual": actual}
+    if action_names is not None:
+        payload["actionHours"] = _action_hours_for(action_names, midnight_local, hour_count)
+    return payload
+
+
+@app.route("/dashboard/raumtemperatur-forecast-vs-actual", methods=["GET"])
+def readRaumtemperaturForecastVsActual():
+    """'Innenraum'-Zweitkurve im Raumtemperatur-Chart (Nutzer-Vorgabe): 'actual' aus der echten
+    Sensorhistorie (heatpump_temp_indoor_measured) statt der bisher dafuer gezeigten, vom Optimierer
+    nur SIMULIERTEN Innentemperatur (T_i aus output_csv) - die bleibt als 'forecast' fuer die Zukunft.
+    'Heizung-Soll' (T_i_Target, Hauptkurve) ist davon unberuehrt: reiner Plan ohne Ist-Gegenstueck,
+    bleibt wie bisher."""
+    config = _read_current_config()
+    entity_id = config.get("sensorMappings", {}).get("heatpump_temp_indoor_measured", "")
+    midnight_local = _hour_floor(_local_now().replace(hour=0))
+    current_hour_local = _hour_floor(_local_now())
+    forecast_by_hour = _read_future_output_column_by_hour("T_i")
+    actual_by_hour = _hourly_state_actual(entity_id, midnight_local, current_hour_local)
+    return jsonify(_forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=HEIZUNG_ACTION_NAMES))
+
+
+@app.route("/dashboard/warmwasser-forecast-vs-actual", methods=["GET"])
+def readWarmwasserForecastVsActual():
+    """Wie readRaumtemperaturForecastVsActual, aber fuer Warmwasser: 'actual' aus der echten
+    Tanktemperatur-Historie (heatpump_dhw_tank_temp), 'forecast' aus T_HW (output_csv)."""
+    config = _read_current_config()
+    entity_id = config.get("sensorMappings", {}).get("heatpump_dhw_tank_temp", "")
+    midnight_local = _hour_floor(_local_now().replace(hour=0))
+    current_hour_local = _hour_floor(_local_now())
+    forecast_by_hour = _read_future_output_column_by_hour("T_HW")
+    actual_by_hour = _hourly_state_actual(entity_id, midnight_local, current_hour_local)
+    return jsonify(_forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=DHW_ACTION_NAMES))
+
+
+@app.route("/dashboard/ladestand-auto-forecast-vs-actual", methods=["GET"])
+def readLadestandAutoForecastVsActual():
+    """Wie readRaumtemperaturForecastVsActual, aber fuer Ladestand Auto: 'actual' aus der echten
+    EV-SOC-Historie (electronicvehicle_state_of_charge, Sensor liefert bereits Prozent), 'forecast'
+    aus SOC_EV (output_csv, dort als 0..1-Anteil - x100 fuer Prozent, wie beim bisherigen Chart per
+    valueScale)."""
+    config = _read_current_config()
+    entity_id = config.get("sensorMappings", {}).get("electronicvehicle_state_of_charge", "")
+    midnight_local = _hour_floor(_local_now().replace(hour=0))
+    current_hour_local = _hour_floor(_local_now())
+    forecast_by_hour = _read_future_output_column_by_hour("SOC_EV", scale=100.0)
+    actual_by_hour = _hourly_state_actual(entity_id, midnight_local, current_hour_local)
+    return jsonify(_forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=CAR_CHARGE_ACTION_NAMES))
+
+
+SONSTIGER_VERBRAUCHER_FORECAST_HOURS = 48
+
+
+@app.route("/dashboard/sonstiges-geraet-forecast-vs-actual", methods=["GET"])
+def readSonstigesGeraetForecastVsActual():
+    """Neuer Ein/Aus-Stufenchart fuer 'Sonstiger Verbraucher' (Nutzer-Vorgabe, bisher nur ein Icon im
+    Energiefluss-Widget): 'actual' aus der echten Schalter-Historie ALLER zugeordneten Entities (100 =
+    alle an, sonst 0 - dieselbe "alle an zaehlt als an"-Regel wie bei der Live-Statusanzeige, siehe
+    _sonstiger_verbraucher_status). 'forecast' kommt NICHT aus einer output_csv-Spalte (die Aktion ist
+    ein/aus, keine kontinuierliche Groesse), sondern aus den geplanten/ausgefuehrten 'Verbraucher an'-
+    Aktionsfenstern (siehe _action_hours_for): 100 fuer eine abgedeckte Stunde, sonst 0."""
+    config = _read_current_config()
+    entity_ids = _sonstiger_verbraucher_entity_ids(config)
+    midnight_local = _hour_floor(_local_now().replace(hour=0))
+    current_hour_local = _hour_floor(_local_now())
+
+    actual_by_hour = {}
+    if entity_ids:
+        per_entity = [_hourly_switch_on_by_hour(eid, midnight_local, current_hour_local) for eid in entity_ids]
+        hour = midnight_local
+        while hour <= current_hour_local:
+            known = [h.get(hour) for h in per_entity if hour in h]
+            if known:
+                actual_by_hour[hour] = 100.0 if all(known) else 0.0
+            hour += timedelta(hours=1)
+
+    action_hours = _action_hours_for(CONSUMER_ACTION_NAMES, midnight_local, SONSTIGER_VERBRAUCHER_FORECAST_HOURS)
+    forecast_by_hour = {midnight_local + timedelta(hours=i): (100.0 if covered else 0.0) for i, covered in enumerate(action_hours)}
+    return jsonify(_forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=CONSUMER_ACTION_NAMES))
+
+
+def _hourly_switch_on_by_hour(entity_id, midnight_local, current_hour_local):
+    "Wie _hourly_state_actual, aber fuer einen an/aus-Schalter: {Stunde (lokal): True/False}, per Forward-Filling aus dem rohen HA-Zustand ('on'/'off')."
+    if not entity_id:
+        return {}
+    hours = []
+    cursor = midnight_local
+    while cursor <= current_hour_local:
+        hours.append(cursor)
+        cursor += timedelta(hours=1)
+    result = {}
+    try:
+        events = homeassistant_adapter.load_entity_history_raw(entity_id, midnight_local, current_hour_local + timedelta(hours=1))
+        for hour_dt, state in _forward_fill_hourly(events, hours).items():
+            if state in ("on", "off"):
+                result[hour_dt] = state == "on"
+    except Exception as e:
+        print(f"[Shyft] Ist-Werte fuer {entity_id} konnten nicht geladen werden:", repr(e))
     return result
 
 
