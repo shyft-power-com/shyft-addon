@@ -7052,7 +7052,28 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 // wo eine Reihe fuer diese Stunde keine Daten hat) gebaut, und alle anderen Charts sollen davon
 // unberuehrt bleiben. labels/forecast/actual sind bereits synchron (eine Stunde pro Index, ab 0 Uhr
 // lokal) - siehe readPvForecastVsActual in app.py.
+// Gemeinsamer Chart-Typ "Prognose vs. Ist" auf einer ab 0 Uhr (lokal) durchgehenden Stundenachse:
+// Ist-Werte (durchgezogen) bis zur zuletzt bekannten Stunde, danach Prognose (gestrichelt) - beide
+// Reihen duerfen sich an der "Jetzt"-Stunde ueberlappen, die Linie geht dann nahtlos ineinander ueber
+// (siehe buildSeriesPath). Urspruenglich nur fuer PV (buildPvForecastActualChart, siehe dort), auf
+// Nutzer-Wunsch jetzt allgemein fuer jeden Chart mit demselben Muster (aktuell zusaetzlich
+// "Ladestand Heimspeicher", siehe buildBatterySocForecastActualChart) - Optik/Interaktion (Tooltip,
+// Touch-Marker, Tagesgrenzen) bleiben fuer alle gleich, nur Titel/Einheit/Skalierung/Nachkommastellen
+// und die PV-spezifische Ertragssumme sind parametrisiert.
 function buildPvForecastActualChart(labels, forecast, actual) {
+    return buildForecastActualChart('PV-Leistung: Prognose vs. Ist', 'kW', labels, forecast, actual, {decimals: 1, energySummary: true});
+}
+
+// "Ladestand Heimspeicher": Ist-Werte kommen direkt aus der echten Sensorhistorie (siehe
+// /dashboard/battery-soc-forecast-vs-actual), nicht aus der Optimierer-Prognose - bewusst OHNE
+// eingefrorenen Prognose-Snapshot wie bei PV (Nutzer-Vorgabe: der SOC-Ladestand hat keine sich im
+// Tagesverlauf aendernde Prognose wie eine Wetterprognose). Feste 0-100%-Skala statt der generischen
+// "10% Padding"-Logik, da der Wertebereich von vornherein bekannt ist.
+function buildBatterySocForecastActualChart(labels, forecast, actual) {
+    return buildForecastActualChart('Ladestand Heimspeicher: Prognose vs. Ist', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}});
+}
+
+function buildForecastActualChart(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false} = {}) {
     const width = 600, height = 220;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -7067,7 +7088,7 @@ function buildPvForecastActualChart(labels, forecast, actual) {
     wrapper.className = 'dashboardChart dashboardChartHalf';
     const titleEl = document.createElement('div');
     titleEl.className = 'dashboardChartTitle';
-    titleEl.textContent = 'PV-Leistung: Prognose vs. Ist (kW)';
+    titleEl.textContent = `${title} (${unit})`;
     wrapper.appendChild(titleEl);
 
     const legend = document.createElement('div');
@@ -7093,15 +7114,19 @@ function buildPvForecastActualChart(labels, forecast, actual) {
         return wrapper;
     }
 
-    const rawMin = Math.min(...definedValues, 0);
-    const rawMax = Math.max(...definedValues);
-    const valueRange = (rawMax - rawMin) || 1;
-    // PV-Leistung kann nie negativ sein - der generische "10% Padding nach unten" wuerde sonst z.B.
-    // -0.5 kW auf der Achse zeigen, obwohl kein Wert der Reihe negativ ist. Anders als beim
-    // generischen buildLineChart (das MIN_Y als Option kennt) ist das hier fest verdrahtet, weil
-    // dieser Chart ausschliesslich PV-Leistung zeigt.
-    const yMin = Math.max(0, rawMin - valueRange * 0.1);
-    const yMax = rawMax + valueRange * 0.1;
+    let yMin, yMax;
+    if (yBounds) {
+        ({min: yMin, max: yMax} = yBounds);
+    } else {
+        const rawMin = Math.min(...definedValues, 0);
+        const rawMax = Math.max(...definedValues);
+        const valueRange = (rawMax - rawMin) || 1;
+        // Standardfall (PV-Leistung): nie negativ - der generische "10% Padding nach unten" wuerde
+        // sonst z.B. -0.5 kW auf der Achse zeigen, obwohl kein Wert der Reihe negativ ist. Ein Chart
+        // mit von vornherein bekannter fester Spanne (z.B. Ladestand 0-100%) uebergibt stattdessen yBounds.
+        yMin = Math.max(0, rawMin - valueRange * 0.1);
+        yMax = rawMax + valueRange * 0.1;
+    }
     const yRange = (yMax - yMin) || 1;
     const lastIndex = labels.length - 1 || 1;
 
@@ -7142,7 +7167,7 @@ function buildPvForecastActualChart(labels, forecast, actual) {
     const yTicks = [yMax, (yMin + yMax) / 2, yMin];
     const yLabels = yTicks.map(v => {
         const y = yFor(v).toFixed(1);
-        return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="end">${v.toFixed(1)}</text>`;
+        return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="end">${v.toFixed(decimals)}</text>`;
     }).join('');
 
     // "Jetzt"-Markierung: Trennlinie zwischen den bereits vergangenen Stunden (mit Ist-Werten) und
@@ -7186,12 +7211,16 @@ function buildPvForecastActualChart(labels, forecast, actual) {
     // ein Versuch, die Werte stattdessen platzsparend IN den Chart einzuzeichnen (neben "Jetzt"-Linie/
     // Tagesgrenze) wirkte trotz Kollisionsvermeidung nicht sauber genug. Direkt hier (statt weiter
     // unten separat im Dashboard-Flow) verankert, damit der Bezug zu DIESEM Chart eindeutig bleibt.
-    const pvSummaryParts = computePvEnergySummary(labels, forecast).map(({label, kwh}) => `${label}: ${kwh} kWh`);
-    if (pvSummaryParts.length > 0) {
-        const pvSummary = document.createElement('div');
-        pvSummary.className = 'dashboardPvEnergySummary';
-        pvSummary.textContent = pvSummaryParts.join(' | ');
-        wrapper.appendChild(pvSummary);
+    // Nur bei PV (energySummary): eine kWh-Ertragssumme ergibt fuer andere Prognose/Ist-Charts (z.B.
+    // Ladestand Heimspeicher in %) keinen Sinn.
+    if (energySummary) {
+        const pvSummaryParts = computePvEnergySummary(labels, forecast).map(({label, kwh}) => `${label}: ${kwh} kWh`);
+        if (pvSummaryParts.length > 0) {
+            const pvSummary = document.createElement('div');
+            pvSummary.className = 'dashboardPvEnergySummary';
+            pvSummary.textContent = pvSummaryParts.join(' | ');
+            wrapper.appendChild(pvSummary);
+        }
     }
 
     const tooltip = document.createElement('div');
@@ -7214,8 +7243,8 @@ function buildPvForecastActualChart(labels, forecast, actual) {
         const d = new Date(labels[idx]);
         const dateText = d.toLocaleString('de-DE', {weekday: 'short', hour: '2-digit', minute: '2-digit'}).replace('.', '');
         const parts = [];
-        if (forecast[idx] !== null && forecast[idx] !== undefined) parts.push(`Prognose ${forecast[idx].toFixed(1)} kW`);
-        if (actual[idx] !== null && actual[idx] !== undefined) parts.push(`Ist ${actual[idx].toFixed(1)} kW`);
+        if (forecast[idx] !== null && forecast[idx] !== undefined) parts.push(`Prognose ${forecast[idx].toFixed(decimals)} ${unit}`);
+        if (actual[idx] !== null && actual[idx] !== undefined) parts.push(`Ist ${actual[idx].toFixed(decimals)} ${unit}`);
         tooltip.textContent = `${dateText}: ${parts.join(' / ') || '–'}`;
         const markerY = yFor(forecast[idx] ?? actual[idx] ?? yMin);
         tooltip.style.left = xFor(idx).toFixed(1) * scale + 'px';
@@ -8969,11 +8998,26 @@ async function loadDashboard() {
         updateOrAppendDashboardWidget(container, 'warmwasser', buildLineChart('Warmwasser', '°C', data.output_labels, data.t_hw, {
             slopeBands: {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 1},
         }));
-        updateOrAppendDashboardWidget(container, 'ladestandHeimspeicher', buildLineChart('Ladestand Heimspeicher', '%', data.output_labels, data.soc_b, {
-            fixedMin: 0,
-            fixedMax: 100,
-            slopeBands: {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 0.1},
-        }));
+        // Ist-Teil (0 Uhr bis jetzt) aus der echten Sensorhistorie statt aus der Optimierer-Prognose
+        // (siehe /dashboard/battery-soc-forecast-vs-actual, Nutzer-Vorgabe) - best-effort wie beim
+        // PV-Chart: schlaegt der neue Endpunkt fehl, faellt es auf die reine Prognose-Ansicht zurueck.
+        let batterySocChartRendered = false;
+        try {
+            const batterySocComparison = await getJson(insideHomeAssistant + '/dashboard/battery-soc-forecast-vs-actual');
+            if (batterySocComparison.status === 'success' && batterySocComparison.labels.length > 0) {
+                updateOrAppendDashboardWidget(container, 'ladestandHeimspeicher', buildBatterySocForecastActualChart(batterySocComparison.labels, batterySocComparison.forecast, batterySocComparison.actual));
+                batterySocChartRendered = true;
+            }
+        } catch (err) {
+            console.log(err);
+        }
+        if (!batterySocChartRendered) {
+            updateOrAppendDashboardWidget(container, 'ladestandHeimspeicher', buildLineChart('Ladestand Heimspeicher', '%', data.output_labels, data.soc_b, {
+                fixedMin: 0,
+                fixedMax: 100,
+                slopeBands: {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 0.1},
+            }));
+        }
         // best-effort: a missing/failed Anwesenheitsprognose (e.g. no wallbox-Status-Zuordnung
         // gepflegt, oder noch keine Historie vorhanden) just means the chart renders without the
         // overlay bar, not that the whole Dashboard-tab fails

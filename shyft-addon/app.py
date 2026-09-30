@@ -1855,6 +1855,80 @@ def readPvForecastVsActual():
     return jsonify({"status": "success", "labels": labels, "forecast": forecast, "actual": actual})
 
 
+def _read_future_battery_soc_forecast_by_hour():
+    "Wie _read_future_pv_forecast_by_hour, aber SOC_B aus output_csv (nicht PV_generation aus input_csv) - die Prognose fuer 'Ladestand Heimspeicher: Prognose vs. Ist'."
+    try:
+        with open(DASHBOARD_CACHE_PATH, "r") as f:
+            cache = json.load(f)
+    except Exception:
+        return {}
+    output_csv = cache.get("output_csv")
+    creation_date_ms = cache.get("creation_date")
+    if not output_csv or creation_date_ms is None:
+        return {}
+    start_utc = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+    try:
+        rows = list(csv.DictReader(io.StringIO(output_csv)))
+    except Exception:
+        return {}
+    result = {}
+    for i, row in enumerate(rows):
+        hour_local = _hour_floor((start_utc + timedelta(hours=i)).astimezone(get_ha_timezone()))
+        result[hour_local] = _safe_float(row.get("SOC_B"))
+    return result
+
+
+@app.route("/dashboard/battery-soc-forecast-vs-actual", methods=["GET"])
+def readBatterySocForecastVsActual():
+    """Wie readPvForecastVsActual, aber fuer 'Ladestand Heimspeicher' - bewusst OHNE eingefrorenen
+    Prognose-Snapshot (Nutzer-Vorgabe: der SOC-Ladestand hat keine sich im Tagesverlauf systematisch
+    aendernde Prognose wie eine Wetterprognose, die einfache Variante reicht hier). 'forecast' ist
+    SOC_B des zuletzt gecachten Optimierungslaufs (siehe _read_future_battery_soc_forecast_by_hour).
+    'actual' ist per Forward-Filling (siehe _forward_fill_hourly) aus der echten Sensorhistorie des
+    zugeordneten battery_state_of_charge-Sensors rekonstruiert - anders als bei PV (eine Leistung,
+    deren Momentanwert fuer die laufende Stunde nicht repraesentativ waere) ist SOC ein Zustand, die
+    laufende Stunde bekommt hier deshalb bewusst schon einen Ist-Wert (der zuletzt bekannte Stand)."""
+    config = _read_current_config()
+    entity_id = config.get("sensorMappings", {}).get("battery_state_of_charge", "")
+
+    midnight_local = _hour_floor(_local_now().replace(hour=0))
+    current_hour_local = _hour_floor(_local_now())
+
+    forecast_by_hour = _read_future_battery_soc_forecast_by_hour()
+
+    actual_by_hour = {}
+    if entity_id:
+        hours = []
+        cursor = midnight_local
+        while cursor <= current_hour_local:
+            hours.append(cursor)
+            cursor += timedelta(hours=1)
+        try:
+            events = homeassistant_adapter.load_entity_history_raw(entity_id, midnight_local, current_hour_local + timedelta(hours=1))
+            for hour_dt, state in _forward_fill_hourly(events, hours).items():
+                try:
+                    actual_by_hour[hour_dt] = float(state)
+                except (TypeError, ValueError):
+                    continue
+        except Exception as e:
+            print("[Shyft] Ladestand-Heimspeicher-Ist-Werte konnten nicht geladen werden:", repr(e))
+
+    candidate_hours = set(forecast_by_hour) | set(actual_by_hour)
+    all_hours = {h for h in candidate_hours if h >= midnight_local}
+    if not all_hours:
+        return jsonify({"status": "success", "labels": [], "forecast": [], "actual": []})
+
+    hour_count = int((max(all_hours) - midnight_local).total_seconds() // 3600) + 1
+    labels, forecast, actual = [], [], []
+    for i in range(hour_count):
+        hour = midnight_local + timedelta(hours=i)
+        labels.append(hour.isoformat())
+        forecast.append(forecast_by_hour.get(hour))
+        actual.append(actual_by_hour.get(hour))
+
+    return jsonify({"status": "success", "labels": labels, "forecast": forecast, "actual": actual})
+
+
 def get_wallbox_connection_status_options():
     """Distinct state values known for the mapped "Wallbox: Auto verbunden?" sensor, from three
     sources: (1) HA's own recent history (however much the recorder happens to retain), (2) the

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.201
+
+* **Ladestand Heimspeicher: Ist-Werte kommen jetzt aus der echten Sensorhistorie.** Wie beim PV-Leistung-Chart zeigt die Kurve ab 0 Uhr eine durchgezogene Ist-Linie aus der tatsächlichen `battery_state_of_charge`-Historie, dann eine senkrechte „Jetzt“-Markierung, danach gestrichelt die Prognose des zuletzt gecachten Optimierungslaufs (`SOC_B`) - keine Optimierer-Daten mehr für die Vergangenheit. Bewusst ohne eingefrorenen Prognose-Snapshot (anders als bei PV): der Ladestand hat keine sich im Tagesverlauf ändernde Wetterprognose, die einfache Variante genügt. Neuer Endpunkt `/dashboard/battery-soc-forecast-vs-actual`; schlägt er fehl, zeigt die Kachel wie bisher die reine Prognose. Die Chart-Funktion ist jetzt allgemein für „Prognose vs. Ist“ nutzbar (`buildForecastActualChart`), PV läuft unverändert darüber.
+
 ## 0.0.45.200
 
 * **Neu: „TESTUMGEBUNG“-Hinweis auf einem vom test-Branch gebauten Add-on.** Ein schräger Sticker oben links zeigt „Add-on: TESTUMGEBUNG“ plus „Bubble: TEST“ bzw. „Bubble: LIVE“ (je nachdem, ob der hinterlegte shyft_access_key ein test_-Präfix trägt) - auf allen Tabs sichtbar. Erscheint ausschließlich auf einem vom test-Branch gebauten Image (CI schreibt den bauenden Branch vor dem Docker-Build in eine Datei, die das Add-on beim Start liest); ein main-/PROD-Build zeigt den Hinweis nie, unabhängig vom verwendeten Schlüssel.
