@@ -71,6 +71,13 @@ DASHBOARD_CACHE_PATH = "/data/dashboard_cache.json"
 # ist, bleibt ihr zuletzt aufgezeichneter Wert unveraendert - das ist dann "die letzte Prognose vor
 # Eintritt der Stunde", der eigentliche Vergleichswert fuer die Prognosequalitaet.
 PV_FORECAST_SNAPSHOT_PATH = "/data/pv_forecast_snapshot.json"
+# Experimentelles Gegenstueck zu PV_FORECAST_SNAPSHOT_PATH fuer "Ladestand Heimspeicher": haelt je
+# bereits vergangener Stunde des heutigen Tages fest, was der zu diesem Zeitpunkt JUENGSTE
+# Optimierungslauf fuer sie geplant hatte (siehe _maybe_freeze_battery_soc_forecast_snapshot). Dient
+# NICHT der normalen Prognose-Anzeige (siehe readBatterySocForecastVsActual-Docstring: dafuer bewusst
+# kein Snapshot noetig), sondern nur dem Sichtbarmachen, wie stark sich der Batterie-Plan im
+# Tagesverlauf durch Neuplanungen aendert (Nutzer-Vermutung: viele Spruenge, anders als bei PV).
+BATTERY_SOC_FORECAST_SNAPSHOT_PATH = "/data/battery_soc_forecast_snapshot.json"
 CAR_PRESENCE_LOG_PATH = "/data/car_presence_log.json"
 CAR_PRESENCE_LOG_MAX_DAYS = 180
 # "Fahrt planen"-Feature (Dashboard, siehe planCarTrip): einmalige, vom Nutzer angekuendigte
@@ -1887,7 +1894,12 @@ def readBatterySocForecastVsActual():
     'actual' ist per Forward-Filling (siehe _forward_fill_hourly) aus der echten Sensorhistorie des
     zugeordneten battery_state_of_charge-Sensors rekonstruiert - anders als bei PV (eine Leistung,
     deren Momentanwert fuer die laufende Stunde nicht repraesentativ waere) ist SOC ein Zustand, die
-    laufende Stunde bekommt hier deshalb bewusst schon einen Ist-Wert (der zuletzt bekannte Stand)."""
+    laufende Stunde bekommt hier deshalb bewusst schon einen Ist-Wert (der zuletzt bekannte Stand).
+    'plannedHistory' ist EXPERIMENTELL (Nutzer-Anfrage): fuer bereits vergangene Stunden von heute,
+    was der zu ihrer Zeit juengste Optimierungslauf fuer sie geplant hatte (siehe
+    _maybe_freeze_battery_soc_forecast_snapshot) - macht sichtbar, wie stark sich der Batterie-Plan
+    im Tagesverlauf durch Neuplanungen noch aendert. Bleibt leer, bis der erste Sync nach Einfuehrung
+    dieses Felds gelaufen ist - fruehere Stunden wurden nie aufgezeichnet."""
     config = _read_current_config()
     entity_id = config.get("sensorMappings", {}).get("battery_state_of_charge", "")
 
@@ -1895,6 +1907,16 @@ def readBatterySocForecastVsActual():
     current_hour_local = _hour_floor(_local_now())
 
     forecast_by_hour = _read_future_battery_soc_forecast_by_hour()
+
+    today_local = date.today().isoformat()
+    snapshot = _read_battery_soc_forecast_snapshot()
+    planned_history_by_hour = {}
+    if snapshot and snapshot.get("date") == today_local:
+        for label, value in zip(snapshot.get("labels", []), snapshot.get("soc", [])):
+            try:
+                planned_history_by_hour[_hour_floor(datetime.fromisoformat(label).astimezone(get_ha_timezone()))] = value
+            except ValueError:
+                continue
 
     actual_by_hour = {}
     if entity_id:
@@ -1913,23 +1935,25 @@ def readBatterySocForecastVsActual():
         except Exception as e:
             print("[Shyft] Ladestand-Heimspeicher-Ist-Werte konnten nicht geladen werden:", repr(e))
 
-    candidate_hours = set(forecast_by_hour) | set(actual_by_hour)
+    candidate_hours = set(forecast_by_hour) | set(actual_by_hour) | set(planned_history_by_hour)
     all_hours = {h for h in candidate_hours if h >= midnight_local}
     if not all_hours:
-        return jsonify({"status": "success", "labels": [], "forecast": [], "actual": []})
+        return jsonify({"status": "success", "labels": [], "forecast": [], "actual": [], "plannedHistory": []})
 
     hour_count = int((max(all_hours) - midnight_local).total_seconds() // 3600) + 1
-    labels, forecast, actual = [], [], []
+    labels, forecast, actual, planned_history = [], [], [], []
     for i in range(hour_count):
         hour = midnight_local + timedelta(hours=i)
         labels.append(hour.isoformat())
         forecast.append(forecast_by_hour.get(hour))
         actual.append(actual_by_hour.get(hour))
+        planned_history.append(planned_history_by_hour.get(hour) if hour < current_hour_local else None)
 
     # Aktions-Indikator (siehe _battery_action_hours) - dieselbe Stundenachse wie labels/forecast/actual.
     action_hours = _battery_action_hours(midnight_local, hour_count)
 
-    return jsonify({"status": "success", "labels": labels, "forecast": forecast, "actual": actual, "actionHours": action_hours})
+    return jsonify({"status": "success", "labels": labels, "forecast": forecast, "actual": actual,
+                     "plannedHistory": planned_history, "actionHours": action_hours})
 
 
 def get_wallbox_connection_status_options():
@@ -8262,30 +8286,88 @@ def _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms):
         print("[Shyft] PV-Prognose-Snapshot: input_csv konnte nicht gelesen werden:", repr(e))
         return
 
-    labels, pv_generation = [], []
+    # Start bei existing_by_label (nicht bei einer leeren Reihe): jeder Lauf deckt nur noch ab seiner
+    # eigenen Erstellzeit vorwaerts ab (siehe Docstring), ein spaeterer Lauf enthaelt also i.d.R.
+    # KEINE Zeile mehr fuer laengst vergangene fruehe Tagesstunden. Ohne dieses Vorbelegen wuerden
+    # solche schon eingefrorenen Stunden bei jedem weiteren Sync aus dem Snapshot herausfallen, statt
+    # (wie beabsichtigt) dauerhaft erhalten zu bleiben - sie kommen in `rows` schlicht nie wieder vor.
+    merged = dict(existing_by_label)
     for i, row in enumerate(rows):
         row_dt_utc = start_utc + timedelta(hours=i)
         row_dt_local = row_dt_utc.astimezone(get_ha_timezone())
         if row_dt_local.date().isoformat() != today_local:
             continue
         label = row_dt_utc.isoformat()
-        if row_dt_local < now_hour_local and label in existing_by_label:
-            # Diese Stunde ist bereits vergangen UND schon aufgezeichnet - eingefroren lassen, nicht
-            # mit einer neueren Prognose ueberschreiben (fuer eine abgelaufene Stunde waere das
-            # ohnehin keine "Prognose" mehr, sondern ruecksschauend verzerrt).
-            value = existing_by_label[label]
-        else:
-            value = _safe_float(row.get("PV_generation"))
-        labels.append(label)
-        pv_generation.append(value)
-    if not labels:
+        if row_dt_local < now_hour_local and label in merged:
+            continue  # bereits vergangen UND schon aufgezeichnet - eingefroren lassen, nicht ueberschreiben
+        merged[label] = _safe_float(row.get("PV_generation"))
+    if not merged:
         return  # Prognose deckt "heute" (noch) gar nicht ab - naechster Sync versucht es erneut
 
+    labels = sorted(merged, key=datetime.fromisoformat)
+    pv_generation = [merged[label] for label in labels]
     try:
         with open(PV_FORECAST_SNAPSHOT_PATH, "w") as f:
             json.dump({"date": today_local, "labels": labels, "pv_generation": pv_generation}, f)
     except Exception as e:
         print("[Shyft] PV-Prognose-Snapshot konnte nicht gespeichert werden:", repr(e))
+
+
+def _read_battery_soc_forecast_snapshot():
+    try:
+        with open(BATTERY_SOC_FORECAST_SNAPSHOT_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _maybe_freeze_battery_soc_forecast_snapshot(output_csv, creation_date_ms):
+    """Experimentelles Gegenstueck zu _maybe_freeze_pv_forecast_snapshot fuer SOC_B (statt
+    PV_generation, aus output_csv statt input_csv - selbe Stunden-Konvention wie
+    _read_future_battery_soc_forecast_by_hour: Zeile i = creation_date_ms + i Stunden, kein eigener
+    Zeitstempel je Zeile). Vergangene Stunden von heute bleiben auf dem Wert eingefroren, den der
+    zu ihrer Zeit juengste Optimierungslauf fuer sie vorhergesagt hatte; noch bevorstehende Stunden
+    bekommen bei jedem Sync die aktuellste Prognose nachgetragen. Rein diagnostisch (siehe
+    BATTERY_SOC_FORECAST_SNAPSHOT_PATH) - beeinflusst die normale Prognose-Anzeige nicht."""
+    if not output_csv:
+        return
+    today_local = date.today().isoformat()
+    existing = _read_battery_soc_forecast_snapshot()
+    existing_by_label = {}
+    if existing and existing.get("date") == today_local:
+        existing_by_label = dict(zip(existing.get("labels", []), existing.get("soc", [])))
+
+    now_hour_local = _local_now().replace(minute=0, second=0, microsecond=0)
+    start_utc = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+    try:
+        rows = list(csv.DictReader(io.StringIO(output_csv)))
+    except Exception as e:
+        print("[Shyft] Ladestand-Heimspeicher-Planungs-Snapshot: output_csv konnte nicht gelesen werden:", repr(e))
+        return
+
+    # Siehe _maybe_freeze_pv_forecast_snapshot: erst existing_by_label vorbelegen, sonst faellt eine
+    # laengst vergangene fruehe Stunde aus dem Snapshot heraus, sobald ein spaeterer Lauf (der nur
+    # noch ab seiner eigenen Erstellzeit vorwaerts rechnet) keine Zeile mehr fuer sie liefert.
+    merged = dict(existing_by_label)
+    for i, row in enumerate(rows):
+        row_dt_utc = start_utc + timedelta(hours=i)
+        row_dt_local = row_dt_utc.astimezone(get_ha_timezone())
+        if row_dt_local.date().isoformat() != today_local:
+            continue
+        label = row_dt_utc.isoformat()
+        if row_dt_local < now_hour_local and label in merged:
+            continue  # vergangene, bereits aufgezeichnete Stunde - eingefroren lassen
+        merged[label] = _safe_float(row.get("SOC_B"))
+    if not merged:
+        return  # Lauf deckt "heute" (noch) gar nicht ab - naechster Sync versucht es erneut
+
+    labels = sorted(merged, key=datetime.fromisoformat)
+    soc = [merged[label] for label in labels]
+    try:
+        with open(BATTERY_SOC_FORECAST_SNAPSHOT_PATH, "w") as f:
+            json.dump({"date": today_local, "labels": labels, "soc": soc}, f)
+    except Exception as e:
+        print("[Shyft] Ladestand-Heimspeicher-Planungs-Snapshot konnte nicht gespeichert werden:", repr(e))
 
 
 # Statische, mit dem Addon ausgelieferte Beispieldaten fuers Dashboard im Demo-Modus (siehe
@@ -8562,6 +8644,7 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
     except Exception as e:
         print("[Shyft] Dashboard-Chart-Daten konnten nicht zwischengespeichert werden:", repr(e))
     _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms)
+    _maybe_freeze_battery_soc_forecast_snapshot(output_csv, creation_date_ms)
     recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id, base)
     _record_energy_archive_plan_contribution(input_csv, output_csv, creation_date_ms, base)
     _record_household_savings_snapshot()

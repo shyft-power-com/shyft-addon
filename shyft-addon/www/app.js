@@ -7069,11 +7069,11 @@ function buildPvForecastActualChart(labels, forecast, actual) {
 // eingefrorenen Prognose-Snapshot wie bei PV (Nutzer-Vorgabe: der SOC-Ladestand hat keine sich im
 // Tagesverlauf aendernde Prognose wie eine Wetterprognose). Feste 0-100%-Skala statt der generischen
 // "10% Padding"-Logik, da der Wertebereich von vornherein bekannt ist.
-function buildBatterySocForecastActualChart(labels, forecast, actual, actionHours) {
-    return buildForecastActualChart('Ladestand Heimspeicher: Prognose vs. Ist', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}, actionHours});
+function buildBatterySocForecastActualChart(labels, forecast, actual, actionHours, plannedHistory) {
+    return buildForecastActualChart('Ladestand Heimspeicher: Prognose vs. Ist', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}, actionHours, plannedHistory});
 }
 
-function buildForecastActualChart(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null} = {}) {
+function buildForecastActualChart(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, plannedHistory = null} = {}) {
     const width = 600, height = 220;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -7101,6 +7101,20 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
         dot.style.background = color;
         item.appendChild(dot);
         item.appendChild(document.createTextNode(label));
+        legend.appendChild(item);
+    }
+    // Experimentell (Nutzer-Anfrage, siehe plannedHistory-Docstring in readBatterySocForecastVsActual):
+    // "was der zu ihrer Zeit juengste Optimierungslauf fuer diese vergangene Stunde geplant hatte" -
+    // eigener Legenden-Eintrag nur, wenn tatsaechlich mindestens ein Wert vorliegt (leer, solange kein
+    // Sync seit Einfuehrung dieses Felds gelaufen ist).
+    if (plannedHistory && plannedHistory.some(v => v !== null && v !== undefined)) {
+        const item = document.createElement('span');
+        item.className = 'dashboardChartLegendItem';
+        const dot = document.createElement('span');
+        dot.className = 'dashboardChartLegendDot';
+        dot.style.background = 'var(--color-warning)';
+        item.appendChild(dot);
+        item.appendChild(document.createTextNode('Letzter Planungsstand (experimentell)'));
         legend.appendChild(item);
     }
     // Aktions-Indikator (siehe actionHours/actionBandsMarkup unten) - eigener Legenden-Eintrag nur,
@@ -7168,6 +7182,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
 
     const forecastPath = buildSeriesPath(forecast, 'var(--color-accent)', true);
     const actualPath = buildSeriesPath(actual, 'var(--color-text)', false);
+    const plannedHistoryPath = plannedHistory ? buildSeriesPath(plannedHistory, 'var(--color-warning)', true) : '';
 
     const tickCount = Math.min(6, labels.length);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
@@ -7227,6 +7242,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
             <line x1="${paddingLeft}" y1="${baseline.toFixed(1)}" x2="${width - paddingRight}" y2="${baseline.toFixed(1)}" stroke="var(--color-border)" />
             ${actionBandsMarkup}
             ${nowMarkup}
+            ${plannedHistoryPath}
             ${forecastPath}
             ${actualPath}
             ${dayBoundaryMarkup}
@@ -7274,6 +7290,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
         const parts = [];
         if (forecast[idx] !== null && forecast[idx] !== undefined) parts.push(`Prognose ${forecast[idx].toFixed(decimals)} ${unit}`);
         if (actual[idx] !== null && actual[idx] !== undefined) parts.push(`Ist ${actual[idx].toFixed(decimals)} ${unit}`);
+        if (plannedHistory && plannedHistory[idx] !== null && plannedHistory[idx] !== undefined) parts.push(`Planungsstand ${plannedHistory[idx].toFixed(decimals)} ${unit}`);
         tooltip.textContent = `${dateText}: ${parts.join(' / ') || '–'}`;
         const markerY = yFor(forecast[idx] ?? actual[idx] ?? yMin);
         tooltip.style.left = xFor(idx).toFixed(1) * scale + 'px';
@@ -9034,7 +9051,7 @@ async function loadDashboard() {
         try {
             const batterySocComparison = await getJson(insideHomeAssistant + '/dashboard/battery-soc-forecast-vs-actual');
             if (batterySocComparison.status === 'success' && batterySocComparison.labels.length > 0) {
-                updateOrAppendDashboardWidget(container, 'ladestandHeimspeicher', buildBatterySocForecastActualChart(batterySocComparison.labels, batterySocComparison.forecast, batterySocComparison.actual, batterySocComparison.actionHours));
+                updateOrAppendDashboardWidget(container, 'ladestandHeimspeicher', buildBatterySocForecastActualChart(batterySocComparison.labels, batterySocComparison.forecast, batterySocComparison.actual, batterySocComparison.actionHours, batterySocComparison.plannedHistory));
                 batterySocChartRendered = true;
             }
         } catch (err) {

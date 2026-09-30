@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.205
+
+* **Experimentell: „Letzter Planungsstand“ im Ladestand-Heimspeicher-Chart.** Zusaetzliche gepunktete Linie, die fuer bereits vergangene Stunden von heute zeigt, was der zu ihrer Zeit juengste Optimierungslauf fuer sie geplant hatte - macht sichtbar, wie stark der Batterie-Plan im Tagesverlauf durch Neuplanungen noch revidiert wird. Beeinflusst die normale Prognose-Anzeige nicht, ist auf Nutzer-Wunsch als Test gedacht. Die Aufzeichnung beginnt erst mit diesem Update - fruehere Stunden bleiben leer.
+* **Fix: Der PV-Prognose-Snapshot verlor bereits eingefrorene fruehe Tagesstunden.** Jeder Optimierungslauf deckt nur noch ab seiner eigenen Erstellzeit vorwaerts ab; ein spaeterer Lauf am selben Tag enthielt fuer laengst vergangene fruehe Stunden keine Zeile mehr, wodurch sie beim naechsten Sync aus dem fuer den PV-Prognose-vs-Ist-Vergleich aufgezeichneten Snapshot herausfielen, statt (wie beabsichtigt) eingefroren zu bleiben. Betraf denselben, neu hinzugefuegten Mechanismus fuer „Ladestand Heimspeicher“ ebenso - beide sind jetzt korrigiert.
+
 ## 0.0.45.204
 
 * **Fix: Ein erfolgreicher Test räumt jetzt sofort die dazugehörige „wurde noch nicht erfolgreich getestet“-Problemmeldung ab.** Bisher blieb dieser Hinweis (Problem-Banner auf der Konfigurationsseite) so lange stehen, bis der nächste tatsächliche Ausführungsversuch der Steuerung erfolgreich lief - im schlechtesten Fall erst eine Stunde später, obwohl der Test selbst schon bewiesen hatte, dass die Steuerung funktioniert. Ein Test-Erfolg gibt die Meldung jetzt unmittelbar frei.
