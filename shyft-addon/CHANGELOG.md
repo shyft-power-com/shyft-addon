@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.199
+
+* **Fix: Dashboard-Cache-Schreiben atomar gemacht.** Bisher wurde die Cache-Datei fürs Dashboard direkt überschrieben statt (wie die Konfigurationsdatei) über eine temporäre Datei + atomarem Umbenennen. Traf ein Seitenaufruf genau auf einen laufenden Schreibvorgang (stündlicher Sync oder Optimierungs-Trigger), konnte er die Datei nur teilweise geschrieben lesen und scheiterte mit einem JSON-Fehler - sichtbar als regelmäßig kurz aufblitzendes „Diagrammdaten konnten nicht geladen werden“, bis der nächste 30-Sekunden-Refresh wieder eine vollständige Datei antraf. Das Schreiben ist jetzt atomar, ein Lesezugriff trifft immer entweder die alte oder die neue vollständige Datei.
+* **„Fahrt planen“ sitzt im Desktop-Layout jetzt auch direkt im Energiefluss-Widget.** Zentriert unter dem Auto-Icon samt Beschriftung, wie es im Mobil-Layout bereits der Fall war - der alte Button unter dem „Ladestand Auto“-Chart entfällt auf dem Desktop-Layout damit (Mobil-Layout unverändert).
+
 ## 0.0.45.198
 
 * **Fix: Dashboard verlor Raumtemperatur-, Warmwasser-, Batterie- und Auto-Chart.** Der stündliche Dashboard-Sync holte den neuesten Optimierungslauf allein anhand von `input_csv` und Erstellzeitpunkt - hatte der Optimierer für diesen Lauf noch keine `output_csv` geliefert (noch nicht fertig oder in seinen eigenen 600s-Timeout gelaufen), wurde trotzdem eine leere `output_csv` in den Dashboard-Cache geschrieben. Damit blieben „PV-Leistung“ und „Deine Stromkosten“ (kommen aus `input_csv` bzw. dem lokal berechneten Base Case) zwar sichtbar, aber „Raumtemperatur“, „Warmwasser“, „Ladestand Heimspeicher“ und „Ladestand Auto“ (alle aus `output_csv`) zeigten „Keine Daten verfügbar“, obwohl zuvor ein vollständiger Lauf gecacht war. Ein Lauf ohne `output_csv` wird jetzt übersprungen; der Cache behält den letzten vollständigen Lauf, bis Bubble einen neuen mit Ergebnis liefert.

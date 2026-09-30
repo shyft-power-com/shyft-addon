@@ -1599,7 +1599,15 @@
         }
         /* "Fahrt planen"-Button unter dem "Ladestand Auto"-Chart + Popup (siehe buildTripPlanButton/
            openTripPlanModal in app.js). Overlay/Modal sind an <body> gehaengt (nicht im Chart-
-           Wrapper), damit sie ueber allem liegen, unabhaengig von der Chart-eigenen Positionierung. */
+           Wrapper), damit sie ueber allem liegen, unabhaengig von der Chart-eigenen Positionierung.
+           Auf dem Desktop-Layout sitzt der Button stattdessen direkt im Energiefluss-Widget, zentriert
+           unter Auto-Icon + Beschriftung (siehe buildEnergyFlowSvgDesktop) - dieser hier waere dort nur
+           eine verwirrende Dopplung (analog zur bestehenden Ausblendung fuers Mobil-Layout unten). */
+        @media (min-width: 601px) {
+            .tripPlanButtonRow {
+                display: none;
+            }
+        }
         .tripPlanButtonRow {
             margin-top: 0.8em;
         }

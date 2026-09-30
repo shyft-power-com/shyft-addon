@@ -8332,7 +8332,47 @@ function buildEnergyFlowSvgDesktop(data) {
         if (data.car.state === 'away') carLines.push('abwesend');
         else if (data.car.state === 'charging') carLines.push(data.car.chargingKw != null ? `Lädt (${formatKwValue(data.car.chargingKw)})` : 'lädt');
         else if (data.car.state === 'connected') carLines.push('eingesteckt');
-        svg.appendChild(buildEnergyFlowLabel(columnX + carTargetW / 2 + 10, rowY, carLines));
+        const carLabel = buildEnergyFlowLabel(columnX + carTargetW / 2 + 10, rowY, carLines);
+        svg.appendChild(carLabel);
+
+        // "Fahrt planen" zentriert unter Auto-Icon + Beschriftung ZUSAMMEN (Nutzer-Vorgabe: nicht mehr
+        // nur weiter unten beim "Ladestand Auto"-Chart, siehe .tripPlanButtonRow-Ausblendung fuer Desktop
+        // in index.html). Anders als im Mobil-Layout (buildEnergyFlowSvgMobile) stehen Icon und
+        // Beschriftung hier NEBENEINANDER statt uebereinander - die Textbreite der Beschriftung haengt
+        // vom Inhalt ab (z.B. "abwesend" vs. "Lädt (3,7 kW)") und ist erst nach dem Anhaengen ans DOM per
+        // getBBox() bekannt; kurz unsichtbar anhaengen, messen, wieder loesen (gleiches Muster wie der
+        // abschliessende Zuschnitt in buildEnergyFlowSvgMobile).
+        const carMeasureHost = document.createElement('div');
+        carMeasureHost.style.cssText = 'position:absolute;visibility:hidden;width:0;height:0;overflow:hidden;';
+        document.body.appendChild(carMeasureHost);
+        carMeasureHost.appendChild(svg);
+        const carLabelBox = carLabel.getBBox();
+        document.body.removeChild(carMeasureHost);
+
+        const carIconLeft = columnX - carTargetW / 2;
+        const carIconBottom = rowY + (carTargetW * (carImg.h / carImg.w)) / 2;
+        const carGroupCenterX = (carIconLeft + (carLabelBox.x + carLabelBox.width)) / 2;
+        const carGroupBottomY = Math.max(carIconBottom, carLabelBox.y + carLabelBox.height);
+
+        const tripPlanButtonW = 150, tripPlanButtonH = 34;
+        const tripPlanFo = svgEl('foreignObject', {
+            x: carGroupCenterX - tripPlanButtonW / 2, y: carGroupBottomY + 14, width: tripPlanButtonW, height: tripPlanButtonH,
+        });
+        const tripPlanFoDiv = document.createElement('div');
+        tripPlanFoDiv.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+        tripPlanFoDiv.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;';
+        const tripPlanButton = document.createElement('button');
+        tripPlanButton.type = 'button';
+        tripPlanButton.textContent = 'Fahrt planen';
+        // Eigene, ans SVG angepasste Groesse statt der normalen .tripPlanButton-Klasse (deren Schrift
+        // waere bei diesem viewBox->Viewport-Massstab kaum lesbar, siehe Kommentar bei der Mobil-Variante).
+        tripPlanButton.style.cssText = 'font-family:var(--font-body);background:var(--color-input-bg);' +
+            'color:var(--color-text);border:1px solid var(--color-input-border);border-radius:6px;' +
+            'padding:4px 10px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;';
+        tripPlanButton.addEventListener('click', openTripPlanModal);
+        tripPlanFoDiv.appendChild(tripPlanButton);
+        tripPlanFo.appendChild(tripPlanFoDiv);
+        svg.appendChild(tripPlanFo);
     }
 
     if (data.sonstigerVerbraucher && data.sonstigerVerbraucher.configured) {

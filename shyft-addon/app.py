@@ -8399,8 +8399,15 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
         payload.update(base)
         _write_base_case_state(creation_date_ms, base.get("nextState"))
     try:
-        with open(DASHBOARD_CACHE_PATH, "w") as f:
+        # Atomares Schreiben (temp-Datei + os.replace, wie _write_current_config) - ohne das konnte eine
+        # GET /dashboard/chart-data genau waehrend eines Schreibvorgangs (stuendlicher Sync, Trigger-Wartepoll)
+        # die Datei nur teilweise geschrieben lesen: json.load schlug dann mit einem Parse-Fehler fehl, die
+        # Seite zeigte kurz "Diagrammdaten konnten nicht geladen werden", bis der naechste 30s-Refresh wieder
+        # eine vollstaendige Datei antraf (Nutzer-Beobachtung: regelmaessige kurze Aussetzer).
+        tmp_path = DASHBOARD_CACHE_PATH + ".tmp"
+        with open(tmp_path, "w") as f:
             json.dump(payload, f)
+        os.replace(tmp_path, DASHBOARD_CACHE_PATH)
     except Exception as e:
         print("[Shyft] Dashboard-Chart-Daten konnten nicht zwischengespeichert werden:", repr(e))
     _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms)
