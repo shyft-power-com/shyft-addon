@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.203
+
+* **Add-on-Name trägt jetzt „(TEST)“ auf einem vom test-Branch gebauten Add-on.** In der Supervisor-Add-on-Liste/-Sidebar heißt das Add-on dann „shyft-power (TEST)“ statt nur „shyft-power“ - zur Unterscheidung, wenn PROD- und Test-Add-on parallel installiert sind. Wird wie der „TESTUMGEBUNG“-Sticker rein zur Build-Zeit in der CI angehängt, ein main-/PROD-Build ist unverändert.
+* **Fix: „TESTUMGEBUNG“-Sticker war am linken Rand abgeschnitten.** Sticker verlängert und nach rechts gerückt, damit „Add-on: TESTUMGEBUNG“ / „Bubble: TEST“ vollständig lesbar sind.
+
 ## 0.0.45.202
 
 * **Ladestand Heimspeicher: Aktions-Indikator im Chart.** Stunden mit einer Batterie-Aktion (Netzladen, Entladen verschieben oder Laden verschieben) sind jetzt als grün eingefärbte Fläche hervorgehoben, Stunden ohne bleiben unauffällig. Für die Vergangenheit/laufende Stunde zählt nur, was tatsächlich ausgeführt wurde (Execution Status „yes, started“ - eine nur geplante, aber fehlgeschlagene oder noch nicht gestartete Aktion zählt nicht mit), für die Zukunft die aktuell geplanten Aktionen. Datenquelle ist ausschließlich der ohnehin nie beschnittene lokale Aktions-Store, kein neuer Speicherort nötig.

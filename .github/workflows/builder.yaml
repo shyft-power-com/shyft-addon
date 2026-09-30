@@ -44,6 +44,14 @@ jobs:
       - name: Record build branch
         run: echo "${{ github.ref_name }}" > shyft-addon/BUILD_BRANCH
 
+      # Haengt " (TEST)" an den in Supervisor angezeigten Add-on-Namen an, wenn von "test" gebaut wird -
+      # damit ein parallel zu PROD installiertes Test-Add-on auch in der Add-on-Liste/Sidebar klar als
+      # solches erkennbar ist. Nur im CI-Checkout geaendert (wie BUILD_BRANCH oben), config.yaml im
+      # Git-Quelltext bleibt auf main/test identisch.
+      - name: Append TEST suffix to add-on name (test branch only)
+        if: github.ref_name == 'test'
+        run: sed -i 's/^name: "shyft-power"$/name: "shyft-power (TEST)"/' shyft-addon/config.yaml
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
