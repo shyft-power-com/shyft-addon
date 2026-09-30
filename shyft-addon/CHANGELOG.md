@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.200
+
+* **Neu: „TESTUMGEBUNG“-Hinweis auf einem vom test-Branch gebauten Add-on.** Ein schräger Sticker oben links zeigt „Add-on: TESTUMGEBUNG“ plus „Bubble: TEST“ bzw. „Bubble: LIVE“ (je nachdem, ob der hinterlegte shyft_access_key ein test_-Präfix trägt) - auf allen Tabs sichtbar. Erscheint ausschließlich auf einem vom test-Branch gebauten Image (CI schreibt den bauenden Branch vor dem Docker-Build in eine Datei, die das Add-on beim Start liest); ein main-/PROD-Build zeigt den Hinweis nie, unabhängig vom verwendeten Schlüssel.
+
 ## 0.0.45.199
 
 * **Fix: Dashboard-Cache-Schreiben atomar gemacht.** Bisher wurde die Cache-Datei fürs Dashboard direkt überschrieben statt (wie die Konfigurationsdatei) über eine temporäre Datei + atomarem Umbenennen. Traf ein Seitenaufruf genau auf einen laufenden Schreibvorgang (stündlicher Sync oder Optimierungs-Trigger), konnte er die Datei nur teilweise geschrieben lesen und scheiterte mit einem JSON-Fehler - sichtbar als regelmäßig kurz aufblitzendes „Diagrammdaten konnten nicht geladen werden“, bis der nächste 30-Sekunden-Refresh wieder eine vollständige Datei antraf. Das Schreiben ist jetzt atomar, ein Lesezugriff trifft immer entweder die alte oder die neue vollständige Datei.

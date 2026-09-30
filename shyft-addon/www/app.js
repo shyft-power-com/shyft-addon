@@ -908,6 +908,31 @@ async function applyTriggerButtonDemoState() {
     }
 }
 
+// Schraeger Eck-Sticker "Add-on: TESTUMGEBUNG" / "Bubble: TEST|LIVE" - erscheint AUSSCHLIESSLICH auf
+// einem vom "test"-Branch gebauten Add-on (accountStatus.isTestBuild, siehe /account-status), niemals
+// auf einem main-/PROD-Build. Die zweite Zeile ist unabhaengig davon, ob der hinterlegte
+// shyft_access_key ein test_-Praefix traegt (accountStatus.isTestEnvironment) - warnt insbesondere vor
+// der gefaehrlichen Kombination "Test-Branch-Add-on faelschlich mit einem echten/LIVE-Schluessel".
+async function renderEnvironmentBadge() {
+    try {
+        const status = await getJson(insideHomeAssistant + '/account-status');
+        if (!status.isTestBuild) return;
+        if (document.getElementById('environmentBadge')) return;
+        const badge = document.createElement('div');
+        badge.id = 'environmentBadge';
+        badge.className = 'environmentBadge';
+        const line1 = document.createElement('span');
+        line1.textContent = 'Add-on: TESTUMGEBUNG';
+        const line2 = document.createElement('span');
+        line2.textContent = 'Bubble: ' + (status.isTestEnvironment ? 'TEST' : 'LIVE');
+        badge.appendChild(line1);
+        badge.appendChild(line2);
+        document.body.appendChild(badge);
+    } catch (err) {
+        console.log(err);
+    }
+}
+
 // Analyse-Tab (siehe accountStatus.isTestEnvironment in app.py/account-status) - nur sichtbar mit
 // einem test_-praefixierten shyft_access_key, eine bewusst einfache/nicht-live Testmoeglichkeit vor
 // dem allgemeinen Rollout. Die Datenerfassung selbst (energy_archive) laeuft unabhaengig davon fuer
@@ -9253,6 +9278,7 @@ if (document.readyState === 'complete') {
     applyAnalyseTabVisibility();
     applyAssistantWidget();
     renderUpdateBanner();
+    renderEnvironmentBadge();
 } else {
     window.addEventListener('load', () => {
         loadConfiguration().then(loadShyftActions);
@@ -9262,6 +9288,7 @@ if (document.readyState === 'complete') {
         applyAnalyseTabVisibility();
         applyAssistantWidget();
         renderUpdateBanner();
+        renderEnvironmentBadge();
     });
 }
 

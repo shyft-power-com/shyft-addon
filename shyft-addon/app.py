@@ -39,10 +39,24 @@ def load_addon_version():
     return "0.0.0.0"
 
 
+def load_build_branch():
+    """Git-Branch, von dem dieses Image gebaut wurde (siehe BUILD_BRANCH, vom CI-Workflow unmittelbar
+    vor dem Docker-Build geschrieben - kein dauerhafter Unterschied zwischen main und test, damit sich
+    beide Branches weiterhin konfliktfrei mergen lassen). Fehlt die Datei (lokaler Build ohne CI, z.B.
+    ein Supervisor-Lokalbau), gilt das NICHT als 'test' - der "TESTUMGEBUNG"-Hinweis bleibt dann aus,
+    sicherer Default fuer alles ausser einem echten test-Branch-Build."""
+    try:
+        with open("BUILD_BRANCH", "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 app = Flask(__name__, static_folder="www", static_url_path="")
 
 VERSION = load_addon_version()
+BUILD_BRANCH = load_build_branch()
 SHYFT_ACCESS_KEY = "not_set_yet"
 DETAILED_LOGGING = False
 OPTIONS_PATH = "/data/options.json"
@@ -288,8 +302,14 @@ def accountStatusEndpoint():
     DEV_ACCESS_KEY_PREFIX/shyft_adapter.development_mode). Letzteres steuert aktuell nur die
     Sichtbarkeit des Analyse-Tabs (siehe app.js) - eine bewusst einfache, nicht-live Moeglichkeit,
     das Feature vorab auf einer eigenen Test-HA-Instanz zu pruefen, waehrend die Datenerfassung
-    selbst (energy_archive) unabhaengig davon fuer alle Nutzer laeuft."""
-    return jsonify({"isDemo": is_demo_mode(), "isTestEnvironment": shyft_adapter.development_mode})
+    selbst (energy_archive) unabhaengig davon fuer alle Nutzer laeuft.
+    isTestBuild (BUILD_BRANCH == "test", siehe load_build_branch) treibt zusaetzlich den schraegen
+    "TESTUMGEBUNG"-Hinweis im Dashboard - komplett unabhaengig von isTestEnvironment: eins sagt, von
+    welchem Git-Branch dieses Add-on gebaut wurde, das andere, ob es gerade gegen die Test- oder die
+    Live-Umgebung von shyft-power spricht. Beide Kombinationen sind moeglich und sollen es auch
+    bleiben (z.B. ein main-Build testweise mit einem test_-Schluessel)."""
+    return jsonify({"isDemo": is_demo_mode(), "isTestEnvironment": shyft_adapter.development_mode,
+                    "isTestBuild": BUILD_BRANCH == "test"})
 
 
 ADDON_UPDATE_STATUS_CACHE_SECONDS = 300

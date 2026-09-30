@@ -1,0 +1,4 @@
+# Vom CI-Workflow unmittelbar vor dem Docker-Build erzeugt (siehe .github/workflows/builder.yaml,
+# "Record build branch") - haelt den bauenden Git-Branch fest, ist kein Quellcode und soll nie
+# versioniert werden.
+shyft-addon/BUILD_BRANCH
