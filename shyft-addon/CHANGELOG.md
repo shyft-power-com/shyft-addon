@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.207
+
+* **Fix: Aktions-Indikator im Ladestand-Heimspeicher-Chart zeigte nie eine normal beendete Batterie-Aktion an.** `_battery_action_hours` erkannte als "tatsächlich ausgeführt" bisher nur Execution Status "yes, started" - eine Batterie-Aktion wechselt beim normalen Beenden aber auf "yes, finished" (bzw. "yes, not finished" bei einem fehlgeschlagenen Beenden-Versuch), dieselbe Unterscheidung wie beim regulären Aktions-Ablauf. Jede bereits abgeschlossene Batterie-Aktion blieb dadurch im Chart unsichtbar, nur eine gerade laufende oder rein geplante wurde markiert (Nutzer-Beobachtung: "ich sehe noch keinen Indikator").
+
 ## 0.0.45.206
 
 * **TESTUMGEBUNG-Sticker: Versionsnummer ergänzt, Position korrigiert.** Der Sticker zeigt jetzt zusätzlich die laufende Add-on-Version (dritte Zeile), praktisch um abzugleichen, ob ein Supervisor-Update schon angekommen ist. Außerdem saß der Sticker noch zu hoch und war am oberen Rand nicht ganz lesbar - Position neu berechnet, damit er bei jeder Bildschirmgröße vollständig im sichtbaren Bereich liegt.

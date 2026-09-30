@@ -7697,8 +7697,10 @@ BATTERY_ACTION_NAMES = {BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_DISCHARGE_SHIFT
 def _battery_action_hours(midnight_local, hour_count):
     """Je Stunde ab midnight_local (hour_count Stunden, lokale Zeitzone): True, wenn einer der drei
     Batterie-Aktionstypen sie abdeckt - fuer bereits vergangene/laufende Stunden nur, wenn die Aktion
-    TATSAECHLICH ausgefuehrt wurde/wird (Execution Status "yes, started", nicht nur Status "aktiv" -
-    eine Aktion der laufenden Stunde traegt "aktiv" schon vor dem eigentlichen Ausfuehren, siehe
+    TATSAECHLICH ausgefuehrt wurde/wird (Execution Status "yes, started" waehrend sie laeuft, "yes,
+    finished" nach normalem Ende oder "yes, not finished" nach einem fehlgeschlagenen Beenden-Versuch
+    - dieselbe Bedingung wie "was_really_started" beim Ablauf einer Aktion; NICHT nur Status "aktiv",
+    das traegt eine Aktion der laufenden Stunde schon vor dem eigentlichen Ausfuehren, siehe
     compute_battery_charge_shift_actions), fuer kommende Stunden aus dem, was der letzte
     Optimierungslauf plant (Status "geplant"). Liest den vollstaendigen, nie beschnittenen lokalen
     Store (_read_computed_actions) - der haelt auch laengst beendete Aktionen weiterhin vor."""
@@ -7712,7 +7714,7 @@ def _battery_action_hours(midnight_local, hour_count):
     for action in actions:
         if action.get("Action Name") not in BATTERY_ACTION_NAMES:
             continue
-        really_ran_or_running = action.get("Execution Status") == "yes, started"
+        really_ran_or_running = action.get("Execution Status") in ("yes, started", "yes, not finished", "yes, finished")
         planned = (action.get("Status") or "").lower() == "geplant"
         if not (really_ran_or_running or planned):
             continue
