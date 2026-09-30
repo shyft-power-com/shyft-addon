@@ -50,7 +50,8 @@ jobs:
       # Git-Quelltext bleibt auf main/test identisch.
       - name: Append TEST suffix to add-on name (test branch only)
         if: github.ref_name == 'test'
-        run: sed -i 's/^name: "shyft-power"$/name: "shyft-power (TEST)"/' shyft-addon/config.yaml
+        run: |
+          sed -i 's/^name: "shyft-power"$/name: "shyft-power (TEST)"/' shyft-addon/config.yaml
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
