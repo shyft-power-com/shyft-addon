@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.202
+
+* **Ladestand Heimspeicher: Aktions-Indikator im Chart.** Stunden mit einer Batterie-Aktion (Netzladen, Entladen verschieben oder Laden verschieben) sind jetzt als grün eingefärbte Fläche hervorgehoben, Stunden ohne bleiben unauffällig. Für die Vergangenheit/laufende Stunde zählt nur, was tatsächlich ausgeführt wurde (Execution Status „yes, started“ - eine nur geplante, aber fehlgeschlagene oder noch nicht gestartete Aktion zählt nicht mit), für die Zukunft die aktuell geplanten Aktionen. Datenquelle ist ausschließlich der ohnehin nie beschnittene lokale Aktions-Store, kein neuer Speicherort nötig.
+
 ## 0.0.45.201
 
 * **Ladestand Heimspeicher: Ist-Werte kommen jetzt aus der echten Sensorhistorie.** Wie beim PV-Leistung-Chart zeigt die Kurve ab 0 Uhr eine durchgezogene Ist-Linie aus der tatsächlichen `battery_state_of_charge`-Historie, dann eine senkrechte „Jetzt“-Markierung, danach gestrichelt die Prognose des zuletzt gecachten Optimierungslaufs (`SOC_B`) - keine Optimierer-Daten mehr für die Vergangenheit. Bewusst ohne eingefrorenen Prognose-Snapshot (anders als bei PV): der Ladestand hat keine sich im Tagesverlauf ändernde Wetterprognose, die einfache Variante genügt. Neuer Endpunkt `/dashboard/battery-soc-forecast-vs-actual`; schlägt er fehl, zeigt die Kachel wie bisher die reine Prognose. Die Chart-Funktion ist jetzt allgemein für „Prognose vs. Ist“ nutzbar (`buildForecastActualChart`), PV läuft unverändert darüber.

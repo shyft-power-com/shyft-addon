@@ -1926,7 +1926,10 @@ def readBatterySocForecastVsActual():
         forecast.append(forecast_by_hour.get(hour))
         actual.append(actual_by_hour.get(hour))
 
-    return jsonify({"status": "success", "labels": labels, "forecast": forecast, "actual": actual})
+    # Aktions-Indikator (siehe _battery_action_hours) - dieselbe Stundenachse wie labels/forecast/actual.
+    action_hours = _battery_action_hours(midnight_local, hour_count)
+
+    return jsonify({"status": "success", "labels": labels, "forecast": forecast, "actual": actual, "actionHours": action_hours})
 
 
 def get_wallbox_connection_status_options():
@@ -7645,6 +7648,46 @@ def compute_battery_charge_shift_actions(config, output_rows, input_rows, start,
         result[i] = action
 
     return result
+
+
+# Aktions-Indikator im "Ladestand Heimspeicher"-Chart (Nutzer-Vorgabe): fuer jede Stunde, egal ob
+# Vergangenheit oder Zukunft, zaehlt EINE der drei Batterie-Aktionstypen als "Aktion" - welcher davon,
+# spielt fuer die Anzeige keine Rolle.
+BATTERY_ACTION_NAMES = {BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_DISCHARGE_SHIFT_ACTION_NAME, BATTERY_CHARGE_SHIFT_ACTION_NAME}
+
+
+def _battery_action_hours(midnight_local, hour_count):
+    """Je Stunde ab midnight_local (hour_count Stunden, lokale Zeitzone): True, wenn einer der drei
+    Batterie-Aktionstypen sie abdeckt - fuer bereits vergangene/laufende Stunden nur, wenn die Aktion
+    TATSAECHLICH ausgefuehrt wurde/wird (Execution Status "yes, started", nicht nur Status "aktiv" -
+    eine Aktion der laufenden Stunde traegt "aktiv" schon vor dem eigentlichen Ausfuehren, siehe
+    compute_battery_charge_shift_actions), fuer kommende Stunden aus dem, was der letzte
+    Optimierungslauf plant (Status "geplant"). Liest den vollstaendigen, nie beschnittenen lokalen
+    Store (_read_computed_actions) - der haelt auch laengst beendete Aktionen weiterhin vor."""
+    hours = [midnight_local + timedelta(hours=i) for i in range(hour_count)]
+    covered = [False] * hour_count
+    try:
+        actions = _read_computed_actions()
+    except Exception as e:
+        print("[Shyft] Batterie-Aktions-Indikator: Store konnte nicht gelesen werden:", repr(e))
+        return covered
+    for action in actions:
+        if action.get("Action Name") not in BATTERY_ACTION_NAMES:
+            continue
+        really_ran_or_running = action.get("Execution Status") == "yes, started"
+        planned = (action.get("Status") or "").lower() == "geplant"
+        if not (really_ran_or_running or planned):
+            continue
+        start_ms, end_ms = action.get("Date Start"), action.get("Date End")
+        if start_ms is None:
+            continue
+        start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).astimezone(get_ha_timezone())
+        end_dt = (datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc).astimezone(get_ha_timezone())
+                  if end_ms is not None else start_dt + timedelta(hours=1))
+        for i, hour in enumerate(hours):
+            if start_dt < hour + timedelta(hours=1) and end_dt > hour:
+                covered[i] = True
+    return covered
 
 
 # Einheit fuer die "neuer Zielwert"-Log-Zeile in _reconcile_computed_actions - je nach Aktionstyp
