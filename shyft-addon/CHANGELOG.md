@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.204
+
+* **Fix: Ein erfolgreicher Test räumt jetzt sofort die dazugehörige „wurde noch nicht erfolgreich getestet“-Problemmeldung ab.** Bisher blieb dieser Hinweis (Problem-Banner auf der Konfigurationsseite) so lange stehen, bis der nächste tatsächliche Ausführungsversuch der Steuerung erfolgreich lief - im schlechtesten Fall erst eine Stunde später, obwohl der Test selbst schon bewiesen hatte, dass die Steuerung funktioniert. Ein Test-Erfolg gibt die Meldung jetzt unmittelbar frei.
+
 ## 0.0.45.203
 
 * **Add-on-Name trägt jetzt „(TEST)“ auf einem vom test-Branch gebauten Add-on.** In der Supervisor-Add-on-Liste/-Sidebar heißt das Add-on dann „shyft-power (TEST)“ statt nur „shyft-power“ - zur Unterscheidung, wenn PROD- und Test-Add-on parallel installiert sind. Wird wie der „TESTUMGEBUNG“-Sticker rein zur Build-Zeit in der CI angehängt, ein main-/PROD-Build ist unverändert.

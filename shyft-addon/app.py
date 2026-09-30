@@ -4947,8 +4947,22 @@ def _record_action_test_result(ready_key, ok):
             passed.pop(ready_key, None)
             failed[ready_key] = _action_type_fingerprint(cfg, ready_key)
         _write_current_config(cfg)
+        if ok:
+            _clear_not_ready_problem(ready_key)
     except Exception as e:
         print("[Shyft] actionTestPassed konnte nicht aktualisiert werden:", repr(e))
+
+
+def _clear_not_ready_problem(ready_key):
+    """Gibt eine durch den Bereitschafts-Gate ausgeloeste 'action_failed:<label>'-Problemmeldung
+    (siehe handle_shyft_action_start: 'wurde noch nicht erfolgreich getestet') sofort frei, statt auf
+    den naechsten - moeglicherweise erst in einer Stunde stattfindenden - Ausfuehrungsversuch zu
+    warten. Der bestandene Test beweist bereits, dass die Steuerung jetzt funktioniert; ein echter
+    Geraetefehler (ueber _note_action_outcome registriert) hat eine andere Problem-ID und bleibt
+    davon unberuehrt."""
+    label_section = _READY_KEY_TO_LABEL_SECTION.get(ready_key)
+    if label_section:
+        problem_registry.clear(_action_problem_id(label_section[0]))
 
 
 def _records_action_test(ready_key=None, record_success=True):
