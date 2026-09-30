@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.198
+
+* **Fix: Dashboard verlor Raumtemperatur-, Warmwasser-, Batterie- und Auto-Chart.** Der stündliche Dashboard-Sync holte den neuesten Optimierungslauf allein anhand von `input_csv` und Erstellzeitpunkt - hatte der Optimierer für diesen Lauf noch keine `output_csv` geliefert (noch nicht fertig oder in seinen eigenen 600s-Timeout gelaufen), wurde trotzdem eine leere `output_csv` in den Dashboard-Cache geschrieben. Damit blieben „PV-Leistung“ und „Deine Stromkosten“ (kommen aus `input_csv` bzw. dem lokal berechneten Base Case) zwar sichtbar, aber „Raumtemperatur“, „Warmwasser“, „Ladestand Heimspeicher“ und „Ladestand Auto“ (alle aus `output_csv`) zeigten „Keine Daten verfügbar“, obwohl zuvor ein vollständiger Lauf gecacht war. Ein Lauf ohne `output_csv` wird jetzt übersprungen; der Cache behält den letzten vollständigen Lauf, bis Bubble einen neuen mit Ergebnis liefert.
+
 ## 0.0.45.197
 
 * **PV-Historie: zeitgewichtetes Mittel statt erstem Messwert.** Für die PV-Historie, die an Shyft übertragen wird, und die Ist-Kurve im PV-Diagramm galt bisher der jeweils erste Messwert eines 20-Minuten-Abschnitts für den ganzen Abschnitt. Ein aus mehreren Werten berechneter PV-Sensor (z. B. Wechselrichter + Batterie über Modbus) zeigt beim Aktualisieren für wenige Millisekunden einen falschen Zwischenwert – der landete so als PV-Leistung für 20 Minuten in der Historie (beobachtet: 1,16 kW um 2 Uhr nachts). Jetzt zählt jeder Messwert nur so lange, wie er tatsächlich galt; kurze Ausreißer fallen nicht mehr ins Gewicht.

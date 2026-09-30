@@ -8462,6 +8462,17 @@ def _fetch_newest_optimizer_run(user_id, cached_ms):
         run_ms = int(run_ms)
         if newest_ms is not None and run_ms <= newest_ms:
             break  # nicht neuer als das, was wir schon haben - Schleife beenden
+        if not run.get("output_csv") or not str(run.get("output_csv")).strip():
+            # Optimizer fuer diesen Lauf noch nicht fertig (oder in seinen eigenen Timeout gelaufen,
+            # siehe _check_optimizer_result) - output_csv bleibt dann leer, obwohl input_csv schon da
+            # ist. Diesen Lauf NICHT als "newest" uebernehmen (sonst schriebe sync_dashboard_chart_data
+            # eine leere output_csv in den Cache und die davon abhaengigen Charts - Raumtemperatur,
+            # Warmwasser, Ladestand Heimspeicher/Auto - zeigten "Keine Daten verfügbar", obwohl zuvor
+            # ein vollstaendiger Lauf gecacht war). newest_ms trotzdem auf run_ms vorruecken, damit die
+            # naechste Catch-up-Runde nicht in einer Schleife auf demselben Lauf haengenbleibt.
+            print(f"[Shyft] Dashboard-Chart-Daten: Optimierungslauf {run.get('_id')!r} (creation_date={run_ms}) hat noch keine output_csv - übersprungen.")
+            newest_ms = run_ms
+            continue
         newest, newest_ms = run, run_ms
     return newest
 
