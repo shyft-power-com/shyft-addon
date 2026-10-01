@@ -7538,7 +7538,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
 // base_case.py / /dashboard/chart-data: opt_cost/opt_usage vs. base_cost/base_usage) auf
 // gemeinsamer Stundenachse. Bewusst eigene Funktion (wie buildPvForecastActualChart): zwei Reihen
 // ohne Luecken, Summen in der Legende, "(Beta)" im Titel.
-function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false} = {}) {
+function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false, actualValues = null} = {}) {
     const width = 600, height = 220;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -7580,13 +7580,23 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
 
     // Shyft-Plan gruen (Erfolg/aktiv, wie ueberall sonst im Addon), Base Case grau+gestrichelt (klar
     // als Vergleichs-/Referenzlinie erkennbar) - Nutzer-Feedback: beide Linien waren bisher farblich
-    // zu aehnlich (Text-/Text-Secondary-Grauton), schwer auseinanderzuhalten.
+    // zu aehnlich (Text-/Text-Secondary-Grauton), schwer auseinanderzuhalten. "Ist" (Nutzer-Vorgabe):
+    // fuer heute bereits abgelaufene Stunden eine einzelne durchgezogene gruene Linie statt der
+    // beiden Prognose-Linien - fuer die Vergangenheit ergibt "ohne Optimierung" (Base Case) kein
+    // reales Gegenstueck, nur "optimiert" (das ist ja tatsaechlich passiert).
     const legend = document.createElement('div');
     legend.className = 'dashboardChartLegend';
-    for (const [color, dashed, label, key, values] of [
-        ['var(--color-accent)', false, 'Shyft-Plan', 'opt', optValues],
-        ['var(--color-text-secondary)', true, 'Ohne Steuerung', 'base', baseValues],
-    ]) {
+    const legendRows = actualValues
+        ? [
+            ['var(--color-accent)', false, 'Ist', 'actual', actualValues],
+            ['var(--color-accent)', true, 'Shyft-Plan', 'opt', optValues],
+            ['var(--color-text-secondary)', true, 'Ohne Steuerung', 'base', baseValues],
+        ]
+        : [
+            ['var(--color-accent)', false, 'Shyft-Plan', 'opt', optValues],
+            ['var(--color-text-secondary)', true, 'Ohne Steuerung', 'base', baseValues],
+        ];
+    for (const [color, dashed, label, key, values] of legendRows) {
         const item = document.createElement('span');
         item.className = 'dashboardChartLegendItem';
         const dot = document.createElement('span');
@@ -7598,8 +7608,8 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
     }
     wrapper.appendChild(legend);
 
-    const n = Math.min(labels.length, Math.max(optValues.length, baseValues.length));
-    const defined = [...optValues.slice(0, n), ...baseValues.slice(0, n)].filter(v => Number.isFinite(v));
+    const n = Math.min(labels.length, Math.max(optValues.length, baseValues.length, (actualValues || []).length));
+    const defined = [...optValues.slice(0, n), ...baseValues.slice(0, n), ...(actualValues || []).slice(0, n)].filter(v => Number.isFinite(v));
     if (n === 0 || defined.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'shyftActionsEmpty';
@@ -7630,11 +7640,34 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
         const dashAttr = dashed ? ' stroke-dasharray="6,4"' : '';
         return parts.length < 2 ? '' : `<path d="${parts.join(' ')}" fill="none" stroke="${color}" stroke-width="2"${dashAttr} />`;
     }
-    // Shyft-Plan gruen und durchgezogen (der tatsaechlich gefahrene/geplante Verlauf), Base Case grau
-    // und gestrichelt (Referenz-/Vergleichslinie "was ohne Steuerung passiert waere") - Nutzer-
-    // Feedback: beide Linien waren farblich zu aehnlich und schwer auseinanderzuhalten.
+    // Wie seriesPath, aber als Folge einzelner Segment-Pfade statt eines einzigen mehrteiligen Pfads -
+    // noetig, damit das gruene "Ist"/"Shyft-Plan"-Gesamtband je Segment durchgezogen oder gestrichelt
+    // sein kann (siehe dashedAt), was ein einzelnes <path>-Element mit EINEM stroke-dasharray nicht
+    // koennte.
+    function segmentedPath(values, dashedAt, color) {
+        const parts = [];
+        for (let i = 0; i < n - 1; i++) {
+            const v0 = values[i], v1 = values[i + 1];
+            if (!Number.isFinite(v0) || !Number.isFinite(v1)) continue;
+            const dashAttr = dashedAt(i) ? ' stroke-dasharray="6,4"' : '';
+            parts.push(`<path d="M${xFor(i).toFixed(1)},${yFor(v0).toFixed(1)} L${xFor(i + 1).toFixed(1)},${yFor(v1).toFixed(1)}" fill="none" stroke="${color}" stroke-width="2"${dashAttr} />`);
+        }
+        return parts.join('');
+    }
+    // Base Case bleibt grau und IMMER gestrichelt (reine Vergleichs-/Referenzlinie, nie ein echtes
+    // Ist) - ihre Werte sind fuer bereits vergangene Stunden ohnehin null (siehe comparison_base_*
+    // in app.py), die Linie beginnt dort also automatisch erst in der Zukunft. "Ist"/"Shyft-Plan"
+    // sind EIN visuelles Band: Ist (durchgezogen) fuer bereits vergangene Stunden, nahtlos uebergehend
+    // in Shyft-Plan (gestrichelt) fuer die Zukunft - Nutzer-Vorgabe, analog zur Historisch/Prognose-
+    // Linie im Ladestand-Heimspeicher-Chart.
     const basePathMarkup = seriesPath(baseValues, 'var(--color-text-secondary)', true);
-    const optPathMarkup = seriesPath(optValues, 'var(--color-accent)');
+    const isHistorical = i => !!(actualValues && Number.isFinite(actualValues[i]));
+    const optPathMarkup = actualValues
+        ? segmentedPath(
+            Array.from({length: n}, (_, i) => (isHistorical(i) ? actualValues[i] : optValues[i])),
+            i => !isHistorical(i),
+            'var(--color-accent)')
+        : seriesPath(optValues, 'var(--color-accent)');
 
     const tickCount = Math.min(6, n);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
@@ -9433,14 +9466,17 @@ async function loadDashboard() {
         }
 
         // Beta: optimierter Lauf vs. Base Case ("Ohne Steuerung", siehe base_case.py) - ganz unten,
-        // unter allen bestehenden Charts.
-        if ((data.base_cost && data.base_cost.length) || (data.opt_cost && data.opt_cost.length)) {
+        // unter allen bestehenden Charts. comparison_labels/comparison_opt_*/comparison_base_*/
+        // actual_* (statt labels/opt_*/base_*): eigene, Mitternacht-verankerte Reihen mit vorangestellten
+        // Ist-Werten fuer bereits vergangene Stunden heute (Nutzer-Vorgabe) - siehe deren Aufbau in
+        // readDashboardChartData.
+        if ((data.comparison_base_cost && data.comparison_base_cost.length) || (data.comparison_opt_cost && data.comparison_opt_cost.length)) {
             updateOrAppendDashboardWidget(container, 'kostenVergleich', buildComparisonChart(
-                'Deine Stromkosten / -erträge', '€', data.labels, data.opt_cost || [], data.base_cost || [],
-                {decimals: 2, summary: data.cost_summary, badgeLabel: 'Ersparnis', highlightPositive: true}));
+                'Deine Stromkosten / -erträge', '€', data.comparison_labels, data.comparison_opt_cost || [], data.comparison_base_cost || [],
+                {decimals: 2, summary: data.cost_summary, badgeLabel: 'Ersparnis', highlightPositive: true, actualValues: data.actual_cost || []}));
             updateOrAppendDashboardWidget(container, 'verbrauchVergleich', buildComparisonChart(
-                'Dein Stromverbrauch', 'kWh', data.labels, data.opt_usage || [], data.base_usage || [],
-                {decimals: 1, summary: data.usage_summary, badgeLabel: 'Differenz'}));
+                'Dein Stromverbrauch', 'kWh', data.comparison_labels, data.comparison_opt_usage || [], data.comparison_base_usage || [],
+                {decimals: 1, summary: data.usage_summary, badgeLabel: 'Differenz', actualValues: data.actual_usage || []}));
         }
     } catch (err) {
         console.log(err);

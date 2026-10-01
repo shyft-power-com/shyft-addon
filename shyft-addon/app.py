@@ -1540,6 +1540,35 @@ def readDashboardChartData():
     base_t_i, base_t_hw, base_soc_b, base_soc_ev = base_t_i[skip:], base_t_hw[skip:], base_soc_b[skip:], base_soc_ev[skip:]
     opt_cost, opt_usage = opt_cost[skip:], opt_usage[skip:]
 
+    # Ist-Werte fuer die Stromkosten-/Stromverbrauch-Vergleichscharts (Nutzer-Vorgabe): fuer heute
+    # bereits abgelaufene Stunden eine einzelne durchgezogene "Ist"-Linie statt der beiden
+    # Prognose-Linien (opt/base ergeben fuer die Vergangenheit keinen Sinn mehr). Quelle ist das
+    # Energie-Archiv (energy_archive.finalize_hour/_household_usage_kwh) statt "Verbrauch x
+    # Strompreis" direkt aus der Sensor-Historie zu bilden - das Archiv verrechnet den tatsaechlichen
+    # Netzbezug/die Einspeisung bereits zeitgewichtet mit dem damaligen Strompreis UND beruecksichtigt
+    # den PV-Eigenverbrauchsanteil (dieselbe Methodik wie costsbase/costsopt), eine reine
+    # Verbrauch-mal-Preis-Rechnung wuerde das ignorieren. comparison_labels/actual_*/opt_*/base_* sind
+    # bewusst eigene Felder (nicht 'labels'/'output_labels' wiederverwendet) - andere Charts lesen
+    # diese unveraendert "ab jetzt", nur die Vergleichscharts brauchen die Mitternacht-Verankerung.
+    midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
+    history_hour_count = max(0, int((now_hour - midnight_utc).total_seconds() // 3600))
+    history_hours = [midnight_utc + timedelta(hours=i) for i in range(history_hour_count)]
+    archive_by_hour = {}
+    if history_hours:
+        try:
+            archive_rows = energy_archive.query_summary(
+                "hourly", energy_archive.hour_key(midnight_utc), energy_archive.hour_key(now_hour))
+            archive_by_hour = {r["period"]: r for r in archive_rows}
+        except Exception as e:
+            print("[Shyft] Ist-Verbrauch/-Kosten (Vergleichscharts) konnten nicht geladen werden:", repr(e))
+    actual_cost = [(archive_by_hour.get(energy_archive.hour_key(h)) or {}).get("actual_cost_eur") for h in history_hours] + [None] * len(opt_cost)
+    actual_usage = [(archive_by_hour.get(energy_archive.hour_key(h)) or {}).get("actual_usage_kwh") for h in history_hours] + [None] * len(opt_usage)
+    comparison_labels = [h.isoformat() for h in history_hours] + output_labels
+    comparison_opt_cost = [None] * history_hour_count + opt_cost
+    comparison_opt_usage = [None] * history_hour_count + opt_usage
+    comparison_base_cost = [None] * history_hour_count + base_cost
+    comparison_base_usage = [None] * history_hour_count + base_usage
+
     return jsonify({
         "status": "success",
         "labels": labels,
@@ -1564,6 +1593,13 @@ def readDashboardChartData():
         "opt_usage": opt_usage,
         "cost_summary": cost_summary,
         "usage_summary": usage_summary,
+        "comparison_labels": comparison_labels,
+        "comparison_opt_cost": comparison_opt_cost,
+        "comparison_opt_usage": comparison_opt_usage,
+        "comparison_base_cost": comparison_base_cost,
+        "comparison_base_usage": comparison_base_usage,
+        "actual_cost": actual_cost,
+        "actual_usage": actual_usage,
         "einsatzplan": einsatzplan,
         "optimizer_running": _optimizer_result_pending(creation_date_ms),
     })

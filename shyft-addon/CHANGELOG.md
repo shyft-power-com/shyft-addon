@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.0.45.223
+## 0.0.45.224
+
+* **Stromkosten-/Stromverbrauch-Vergleichscharts zeigen jetzt auch die heutige Historie** (Nutzer-Vorgabe): für bereits vergangene Stunden eine einzelne durchgezogene grüne "Ist"-Linie statt der beiden Prognose-Linien (für die Vergangenheit gibt es kein reales "ohne Optimierung"-Gegenstück) - ab jetzt laufen "Shyft-Plan" (grün) und "Ohne Steuerung" (grau) wie bisher weiter, jetzt aber beide gestrichelt. Datenquelle ist das bereits bestehende Energie-Archiv (zeitgewichteter Ist-Verbrauch/-Netzbezug je Stunde, verrechnet mit dem damaligen Strompreis inkl. PV-Eigenverbrauchsanteil) statt einer einfachen Verbrauch-mal-Preis-Rechnung, damit es methodisch zu den bestehenden Kosten-Werten passt.
 
 * **Fix: im Ladestand-Heimspeicher-Chart war die historische Prognose nicht von der Ist-Linie zu unterscheiden** (Nutzer-Feedback) - beide waren durchgezogen. Die gesamte Prognose-Linie (auch ihr vergangener, als "Alt" gekennzeichneter Abschnitt) ist jetzt durchgehend gestrichelt, wie es die Chart-Legende ohnehin schon versprach.
 * **Stromkosten-/Stromverbrauch-Vergleichscharts zeigen jetzt im Titel die Differenz "ohne Optimierung" minus "optimiert" über den gesamten gezeigten Zeitraum.** Bei den Stromkosten als grün hinterlegte "Ersparnis" (nur wenn positiv), beim Stromverbrauch als neutrale "Differenz" ohne Hintergrundfarbe - ein Mehrverbrauch durch die Optimierung ist dort der Normalfall, keine Verschlechterung.
