@@ -35,6 +35,7 @@
     "battery_storage_command_mode": "",
     "battery_state_of_charge": "",
     "battery_charge_limit_current": "",
+    "battery_charge_limit_current_pv_surplus": "",
     "battery_discharge_limit_current": "",
     "heatpump_dhw_tank_temp": "",
     "heatpump_dhw_activated": "",

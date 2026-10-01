@@ -7,6 +7,7 @@
     "battery_storage_command_mode": "sensor.heatpump_mock_the_sensor_mock",
     "battery_state_of_charge": "sensor.heatpump_mock_the_sensor_mock",
     "battery_charge_limit_current": "sensor.heatpump_mock_the_sensor_mock",
+    "battery_charge_limit_current_pv_surplus": "sensor.heatpump_mock_the_sensor_mock",
     "battery_discharge_limit_current": "sensor.heatpump_mock_the_sensor_mock",
     "heatpump_dhw_tank_temp": "sensor.heatpump_mock_the_sensor_mock",
     "heatpump_dhw_activated": "sensor.heatpump_mock_the_sensor_mock",

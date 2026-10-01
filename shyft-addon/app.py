@@ -5118,10 +5118,32 @@ DHW_ACTIVATION_TEST_REFRESH_INTERVAL_SECONDS = 30
 # definierte Namen (resolve_control_variant, ACTION_NAME_TO_CONTROL_KEY, ...) - das ist ok, sie
 # laufen erst zur Aufrufzeit.
 BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS = {
-    "battery_charge_shift_pv_surplus": "battery_charge_limit_current",
+    "battery_charge_shift_pv_surplus": "battery_charge_limit_current_pv_surplus",
     "battery_discharge_shift": "battery_discharge_limit_current",
     "battery_grid_charge": "battery_charge_limit_current",
 }
+
+
+def _migrate_battery_pv_surplus_charge_limit():
+    """Self-Heal/Einmal-Migration: battery_charge_limit_current_pv_surplus ist ein NEUER, von
+    battery_charge_limit_current (Netzladen) unabhaengiger sensorMappings-Schluessel (Nutzer-Vorgabe:
+    manche Wechselrichter trennen die Ladeleistungsbegrenzung fuer Netzladen und PV-Ueberschuss-
+    Verschiebung - vorher musste es dieselbe Entitaet sein). Bestehende Installationen, die bisher
+    eine Entitaet fuer beide genutzt haben, sollen dadurch nicht ploetzlich als "nicht vollstaendig
+    eingerichtet" gelten - einmalig (der neue Schluessel fehlt dann noch komplett im gespeicherten
+    sensorMappings-Dict, anders als ein bewusst leer gelassenes/geleertes Feld) auf den Netzladen-Wert
+    vorbelegen. Setzt der Nutzer die beiden Entitaeten danach bewusst unterschiedlich, bleibt das so."""
+    config = _read_current_config()
+    sensor_mappings = config.get("sensorMappings", {}) or {}
+    if "battery_charge_limit_current_pv_surplus" in sensor_mappings:
+        return
+    netzladen_entity = sensor_mappings.get("battery_charge_limit_current")
+    if not netzladen_entity:
+        return
+    sensor_mappings["battery_charge_limit_current_pv_surplus"] = netzladen_entity
+    config["sensorMappings"] = sensor_mappings
+    _write_current_config(config)
+    print("[Shyft] PV-Ueberschuss-Ladeleistungslimit einmalig von Netzladen-Entitaet uebernommen:", netzladen_entity)
 
 
 def _action_ready_key(action_name):
@@ -6115,7 +6137,11 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
     eine echte Push-Benachrichtigung ausloesen."""
     sensor_mappings = config.get("sensorMappings", {})
     mode_entity = sensor_mappings.get("battery_storage_command_mode")
+    # Netzladen und PV-Ueberschuss-Verschiebung begrenzen die Ladeleistung ueber zwei UNABHAENGIGE
+    # Entitaeten (Nutzer-Vorgabe: manche Wechselrichter trennen das) - charge_limit_entity ist die
+    # "Netzladen"-Entitaet, pv_surplus_charge_limit_entity die eigene fuer PV-Ueberschuss.
     charge_limit_entity = sensor_mappings.get("battery_charge_limit_current")
+    pv_surplus_charge_limit_entity = sensor_mappings.get("battery_charge_limit_current_pv_surplus")
     discharge_limit_entity = sensor_mappings.get("battery_discharge_limit_current")
     timeout_entity = sensor_mappings.get("battery_command_timeout")
     netzladen_mode_value = config.get("batteryModeNetzladenValue")
@@ -6145,14 +6171,17 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         write_number(discharge_limit_entity, 0, "Entladeleistung")
     elif action_key == "battery_charge_shift_pv_surplus":
         write_mode(self_consumption_mode_value, "Modus")
-        write_number(charge_limit_entity, round((target_kw or 0) * 1000), "Limit Ladeleistung")
+        write_number(pv_surplus_charge_limit_entity, round((target_kw or 0) * 1000), "Limit Ladeleistung (PV-Überschuss)")
     elif action_key == "battery_action_stop":
         write_mode(self_consumption_mode_value, "Modus")
         # Kein eigenes "maximale Entladeleistung"-Konfigurationsfeld vorhanden - nutzt denselben
         # Wert wie die Ladeleistungs-Grenze als bestmoegliche Annaeherung an "kein Limit mehr".
+        # Beide Ladeleistungslimit-Entitaeten zuruecksetzen (Netzladen UND PV-Ueberschuss, siehe
+        # oben) - unabhaengig davon, welche der beiden Aktionen tatsaechlich aktiv war.
         if max_charge_watts:
             write_number(discharge_limit_entity, max_charge_watts, "Entladeleistung")
-            write_number(charge_limit_entity, max_charge_watts, "Limit Ladeleistung")
+            write_number(charge_limit_entity, max_charge_watts, "Limit Ladeleistung (Netzladen)")
+            write_number(pv_surplus_charge_limit_entity, max_charge_watts, "Limit Ladeleistung (PV-Überschuss)")
 
     if failed:
         if notify_on_failure:
@@ -6194,12 +6223,13 @@ BATTERY_DIRECT_WRITTEN_SENSOR_KEYS = {
     ],
     "battery_charge_shift_pv_surplus": [
         ("battery_storage_command_mode", "Modus"),
-        ("battery_charge_limit_current", "Limit Ladeleistung"),
+        ("battery_charge_limit_current_pv_surplus", "Limit Ladeleistung (PV-Überschuss)"),
     ],
     "battery_action_stop": [
         ("battery_storage_command_mode", "Modus"),
         ("battery_discharge_limit_current", "Entladeleistung"),
-        ("battery_charge_limit_current", "Limit Ladeleistung"),
+        ("battery_charge_limit_current", "Limit Ladeleistung (Netzladen)"),
+        ("battery_charge_limit_current_pv_surplus", "Limit Ladeleistung (PV-Überschuss)"),
     ],
 }
 
@@ -6572,23 +6602,40 @@ def check_device_status_deviation(config):
         except (TypeError, ValueError):
             max_charge_kw = None
 
-        # Ladeleistungslimit: von "Batterie netzladen" ODER "Batterie-Laden verschieben
-        # (PV-Ueberschuss)" auf deren Target Value gesetzt, sonst (Ruhezustand) auf batteryMaxChargeKw.
+        # Ladeleistungslimit (Netzladen): von "Batterie netzladen" auf deren Target Value gesetzt,
+        # sonst (Ruhezustand) auf batteryMaxChargeKw. Eigene, unabhaengige Entitaet seit der
+        # Trennung von der PV-Ueberschuss-Begrenzung (Nutzer-Vorgabe: manche Wechselrichter haben
+        # dafuer zwei getrennte Steuerungen) - der Ruhezustand-Vergleich braucht deshalb nur noch
+        # Rueckschluesse aus "Batterie netzladen" selbst, nicht mehr zusaetzlich aus der (jetzt
+        # komplett getrennten) PV-Ueberschuss-Verschiebung.
         expected_charge_kw = None
         if grid_charge is not None and grid_charge_direct:
             if past_grace(grid_charge):
                 expected_charge_kw = grid_charge.get("Target Value")
-        elif charge_shift is not None and charge_shift_direct:
-            if past_grace(charge_shift):
-                expected_charge_kw = charge_shift.get("Target Value")
-        elif grid_charge_direct and charge_shift_direct and max_charge_kw is not None \
-                and baseline_ok((BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_CHARGE_SHIFT_ACTION_NAME)):
+        elif grid_charge_direct and max_charge_kw is not None and baseline_ok((BATTERY_GRID_CHARGE_ACTION_NAME,)):
             expected_charge_kw = max_charge_kw
         live_charge_kw = _read_mapped_numeric(config, "battery_charge_limit_current")
         _check_numeric_deviation(
             "battery_charge_limit", expected_charge_kw, live_charge_kw,
             BATTERY_DEVIATION_TOLERANCE_KW,
-            f"Batterie-Ladeleistungslimit weicht ab: Shyft erwartet {expected_charge_kw} kW, gemessen werden {live_charge_kw} kW.",
+            f"Batterie-Ladeleistungslimit (Netzladen) weicht ab: Shyft erwartet {expected_charge_kw} kW, gemessen werden {live_charge_kw} kW.",
+            config,
+        )
+
+        # Ladeleistungslimit (PV-Ueberschuss): von "Batterie-Laden verschieben (PV-Ueberschuss)" auf
+        # deren (kleinen) Target Value gesetzt, sonst (Ruhezustand) auf batteryMaxChargeKw - eigene
+        # Entitaet, siehe oben.
+        expected_pv_surplus_charge_kw = None
+        if charge_shift is not None and charge_shift_direct:
+            if past_grace(charge_shift):
+                expected_pv_surplus_charge_kw = charge_shift.get("Target Value")
+        elif charge_shift_direct and max_charge_kw is not None and baseline_ok((BATTERY_CHARGE_SHIFT_ACTION_NAME,)):
+            expected_pv_surplus_charge_kw = max_charge_kw
+        live_pv_surplus_charge_kw = _read_mapped_numeric(config, "battery_charge_limit_current_pv_surplus")
+        _check_numeric_deviation(
+            "battery_charge_limit_pv_surplus", expected_pv_surplus_charge_kw, live_pv_surplus_charge_kw,
+            BATTERY_DEVIATION_TOLERANCE_KW,
+            f"Batterie-Ladeleistungslimit (PV-Überschuss) weicht ab: Shyft erwartet {expected_pv_surplus_charge_kw} kW, gemessen werden {live_pv_surplus_charge_kw} kW.",
             config,
         )
 
@@ -6631,7 +6678,7 @@ def check_device_status_deviation(config):
             config,
         )
     else:
-        for key in ("battery_charge_limit", "battery_discharge_limit", "battery_mode"):
+        for key in ("battery_charge_limit", "battery_charge_limit_pv_surplus", "battery_discharge_limit", "battery_mode"):
             _clear_device_deviation(key)
 
     # --- Sonstiger Verbraucher: Schalter an/aus (nur "direct"-gesteuert) ---
@@ -9692,6 +9739,11 @@ if __name__ == "__main__":
         _reconcile_orphaned_sensor_problems()
     except Exception as e:
         print("Failed to reconcile orphaned sensor problems at startup:", repr(e))
+
+    try:
+        _migrate_battery_pv_surplus_charge_limit()
+    except Exception as e:
+        print("Failed to migrate battery pv-surplus charge limit at startup:", repr(e))
 
     live_entity_watcher.start()
 

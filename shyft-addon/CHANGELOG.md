@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.220
+
+* **Batterie: Ladeleistungsbegrenzung für Netzladen und PV-Überschuss-Verschieben sind jetzt zwei unabhängige Entitäten** statt einer gemeinsamen (Nutzer-Hinweis: bei manchen Wechselrichtern ist das tatsächlich getrennt). Die Felder heißen entsprechend jetzt „Netz-Ladeleistung begrenzen" bzw. „PV-Ladeleistung begrenzen". Ist bereits eine Entität in einem der beiden Felder hinterlegt, wird sie im jeweils anderen Feld als anklickbare Top-Option im Dropdown vorgeschlagen - ein abweichender Sensor lässt sich weiterhin frei wählen. Bestehende Installationen (bisher eine gemeinsame Entität) behalten diese beim Update automatisch für beide Felder, bis man sie bewusst trennt. „Batterie-Aktion beenden" setzt beim Beenden jetzt beide Limits zurück, und die Geräteverhalten-Abweichungsüberwachung prüft beide Entitäten unabhängig voneinander.
+
 ## 0.0.45.219
 
 * **Fix: sichtbarer Sprung zwischen Ist und Prognose genau an der laufenden Stunde** (Nutzer-Beobachtung am Warmwasser-Chart, betraf auch Raumtemperatur/Ladestand Auto/Ladestand Heimspeicher/Sonstiger Verbraucher). Die laufende Stunde hat für diese Zustandssensoren immer schon einen echten `actual`-Wert; bisher wurde zusätzlich noch ein (teils längst veralteter) Prognosewert für dieselbe Stunde gezeigt, was wie ein Datensprung aussah. Prognose beginnt jetzt erst eine Stunde nach der aktuellen, nicht mehr ab einschließlich - im Chart entsteht dadurch eine kleine, bewusste Lücke an der „Jetzt"-Linie statt eines irreführenden Sprungs.

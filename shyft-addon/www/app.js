@@ -55,8 +55,12 @@ const helpinformation = {
         'description': ' Der Modus, in den deine Batterie versetzt werden kann (z.B. Eigenverbrauchsoptimierung, Netzladen)'
     },
     'battery_charge_limit_current': {
-        label: 'Batterie: Aktuelle max. Ladeleistung',
-        description: 'Leistung (in kW), die an der Batterie als aktuelle Begrenzung für die Ladeleistung eingestellt ist.'
+        label: 'Batterie: Aktuelle max. Ladeleistung (Netzladen)',
+        description: 'Leistung (in kW), die an der Batterie als aktuelle Begrenzung für die Ladeleistung beim Netzladen eingestellt ist.'
+    },
+    'battery_charge_limit_current_pv_surplus': {
+        label: 'Batterie: Aktuelle max. Ladeleistung (PV-Überschuss)',
+        description: 'Leistung (in kW), die an der Batterie als aktuelle Begrenzung für die Ladeleistung bei "Batterie-Laden verschieben (PV-Überschuss)" eingestellt ist. Bei manchen Wechselrichtern dieselbe Entität wie beim Netzladen, bei anderen eine eigene.'
     },
     'battery_discharge_limit_current': {
         label: 'Batterie: Aktuelle max. Entladeleistung',
@@ -184,6 +188,7 @@ const SENSOR_ENTITY_FILTERS = {
     // Keine reinen Anzeige-Sensoren: das Addon SCHREIBT hierueber die Lade-/Entladeleistungs-Grenze,
     // muss also eine settable Entitaet (number./input_number.) mit Leistungs-Einheit sein.
     'battery_charge_limit_current': {type: 'writable_power'},
+    'battery_charge_limit_current_pv_surplus': {type: 'writable_power'},
     'battery_discharge_limit_current': {type: 'writable_power'},
     // Temperatur Warmwassertank ist eine reine Messung (nicht schreibbar); die Solltemperatur ist
     // genau umgekehrt - eine settable Entitaet (number./input_number./climate.), keine Anzeige.
@@ -218,6 +223,7 @@ const SENSOR_MATCH_KEYWORDS = {
     'battery_state_of_charge': ['soc', 'ladestand', 'akkustand', 'charge_level', 'state_of_charge'],
     'battery_storage_command_mode': ['mode', 'modus', 'betriebsart', 'command', 'storage_mode', 'operation'],
     'battery_charge_limit_current': ['charge_limit', 'lade_limit', 'ladestrom', 'max_charge', 'charging_current'],
+    'battery_charge_limit_current_pv_surplus': ['charge_limit', 'lade_limit', 'ladestrom', 'max_charge', 'charging_current'],
     'battery_discharge_limit_current': ['discharge_limit', 'entlade_limit', 'entladestrom', 'max_discharge', 'discharging_current'],
     'heatpump_dhw_tank_temp': ['ww', 'dhw', 'warmwasser', 'boiler', 'tank', 'hot_water'],
     'heatpump_dhw_target_temp': ['ww_soll', 'dhw_target', 'warmwasser_soll', 'boiler_target', 'hot_water_target'],
@@ -428,7 +434,7 @@ const BATTERY_DIRECT_ACTION_KEYS = new Set([
 // mindestens gesetzt sein muss, damit die Geraete-Kachel als vollstaendig konfiguriert gilt -
 // analog zu control.sensorField bei AUTO_MANAGED_CONTROLS (siehe isSectionComplete).
 const BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS = {
-    battery_charge_shift_pv_surplus: 'battery_charge_limit_current',
+    battery_charge_shift_pv_surplus: 'battery_charge_limit_current_pv_surplus',
     battery_discharge_shift: 'battery_discharge_limit_current',
     battery_grid_charge: 'battery_charge_limit_current',
     battery_action_stop: 'battery_charge_limit_current',
@@ -5237,12 +5243,19 @@ function extractEntityId(value) {
 // ----------------------------------------------------------------------
 // Batterie > Steuerung: vier Aktionstypen mit "Varianten" (Direkt / HA-Automation), analog zum
 // Wallbox-Muster. Bei "Direkt" braucht es je nach Aktionstyp einen Modus-Wert (Dropdown, gespeist
-// aus /battery-mode-options) und/oder eine Leistungs-Limit-Entitaet - Letztere ist zwischen
-// mehreren Aktionstypen GETEILT: einmal gesetzt, wird sie an den anderen Stellen nur noch
-// schreibgeschuetzt angezeigt ("gekoppelt"), aendern kann man sie nur dort, wo sie urspruenglich
-// eingetragen wurde. Automations-Vorschlaege nutzen bewusst dieselbe ungefilterte
-// automation.*-Liste wie ueberall sonst im Addon (keine Filterung nach Batterie-Bezug - das waere
-// pro Automation ein zusaetzlicher REST-Call und ist (noch) nicht umgesetzt).
+// aus /battery-mode-options) und/oder eine Leistungs-Limit-Entitaet. Die Entladeleistungs-Grenze ist
+// zwischen "Batterie-Entladen verschieben" und "Batterie-Aktion beenden" GETEILT (gleicher
+// sensorMappings-Schluessel ueberall, siehe buildBatteryCoupledEntityField - eine Aenderung an
+// einer Stelle gilt dann ueberall). Die Ladeleistungs-Grenze dagegen hat seit Trennung von Netzladen
+// und PV-Ueberschuss (Nutzer-Vorgabe: manche Wechselrichter haben dafuer zwei unabhaengige
+// Entitaeten) ZWEI eigene Schluessel (battery_charge_limit_current/_pv_surplus) - "Batterie-Aktion
+// beenden" zeigt deshalb beide. Da die meisten Nutzer trotzdem dieselbe Entitaet fuer beide
+// eintragen, schlaegt das jeweils andere Feld, sobald eines gesetzt ist, dessen Wert als anklickbare
+// Top-Option im Dropdown vor (siehe suggestion-Parameter von buildBatteryCoupledEntityField) - ohne
+// die freie Auswahl eines abweichenden Sensors einzuschraenken. Automations-Vorschlaege nutzen
+// bewusst dieselbe ungefilterte automation.*-Liste wie ueberall sonst im Addon (keine Filterung nach
+// Batterie-Bezug - das waere pro Automation ein zusaetzlicher REST-Call und ist (noch) nicht
+// umgesetzt).
 // ----------------------------------------------------------------------
 
 let batteryModeOptionsCache = null;
@@ -5299,7 +5312,12 @@ function buildBatteryModeValueSelect(id, currentValue, options) {
 // Gekoppeltes/gesperrtes Feld: an mehreren Stellen (Aktionstypen) referenziert, aber nur EINMAL
 // ausfuellbar - ist schon eine Entitaet zugeordnet, wird sie hier nur noch schreibgeschuetzt
 // angezeigt statt erneut editierbar zu sein.
-function buildBatteryCoupledEntityField(sensorKey, datalistId, onChange) {
+// suggestion (optional): {entityId, siblingLabel} - wenn ein ANDERES (z.B. das Netzladen-Pendant
+// dieses PV-Ueberschuss-Felds) Feld schon eine Entitaet hat und dieses Feld hier nicht bereits
+// genau dieselbe, wird sie als anklickbare Top-Zeile im Dropdown vorgeschlagen (ueber den
+// bestehenden topAction-Mechanismus von attachEntityDropdown) - schraenkt die freie Auswahl eines
+// abweichenden Sensors aber nicht ein, der Rest der Liste bleibt unveraendert erreichbar.
+function buildBatteryCoupledEntityField(sensorKey, datalistId, onChange, suggestion) {
     const sensorMappings = configData['sensorMappings'] || {};
     const currentValue = sensorMappings[sensorKey] || '';
     const input = document.createElement('input');
@@ -5307,7 +5325,7 @@ function buildBatteryCoupledEntityField(sensorKey, datalistId, onChange) {
     input.className = 'sensorInput';
     input.setAttribute('autocomplete', 'off');
     input.value = formatEntityDisplay(currentValue);
-    // Dieselbe sensorKey (z.B. battery_charge_limit_current) taucht in bis zu drei Aktionstyp-
+    // Dieselbe sensorKey (z.B. battery_discharge_limit_current) taucht an bis zu zwei Aktionstyp-
     // Bloecken gleichzeitig auf (siehe buildBatterySteuerungSection) - eine hier vorgenommene
     // Aenderung muss ueberall gleich sein. onChange() ist "refresh" (renderSectionBody neu), das
     // laedt configData bereits aktualisiert erneut und rendert damit auch die anderen Vorkommen
@@ -5323,7 +5341,17 @@ function buildBatteryCoupledEntityField(sensorKey, datalistId, onChange) {
         await autoSave();
         if (onChange) await onChange();
     });
-    const dropdownEl = datalistId ? attachEntityDropdown(input, {datalistId, headerText: 'Home-Assistant-Entität'}) : input;
+    let topAction = null;
+    if (suggestion && suggestion.entityId && suggestion.entityId !== currentValue) {
+        topAction = {
+            label: `Gleiche Entität wie bei "${suggestion.siblingLabel}" verwenden: ${formatEntityDisplay(suggestion.entityId)}`,
+            onClick: () => {
+                input.value = formatEntityDisplay(suggestion.entityId);
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+            },
+        };
+    }
+    const dropdownEl = datalistId ? attachEntityDropdown(input, {datalistId, headerText: 'Home-Assistant-Entität', topAction}) : input;
     return wrapEntityInputWithClear(dropdownEl, input);
 }
 
@@ -5523,17 +5551,29 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
     populateSensorDatalist(chargeLimitDatalist, candidateEntities, 'battery_charge_limit_current', {});
     container.appendChild(chargeLimitDatalist);
 
+    // Eigene Entitaet fuer die PV-Ueberschuss-Ladeleistungsbegrenzung (Nutzer-Vorgabe: bei manchen
+    // Wechselrichtern ist das eine andere als die Netzladen-Begrenzung) - siehe Modulkommentar oben.
+    const pvSurplusChargeLimitDatalistId = 'entityOptions_batterie_steuerung_charge_limit_pv_surplus';
+    const pvSurplusChargeLimitDatalist = document.createElement('datalist');
+    pvSurplusChargeLimitDatalist.id = pvSurplusChargeLimitDatalistId;
+    populateSensorDatalist(pvSurplusChargeLimitDatalist, candidateEntities, 'battery_charge_limit_current_pv_surplus', {});
+    container.appendChild(pvSurplusChargeLimitDatalist);
+
     const dischargeLimitDatalistId = 'entityOptions_batterie_steuerung_discharge_limit';
     const dischargeLimitDatalist = document.createElement('datalist');
     dischargeLimitDatalist.id = dischargeLimitDatalistId;
     populateSensorDatalist(dischargeLimitDatalist, candidateEntities, 'battery_discharge_limit_current', {});
     container.appendChild(dischargeLimitDatalist);
 
+    const netzladenChargeLimitEntity = (configData['sensorMappings'] || {})['battery_charge_limit_current'];
+    const pvSurplusChargeLimitEntity = (configData['sensorMappings'] || {})['battery_charge_limit_current_pv_surplus'];
+
     container.appendChild(buildBatteryControlBlock('battery_charge_shift_pv_surplus', 'Batterie-Laden verschieben (PV-Überschuss)',
         'Verhindert gezieltes Laden aus PV-Überschuss, wenn sich das aktuell nicht lohnt.', () => {
             const wrap = document.createElement('div');
-            wrap.appendChild(buildLabeledRow('Ladeleistung begrenzen', 'Entität, über die das Addon die Ladeleistung der Batterie begrenzt (Zahlenwert in kW).',
-                buildBatteryCoupledEntityField('battery_charge_limit_current', chargeLimitDatalistId, refresh)));
+            wrap.appendChild(buildLabeledRow('PV-Ladeleistung begrenzen', 'Entität, über die das Addon die Ladeleistung der Batterie beim PV-Überschuss-Laden begrenzt (Zahlenwert in kW). Bei manchen Wechselrichtern dieselbe Entität wie "Netz-Ladeleistung begrenzen" bei "Batterie netzladen", bei anderen eine eigene.',
+                buildBatteryCoupledEntityField('battery_charge_limit_current_pv_surplus', pvSurplusChargeLimitDatalistId, refresh,
+                    {entityId: netzladenChargeLimitEntity, siblingLabel: 'Netzladen'})));
             return wrap;
         }));
 
@@ -5553,8 +5593,9 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
             const modeOptions = batteryModeOptionsCache || [];
             const modeSelect = buildBatteryModeValueSelect('battery_mode_netzladen_value', configData['batteryModeNetzladenValue'], modeOptions);
             wrap.appendChild(buildLabeledRow('Modus "Netzladen"', 'Welcher Rohwert der Batterie-Modus-Entität bedeutet "aus dem Netz laden" (z.B. "Charge from Solar Power and Grid").', modeSelect));
-            wrap.appendChild(buildLabeledRow('Ladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie-Laden verschieben" - dort bereits ausgefüllt, falls du das schon gemacht hast.',
-                buildBatteryCoupledEntityField('battery_charge_limit_current', chargeLimitDatalistId, refresh)));
+            wrap.appendChild(buildLabeledRow('Netz-Ladeleistung begrenzen', 'Entität, über die das Addon die Ladeleistung der Batterie beim Netzladen begrenzt (Zahlenwert in kW). Bei manchen Wechselrichtern dieselbe Entität wie "PV-Ladeleistung begrenzen" bei "Batterie-Laden verschieben (PV-Überschuss)", bei anderen eine eigene.',
+                buildBatteryCoupledEntityField('battery_charge_limit_current', chargeLimitDatalistId, refresh,
+                    {entityId: pvSurplusChargeLimitEntity, siblingLabel: 'PV-Überschuss'})));
             return wrap;
         }));
 
@@ -5568,8 +5609,12 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
             const modeOptions = batteryModeOptionsCache || [];
             const modeSelect = buildBatteryModeValueSelect('battery_mode_self_consumption_value', configData['batteryModeSelfConsumptionValue'], modeOptions);
             wrap.appendChild(buildLabeledRow('Modus zurückstellen auf "Eigenverbrauchsmaximierung"', 'Welcher Rohwert der Batterie-Modus-Entität den Normalbetrieb bedeutet (z.B. "Maximize Self Consumption").', modeSelect));
-            wrap.appendChild(buildLabeledRow('Ladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie-Laden verschieben"/"Batterie netzladen".',
-                buildBatteryCoupledEntityField('battery_charge_limit_current', chargeLimitDatalistId, refresh)));
+            wrap.appendChild(buildLabeledRow('Netz-Ladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie netzladen".',
+                buildBatteryCoupledEntityField('battery_charge_limit_current', chargeLimitDatalistId, refresh,
+                    {entityId: pvSurplusChargeLimitEntity, siblingLabel: 'PV-Überschuss'})));
+            wrap.appendChild(buildLabeledRow('PV-Ladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie-Laden verschieben (PV-Überschuss)".',
+                buildBatteryCoupledEntityField('battery_charge_limit_current_pv_surplus', pvSurplusChargeLimitDatalistId, refresh,
+                    {entityId: netzladenChargeLimitEntity, siblingLabel: 'Netzladen'})));
             wrap.appendChild(buildLabeledRow('Entladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie-Entladen verschieben".',
                 buildBatteryCoupledEntityField('battery_discharge_limit_current', dischargeLimitDatalistId, refresh)));
             return wrap;
