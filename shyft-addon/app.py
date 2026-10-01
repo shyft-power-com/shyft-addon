@@ -1223,6 +1223,11 @@ def readNotificationTargets():
 # ueber Jahre erhalten, um sie spaeter auswerten zu koennen. Nur die Gerätesteuerung-Anzeige zeigt
 # ein begrenztes Fenster, damit die Liste nicht endlos waechst.
 SHYFT_ACTIONS_DISPLAY_MAX_DAYS = 3
+# Seit recompute_actions_from_optimizer_run Aktionen ueber den GESAMTEN Optimierungszeitraum
+# berechnet/speichert (frueher nur zehn Stunden, siehe dessen Kommentar), begrenzt sich die
+# Gerätesteuerung-TAB-Anzeige selbst wieder auf die naechsten zehn Stunden (Nutzer-Vorgabe) - Charts
+# (z.B. Ladestand Auto) lesen den vollen Store weiterhin direkt, ohne dieses Limit.
+GERAETESTEUERUNG_DISPLAY_HOUR_WINDOW = 10
 
 
 # Illustrative Aktionsliste fuer den Demo-Modus - in demo laeuft recompute_actions_from_optimizer_run
@@ -1407,7 +1412,10 @@ def readShyftActions():
     _historical_household_savings_actions/energy_archive.household_savings_daily), damit alle
     nahtlos in einer Liste erscheinen.
     Fuer die Anzeige auf die letzten SHYFT_ACTIONS_DISPLAY_MAX_DAYS Tage (plus alle noch
-    laufenden/geplanten) begrenzt - der Store selbst bleibt vollstaendig erhalten."""
+    laufenden/geplanten, aber hoechstens GERAETESTEUERUNG_DISPLAY_HOUR_WINDOW Stunden im Voraus -
+    der Store selbst berechnet/haelt seit Nutzer-Vorgabe den gesamten Optimierungszeitraum, die
+    Anzeige in diesem Tab soll aber uebersichtlich bleiben) begrenzt - der Store selbst bleibt
+    vollstaendig erhalten."""
     if is_demo_mode():
         return jsonify({"status": "success",
                         "response": {"actions": _demo_shyft_actions(), "display_max_days": SHYFT_ACTIONS_DISPLAY_MAX_DAYS}})
@@ -1417,8 +1425,12 @@ def readShyftActions():
     if household_action:
         all_actions.append(household_action)
     all_actions.extend(_historical_household_savings_actions())
-    cutoff_ms = (time.time() - SHYFT_ACTIONS_DISPLAY_MAX_DAYS * 86400) * 1000
-    visible = [a for a in all_actions if a.get("Date End") is None or a.get("Date End") >= cutoff_ms]
+    now_ms = time.time() * 1000
+    cutoff_ms = now_ms - SHYFT_ACTIONS_DISPLAY_MAX_DAYS * 86400000
+    forward_cutoff_ms = now_ms + GERAETESTEUERUNG_DISPLAY_HOUR_WINDOW * 3600000
+    visible = [a for a in all_actions
+               if (a.get("Date End") is None or a.get("Date End") >= cutoff_ms)
+               and (a.get("Date Start") is None or a.get("Date Start") <= forward_cutoff_ms)]
     return jsonify({"status": "success",
                     "response": {"actions": visible, "display_max_days": SHYFT_ACTIONS_DISPLAY_MAX_DAYS}})
 
@@ -6948,17 +6960,19 @@ def handle_shyft_action_end(action, actions_enabled, config):
 # Bisher implementiert: "Auto laden", "Warmwasser", "Heizung Soll-Temperatur", "Verbraucher an".
 # Weitere Aktionstypen (Zweitheizung, Batterie) folgen demselben Muster in spaeteren Schritten.
 #
-# Reichweite: die ersten EV_CHARGE_HOUR_WINDOW Stunden (0 = die gerade laufende, per output_csv-
-# Zeilenindex) jedes frischen Optimierungslaufs. Stunde 0 wird bei jedem neuen Lauf abgeglichen
-# (Zielwert aktualisiert statt neu angelegt, siehe _reconcile_computed_actions) - fuer die Stunden 1
-# bis EV_CHARGE_HOUR_WINDOW-1 werden zuvor berechnete, noch nicht gestartete Aktionen verworfen und
-# aus dem aktuellen Lauf neu aufgebaut. Der allgemeine "zur vollen Stunde beenden/starten/
-# verlaengern"-Mechanismus (unabhaengig vom Aktionstyp) ist ein spaeterer, separater Schritt.
+# Reichweite: der GESAMTE Optimierungszeitraum (0 = die gerade laufende Stunde, per output_csv-
+# Zeilenindex) jedes frischen Optimierungslaufs - urspruenglich auf die ersten zehn Stunden begrenzt
+# (reine Datensparsamkeit, ohne echten Grund), auf Nutzer-Vorgabe aber aufgehoben: die Berechnung/
+# Speicherung deckt jetzt den ganzen Lauf ab, nur die Gerätesteuerung-TAB-Anzeige bleibt auf
+# GERAETESTEUERUNG_DISPLAY_HOUR_WINDOW begrenzt (siehe readShyftActions). Stunde 0 wird bei jedem
+# neuen Lauf abgeglichen (Zielwert aktualisiert statt neu angelegt, siehe _reconcile_computed_actions)
+# - alle folgenden Stunden werden komplett verworfen und aus dem aktuellen Lauf neu aufgebaut, sie
+# sind ja noch nicht gestartet. Der allgemeine "zur vollen Stunde beenden/starten/verlaengern"-
+# Mechanismus (unabhaengig vom Aktionstyp) ist ein spaeterer, separater Schritt.
 # ============================================================================
 
 EV_CHARGE_ACTION_NAME = "Auto laden"
 EV_CHARGE_ID_PREFIX = "auto_laden"
-EV_CHARGE_HOUR_WINDOW = 10
 EV_SUM_TRIGGER_KW = 0.3
 # PV-Ueberschuss liegt vor, wenn kaum Netzeinspeisung stattfindet (PV_GR), die Batterie nicht
 # nennenswert zum Laden beitraegt (B_EV) UND kaum Netzstrom direkt ans Auto geht (GR_EV) - der
@@ -7084,7 +7098,7 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
     if not _is_ev_wallbox_configured(config):
         return result
 
-    row_count = min(EV_CHARGE_HOUR_WINDOW, len(output_rows))
+    row_count = len(output_rows)
 
     # Praesenzprognose fuer die "geplant"-Stunden (i > 0) - zusaetzliche Absicherung NEBEN dem Fix
     # in build_ev_optimizer_fields (ev_usage_h schliesst jetzt auch "steht"-Stunden mit ein, nicht
@@ -7346,7 +7360,6 @@ def _convert_ev_charge_action_to_pv_surplus_fallback(action, config):
 
 DHW_ACTION_NAME = "Warmwasser"
 DHW_ID_PREFIX = "warmwasser"
-DHW_HOUR_WINDOW = 10
 HP_HW_TRIGGER_KW = 0.2
 # Default wie im Konfigurationsfeld "Max. Vorlauftemperatur (°C)" (hpMaxSupplyTempC, www/app.js).
 HP_MAX_SUPPLY_TEMP_DEFAULT_C = 55
@@ -7361,7 +7374,7 @@ def _dhw_action_id(hour_start):
 
 
 def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base=None, net_profit_opt=None, x_sum_total=None):
-    """Berechnet fuer die Stunden 0..DHW_HOUR_WINDOW-1 des aktuellsten Optimierungslaufs, ob eine
+    """Berechnet fuer alle Stunden des aktuellsten Optimierungslaufs, ob eine
     "Warmwasser"-Aktion existieren soll (HP_HW >= HP_HW_TRIGGER_KW) - analog zu
     compute_ev_charge_actions, siehe dort fuer die generelle Struktur (Stunde 0 = die gerade
     laufende Stunde: Date Start = jetzt, Status = aktiv, sonst geplant mit Stundenbeginn) UND fuer
@@ -7370,7 +7383,7 @@ def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id
     if not _is_heatpump_configured(config):
         return result
 
-    row_count = min(DHW_HOUR_WINDOW, len(output_rows))
+    row_count = len(output_rows)
     for i in range(row_count):
         output_row = output_rows[i]
         is_current_hour = (i == 0)
@@ -7422,7 +7435,6 @@ def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id
 
 HEIZUNG_ACTION_NAME = "Heizung Soll-Temperatur"
 HEIZUNG_ID_PREFIX = "heizung_soll"
-HEIZUNG_HOUR_WINDOW = 10
 # Plausibler Bereich fuer den Heizungs-Sollwert (°C) - der Optimierer-Wert T_i_Target wird darauf begrenzt.
 # Untergrenze wie im Optimierer (run_SHEMS.jl): T_i_min - 4, mit T_i_min = "Gewuenschte Raumtemperatur
 # (mindestens)" (hpHeatingTargetTempMin, Default wie im Konfigurationsfeld in www/app.js).
@@ -7436,7 +7448,7 @@ def _heizung_action_id(hour_start):
 
 
 def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base=None, net_profit_opt=None, x_sum_total=None):
-    """Berechnet fuer die Stunden 0..HEIZUNG_HOUR_WINDOW-1 des aktuellsten Optimierungslaufs, ob
+    """Berechnet fuer alle Stunden des aktuellsten Optimierungslaufs, ob
     eine "Heizung Soll-Temperatur"-Aktion existieren soll - analog zu compute_dhw_actions. Trigger:
     T_i_Target (auf 0 Stellen gerundet) weicht vom aktuell aktiven Sollwert ab (Live-Wert des
     Controls "heatpump_heating_target_temp_normal", das die Aktion bei Ausfuehrung selbst setzt -
@@ -7460,7 +7472,7 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
     t_i_min = _safe_float(config.get("hpHeatingTargetTempMin"), HEIZUNG_T_I_MIN_DEFAULT_C)
     target_min = round(t_i_min - HEIZUNG_TARGET_MIN_OFFSET_C)
 
-    row_count = min(HEIZUNG_HOUR_WINDOW, len(output_rows))
+    row_count = len(output_rows)
     for i in range(row_count):
         output_row = output_rows[i]
         is_current_hour = (i == 0)
@@ -7512,7 +7524,6 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
 
 OD_ACTION_NAME = "Verbraucher an"
 OD_ID_PREFIX = "verbraucher_an"
-OD_HOUR_WINDOW = 10
 OD_POWER_MIN_KW = 0.1
 # Der Optimierer kann bei manchen Laeufen Artefakte mit sehr grossen OD_Power-Werten ausgeben, die
 # nicht triggern sollen (siehe Nutzer-Vorgabe) - alles ab hier gilt als Artefakt, nicht als echter Bedarf.
@@ -7528,7 +7539,7 @@ def _od_action_id(hour_start):
 
 
 def compute_od_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base=None, net_profit_opt=None, x_sum_total=None):
-    """Berechnet fuer die Stunden 0..OD_HOUR_WINDOW-1 des aktuellsten Optimierungslaufs, ob eine
+    """Berechnet fuer alle Stunden des aktuellsten Optimierungslaufs, ob eine
     "Verbraucher an"-Aktion existieren soll - analog zu compute_dhw_actions/compute_heizung_actions,
     aber ohne Zielwert (reiner Ein/Aus-Schalter). Trigger: OD_Power liegt strikt zwischen
     OD_POWER_MIN_KW und OD_POWER_MAX_KW (ausserhalb dieses Bereichs entweder kein nennenswerter
@@ -7537,7 +7548,7 @@ def compute_od_actions(config, output_rows, input_rows, start, optimizer_run_id,
     if not _is_other_device_configured(config):
         return result
 
-    row_count = min(OD_HOUR_WINDOW, len(output_rows))
+    row_count = len(output_rows)
     for i in range(row_count):
         output_row = output_rows[i]
         is_current_hour = (i == 0)
@@ -7580,7 +7591,6 @@ def compute_od_actions(config, output_rows, input_rows, start, optimizer_run_id,
 # (actorMappings.battery_action_stop, siehe handle_shyft_action_end).
 # ============================================================================
 
-BATTERY_HOUR_WINDOW = 10
 BATTERY_GRID_CHARGE_ACTION_NAME = "Batterie netzladen"
 BATTERY_GRID_CHARGE_ID_PREFIX = "batterie_netzladen"
 BATTERY_GRID_CHARGE_TRIGGER_KW = 0.2
@@ -7619,7 +7629,7 @@ def _discharge_shift_reserved_for_hour(hour_start):
 
 
 def compute_battery_grid_charge_actions(config, output_rows, input_rows, start, optimizer_run_id):
-    """Berechnet fuer die Stunden 0..BATTERY_HOUR_WINDOW-1 des aktuellsten Optimierungslaufs, ob
+    """Berechnet fuer alle Stunden des aktuellsten Optimierungslaufs, ob
     eine "Batterie netzladen"-Aktion existieren soll. Trigger: GR_B > BATTERY_GRID_CHARGE_TRIGGER_KW.
     Keine Aktion, wenn fuer dieselbe Stunde schon "Batterie-Entladen verschieben" reserviert ist
     (siehe _discharge_shift_reserved_for_hour) - das hat Vorrang. In Stunden mit vorhergesagtem
@@ -7633,7 +7643,7 @@ def compute_battery_grid_charge_actions(config, output_rows, input_rows, start, 
 
     battery_capacity_kwh = config.get("batteryCapacityKwh")
 
-    row_count = min(BATTERY_HOUR_WINDOW, len(output_rows))
+    row_count = len(output_rows)
     for i in range(row_count):
         output_row = output_rows[i]
         is_current_hour = (i == 0)
@@ -7714,7 +7724,7 @@ def _has_dynamic_tariff(input_rows):
 
 
 def compute_battery_discharge_shift_actions(config, output_rows, input_rows, start, optimizer_run_id):
-    """Berechnet fuer die Stunden 0..BATTERY_HOUR_WINDOW-1 des aktuellsten Optimierungslaufs, ob
+    """Berechnet fuer alle Stunden des aktuellsten Optimierungslaufs, ob
     eine "Batterie-Entladen verschieben"-Aktion existieren soll. Trigger (alle Bedingungen UND-
     verknuepft):
       - (CO_B < 0,2 ODER GR_B < 0,2) UND GR_sum > 0
@@ -7737,7 +7747,7 @@ def compute_battery_discharge_shift_actions(config, output_rows, input_rows, sta
         return result
 
     battery_capacity_kwh = config.get("batteryCapacityKwh")
-    row_count = min(BATTERY_HOUR_WINDOW, len(output_rows))
+    row_count = len(output_rows)
     for i in range(row_count):
         output_row = output_rows[i]
         is_current_hour = (i == 0)
@@ -7922,7 +7932,7 @@ def _battery_charge_shift_action_id(hour_start):
 
 
 def compute_battery_charge_shift_actions(config, output_rows, input_rows, start, optimizer_run_id):
-    """Berechnet fuer die Stunden 0..BATTERY_HOUR_WINDOW-1 des aktuellsten Optimierungslaufs, ob
+    """Berechnet fuer alle Stunden des aktuellsten Optimierungslaufs, ob
     eine "Batterie-Laden verschieben (PV-Ueberschuss)"-Aktion existieren soll. Trigger, betrachtet
     ueber ein 12-Stunden-Fenster ab dieser Stunde (diese eingeschlossen, siehe
     BATTERY_CHARGE_SHIFT_LOOKAHEAD_HOURS):
@@ -7941,7 +7951,7 @@ def compute_battery_charge_shift_actions(config, output_rows, input_rows, start,
         return result
 
     battery_capacity_kwh = config.get("batteryCapacityKwh")
-    row_count = min(BATTERY_HOUR_WINDOW, len(output_rows))
+    row_count = len(output_rows)
     for i in range(row_count):
         window_end = i + BATTERY_CHARGE_SHIFT_LOOKAHEAD_HOURS
         if window_end > len(output_rows):
@@ -8080,7 +8090,7 @@ TARGET_VALUE_UNIT_BY_ACTION_NAME = {
 }
 
 
-def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour, start, hour_window=EV_CHARGE_HOUR_WINDOW, replace_running=False):
+def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour, start, hour_window, replace_running=False):
     """Ersetzt alle vorhandenen Aktionen vom Typ action_name im lokalen Store, deren Stundenfenster
     zum aktuellen Lauf gehoert (Stunden 0..hour_window-1 ab start), durch die frisch berechneten
     (computed_by_hour, siehe compute_ev_charge_actions) - mit Sonderbehandlung fuer die laufende
@@ -8332,25 +8342,31 @@ def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms
         if not output_rows:
             print(f"[Shyft] Optimierungslauf {optimizer_run_id!r} enthaelt keine noch nicht abgelaufene Stunde mehr - keine Aktionen berechnet.")
             return
+        # Alle Aktionstypen decken jetzt den GESAMTEN (noch nicht abgelaufenen) Optimierungszeitraum
+        # ab, nicht mehr nur die ersten zehn Stunden (Nutzer-Vorgabe: die fruehere Zehn-Stunden-
+        # Grenze war reine, unbegruendete Datensparsamkeit) - die Gerätesteuerung-TAB-Anzeige
+        # begrenzt sich selbst wieder auf GERAETESTEUERUNG_DISPLAY_HOUR_WINDOW (siehe readShyftActions),
+        # Charts lesen weiterhin den vollen Store.
+        full_hour_window = len(output_rows)
         ev_actions = _suppress_near_boundary_singleton(compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
-        _reconcile_computed_actions(config, EV_CHARGE_ACTION_NAME, EV_CHARGE_ID_PREFIX, ev_actions, start)
+        _reconcile_computed_actions(config, EV_CHARGE_ACTION_NAME, EV_CHARGE_ID_PREFIX, ev_actions, start, hour_window=full_hour_window)
         dhw_actions = _suppress_near_boundary_singleton(compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
-        _reconcile_computed_actions(config, DHW_ACTION_NAME, DHW_ID_PREFIX, dhw_actions, start)
+        _reconcile_computed_actions(config, DHW_ACTION_NAME, DHW_ID_PREFIX, dhw_actions, start, hour_window=full_hour_window)
         heizung_actions = _suppress_near_boundary_singleton(compute_heizung_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
-        _reconcile_computed_actions(config, HEIZUNG_ACTION_NAME, HEIZUNG_ID_PREFIX, heizung_actions, start)
+        _reconcile_computed_actions(config, HEIZUNG_ACTION_NAME, HEIZUNG_ID_PREFIX, heizung_actions, start, hour_window=full_hour_window)
         od_actions = _suppress_near_boundary_singleton(compute_od_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
-        _reconcile_computed_actions(config, OD_ACTION_NAME, OD_ID_PREFIX, od_actions, start)
+        _reconcile_computed_actions(config, OD_ACTION_NAME, OD_ID_PREFIX, od_actions, start, hour_window=full_hour_window)
         # VOR "Batterie netzladen" berechnen+reconcilen: dessen Vorrang-Check
         # (_discharge_shift_reserved_for_hour) liest den Store und braucht deshalb den frischen
         # Stand aus DIESEM Lauf, nicht den von der letzten Optimierung. Die umgekehrte Pruefung
         # (compute_battery_discharge_shift_actions gibt "Batterie netzladen" Vorrang) rechnet GR_B
         # direkt aus output_csv nach, ist also unabhaengig von der Reihenfolge hier korrekt.
         battery_discharge_shift_actions = _suppress_near_boundary_singleton(compute_battery_discharge_shift_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
-        _reconcile_computed_actions(config, BATTERY_DISCHARGE_SHIFT_ACTION_NAME, BATTERY_DISCHARGE_SHIFT_ID_PREFIX, battery_discharge_shift_actions, start, hour_window=BATTERY_HOUR_WINDOW)
+        _reconcile_computed_actions(config, BATTERY_DISCHARGE_SHIFT_ACTION_NAME, BATTERY_DISCHARGE_SHIFT_ID_PREFIX, battery_discharge_shift_actions, start, hour_window=full_hour_window)
         battery_grid_charge_actions = _suppress_near_boundary_singleton(compute_battery_grid_charge_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
-        _reconcile_computed_actions(config, BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_GRID_CHARGE_ID_PREFIX, battery_grid_charge_actions, start, hour_window=BATTERY_HOUR_WINDOW, replace_running=True)
+        _reconcile_computed_actions(config, BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_GRID_CHARGE_ID_PREFIX, battery_grid_charge_actions, start, hour_window=full_hour_window, replace_running=True)
         battery_charge_shift_actions = _suppress_near_boundary_singleton(compute_battery_charge_shift_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
-        _reconcile_computed_actions(config, BATTERY_CHARGE_SHIFT_ACTION_NAME, BATTERY_CHARGE_SHIFT_ID_PREFIX, battery_charge_shift_actions, start, hour_window=BATTERY_HOUR_WINDOW)
+        _reconcile_computed_actions(config, BATTERY_CHARGE_SHIFT_ACTION_NAME, BATTERY_CHARGE_SHIFT_ID_PREFIX, battery_charge_shift_actions, start, hour_window=full_hour_window)
     except Exception as e:
         print("[Shyft] Aktionsberechnung aus Optimierungslauf fehlgeschlagen:", repr(e))
 
