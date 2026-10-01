@@ -7924,10 +7924,9 @@ def compute_battery_charge_shift_actions(config, output_rows, input_rows, start,
 
 # Aktions-Indikator in den Dashboard-Charts (Nutzer-Vorgabe): fuer jede Stunde, egal ob Vergangenheit
 # oder Zukunft, zaehlt EINE der Aktionstypen einer Kachel als "Aktion" - welcher davon genau, spielt
-# fuer die Anzeige keine Rolle. BATTERY_ACTION_NAMES war urspruenglich die einzige Gruppe (Ladestand
-# Heimspeicher); auf Nutzer-Wunsch jetzt auch fuer Raumtemperatur/Warmwasser/Ladestand Auto/Sonstiges
-# Geraet, siehe _action_hours_for.
-BATTERY_ACTION_NAMES = {BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_DISCHARGE_SHIFT_ACTION_NAME, BATTERY_CHARGE_SHIFT_ACTION_NAME}
+# fuer die Anzeige keine Rolle (Ladestand Heimspeicher ist die Ausnahme, siehe
+# BATTERY_ACTION_CATEGORY_BY_NAME/_battery_action_hours weiter unten). Fuer Raumtemperatur/Warmwasser/
+# Ladestand Auto/Sonstiges Geraet, siehe _action_hours_for.
 HEIZUNG_ACTION_NAMES = {HEIZUNG_ACTION_NAME}
 DHW_ACTION_NAMES = {DHW_ACTION_NAME}
 CAR_CHARGE_ACTION_NAMES = {"Auto laden"}
@@ -7970,8 +7969,47 @@ def _action_hours_for(action_names, midnight_local, hour_count):
     return covered
 
 
+
+# Ladestand Heimspeicher ist (Nutzer-Vorgabe) der einzige Aktions-Indikator mit mehreren Hintergrund-
+# farben statt einer einzigen: "charging" (Netzladen UND PV-Ueberschuss-Laden verschieben - beide
+# laden den Speicher) gruen, "not_discharging" (Entladen verschieben) grau. Siehe buildBatterySocForecastActualChart/
+# BATTERY_ACTION_COLORS fuer die Farben selbst.
+BATTERY_ACTION_CATEGORY_BY_NAME = {
+    BATTERY_GRID_CHARGE_ACTION_NAME: "charging",
+    BATTERY_CHARGE_SHIFT_ACTION_NAME: "charging",
+    BATTERY_DISCHARGE_SHIFT_ACTION_NAME: "not_discharging",
+}
+
+
 def _battery_action_hours(midnight_local, hour_count):
-    return _action_hours_for(BATTERY_ACTION_NAMES, midnight_local, hour_count)
+    """Wie _action_hours_for, aber statt True/False je Stunde deren Aktions-KATEGORIE (siehe
+    BATTERY_ACTION_CATEGORY_BY_NAME) oder None - der Ladestand-Heimspeicher-Chart zeigt je Kategorie
+    eine eigene Hintergrundfarbe, anders als die uebrigen (einfarbigen) Aktions-Indikatoren."""
+    hours = [midnight_local + timedelta(hours=i) for i in range(hour_count)]
+    covered = [None] * hour_count
+    try:
+        actions = _read_computed_actions()
+    except Exception as e:
+        print("[Shyft] Batterie-Aktions-Indikator: Store konnte nicht gelesen werden:", repr(e))
+        return covered
+    for action in actions:
+        category = BATTERY_ACTION_CATEGORY_BY_NAME.get(action.get("Action Name"))
+        if category is None:
+            continue
+        really_ran_or_running = action.get("Execution Status") in ("yes, started", "yes, not finished", "yes, finished")
+        planned = (action.get("Status") or "").lower() == "geplant"
+        if not (really_ran_or_running or planned):
+            continue
+        start_ms, end_ms = action.get("Date Start"), action.get("Date End")
+        if start_ms is None:
+            continue
+        start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).astimezone(get_ha_timezone())
+        end_dt = (datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc).astimezone(get_ha_timezone())
+                  if end_ms is not None else start_dt + timedelta(hours=1))
+        for i, hour in enumerate(hours):
+            if start_dt < hour + timedelta(hours=1) and end_dt > hour:
+                covered[i] = category
+    return covered
 
 
 # Einheit fuer die "neuer Zielwert"-Log-Zeile in _reconcile_computed_actions - je nach Aktionstyp

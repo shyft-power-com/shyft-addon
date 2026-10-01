@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.212
+
+* **Aktions-Legende heißt jetzt einfach „Aktion“** statt „Aktion geplant/ausgeführt“.
+* **Ladestand Heimspeicher: unterschiedliche Aktions-Hintergrundfarben je Aktionsart.** Grün für Laden (Netzladen und PV-Überschuss-Laden verschieben), grau für „nicht entladen“ (Entladen verschieben) - vorher einheitlich grün für alle drei Aktionstypen.
+* **Y-Achsen-Beschriftung auf „hübsche“ Schritte gerundet, statt krummer Werte aus Min/Max.** Betrifft alle Dashboard-Charts (Strompreis, Temperatur, PV, Ladestände, Kostenvergleich, …): z.B. 20/40/60 Cent statt 22,4/40,5, oder 0/10/20/30 °C statt krummer Zwischenwerte. Die Schrittweite bleibt variabel je nach Wertebereich des jeweiligen Charts, wird aber immer auf eine der üblichen „nice numbers“ (1/2/2,5/5/10 je Zehnerpotenz) gerundet.
+
 ## 0.0.45.211
 
 * **Fix: Außentemperatur/Strompreis zeigten gar keine historischen Stunden.** Beide Charts bezogen ihre Daten bisher aus `/dashboard/chart-data`, das absichtlich „ab jetzt" beginnt (und frühere Stunden sogar explizit abschneidet) - für die neue Historisch/Prognose-Aufteilung fehlte ihnen dadurch die ganze Vergangenheit von heute. Neue, an Mitternacht verankerte Endpunkte `/dashboard/aussentemperatur` und `/dashboard/strompreis` (best-effort mit Rückfall auf die alten Felder).

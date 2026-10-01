@@ -6664,6 +6664,31 @@ function computePvEnergySummary(labels, values) {
 //                 one, regardless of the data's actual range - e.g. 0/100 for a percentage that
 //                 should always show its full possible range (Ladestand)
 //   decimals    - digits shown in the hover/tap tooltip
+
+// "Huebsche" Y-Achsen-Schritte statt krummer Werte aus Min/Max (Nutzer-Vorgabe: z.B. "20/40/60 Cent
+// statt 22.4/40.5", "0/10/20/30" bei Temperatur, "2.5/5" bei PV) - die Schrittweite bleibt variabel
+// je nach Wertebereich des jeweiligen Charts/Datensatzes, wird aber immer auf eine der ueblichen
+// "nice numbers" (1/2/2.5/5/10 je Zehnerpotenz) gerundet, statt den Bereich stur in (targetCount-1)
+// gleiche Teile zu zerlegen. Gemeinsam genutzt von buildLineChart/buildForecastActualChart/
+// buildComparisonChart statt je Chart eine eigene (bisher: feste 3 Ticks top/mitte/unten).
+function computeNiceTicks(min, max, targetCount = 4) {
+    const range = max - min;
+    if (!isFinite(range) || range <= 0) return [min];
+    const rawStep = range / targetCount;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const residual = rawStep / magnitude;
+    const niceResidual = [1, 2, 2.5, 5, 10].find(s => residual <= s) ?? 10;
+    const step = niceResidual * magnitude;
+    const start = Math.ceil(min / step) * step;
+    const ticks = [];
+    for (let v = start; v <= max + step * 1e-6; v += step) {
+        let cleaned = Math.round(v / step) * step; // Gleitkomma-Drift (z.B. 0.30000000000000004) bereinigen
+        if (Object.is(cleaned, -0)) cleaned = 0; // sonst zeigt toFixed() "-0.0" an einer Nulllinie
+        ticks.push(cleaned);
+    }
+    return ticks.length ? ticks : [min];
+}
+
 function buildLineChart(title, unit, labels, values, options = {}) {
     const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null} = options;
     const width = 600, height = 220;
@@ -6723,7 +6748,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         dot.style.background = 'var(--color-accent)';
         dot.style.opacity = ACTION_BAND_OPACITY;
         item.appendChild(dot);
-        item.appendChild(document.createTextNode('Aktion geplant/ausgeführt'));
+        item.appendChild(document.createTextNode('Aktion'));
         legend.appendChild(item);
         wrapper.appendChild(legend);
     }
@@ -6921,7 +6946,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         return `<text x="${x}" y="${height - 6}" fill="var(--color-text-secondary)" text-anchor="${i === lastIndex ? 'end' : 'middle'}">${text}</text>`;
     }).join('');
 
-    const yTicks = [yMax, (yMin + yMax) / 2, yMin];
+    const yTicks = computeNiceTicks(yMin, yMax);
     const yLabels = yTicks.map(v => {
         const y = (paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight).toFixed(1);
         return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="end">${round ? Math.round(v) : v.toFixed(1)}</text>`;
@@ -7109,9 +7134,17 @@ const TEMPERATURE_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: '
 const PERCENT_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 0.1};
 const ON_OFF_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 50};
 
+// Nutzer-Vorgabe: Batterie-Aktions-Hintergrund nach Kategorie eingefaerbt statt einheitlich -
+// gruen fuers Laden (Netzladen UND PV-Ueberschuss-Laden verschieben, siehe
+// BATTERY_ACTION_CATEGORY_BY_NAME in app.py), grau fuers "nicht entladen" (Entladen verschieben).
+const BATTERY_ACTION_COLORS = {
+    charging: {color: 'var(--color-accent)', label: 'Aktion: Laden'},
+    not_discharging: {color: 'var(--color-text-secondary)', label: 'Aktion: nicht entladen'},
+};
+
 function buildBatterySocForecastActualChart(labels, forecast, actual, actionHours, plannedHistory) {
     return buildForecastActualChart('Ladestand Heimspeicher: Prognose vs. Ist', '%', labels, forecast, actual, {
-        decimals: 0, yBounds: {min: 0, max: 100}, actionHours, plannedHistory, slopeColors: PERCENT_SLOPE_COLORS,
+        decimals: 0, yBounds: {min: 0, max: 100}, actionHours, actionColors: BATTERY_ACTION_COLORS, plannedHistory, slopeColors: PERCENT_SLOPE_COLORS,
     });
 }
 
@@ -7147,7 +7180,7 @@ function buildAussentemperaturForecastActualChart(labels, temperature) {
 // Nutzers kaum erkennbar (siehe Nutzer-Feedback), deutlich angehoben.
 const ACTION_BAND_OPACITY = 0.32;
 
-function buildForecastActualChart(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, plannedHistory = null, slopeColors = null, flatColor = null} = {}) {
+function buildForecastActualChart(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null} = {}) {
     // "Prognose" ist visuell EINE Linie ueber den ganzen Tag: fuer bereits vergangene Stunden (wo
     // plannedHistory einen Wert hat) der zu ihrer Zeit juengste Planungsstand ("Alt", durchgezogen),
     // fuer die Zukunft die aktuelle Prognose ("Neu", gestrichelt) - siehe Nutzer-Vorgabe, ersetzt die
@@ -7220,9 +7253,15 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     // Aktions-Indikator (siehe actionHours/actionBandsMarkup unten) - eigener Legenden-Eintrag nur,
     // wenn der Aufrufer ueberhaupt Aktionsstunden mitgibt. Deutlich kraeftigere Opacity als zuvor
     // (0.12 -> ACTION_BAND_OPACITY) - Nutzer-Feedback: bisher auf dem eigenen Bildschirm kaum zu
-    // erkennen.
-    if (actionHours) {
-        legendDotItem('var(--color-accent)', 'Aktion geplant/ausgeführt', ACTION_BAND_OPACITY);
+    // erkennen. actionColors (nur Ladestand Heimspeicher, Nutzer-Vorgabe): je Aktions-Kategorie
+    // (siehe BATTERY_ACTION_CATEGORY_BY_NAME in app.py) eine eigene Farbe/Legenden-Zeile statt
+    // einer einzigen "Aktion"-Farbe fuer alle.
+    if (actionColors) {
+        for (const [category, {color, label}] of Object.entries(actionColors)) {
+            if (actionHours.includes(category)) legendDotItem(color, label, ACTION_BAND_OPACITY);
+        }
+    } else if (actionHours) {
+        legendDotItem('var(--color-accent)', 'Aktion', ACTION_BAND_OPACITY);
     }
     wrapper.appendChild(legend);
 
@@ -7297,7 +7336,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
         return `<text x="${x}" y="${height - 6}" fill="var(--color-text-secondary)" text-anchor="${i === lastIndex ? 'end' : 'middle'}">${text}</text>`;
     }).join('');
 
-    const yTicks = [yMax, (yMin + yMax) / 2, yMin];
+    const yTicks = computeNiceTicks(yMin, yMax);
     const yLabels = yTicks.map(v => {
         const y = yFor(v).toFixed(1);
         return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="end">${v.toFixed(decimals)}</text>`;
@@ -7321,9 +7360,12 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     if (actionHours) {
         for (let i = 0; i < labels.length; i++) {
             if (!actionHours[i]) continue;
+            // actionColors (nur Ladestand Heimspeicher): actionHours[i] ist dann die Kategorie
+            // (z.B. "charging"/"not_discharging") statt true - eigene Farbe je Kategorie.
+            const color = actionColors ? (actionColors[actionHours[i]] || {}).color || 'var(--color-accent)' : 'var(--color-accent)';
             const xStart = xFor(i);
             const xEnd = i < lastIndex ? xFor(i + 1) : (width - paddingRight);
-            actionBandsMarkup += `<rect x="${xStart.toFixed(1)}" y="${paddingTop}" width="${(xEnd - xStart).toFixed(1)}" height="${plotHeight.toFixed(1)}" fill="var(--color-accent)" opacity="${ACTION_BAND_OPACITY}" />`;
+            actionBandsMarkup += `<rect x="${xStart.toFixed(1)}" y="${paddingTop}" width="${(xEnd - xStart).toFixed(1)}" height="${plotHeight.toFixed(1)}" fill="${color}" opacity="${ACTION_BAND_OPACITY}" />`;
         }
     }
 
@@ -7513,7 +7555,7 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
         return `<text x="${xFor(i).toFixed(1)}" y="${height - 6}" fill="var(--color-text-secondary)" text-anchor="${i === lastIndex ? 'end' : 'middle'}">${text}</text>`;
     }).join('');
 
-    const yTicks = [yMax, (yMin + yMax) / 2, yMin];
+    const yTicks = computeNiceTicks(yMin, yMax);
     const yDecimals = decimals === 0 ? 0 : 1;
     const yLabels = yTicks.map(v => `<text x="${paddingLeft - 8}" y="${(yFor(v) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="end">${v.toFixed(yDecimals)}</text>`).join('');
 
