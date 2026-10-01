@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.228
+
+* **Fix: eine sofort beendete Aktion, die in derselben Stunde neu angelegt wurde, blieb auf „aktiv“, ohne das Gerät zu steuern** (Nutzer-Meldung „Batterie-Entladen verschieben“: Entladelimit stand auf 5000 W, obwohl die Aktion aktiv war). Die Aktions-ID hängt am Stundenbeginn; beim sofortigen Beenden (neuer Optimierungslauf enthält die Aktion für die laufende Stunde nicht mehr) blieb sie in `startedShyftActionIds`/`endedShyftActionIds` stehen. Legte ein späterer Lauf dieselbe Aktion in derselben Stunde neu an, hielt `process_shyft_actions` sie für „schon gestartet“ und löste weder Start noch späteres Ende aus. Die ID wird jetzt beim sofortigen Beenden aus beiden Listen entfernt.
+
 ## 0.0.45.227
 
 * **Deaktivierte Aktionstypen werden in den Charts jetzt hellgrau statt grün/dunkelgrau dargestellt** (Nutzer-Feedback). Ist ein Aktionstyp per Toggle ausgeschaltet, plant der Optimierer trotzdem weiter damit (z.B. eine Warmwasser-Aufheizung im Prognoseverlauf), das Gerät wird aber nie wirklich angesteuert - bisher erschien eine für die Zukunft geplante, aber deaktivierte Aktion trotzdem als normale (grüne) Aktionsfläche, eine bereits abgelaufene gar nicht. Beide Fälle zeigen jetzt eine hellgraue Fläche samt eigenem Legenden-Eintrag „Aktion (deaktiviert)“ - bei der Batterie ersetzt das auch das bisherige Dunkelgrau von „Laden/Entladen verschieben“, wenn deren Aktionstyp deaktiviert ist.

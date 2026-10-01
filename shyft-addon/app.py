@@ -8212,6 +8212,18 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
             handle_shyft_action_end(hour0_existing, was_really_started, config)
         except Exception as e:
             print(f"[Shyft] Sofortiges Beenden von '{action_name}' fehlgeschlagen:", repr(e))
+        # Die ID haengt am Stundenbeginn: legt ein spaeterer Lauf in derselben Stunde die Aktion neu an
+        # (Bedingung wieder erfuellt), muss process_shyft_actions sie als frische Aktion starten UND
+        # beenden - sonst gilt sie wegen der alten IDs als "schon gestartet"/"schon beendet", steht
+        # auf "aktiv", steuert aber nichts (wie beim replace_running-Zweig oben).
+        started_ids = set(config.get("startedShyftActionIds", []))
+        ended_ids = set(config.get("endedShyftActionIds", []))
+        if hour0_existing.get("_id") in started_ids or hour0_existing.get("_id") in ended_ids:
+            started_ids.discard(hour0_existing.get("_id"))
+            ended_ids.discard(hour0_existing.get("_id"))
+            config["startedShyftActionIds"] = sorted(started_ids)
+            config["endedShyftActionIds"] = sorted(ended_ids)
+            config_changed = True
         # nicht wieder aufgenommen - die Aktion ist beendet und faellt aus dem Store
 
     for i in range(1, hour_window):
