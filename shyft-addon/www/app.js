@@ -4232,6 +4232,9 @@ function buildAutoManagedNumberControl(control) {
             if (minusButton) minusButton.disabled = true;
             plusButton.disabled = true;
             valueDisplay.className = 'autoActionValue testing';
+            // Waehrend ein Test laeuft, ist der "Bitte testen"-Hinweis nur verwirrend (Nutzer-
+            // Feedback) - applyTestGate() in handleTestResult() blendet ihn danach wieder passend ein.
+            hint.hidden = true;
             valueDisplay.textContent = 'Teste … ' + (status.progress || '');
             handleTestResult(await pollTestUntilDone());
         } catch (err) {
@@ -4246,6 +4249,7 @@ function buildAutoManagedNumberControl(control) {
         if (minusButton) minusButton.disabled = true;
         plusButton.disabled = true;
         valueDisplay.className = 'autoActionValue testing';
+        hint.hidden = true;
         // control.onlyIncrement (bisher nur "Heizung Soll-Temperatur"): eigener Endpoint, der
         // serverseitig synchron erhoeht, auf Bestaetigung wartet UND danach IMMER zurueckstellt
         // (siehe /actions/heating_target_temp/test) - kann daher spuerbar laenger dauern als der
@@ -4441,6 +4445,7 @@ function buildAutoManagedSwitchControl(control) {
         testButton.disabled = true;
         valueDisplay.textContent = 'Teste...';
         valueDisplay.className = 'autoActionValue testing';
+        hint.hidden = true;
         try {
             const response = await fetch(insideHomeAssistant + '/actions/' + control.key + '/test', {
                 method: 'POST',
@@ -4928,6 +4933,7 @@ function buildCarChargeControl() {
     testButton.addEventListener('click', async () => {
         testButton.disabled = true;
         wallboxStatusDisplay.className = 'autoActionValue testing';
+        carChargeHint.hidden = true;
         let startedCharging = false;
         let ok = true;
         let failMessage = '';
@@ -5135,6 +5141,7 @@ function buildHotWaterControl() {
         status.textContent = 'Teste... (kann bis zu 3 Minuten dauern)';
         status.className = 'autoActionStatus';
         statusDisplay.className = 'autoActionValue testing';
+        hotWaterHint.hidden = true;
         let success = false;
         try {
             const response = await fetch(insideHomeAssistant + '/actions/hot_water_target_temp/test', {method: 'POST'});
@@ -5412,6 +5419,7 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
         statusIcon.hidden = true;
         valuesDisplay.textContent = 'Teste...';
         valuesDisplay.className = 'autoActionValue testing';
+        if (hint) hint.hidden = true;
         try {
             const response = await fetch(insideHomeAssistant + '/actions/battery/' + actionKey + '/test', {method: 'POST'});
             const result = await response.json();

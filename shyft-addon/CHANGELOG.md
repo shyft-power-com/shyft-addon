@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.225
+
+* **Fix: "Bitte Gerätesteuerung testen" blieb sichtbar, während gerade ein Test lief** (Nutzer-Feedback) - der rote Hinweis wird jetzt für die Dauer des Testklicks ausgeblendet und danach wie gehabt passend zum Testergebnis wieder ein-/ausgeblendet.
+
 ## 0.0.45.224
 
 * **Stromkosten-/Stromverbrauch-Vergleichscharts zeigen jetzt auch die heutige Historie** (Nutzer-Vorgabe): für bereits vergangene Stunden eine einzelne durchgezogene grüne "Ist"-Linie statt der beiden Prognose-Linien (für die Vergangenheit gibt es kein reales "ohne Optimierung"-Gegenstück) - ab jetzt laufen "Shyft-Plan" (grün) und "Ohne Steuerung" (grau) wie bisher weiter, jetzt aber beide gestrichelt. Datenquelle ist das bereits bestehende Energie-Archiv (zeitgewichteter Ist-Verbrauch/-Netzbezug je Stunde, verrechnet mit dem damaligen Strompreis inkl. PV-Eigenverbrauchsanteil) statt einer einfachen Verbrauch-mal-Preis-Rechnung, damit es methodisch zu den bestehenden Kosten-Werten passt.
