@@ -1905,6 +1905,8 @@
         }
         .dashboardChartLegend {
             display: flex;
+            flex-wrap: wrap;
+            row-gap: 0.3em;
             gap: 1em;
             font-size: 0.85em;
             color: var(--color-text-secondary);
@@ -1915,6 +1917,10 @@
             display: inline-flex;
             align-items: center;
             gap: 0.4em;
+            /* Jeder Legenden-Eintrag bricht als Ganzes in eine neue Zeile um (siehe flex-wrap oben),
+               statt dass sein eigener Text mittendrin umbricht - bei laengeren Eintraegen wie
+               "Shyft-Plan (5,59 €) (heute ... | morgen ...)" war das sonst unleserlich (Nutzer-Feedback). */
+            white-space: nowrap;
         }
         .dashboardChartLegendDot {
             width: 0.7em;

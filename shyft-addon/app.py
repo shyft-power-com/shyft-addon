@@ -1528,27 +1528,11 @@ def readDashboardChartData():
     base_t_i, base_t_hw, base_soc_b, base_soc_ev = base_t_i[skip:], base_t_hw[skip:], base_soc_b[skip:], base_soc_ev[skip:]
     opt_cost, opt_usage = opt_cost[skip:], opt_usage[skip:]
 
-    # Wie viele Stunden ab labels[0] echte, von Awattar veroeffentlichte Marktpreise sind (Nutzer-
-    # Vorgabe fuers Strompreis-Chart: diese IMMER durchgezogen zeichnen, auch wenn sie in der Zukunft
-    # liegen - "sie sind ja bekannt", anders als eine echte Prognose). Nur ein zusammenhaengender
-    # Praefix zaehlt (bricht an der ersten Luecke ab) - Awattar veroeffentlicht ein durchgehendes
-    # Fenster, keine einzelnen Stunden verstreut in der Zukunft.
-    try:
-        awattar_prices = _fetch_awattar_prices()
-    except Exception:
-        awattar_prices = {}
-    p_buy_known_hours = 0
-    for label in labels:
-        if int(datetime.fromisoformat(label).timestamp() * 1000) not in awattar_prices:
-            break
-        p_buy_known_hours += 1
-
     return jsonify({
         "status": "success",
         "labels": labels,
         "pv_generation": pv_generation,
         "p_buy": p_buy,
-        "p_buy_known_hours": p_buy_known_hours,
         "temperature": temperature,
         "output_labels": output_labels,
         "t_i_target": t_i_target,
@@ -2028,9 +2012,15 @@ def readSonstigesGeraetForecastVsActual():
     alle an, sonst 0 - dieselbe "alle an zaehlt als an"-Regel wie bei der Live-Statusanzeige, siehe
     _sonstiger_verbraucher_status). 'forecast' kommt NICHT aus einer output_csv-Spalte (die Aktion ist
     ein/aus, keine kontinuierliche Groesse), sondern aus den geplanten/ausgefuehrten 'Verbraucher an'-
-    Aktionsfenstern (siehe _action_hours_for): 100 fuer eine abgedeckte Stunde, sonst 0."""
+    Aktionsfenstern (siehe _action_hours_for): 100 fuer eine abgedeckte Stunde, sonst 0. Leer (kein
+    Status 'success' mit Daten), wenn kein 'Sonstiger Verbraucher' zugeordnet ist - die Kachel soll
+    dann im Dashboard gar nicht erst auftauchen."""
     config = _read_current_config()
     entity_ids = _sonstiger_verbraucher_entity_ids(config)
+    if not entity_ids:
+        # Kein "Sonstiger Verbraucher" eingerichtet -> Kachel soll im Dashboard gar nicht erst
+        # auftauchen (Nutzer-Vorgabe), statt eine leere 0%-Linie zu zeigen.
+        return jsonify({"status": "success", "labels": [], "forecast": [], "actual": [], "actionHours": []})
     midnight_local = _hour_floor(_local_now().replace(hour=0))
     current_hour_local = _hour_floor(_local_now())
 
@@ -2067,6 +2057,57 @@ def _hourly_switch_on_by_hour(entity_id, midnight_local, current_hour_local):
     except Exception as e:
         print(f"[Shyft] Ist-Werte fuer {entity_id} konnten nicht geladen werden:", repr(e))
     return result
+
+
+# Horizont fuer /dashboard/aussentemperatur und /dashboard/strompreis: heutiger Tag (bis zu 24h ab
+# Mitternacht) + derselbe ~48h-Vorschau-Puffer wie beim normalen Optimierungszeitraum (siehe
+# OPEN_METEO_FORECAST_DAYS/optimizer_period+24 in sync_site_data) - reicht grosszuegig fuer beide Tage.
+MIDNIGHT_ANCHORED_CHART_HOURS = 72
+
+
+@app.route("/dashboard/aussentemperatur", methods=["GET"])
+def readAussentemperatur():
+    """Aussentemperatur-Chart ab 0 Uhr heute (Nutzer-Vorgabe: Historie + Prognose statt nur je 'ab
+    jetzt' wie /dashboard/chart-data liefert, das fuer den gecachten Optimierungslauf anchort statt
+    an Mitternacht). open-meteo liefert fuer 'temperature' ohnehin echte Vergangenheit UND Prognose in
+    EINER durchgehenden Reihe (siehe pv_forecast.py) - hier nur neu, ab Mitternacht statt 'jetzt',
+    angefragt. Das Frontend trennt Historisch/Prognose selbst anhand der aktuellen Uhrzeit."""
+    midnight_local = _hour_floor(_local_now().replace(hour=0))
+    try:
+        fields = pv_forecast.compute_site_weather_fields(MIDNIGHT_ANCHORED_CHART_HOURS, pv_sensor_configured=False)
+        temperatures = [float(v) if v != "" else None for v in fields["temperature"].split(",")]
+    except Exception as e:
+        print("[Shyft] Aussentemperatur (ab Mitternacht) konnte nicht berechnet werden:", repr(e))
+        return jsonify({"status": "success", "labels": [], "temperature": []})
+    labels = [(midnight_local + timedelta(hours=i)).isoformat() for i in range(len(temperatures))]
+    return jsonify({"status": "success", "labels": labels, "temperature": temperatures})
+
+
+@app.route("/dashboard/strompreis", methods=["GET"])
+def readStrompreis():
+    """Strompreis-Chart ab 0 Uhr heute (wie /dashboard/aussentemperatur, gleicher Grund).
+    compute_price_buy_array deckt dabei auch bereits vergangene Stunden des heutigen Tages korrekt mit
+    echten Awattar-Marktpreisen ab (nicht nur Zukunft). 'knownHours' (siehe Nutzer-Vorgabe): wie viele
+    Stunden ab labels[0] bereits von Awattar veroeffentlichte, also BEKANNTE (nicht vorhergesagte)
+    Preise sind - diese sollen im Chart durchgezogen bleiben, auch wenn sie in der Zukunft liegen; erst
+    danach beginnt die gestrichelte eigene Prognose. Nur ein zusammenhaengender Praefix zaehlt (bricht
+    an der ersten Luecke ab) - Awattar veroeffentlicht ein durchgehendes Fenster, keine einzelnen
+    Stunden verstreut in der Zukunft."""
+    config = _read_current_config()
+    midnight_local = _hour_floor(_local_now().replace(hour=0))
+    midnight_utc = midnight_local.astimezone(timezone.utc)
+    prices = compute_price_buy_array(config, midnight_utc, MIDNIGHT_ANCHORED_CHART_HOURS) or []
+    labels = [(midnight_local + timedelta(hours=i)).isoformat() for i in range(len(prices))]
+    try:
+        awattar_prices = _fetch_awattar_prices()
+    except Exception:
+        awattar_prices = {}
+    known_hours = 0
+    for label in labels:
+        if int(datetime.fromisoformat(label).timestamp() * 1000) not in awattar_prices:
+            break
+        known_hours += 1
+    return jsonify({"status": "success", "labels": labels, "p_buy": prices, "knownHours": known_hours})
 
 
 @app.route("/dashboard/battery-soc-forecast-vs-actual", methods=["GET"])

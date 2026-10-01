@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.45.211
+
+* **Fix: Außentemperatur/Strompreis zeigten gar keine historischen Stunden.** Beide Charts bezogen ihre Daten bisher aus `/dashboard/chart-data`, das absichtlich „ab jetzt" beginnt (und frühere Stunden sogar explizit abschneidet) - für die neue Historisch/Prognose-Aufteilung fehlte ihnen dadurch die ganze Vergangenheit von heute. Neue, an Mitternacht verankerte Endpunkte `/dashboard/aussentemperatur` und `/dashboard/strompreis` (best-effort mit Rückfall auf die alten Felder).
+* **Legende: grau/rot/grün-Erklärung entfernt** (Nutzer-Feedback: selbsterklärend) - übrig bleiben nur noch „Historisch“/„Prognose“.
+* **Sonstiger Verbraucher:** Chart heißt jetzt „Sonstiger Verbraucher“ statt „Sonstiges Gerät“ und erscheint gar nicht erst, wenn kein Verbraucher zugeordnet ist (vorher eine leere 0%-Linie).
+* **Fix: Legenden-Text brach teils unleserlich mitten im Wort um.** `.dashboardChartLegend` erlaubt jetzt Zeilenumbruch zwischen ganzen Einträgen (`flex-wrap`), einzelne Einträge brechen nicht mehr selbst mitten im Text um (`white-space: nowrap` je Eintrag) - betraf vor allem lange Einträge wie beim Kostenvergleich-Chart und mehrzeilige Legenden (z.B. Ladestand Auto: Anwesenheits- + Aktions-Legende).
+
 ## 0.0.45.210
 
 * **Dashboard-Charts: einheitliches Prognose-vs-Ist-Farbschema, fünf neue/erweiterte Karten, kräftigerer Aktions-Indikator.**

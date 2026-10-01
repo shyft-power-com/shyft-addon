@@ -7128,7 +7128,7 @@ function buildLadestandAutoForecastActualChart(labels, forecast, actual, actionH
 // forecast-vs-actual (Ist aus der echten Schalter-Historie, Prognose aus den geplanten/ausgefuehrten
 // "Verbraucher an"-Aktionsfenstern statt einer output_csv-Spalte).
 function buildSonstigesGeraetForecastActualChart(labels, forecast, actual, actionHours) {
-    return buildForecastActualChart('Sonstiges Gerät: Prognose vs. Ist', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}, actionHours, slopeColors: ON_OFF_SLOPE_COLORS});
+    return buildForecastActualChart('Sonstiger Verbraucher: Prognose vs. Ist', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}, actionHours, slopeColors: ON_OFF_SLOPE_COLORS});
 }
 
 // Aussentemperatur bleibt bewusst durchgehend gruen (Nutzer-Vorgabe, kein grau/rot/gruen wie bei den
@@ -7202,14 +7202,12 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
         legend.appendChild(item);
     }
     if (slopeColors) {
-        // Nutzer-Vorgabe: Farbe zeigt die Wertrichtung (grau/rot/gruen), nicht mehr Ist-vs-Prognose -
-        // das uebernimmt stattdessen die Linienart. "Planungsstand" ist jetzt Teil von "Prognose"
-        // (durchgezogener Abschnitt = "Alt"/vergangene Stunden, gestrichelt = "Neu"/Zukunft).
+        // Nutzer-Vorgabe: Farbe zeigt die Wertrichtung (grau/rot/gruen, selbsterklaerend - keine
+        // eigene Legende dafuer noetig), Linienart unterscheidet Historisch/Prognose. "Planungsstand"
+        // ist jetzt Teil von "Prognose" (durchgezogener Abschnitt = "Alt"/vergangene Stunden,
+        // gestrichelt = "Neu"/Zukunft).
         legendLineItem(false, 'Historisch');
         legendLineItem(true, 'Prognose');
-        legendDotItem(slopeColors.flatColor, 'gleichbleibend');
-        legendDotItem(slopeColors.dropColor, 'fallend');
-        legendDotItem(slopeColors.riseColor, 'steigend');
     } else if (flatColor) {
         // Nutzer-Vorgabe (Aussentemperatur): durchgehend eine Farbe, nur Historisch/Prognose per
         // Linienart unterscheiden - kein grau/rot/gruen, kein separates Ist/Prognose-Farbpaar.
@@ -9083,7 +9081,23 @@ async function loadDashboard() {
             // best-effort: ein fehlgeschlagenes Energiefluss-Widget darf die restlichen Charts nicht verhindern
             console.log(err);
         }
-        updateOrAppendDashboardWidget(container, 'strompreis', buildLineChart('Strompreis', 'Cent/kWh', data.labels, data.p_buy, {
+        // Beide ab 0 Uhr heute statt 'ab jetzt' (Nutzer-Vorgabe: Historie + Prognose statt nur
+        // Prognose) - /dashboard/chart-data ankert labels/p_buy/temperature am gecachten
+        // Optimierungslauf, nicht an Mitternacht, und schneidet Stunden vor 'jetzt' sogar explizit ab
+        // (siehe dortigen "skip"-Kommentar). Eigene, an Mitternacht verankerte Endpunkte, best-effort
+        // mit Rueckfall auf die alten (nur-Prognose-)Felder aus data.
+        let strompreisLabels = data.labels, strompreisValues = data.p_buy, strompreisDashedFromIndex = null;
+        try {
+            const strompreisData = await getJson(insideHomeAssistant + '/dashboard/strompreis');
+            if (strompreisData.status === 'success' && strompreisData.labels.length > 0) {
+                strompreisLabels = strompreisData.labels;
+                strompreisValues = strompreisData.p_buy;
+                strompreisDashedFromIndex = strompreisData.knownHours ?? null;
+            }
+        } catch (err) {
+            console.log(err);
+        }
+        updateOrAppendDashboardWidget(container, 'strompreis', buildLineChart('Strompreis', 'Cent/kWh', strompreisLabels, strompreisValues, {
             subtitle: 'Bezug',
             stepped: true,
             valueScale: 100,
@@ -9092,11 +9106,20 @@ async function loadDashboard() {
             // zum normalen "teuer"-Rot (>35 Cent) farblich abheben, statt gleich auszusehen.
             colorBands: {extremeThreshold: 80, extremeColor: '#8e24aa', highThreshold: 35, highColor: 'var(--color-error)', lowThreshold: 25, lowColor: 'var(--color-accent)', midColor: 'var(--color-text-secondary)'},
             // Nutzer-Vorgabe: alle veroeffentlichten Awattar-Werte durchgezogen zeichnen (auch in der
-            // Zukunft - die sind bekannt, keine Prognose), erst danach gestrichelt (siehe
-            // p_buy_known_hours in readDashboardChartData).
-            dashedFromIndex: data.p_buy_known_hours ?? null,
+            // Zukunft - die sind bekannt, keine Prognose), erst danach gestrichelt.
+            dashedFromIndex: strompreisDashedFromIndex,
         }));
-        updateOrAppendDashboardWidget(container, 'aussentemperatur', buildAussentemperaturForecastActualChart(data.labels, data.temperature));
+        let aussentemperaturLabels = data.labels, aussentemperaturValues = data.temperature;
+        try {
+            const aussentemperaturData = await getJson(insideHomeAssistant + '/dashboard/aussentemperatur');
+            if (aussentemperaturData.status === 'success' && aussentemperaturData.labels.length > 0) {
+                aussentemperaturLabels = aussentemperaturData.labels;
+                aussentemperaturValues = aussentemperaturData.temperature;
+            }
+        } catch (err) {
+            console.log(err);
+        }
+        updateOrAppendDashboardWidget(container, 'aussentemperatur', buildAussentemperaturForecastActualChart(aussentemperaturLabels, aussentemperaturValues));
         // Ersetzt die reine Prognose-Ansicht: gemeinsame Stundenachse ab 0 Uhr heute, aufgezeichnete
         // Prognose (heute, vergangene Stunden eingefroren/kommende laufend aktualisiert + ab morgen
         // live) gegen tatsaechliche Ist-Werte (siehe
