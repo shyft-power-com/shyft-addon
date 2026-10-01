@@ -63,8 +63,19 @@ SAFETY_OFFSET_KW = 0.1
 # EWMA-Glaettung der m2-Kalibrierung. alpha klein -> traege, robust gegen einen Ausreissertag.
 CALIBRATION_ALPHA = 0.25
 # Nur Stunden mit belastbarer Einstrahlung fliessen in die m2-Anpassung ein (sonst ist
-# gemessen / (irr * eta) numerisch instabil).
-CALIBRATION_MIN_IRRADIANCE_WM2 = 50
+# gemessen / (irr * eta) numerisch instabil: bei kleinem irr_avg verstaerkt die Division jedes
+# Messrauschen extrem - frueher 50 W/m^2, das war in der Praxis noch zu niedrig (Nutzer-Beobachtung:
+# "362 kWh" PV-Prognose durch eine einzelne verzerrte Stunden-Kalibrierung, vermutlich an einer
+# Morgen-/Abendstunde knapp ueber der alten Schwelle). Auf 150 W/m^2 angehoben.
+CALIBRATION_MIN_IRRADIANCE_WM2 = 150
+# Zusaetzliche Ausreisser-Bremse: ein m2_implied, das mehr als CALIBRATION_MAX_IMPLIED_RATIO ueber
+# oder unter dem AKTUELLEN m2[hour] liegt, fliesst NICHT per EWMA ein (wird komplett uebersprungen,
+# auch nicht gedaempft) - ein einzelner Messwert-Ausreisser (Wolkenrand-Lensing-Effekt, kurzzeitiger
+# Sensor-Spike) kann sonst trotz EWMA-Daempfung ueber mehrere Kalibrierungslaeufe hinweg immer wieder
+# nachwirken, wenn er sich wiederholt (z.B. an aehnlichen Morgenstunden). Noch nie kalibrierte
+# Stunden (m2[hour] == 0, z.B. nach from_default) sind davon ausgenommen - da gibt es keinen
+# sinnvollen Referenzwert zum Vergleichen.
+CALIBRATION_MAX_IMPLIED_RATIO = 3
 CALIBRATION_SETUP_DAYS = 7
 
 # Grobes Startprofil, bevor kalibriert wurde: ~50 m^2 in den Tagesstunden, 0 nachts. Zusammen mit
@@ -406,6 +417,13 @@ def calibrate(history_pairs, days, from_default=False):
             if measured_kw is None:
                 continue
             m2_implied = measured_kw / (irr_avg / 1000 * PV_EFFICIENCY)
+            # Ausreisser ueberspringen statt per EWMA einfliessen zu lassen (siehe
+            # CALIBRATION_MAX_IMPLIED_RATIO) - ein noch nie kalibrierter Bucket (0) hat keinen
+            # sinnvollen Referenzwert, dort immer uebernehmen.
+            if m2[hour] > 0 and not (m2[hour] / CALIBRATION_MAX_IMPLIED_RATIO <= m2_implied <= m2[hour] * CALIBRATION_MAX_IMPLIED_RATIO):
+                print(f"[Shyft] PV-Kalibrierung: Ausreisser fuer Stunde {hour} uebersprungen "
+                      f"(m2_implied={m2_implied:.1f}, aktuell m2={m2[hour]:.1f}, irr_avg={irr_avg:.0f} W/m^2, measured={measured_kw:.2f} kW).")
+                continue
             m2[hour] = max(0.0, (1 - CALIBRATION_ALPHA) * m2[hour] + CALIBRATION_ALPHA * m2_implied)
             updated_hours += 1
 

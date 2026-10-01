@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.215
+
+* **Zurückgerollt:** die in 0.0.45.214 eingeführte Plausibilitätsprüfung für die PV-Prognose (Nutzer-Feedback: verschleiert echte Fehler, statt sie sichtbar zu machen).
+* **Echte Ursache der „362 kWh für morgen“-PV-Prognose gefunden und behoben: numerisch instabile Kalibrierung bei schwacher Einstrahlung.** `m2_implied = gemessene Leistung / Einstrahlung` dividiert bei kleiner Einstrahlung durch eine sehr kleine Zahl - ein ansonsten unauffälliger Messwert (z.B. durch einen kurzen Wolkenrand-Lensing-Effekt oder einen Sensor-Spike knapp über der alten 50-W/m²-Schwelle) konnte dadurch einen stark überhöhten `m2_implied`-Wert erzeugen, der sich per EWMA in die dauerhafte Kalibrierung einschlich und sich - vor allem an wiederkehrenden Morgen-/Abendstunden - über mehrere Kalibrierungsläufe hinweg verstärken statt abklingen konnte. Zwei Maßnahmen: `CALIBRATION_MIN_IRRADIANCE_WM2` von 50 auf 150 W/m² angehoben, und ein neuer Ausreißer-Schutz überspringt einen `m2_implied`-Wert komplett (statt ihn gedämpft einfließen zu lassen), wenn er mehr als das 3-fache über oder unter dem aktuellen Kalibrierungswert dieser Stunde liegt.
+
 ## 0.0.45.214
 
 * **Fix: PV-Prognose zeigte wiederholt physikalisch unmögliche Ausreißer** (Nutzer-Beobachtung: „362 kWh für morgen“, einzelne Stunden über 100 kW). Der gecachte Optimierungslauf übernahm diese Werte unverändert; sie werden jetzt gegen eine frisch berechnete, garantiert plausible Referenz geprüft und bei Überschreitung (mehr als das 3-fache, und absolut über 1 kW) durch diese Referenz ersetzt, statt unverändert angezeigt zu werden.
