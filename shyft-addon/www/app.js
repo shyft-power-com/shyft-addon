@@ -6978,6 +6978,19 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         }
     }
 
+    // "Jetzt"-Markierung (Nutzer-Vorgabe: wie bei den Prognose-vs-Ist-Charts, siehe nowMarkup in
+    // buildForecastActualChart) - fuer Charts auf einer ab 0 Uhr durchgehenden Stundenachse (z.B.
+    // Strompreis). Nur gezeichnet, wenn "jetzt" ueberhaupt im angezeigten Zeitraum liegt; auf die
+    // naechstgelegene Stunde gerundet statt exakt interpoliert, wie bei den uebrigen Chart-Markern.
+    let nowMarkup = '';
+    const nowMs = Date.now();
+    const firstLabelMs = new Date(labels[0]).getTime();
+    const nowIndex = Math.round((nowMs - firstLabelMs) / 3600000);
+    if (nowIndex >= 0 && nowIndex <= lastIndex) {
+        const x = (paddingLeft + (nowIndex / lastIndex) * plotWidth).toFixed(1);
+        nowMarkup = `<line x1="${x}" y1="${paddingTop}" x2="${x}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
+    }
+
     // Anwesenheitsprognose overlay: one cell per point in THIS chart's own x-scale (not the
     // forecast's own 48-point grid) - looked up by exact ISO-hour label match - so it stays
     // pixel-aligned with the SOC line above it instead of drawing a second, slightly-offset axis.
@@ -7021,6 +7034,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
             ${lineMarkup}
             ${secondLineMarkup}
             ${presenceMarkup}
+            ${nowMarkup}
             ${dayBoundaryMarkup}
             ${yLabels}
             ${yLabels2}

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.218
+
+* **„Jetzt"-Markierung jetzt auch im Strompreis-Chart** (und allen anderen über `buildLineChart` gezeichneten Karten, z.B. Außentemperatur/Warmwasser im Fallback) – gleicher gestrichelter senkrechter Strich wie bei den Prognose-vs-Ist-Charts (PV, Ladestände, …), bisher fehlte er dort.
+
 ## 0.0.45.217
 
 * **Zurückgerollt:** der Netzladen-Ausschluss aus 0.0.45.216 für die PV-Kalibrierung. Nutzer-Korrektur: Die als Ursache vermutete Sensor-Vorlage ist bewusst so gebaut, dass sie reine PV-Leistung liefert (Korrektur eines bekannten Messfehlers der reinen Modbus-DC-Summe) - keine Vermischung mit Netzladen. Die eigentliche Ursache der „362 kWh"-PV-Prognose ist damit weiterhin ungeklärt; es wird nichts geändert, bis sie wirklich feststeht. Bleibt bestehen: die in 0.0.45.215 eingeführte Ausreißer-Ratio-Bremse (max. 3-fache Abweichung pro Kalibrierungslauf) und die 150-W/m²-Einstrahlungs-Schwelle.
