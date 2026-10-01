@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.0.45.222
+## 0.0.45.223
+
+* **Fix: im Ladestand-Heimspeicher-Chart war die historische Prognose nicht von der Ist-Linie zu unterscheiden** (Nutzer-Feedback) - beide waren durchgezogen. Die gesamte Prognose-Linie (auch ihr vergangener, als "Alt" gekennzeichneter Abschnitt) ist jetzt durchgehend gestrichelt, wie es die Chart-Legende ohnehin schon versprach.
+* **Stromkosten-/Stromverbrauch-Vergleichscharts zeigen jetzt im Titel die Differenz "ohne Optimierung" minus "optimiert" über den gesamten gezeigten Zeitraum.** Bei den Stromkosten als grün hinterlegte "Ersparnis" (nur wenn positiv), beim Stromverbrauch als neutrale "Differenz" ohne Hintergrundfarbe - ein Mehrverbrauch durch die Optimierung ist dort der Normalfall, keine Verschlechterung.
 
 * **"Batterie-Aktion beenden": die Lade-/Entladeleistungslimit-Felder müssen dort nicht mehr (erneut) ausgefüllt werden** (Nutzer-Feedback). Beim Beenden setzt das Addon ohnehin automatisch genau die Entitäten zurück, die bei "Batterie netzladen", "Batterie-Laden verschieben (PV-Überschuss)" und "Batterie-Entladen verschieben" hinterlegt sind - eine erneute Auswahl hier war überflüssig und hätte nur suggeriert, es könnte eine andere Entität sein. Der "Testen"-Button bei "Batterie-Aktion beenden" ist jetzt zusätzlich deaktiviert (mit Begründung), bis diese drei anderen Batterie-Aktionstypen eingerichtet sind - ein Testklick vorher wäre ohnehin nur an einer fehlenden Entität gescheitert.
 

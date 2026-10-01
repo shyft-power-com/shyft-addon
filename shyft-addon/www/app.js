@@ -7256,16 +7256,17 @@ function buildAussentemperaturForecastActualChart(labels, temperature) {
 const ACTION_BAND_OPACITY = 0.32;
 
 function buildForecastActualChart(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null} = {}) {
-    // "Prognose" ist visuell EINE Linie ueber den ganzen Tag: fuer bereits vergangene Stunden (wo
-    // plannedHistory einen Wert hat) der zu ihrer Zeit juengste Planungsstand ("Alt", durchgezogen),
-    // fuer die Zukunft die aktuelle Prognose ("Neu", gestrichelt) - siehe Nutzer-Vorgabe, ersetzt die
-    // fruehere separate dritte Linie/Legende "Letzter Planungsstand". forecast/plannedHistory
-    // ueberschneiden sich fuer keine Stunde (siehe readBatterySocForecastVsActual), das Mergen ist
-    // deshalb konfliktfrei. Ob eine Stunde "vergangen" ist, wird - statt eines eigenen Flags - daran
+    // "Prognose" ist visuell EINE Linie ueber den ganzen Tag: fuer bereits vergangene Stunden der zu
+    // ihrer Zeit juengste Planungsstand (plannedHistory), fuer die Zukunft die aktuelle Prognose
+    // (forecast) - ersetzt die fruehere separate dritte Linie/Legende "Letzter Planungsstand".
+    // forecast/plannedHistory ueberschneiden sich fuer keine Stunde (siehe
+    // readBatterySocForecastVsActual), das Mergen ist deshalb konfliktfrei. Die GESAMTE Prognose-
+    // Linie ist gestrichelt, auch ihr plannedHistory-Abschnitt (Nutzer-Feedback: durchgezogen war sie
+    // optisch nicht von der ebenfalls durchgezogenen Ist-Linie zu unterscheiden, sobald beide
+    // auseinanderliefen) - Ob eine Stunde "vergangen" ist, wird - statt eines eigenen Flags - daran
     // erkannt, ob 'actual' dort einen Wert hat (bei jedem Aufrufer nur fuer bereits vergangene/
     // laufende Stunden befuellt).
     const prognose = plannedHistory ? labels.map((_, i) => (plannedHistory[i] ?? forecast[i])) : forecast;
-    const isHistoricalHour = i => actual[i] !== null && actual[i] !== undefined;
     const width = 600, height = 220;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -7311,9 +7312,9 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     }
     if (slopeColors) {
         // Nutzer-Vorgabe: Farbe zeigt die Wertrichtung (grau/rot/gruen, selbsterklaerend - keine
-        // eigene Legende dafuer noetig), Linienart unterscheidet Historisch/Prognose. "Planungsstand"
-        // ist jetzt Teil von "Prognose" (durchgezogener Abschnitt = "Alt"/vergangene Stunden,
-        // gestrichelt = "Neu"/Zukunft).
+        // eigene Legende dafuer noetig), Linienart unterscheidet Historisch/Prognose - durchgehend,
+        // auch fuer den plannedHistory-Abschnitt der Prognose-Linie (sonst optisch nicht von der
+        // Ist-Linie zu unterscheiden, Nutzer-Feedback).
         legendLineItem(false, 'Historisch');
         legendLineItem(true, 'Prognose');
     } else if (flatColor) {
@@ -7372,9 +7373,8 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     // Baut den Linienpfad einer Reihe, die Luecken (null) enthalten kann, als eine Folge einzelner
     // Segment-Pfade (statt eines einzigen mehrteiligen Pfads) - noetig, damit jedes Segment ueber
     // styleFor(i, v0, v1) seine EIGENE Farbe/Linienart bekommen kann (slopeColors: Farbe nach
-    // Wertrichtung; Prognose: durchgezogen/gestrichelt je nachdem, ob es eine vergangene oder
-    // zukuenftige Stunde verbindet, siehe isHistoricalHour). Eine Luecke ueberspringt einfach das
-    // betroffene Segment, wie es die alte "M/L"-Variante durch einen neuen Teilpfad tat.
+    // Wertrichtung; Prognose: immer gestrichelt, Ist immer durchgezogen). Eine Luecke ueberspringt
+    // einfach das betroffene Segment, wie es die alte "M/L"-Variante durch einen neuen Teilpfad tat.
     function buildSegmentedPath(values, styleFor) {
         const parts = [];
         for (let i = 0; i < values.length - 1; i++) {
@@ -7399,9 +7399,8 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     }
 
     const actualPath = buildSegmentedPath(actual, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-text)'), dashed: false}));
-    // "Prognose" (siehe prognose-Merge oben): durchgezogen ("Alt") fuer ein Segment, das bei einer
-    // bereits vergangenen Stunde beginnt, gestrichelt ("Neu") sonst.
-    const forecastPath = buildSegmentedPath(prognose, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-accent)'), dashed: !isHistoricalHour(i)}));
+    // "Prognose" (siehe prognose-Merge oben): immer gestrichelt, auch der plannedHistory-Abschnitt.
+    const forecastPath = buildSegmentedPath(prognose, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-accent)'), dashed: true}));
 
     const tickCount = Math.min(6, labels.length);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
@@ -7539,7 +7538,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
 // base_case.py / /dashboard/chart-data: opt_cost/opt_usage vs. base_cost/base_usage) auf
 // gemeinsamer Stundenachse. Bewusst eigene Funktion (wie buildPvForecastActualChart): zwei Reihen
 // ohne Luecken, Summen in der Legende, "(Beta)" im Titel.
-function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null} = {}) {
+function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false} = {}) {
     const width = 600, height = 220;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -7564,6 +7563,20 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
         if (!s || (!Number.isFinite(s.today) && !Number.isFinite(s.tomorrow))) return '';
         return ` (heute ${fmt(s.today || 0)} ${unit} | morgen ${fmt(s.tomorrow || 0)} ${unit})`;
     };
+
+    // Badge im Titel (Nutzer-Vorgabe): Differenz "ohne Optimierung" minus "optimiert" ueber den
+    // gesamten gezeigten Zeitraum. Bei den Stromkosten ist das eine echte Ersparnis - gruen
+    // hinterlegt, aber nur wenn tatsaechlich positiv (sonst neutral, strukturell sollte das laut
+    // Optimierer ohnehin nicht vorkommen, siehe compute_battery_grid_charge_actions-Nachbarkommentare
+    // zum Base-Case-Vergleich). Beim Stromverbrauch ist ein Mehrverbrauch durch die Optimierung der
+    // Normalfall, keine "Verschlechterung" - deshalb bewusst OHNE Hintergrundfarbe.
+    if (badgeLabel) {
+        const diff = seriesTotal('base', baseValues) - seriesTotal('opt', optValues);
+        const badge = document.createElement('span');
+        badge.className = 'dashboardChartTitleBadge' + (highlightPositive && diff > 0 ? ' positive' : '');
+        badge.textContent = `${badgeLabel}: ${fmt(diff)} ${unit}`;
+        titleEl.appendChild(badge);
+    }
 
     // Shyft-Plan gruen (Erfolg/aktiv, wie ueberall sonst im Addon), Base Case grau+gestrichelt (klar
     // als Vergleichs-/Referenzlinie erkennbar) - Nutzer-Feedback: beide Linien waren bisher farblich
@@ -9424,10 +9437,10 @@ async function loadDashboard() {
         if ((data.base_cost && data.base_cost.length) || (data.opt_cost && data.opt_cost.length)) {
             updateOrAppendDashboardWidget(container, 'kostenVergleich', buildComparisonChart(
                 'Deine Stromkosten / -erträge', '€', data.labels, data.opt_cost || [], data.base_cost || [],
-                {decimals: 2, summary: data.cost_summary}));
+                {decimals: 2, summary: data.cost_summary, badgeLabel: 'Ersparnis', highlightPositive: true}));
             updateOrAppendDashboardWidget(container, 'verbrauchVergleich', buildComparisonChart(
                 'Dein Stromverbrauch', 'kWh', data.labels, data.opt_usage || [], data.base_usage || [],
-                {decimals: 1, summary: data.usage_summary}));
+                {decimals: 1, summary: data.usage_summary, badgeLabel: 'Differenz'}));
         }
     } catch (err) {
         console.log(err);

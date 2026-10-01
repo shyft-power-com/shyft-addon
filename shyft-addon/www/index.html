@@ -1888,6 +1888,23 @@
             color: var(--color-text);
             margin-bottom: 0.5em;
         }
+        /* Badge hinter dem Chart-Titel (siehe buildComparisonChart) - Ersparnis/Differenz ueber den
+           gesamten gezeigten Zeitraum. .positive nur fuer die Stromkosten, und nur wenn der Wert
+           tatsaechlich eine Ersparnis ist (siehe dort) - Stromverbrauch bleibt bewusst ungefaerbt. */
+        .dashboardChartTitleBadge {
+            display: inline-block;
+            margin-left: 0.5em;
+            font-size: 0.75em;
+            font-weight: 600;
+            color: var(--color-text-secondary);
+            padding: 0.15em 0.6em;
+            border-radius: 999px;
+            vertical-align: middle;
+        }
+        .dashboardChartTitleBadge.positive {
+            color: var(--color-accent);
+            background: rgba(46, 204, 113, 0.15);
+        }
         .dashboardChartCaption {
             font-size: 0.85em;
             color: var(--color-text-secondary);
