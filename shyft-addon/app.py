@@ -1933,11 +1933,13 @@ def _hourly_state_actual(entity_id, midnight_local, current_hour_local, scale=1.
 def _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=None):
     """Gemeinsamer Response-Aufbau fuer die '<Kachel>: Prognose vs. Ist'-Endpunkte (siehe
     readBatterySocForecastVsActual, die die einzige mit zusaetzlichem plannedHistory bleibt und
-    deshalb nicht hierueber laeuft): gemeinsame Stundenachse ab 0 Uhr lokal, 'forecast' erst AB DER
-    ECHTEN aktuellen Stunde (vermeidet Ueberschneidung mit einer historischen Auswertung, siehe
-    readBatterySocForecastVsActual-Fix), 'actual' unveraendert je Stunde. action_names (optional):
-    Aktions-Indikator (siehe _action_hours_for) unter demselben Schluessel wie bei Ladestand
-    Heimspeicher ('actionHours')."""
+    deshalb nicht hierueber laeuft): gemeinsame Stundenachse ab 0 Uhr lokal, 'forecast' erst NACH der
+    ECHTEN aktuellen Stunde (nicht ab einschliesslich - die laufende Stunde hat hier immer schon einen
+    echten 'actual'-Wert, siehe _hourly_state_actual; ein zusaetzlicher, evtl. laengst veralteter
+    Prognosewert fuer dieselbe Stunde fuehrte sonst zu einem sichtbaren Sprung zwischen Ist und
+    Prognose GENAU an der 'Jetzt'-Stunde, Nutzer-Beobachtung am Warmwasser-Chart), 'actual'
+    unveraendert je Stunde. action_names (optional): Aktions-Indikator (siehe _action_hours_for)
+    unter demselben Schluessel wie bei Ladestand Heimspeicher ('actionHours')."""
     candidate_hours = set(forecast_by_hour) | set(actual_by_hour)
     all_hours = {h for h in candidate_hours if h >= midnight_local}
     if not all_hours:
@@ -1950,7 +1952,7 @@ def _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local
     for i in range(hour_count):
         hour = midnight_local + timedelta(hours=i)
         labels.append(hour.isoformat())
-        forecast.append(forecast_by_hour.get(hour) if hour >= current_hour_local else None)
+        forecast.append(forecast_by_hour.get(hour) if hour > current_hour_local else None)
         actual.append(actual_by_hour.get(hour))
     payload = {"status": "success", "labels": labels, "forecast": forecast, "actual": actual}
     if action_names is not None:
@@ -2183,8 +2185,12 @@ def readBatterySocForecastVsActual():
         # veraltet (der naechste laesst z.B. eine Stunde auf sich warten), kann seine erste Zeile
         # inzwischen schon in der echten Vergangenheit liegen. Ohne dieses Abschneiden wuerde so eine
         # Stunde gleichzeitig in Prognose UND plannedHistory auftauchen (Nutzer-Beobachtung) - Prognose
-        # zeigt bewusst nur ab der ECHTEN aktuellen Stunde, plannedHistory deckt die Vergangenheit ab.
-        forecast.append(forecast_by_hour.get(hour) if hour >= current_hour_local else None)
+        # zeigt bewusst nur NACH der ECHTEN aktuellen Stunde (nicht ab einschliesslich - die laufende
+        # Stunde hat immer schon einen echten 'actual'-Wert; ein zusaetzlicher, evtl. veralteter
+        # Prognosewert fuer dieselbe Stunde ergibt sonst einen sichtbaren Sprung zwischen Ist und
+        # Prognose GENAU an der 'Jetzt'-Stunde, Nutzer-Beobachtung am Warmwasser-Chart), plannedHistory
+        # deckt die Vergangenheit ab.
+        forecast.append(forecast_by_hour.get(hour) if hour > current_hour_local else None)
         actual.append(actual_by_hour.get(hour))
         planned_history.append(planned_history_by_hour.get(hour) if hour < current_hour_local else None)
 

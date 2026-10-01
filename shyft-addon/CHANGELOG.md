@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.219
+
+* **Fix: sichtbarer Sprung zwischen Ist und Prognose genau an der laufenden Stunde** (Nutzer-Beobachtung am Warmwasser-Chart, betraf auch Raumtemperatur/Ladestand Auto/Ladestand Heimspeicher/Sonstiger Verbraucher). Die laufende Stunde hat für diese Zustandssensoren immer schon einen echten `actual`-Wert; bisher wurde zusätzlich noch ein (teils längst veralteter) Prognosewert für dieselbe Stunde gezeigt, was wie ein Datensprung aussah. Prognose beginnt jetzt erst eine Stunde nach der aktuellen, nicht mehr ab einschließlich - im Chart entsteht dadurch eine kleine, bewusste Lücke an der „Jetzt"-Linie statt eines irreführenden Sprungs.
+
 ## 0.0.45.218
 
 * **„Jetzt"-Markierung jetzt auch im Strompreis-Chart** (und allen anderen über `buildLineChart` gezeichneten Karten, z.B. Außentemperatur/Warmwasser im Fallback) – gleicher gestrichelter senkrechter Strich wie bei den Prognose-vs-Ist-Charts (PV, Ladestände, …), bisher fehlte er dort.
