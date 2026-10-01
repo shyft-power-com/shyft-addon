@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.213
+
+* **Fix: „Laden verschieben“ war fälschlich grün statt grau.** Nutzer-Korrektur: „Laden verschieben“ bedeutet, dass die Batterie gerade NICHT lädt (wie „Entladen verschieben“ nicht entlädt) - beide zählen jetzt als „passiv“ (grau), nur noch das tatsächlich aktive Netzladen ist grün.
+
 ## 0.0.45.212
 
 * **Aktions-Legende heißt jetzt einfach „Aktion“** statt „Aktion geplant/ausgeführt“.

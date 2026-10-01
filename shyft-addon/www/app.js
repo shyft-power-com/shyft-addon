@@ -7134,12 +7134,13 @@ const TEMPERATURE_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: '
 const PERCENT_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 0.1};
 const ON_OFF_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 50};
 
-// Nutzer-Vorgabe: Batterie-Aktions-Hintergrund nach Kategorie eingefaerbt statt einheitlich -
-// gruen fuers Laden (Netzladen UND PV-Ueberschuss-Laden verschieben, siehe
-// BATTERY_ACTION_CATEGORY_BY_NAME in app.py), grau fuers "nicht entladen" (Entladen verschieben).
+// Nutzer-Vorgabe: Batterie-Aktions-Hintergrund nach Kategorie eingefaerbt statt einheitlich - gruen
+// NUR fuers aktive Netzladen, grau fuer "passiv" (sowohl Entladen verschieben als auch Laden
+// verschieben, siehe BATTERY_ACTION_CATEGORY_BY_NAME in app.py - Nutzer-Korrektur: "Laden verschieben
+// bedeutet, dass man nicht laedt").
 const BATTERY_ACTION_COLORS = {
-    charging: {color: 'var(--color-accent)', label: 'Aktion: Laden'},
-    not_discharging: {color: 'var(--color-text-secondary)', label: 'Aktion: nicht entladen'},
+    charging: {color: 'var(--color-accent)', label: 'Aktion: Netzladen'},
+    passive: {color: 'var(--color-text-secondary)', label: 'Aktion: nicht laden/entladen'},
 };
 
 function buildBatterySocForecastActualChart(labels, forecast, actual, actionHours, plannedHistory) {

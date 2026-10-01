@@ -7971,13 +7971,14 @@ def _action_hours_for(action_names, midnight_local, hour_count):
 
 
 # Ladestand Heimspeicher ist (Nutzer-Vorgabe) der einzige Aktions-Indikator mit mehreren Hintergrund-
-# farben statt einer einzigen: "charging" (Netzladen UND PV-Ueberschuss-Laden verschieben - beide
-# laden den Speicher) gruen, "not_discharging" (Entladen verschieben) grau. Siehe buildBatterySocForecastActualChart/
-# BATTERY_ACTION_COLORS fuer die Farben selbst.
+# farben statt einer einzigen: "charging" (nur Netzladen - aktiv geladen) gruen, "passive" (sowohl
+# Entladen verschieben als auch Laden verschieben - beides heisst "gerade NICHT aktiv ge-/entladen",
+# Nutzer-Korrektur: "Laden verschieben bedeutet, dass man nicht laedt") grau. Siehe
+# buildBatterySocForecastActualChart/BATTERY_ACTION_COLORS fuer die Farben selbst.
 BATTERY_ACTION_CATEGORY_BY_NAME = {
     BATTERY_GRID_CHARGE_ACTION_NAME: "charging",
-    BATTERY_CHARGE_SHIFT_ACTION_NAME: "charging",
-    BATTERY_DISCHARGE_SHIFT_ACTION_NAME: "not_discharging",
+    BATTERY_CHARGE_SHIFT_ACTION_NAME: "passive",
+    BATTERY_DISCHARGE_SHIFT_ACTION_NAME: "passive",
 }
 
 
