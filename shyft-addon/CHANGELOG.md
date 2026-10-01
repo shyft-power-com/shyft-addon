@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.222
+
+* **"Batterie-Aktion beenden": die Lade-/Entladeleistungslimit-Felder müssen dort nicht mehr (erneut) ausgefüllt werden** (Nutzer-Feedback). Beim Beenden setzt das Addon ohnehin automatisch genau die Entitäten zurück, die bei "Batterie netzladen", "Batterie-Laden verschieben (PV-Überschuss)" und "Batterie-Entladen verschieben" hinterlegt sind - eine erneute Auswahl hier war überflüssig und hätte nur suggeriert, es könnte eine andere Entität sein. Der "Testen"-Button bei "Batterie-Aktion beenden" ist jetzt zusätzlich deaktiviert (mit Begründung), bis diese drei anderen Batterie-Aktionstypen eingerichtet sind - ein Testklick vorher wäre ohnehin nur an einer fehlenden Entität gescheitert.
+
 ## 0.0.45.221
 
 * **Aktionsberechnung (Auto laden, Warmwasser, Heizung Soll-Temperatur, Verbraucher an, alle drei Batterie-Verschiebe-Aktionstypen) deckt jetzt den gesamten Optimierungszeitraum ab, nicht mehr nur die ersten zehn Stunden.** Die bisherige Zehn-Stunden-Grenze war reine (unbegründete) Datensparsamkeit - Charts mit Aktions-Hintergrundbalken (z.B. Ladestand Auto) können dadurch auch weiter in der Zukunft liegende, bereits geplante Aktionen anzeigen (behebt den gemeldeten Fall: eine für morgen 13 Uhr geplante Ladesession fehlte bisher im Chart). Die Gerätesteuerung-Tab-Liste selbst bleibt zur Übersichtlichkeit weiterhin auf die nächsten zehn Stunden begrenzt.

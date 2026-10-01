@@ -5365,18 +5365,23 @@ function buildBatteryCoupledEntityField(sensorKey, datalistId, onChange, suggest
 // Aktionstyp naechste zufaellig durch den Optimierer erneut UND dabei erfolgreich ausgeloest wurde.
 // checkmark/hint: vom Aufrufer (buildBatteryControlBlock) uebergebene Elemente aus dessen
 // Ueberschrift, nur fuer gegatete Aktionstypen gesetzt (siehe dort) - null bei "Batterie-Aktion
-// beenden", die kein Bereitschafts-Gating hat.
-function buildBatteryDirectTestRow(actionKey, checkmark, hint) {
+// beenden", die kein eigenes Bereitschafts-Gating hat (siehe aber blockedReason).
+// blockedReason (optional): "Batterie-Aktion beenden" setzt bei den anderen drei Batterie-
+// Aktionstypen die dort konfigurierte(n) Entitaet(en) zurueck (siehe execute_battery_direct) - ein
+// Testklick vor deren Einrichtung wuerde deshalb nur mit "Entitaet fehlt" scheitern. Button bleibt
+// dann dauerhaft deaktiviert, mit Begruendung statt der Live-Werte.
+function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
     const wrapper = document.createElement('div');
     wrapper.className = 'autoActionControl';
 
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = 'Testen';
+    if (blockedReason) button.disabled = true;
 
     const valuesDisplay = document.createElement('span');
     valuesDisplay.className = 'autoActionValue';
-    valuesDisplay.textContent = 'Lade Werte...';
+    valuesDisplay.textContent = blockedReason || 'Lade Werte...';
 
     const statusIcon = document.createElement('span');
     statusIcon.className = 'batteryTestStatusIcon';
@@ -5443,14 +5448,28 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint) {
     controls.appendChild(statusIcon);
     wrapper.appendChild(controls);
 
-    refreshValues();
+    if (!blockedReason) refreshValues();
     return wrapper;
+}
+
+// Fuer einen der drei "echten" Batterie-Aktionstypen (nicht battery_action_stop selbst): true, wenn
+// er entweder per Toggle deaktiviert ist (zaehlt dann nicht als Voraussetzung) oder sein jeweiliges
+// Pflichtfeld ausgefuellt ist (Direkt: das zugeordnete sensorMappings-Feld, siehe
+// BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS; HA-Automation: die hinterlegte Automation) - Grundlage fuer
+// die "Testen"-Sperre bei "Batterie-Aktion beenden" (siehe buildBatterySteuerungSection).
+function isBatteryDirectActionConfigured(actionKey) {
+    if (isActionToggleOff(actionKey)) return true;
+    const variant = (configData['controlVariant'] || {})[actionKey] || 'direct';
+    if (variant === 'ha_automation') return !!(configData['actorMappings'] || {})[actionKey];
+    return !isEntityMappingEmpty((configData['sensorMappings'] || {})[BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[actionKey]]);
 }
 
 // Ein einzelner Aktionstyp-Block innerhalb "Steuerung": Ueberschrift+Toggle, "Varianten"-Auswahl,
 // darunter je nach Variante entweder die Direkt-Steuerungsfelder (buildDirectFields liefert sie)
-// oder ein Automations-Feld.
-function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields) {
+// oder ein Automations-Feld. testBlockedReason (optional): wird die "Testen"-Zeile deaktiviert
+// weitergegeben (siehe buildBatteryDirectTestRow) - genutzt von "Batterie-Aktion beenden", solange
+// die anderen drei Batterie-Aktionstypen noch nicht eingerichtet sind.
+function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, testBlockedReason) {
     const wrapper = document.createElement('div');
     wrapper.className = 'autoActionControl';
 
@@ -5491,7 +5510,7 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields) 
     const directFields = document.createElement('div');
     directFields.style.display = variant === 'direct' ? '' : 'none';
     directFields.appendChild(buildDirectFields());
-    directFields.appendChild(buildBatteryDirectTestRow(actionKey, gated ? checkmark : null, gated ? hint : null));
+    directFields.appendChild(buildBatteryDirectTestRow(actionKey, gated ? checkmark : null, gated ? hint : null, testBlockedReason));
     wrapper.appendChild(directFields);
 
     const automationRow = buildAutomationEntityRow('HA-Automation auswählen',
@@ -5599,26 +5618,22 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
             return wrap;
         }));
 
+    // Die Lade-/Entladeleistungslimit-Entitaeten werden hier bewusst NICHT nochmal zur Auswahl
+    // angeboten (Nutzer-Feedback, analog zu "Steuerungs-Modi" oben) - execute_battery_direct setzt
+    // beim Beenden ohnehin automatisch genau die Entitaeten zurueck, die bei "Batterie netzladen",
+    // "Batterie-Laden verschieben (PV-Überschuss)" und "Batterie-Entladen verschieben" hinterlegt
+    // sind. Ein eigenes Testen dieser Aktion ergibt deshalb erst Sinn, wenn diese drei eingerichtet
+    // sind - vorher wuerde der Testklick nur mit "Entitaet fehlt" scheitern.
+    const otherBatteryActionKeys = ['battery_grid_charge', 'battery_discharge_shift', 'battery_charge_shift_pv_surplus'];
+    const othersConfigured = otherBatteryActionKeys.every(isBatteryDirectActionConfigured);
     container.appendChild(buildBatteryControlBlock('battery_action_stop', 'Batterie-Aktion beenden',
         'Setzt den Modus zurück und hebt die Lade-/Entladelimits wieder auf - wird ausgelöst, sobald eine der drei Aktionen oben endet.', () => {
             const wrap = document.createElement('div');
-            // Steuerungs-Modi wird bewusst NICHT nochmal angezeigt (Nutzer-Feedback) - dieselbe
-            // Entitaet ist schon bei "Batterie netzladen" gepflegt (gemeinsamer sensorMappings-
-            // Schluessel, siehe buildBatteryCoupledEntityField), eine erneute Auswahl hier waere
-            // ueberfluessig und wuerde nur suggerieren, es koennte eine andere sein.
             const modeOptions = batteryModeOptionsCache || [];
             const modeSelect = buildBatteryModeValueSelect('battery_mode_self_consumption_value', configData['batteryModeSelfConsumptionValue'], modeOptions);
             wrap.appendChild(buildLabeledRow('Modus zurückstellen auf "Eigenverbrauchsmaximierung"', 'Welcher Rohwert der Batterie-Modus-Entität den Normalbetrieb bedeutet (z.B. "Maximize Self Consumption").', modeSelect));
-            wrap.appendChild(buildLabeledRow('Netz-Ladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie netzladen".',
-                buildBatteryCoupledEntityField('battery_charge_limit_current', chargeLimitDatalistId, refresh,
-                    {entityId: pvSurplusChargeLimitEntity, siblingLabel: 'PV-Überschuss'})));
-            wrap.appendChild(buildLabeledRow('PV-Ladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie-Laden verschieben (PV-Überschuss)".',
-                buildBatteryCoupledEntityField('battery_charge_limit_current_pv_surplus', pvSurplusChargeLimitDatalistId, refresh,
-                    {entityId: netzladenChargeLimitEntity, siblingLabel: 'Netzladen'})));
-            wrap.appendChild(buildLabeledRow('Entladeleistung begrenzen', 'Dieselbe Entität wie bei "Batterie-Entladen verschieben".',
-                buildBatteryCoupledEntityField('battery_discharge_limit_current', dischargeLimitDatalistId, refresh)));
             return wrap;
-        }));
+        }, othersConfigured ? null : 'Bitte zuerst "Batterie netzladen", "Batterie-Laden verschieben (PV-Überschuss)" und "Batterie-Entladen verschieben" einrichten.'));
 
     // loadConfiguration() wartet bereits auf die Modus-Optionen, bevor ueberhaupt gerendert wird -
     // dieser Aufruf hier ist nur ein Sicherheitsnetz, falls battery_storage_command_mode erst
