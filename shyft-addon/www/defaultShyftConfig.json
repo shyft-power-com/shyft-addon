@@ -37,6 +37,7 @@
     "battery_charge_limit_current": "",
     "battery_charge_limit_current_pv_surplus": "",
     "battery_discharge_limit_current": "",
+    "battery_command_timeout": "",
     "heatpump_dhw_tank_temp": "",
     "heatpump_dhw_activated": "",
     "heatpump_dhw_on_off": "",

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.45.227
+
+* **Deaktivierte Aktionstypen werden in den Charts jetzt hellgrau statt grün/dunkelgrau dargestellt** (Nutzer-Feedback). Ist ein Aktionstyp per Toggle ausgeschaltet, plant der Optimierer trotzdem weiter damit (z.B. eine Warmwasser-Aufheizung im Prognoseverlauf), das Gerät wird aber nie wirklich angesteuert - bisher erschien eine für die Zukunft geplante, aber deaktivierte Aktion trotzdem als normale (grüne) Aktionsfläche, eine bereits abgelaufene gar nicht. Beide Fälle zeigen jetzt eine hellgraue Fläche samt eigenem Legenden-Eintrag „Aktion (deaktiviert)“ - bei der Batterie ersetzt das auch das bisherige Dunkelgrau von „Laden/Entladen verschieben“, wenn deren Aktionstyp deaktiviert ist.
+
+## 0.0.45.226
+
+* **„Command Timeout“ der Batterie ist in der Konfiguration wieder zuordenbar** (Nutzer-Vorgabe) - optionales Feld unter „Batterie netzladen“ und „Batterie-Entladen verschieben“ (dieselbe Entität, zwei Anzeigeorte). Ohne Zuordnung blieb der Standard-Timeout des Wechselrichters (SolarEdge: 3600 s) aktiv, sodass ein Befehl über mehrere Stunden hinweg nach spätestens einer Stunde zurückfiel. Mit Zuordnung setzt das Addon beim Start 60 Min (Netzladen) bzw. 10 h (Entladen verschieben).
+
 ## 0.0.45.225
 
 * **Fix: "Bitte Gerätesteuerung testen" blieb sichtbar, während gerade ein Test lief** (Nutzer-Feedback) - der rote Hinweis wird jetzt für die Dauer des Testklicks ausgeblendet und danach wie gehabt passend zum Testergebnis wieder ein-/ausgeblendet.

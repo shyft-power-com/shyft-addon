@@ -2090,7 +2090,9 @@ def readSonstigesGeraetForecastVsActual():
             hour += timedelta(hours=1)
 
     action_hours = _action_hours_for(CONSUMER_ACTION_NAMES, midnight_local, SONSTIGER_VERBRAUCHER_FORECAST_HOURS)
-    forecast_by_hour = {midnight_local + timedelta(hours=i): (100.0 if covered else 0.0) for i, covered in enumerate(action_hours)}
+    # Nur "active" zaehlt als eingeschaltet - ein "deactivated" (Aktionstyp per Toggle aus) wird vom
+    # Optimierer zwar weiter eingeplant, aber nie wirklich geschaltet (siehe _action_hours_for).
+    forecast_by_hour = {midnight_local + timedelta(hours=i): (100.0 if category == "active" else 0.0) for i, category in enumerate(action_hours)}
     return jsonify(_forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=CONSUMER_ACTION_NAMES))
 
 
@@ -8038,17 +8040,21 @@ CONSUMER_ACTION_NAMES = {OD_ACTION_NAME}
 
 
 def _action_hours_for(action_names, midnight_local, hour_count):
-    """Je Stunde ab midnight_local (hour_count Stunden, lokale Zeitzone): True, wenn eine Aktion mit
-    Action Name in action_names sie abdeckt - fuer bereits vergangene/laufende Stunden nur, wenn die
-    Aktion TATSAECHLICH ausgefuehrt wurde/wird (Execution Status "yes, started" waehrend sie laeuft,
-    "yes, finished" nach normalem Ende oder "yes, not finished" nach einem fehlgeschlagenen Beenden-
-    Versuch - dieselbe Bedingung wie "was_really_started" beim Ablauf einer Aktion; NICHT nur Status
-    "aktiv", das traegt eine Aktion der laufenden Stunde schon vor dem eigentlichen Ausfuehren, siehe
-    compute_battery_charge_shift_actions), fuer kommende Stunden aus dem, was der letzte
-    Optimierungslauf plant (Status "geplant"). Liest den vollstaendigen, nie beschnittenen lokalen
-    Store (_read_computed_actions) - der haelt auch laengst beendete Aktionen weiterhin vor."""
+    """Je Stunde ab midnight_local (hour_count Stunden, lokale Zeitzone): "active", wenn eine Aktion
+    mit Action Name in action_names sie abdeckt - fuer bereits vergangene/laufende Stunden nur, wenn
+    die Aktion TATSAECHLICH ausgefuehrt wurde/wird (Execution Status "yes, started" waehrend sie
+    laeuft, "yes, finished" nach normalem Ende oder "yes, not finished" nach einem fehlgeschlagenen
+    Beenden-Versuch - dieselbe Bedingung wie "was_really_started" beim Ablauf einer Aktion; NICHT nur
+    Status "aktiv", das traegt eine Aktion der laufenden Stunde schon vor dem eigentlichen Ausfuehren,
+    siehe compute_battery_charge_shift_actions), fuer kommende Stunden aus dem, was der letzte
+    Optimierungslauf plant (Status "geplant"). "deactivated" (Nutzer-Feedback), wenn der Aktionstyp
+    per Toggle aus ist (Execution Status "no, deactivated", siehe is_action_type_enabled in
+    compute_dhw_actions/compute_od_actions/...) - der Optimierer plant dann trotzdem weiter damit
+    (z.B. eine Warmwasser-Aufheizung im T_HW-Prognoseverlauf), das Geraet wird aber nie wirklich
+    angesteuert; sonst None. Liest den vollstaendigen, nie beschnittenen lokalen Store
+    (_read_computed_actions) - der haelt auch laengst beendete Aktionen weiterhin vor."""
     hours = [midnight_local + timedelta(hours=i) for i in range(hour_count)]
-    covered = [False] * hour_count
+    covered = [None] * hour_count
     try:
         actions = _read_computed_actions()
     except Exception as e:
@@ -8057,9 +8063,11 @@ def _action_hours_for(action_names, midnight_local, hour_count):
     for action in actions:
         if action.get("Action Name") not in action_names:
             continue
-        really_ran_or_running = action.get("Execution Status") in ("yes, started", "yes, not finished", "yes, finished")
+        execution_status = action.get("Execution Status")
+        deactivated = execution_status == "no, deactivated"
+        really_ran_or_running = execution_status in ("yes, started", "yes, not finished", "yes, finished")
         planned = (action.get("Status") or "").lower() == "geplant"
-        if not (really_ran_or_running or planned):
+        if not (really_ran_or_running or planned or deactivated):
             continue
         start_ms, end_ms = action.get("Date Start"), action.get("Date End")
         if start_ms is None:
@@ -8069,7 +8077,7 @@ def _action_hours_for(action_names, midnight_local, hour_count):
                   if end_ms is not None else start_dt + timedelta(hours=1))
         for i, hour in enumerate(hours):
             if start_dt < hour + timedelta(hours=1) and end_dt > hour:
-                covered[i] = True
+                covered[i] = "deactivated" if deactivated else "active"
     return covered
 
 
@@ -8087,9 +8095,12 @@ BATTERY_ACTION_CATEGORY_BY_NAME = {
 
 
 def _battery_action_hours(midnight_local, hour_count):
-    """Wie _action_hours_for, aber statt True/False je Stunde deren Aktions-KATEGORIE (siehe
-    BATTERY_ACTION_CATEGORY_BY_NAME) oder None - der Ladestand-Heimspeicher-Chart zeigt je Kategorie
-    eine eigene Hintergrundfarbe, anders als die uebrigen (einfarbigen) Aktions-Indikatoren."""
+    """Wie _action_hours_for, aber statt "active"/"deactivated" je Stunde deren Aktions-KATEGORIE
+    (siehe BATTERY_ACTION_CATEGORY_BY_NAME: "charging"/"passive") oder None - der Ladestand-
+    Heimspeicher-Chart zeigt je Kategorie eine eigene Hintergrundfarbe, anders als die uebrigen
+    (einfarbigen) Aktions-Indikatoren. "deactivated" (Nutzer-Feedback) ueberschreibt charging/passive,
+    wenn der Aktionstyp per Toggle aus ist (Execution Status "no, deactivated") - siehe
+    _action_hours_for-Docstring fuer die Begruendung."""
     hours = [midnight_local + timedelta(hours=i) for i in range(hour_count)]
     covered = [None] * hour_count
     try:
@@ -8101,9 +8112,11 @@ def _battery_action_hours(midnight_local, hour_count):
         category = BATTERY_ACTION_CATEGORY_BY_NAME.get(action.get("Action Name"))
         if category is None:
             continue
-        really_ran_or_running = action.get("Execution Status") in ("yes, started", "yes, not finished", "yes, finished")
+        execution_status = action.get("Execution Status")
+        deactivated = execution_status == "no, deactivated"
+        really_ran_or_running = execution_status in ("yes, started", "yes, not finished", "yes, finished")
         planned = (action.get("Status") or "").lower() == "geplant"
-        if not (really_ran_or_running or planned):
+        if not (really_ran_or_running or planned or deactivated):
             continue
         start_ms, end_ms = action.get("Date Start"), action.get("Date End")
         if start_ms is None:
@@ -8113,7 +8126,7 @@ def _battery_action_hours(midnight_local, hour_count):
                   if end_ms is not None else start_dt + timedelta(hours=1))
         for i, hour in enumerate(hours):
             if start_dt < hour + timedelta(hours=1) and end_dt > hour:
-                covered[i] = category
+                covered[i] = "deactivated" if deactivated else category
     return covered
 
 

@@ -66,6 +66,10 @@ const helpinformation = {
         label: 'Batterie: Aktuelle max. Entladeleistung',
         description: ' Leistung (in kW), die an der Batterie als aktuelle Begrenzung für die Entladeleistung eingestellt ist.'
     },
+    'battery_command_timeout': {
+        label: 'Batterie: Command Timeout (Watchdog)',
+        description: ' Optionale Zahl-Entität (in Sekunden), nach der der Wechselrichter einen Steuerbefehl der Batterie selbst verwirft und in den Normalbetrieb zurückfällt. Das Addon setzt sie beim Start von "Batterie netzladen" auf 60 Minuten und von "Batterie-Entladen verschieben" auf 10 Stunden.'
+    },
     'heatpump_dhw_tank_temp': {
         label: 'Temperatur Warmwassertank',
         description: ' Die aktuelle Temperatur im Warmwassertank (in °C)'
@@ -190,6 +194,9 @@ const SENSOR_ENTITY_FILTERS = {
     'battery_charge_limit_current': {type: 'writable_power'},
     'battery_charge_limit_current_pv_surplus': {type: 'writable_power'},
     'battery_discharge_limit_current': {type: 'writable_power'},
+    // Optionaler "Command Timeout"/Watchdog der Batterie: das Addon SCHREIBT hierueber die Dauer
+    // (s), nach der der Wechselrichter einen Steuerbefehl selbst verwirft - settable Zahl-Entitaet.
+    'battery_command_timeout': {type: 'domain', values: ['number', 'input_number']},
     // Temperatur Warmwassertank ist eine reine Messung (nicht schreibbar); die Solltemperatur ist
     // genau umgekehrt - eine settable Entitaet (number./input_number./climate.), keine Anzeige.
     'heatpump_dhw_tank_temp': {type: 'readonly_temperature'},
@@ -225,6 +232,7 @@ const SENSOR_MATCH_KEYWORDS = {
     'battery_charge_limit_current': ['charge_limit', 'lade_limit', 'ladestrom', 'max_charge', 'charging_current'],
     'battery_charge_limit_current_pv_surplus': ['charge_limit', 'lade_limit', 'ladestrom', 'max_charge', 'charging_current'],
     'battery_discharge_limit_current': ['discharge_limit', 'entlade_limit', 'entladestrom', 'max_discharge', 'discharging_current'],
+    'battery_command_timeout': ['command_timeout', 'timeout', 'watchdog'],
     'heatpump_dhw_tank_temp': ['ww', 'dhw', 'warmwasser', 'boiler', 'tank', 'hot_water'],
     'heatpump_dhw_target_temp': ['ww_soll', 'dhw_target', 'warmwasser_soll', 'boiler_target', 'hot_water_target'],
     'heatpump_dhw_activated': ['ww', 'dhw', 'warmwasser', 'einmalige', 'one_time', 'boost'],
@@ -5592,6 +5600,14 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
     populateSensorDatalist(dischargeLimitDatalist, candidateEntities, 'battery_discharge_limit_current', {});
     container.appendChild(dischargeLimitDatalist);
 
+    const commandTimeoutDatalistId = 'entityOptions_batterie_steuerung_command_timeout';
+    const commandTimeoutDatalist = document.createElement('datalist');
+    commandTimeoutDatalist.id = commandTimeoutDatalistId;
+    populateSensorDatalist(commandTimeoutDatalist, candidateEntities, 'battery_command_timeout', {});
+    container.appendChild(commandTimeoutDatalist);
+
+    const commandTimeoutHelp = 'Optional: Entität "Command Timeout" deines Wechselrichters (Zahlenwert in Sekunden). Das Addon setzt sie beim Start der Aktion auf ';
+
     const netzladenChargeLimitEntity = (configData['sensorMappings'] || {})['battery_charge_limit_current'];
     const pvSurplusChargeLimitEntity = (configData['sensorMappings'] || {})['battery_charge_limit_current_pv_surplus'];
 
@@ -5609,6 +5625,8 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
             const wrap = document.createElement('div');
             wrap.appendChild(buildLabeledRow('Entladeleistung begrenzen', 'Entität, über die das Addon die Entladeleistung der Batterie begrenzt (Zahlenwert in kW).',
                 buildBatteryCoupledEntityField('battery_discharge_limit_current', dischargeLimitDatalistId, refresh)));
+            wrap.appendChild(buildLabeledRow('Command Timeout (optional)', commandTimeoutHelp + '10 Stunden, damit der Befehl auch über mehrere Stunden hinweg stehen bleibt - ohne diese Entität gilt der Standard-Timeout des Wechselrichters (bei SolarEdge 1 Stunde).',
+                buildBatteryCoupledEntityField('battery_command_timeout', commandTimeoutDatalistId, refresh)));
             return wrap;
         }));
 
@@ -5623,6 +5641,8 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
             wrap.appendChild(buildLabeledRow('Netz-Ladeleistung begrenzen', 'Entität, über die das Addon die Ladeleistung der Batterie beim Netzladen begrenzt (Zahlenwert in kW). Bei manchen Wechselrichtern dieselbe Entität wie "PV-Ladeleistung begrenzen" bei "Batterie-Laden verschieben (PV-Überschuss)", bei anderen eine eigene.',
                 buildBatteryCoupledEntityField('battery_charge_limit_current', chargeLimitDatalistId, refresh,
                     {entityId: pvSurplusChargeLimitEntity, siblingLabel: 'PV-Überschuss'})));
+            wrap.appendChild(buildLabeledRow('Command Timeout (optional)', commandTimeoutHelp + '60 Minuten - ohne diese Entität gilt der Standard-Timeout des Wechselrichters.',
+                buildBatteryCoupledEntityField('battery_command_timeout', commandTimeoutDatalistId, refresh)));
             return wrap;
         }));
 
@@ -6805,19 +6825,25 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     }
 
     // Aktions-Indikator-Legende (siehe actionBandsMarkup unten) - eigener Eintrag nur, wenn der
-    // Aufrufer ueberhaupt Aktionsstunden mitgibt.
+    // Aufrufer ueberhaupt Aktionsstunden mitgibt. "Aktion (deaktiviert)" (Nutzer-Feedback) nur, wenn
+    // tatsaechlich eine deaktivierte Stunde vorkommt - der Aktionstyp ist dann per Toggle aus, der
+    // Optimierer plant trotzdem weiter damit, das Geraet wird aber nie wirklich angesteuert.
     if (actionHours) {
         const legend = document.createElement('div');
         legend.className = 'dashboardChartLegend';
-        const item = document.createElement('span');
-        item.className = 'dashboardChartLegendItem';
-        const dot = document.createElement('span');
-        dot.className = 'dashboardChartLegendDot';
-        dot.style.background = 'var(--color-accent)';
-        dot.style.opacity = ACTION_BAND_OPACITY;
-        item.appendChild(dot);
-        item.appendChild(document.createTextNode('Aktion'));
-        legend.appendChild(item);
+        function addActionLegendItem(color, label) {
+            const item = document.createElement('span');
+            item.className = 'dashboardChartLegendItem';
+            const dot = document.createElement('span');
+            dot.className = 'dashboardChartLegendDot';
+            dot.style.background = color;
+            dot.style.opacity = ACTION_BAND_OPACITY;
+            item.appendChild(dot);
+            item.appendChild(document.createTextNode(label));
+            legend.appendChild(item);
+        }
+        addActionLegendItem('var(--color-accent)', 'Aktion');
+        if (actionHours.includes('deactivated')) addActionLegendItem('var(--color-border)', 'Aktion (deaktiviert)');
         wrapper.appendChild(legend);
     }
 
@@ -7084,10 +7110,12 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     let actionBandsMarkup = '';
     if (actionHours) {
         for (let i = 0; i < labels.length; i++) {
-            if (!actionHours[i]) continue;
+            const category = actionHours[i];
+            if (!category) continue;
             const xStart = paddingLeft + (i / lastIndex) * plotWidth;
             const xEnd = i < lastIndex ? paddingLeft + ((i + 1) / lastIndex) * plotWidth : (width - paddingRight);
-            actionBandsMarkup += `<rect x="${xStart.toFixed(1)}" y="${paddingTop}" width="${(xEnd - xStart).toFixed(1)}" height="${plotHeight.toFixed(1)}" fill="var(--color-accent)" opacity="${ACTION_BAND_OPACITY}" />`;
+            const color = category === 'deactivated' ? 'var(--color-border)' : 'var(--color-accent)';
+            actionBandsMarkup += `<rect x="${xStart.toFixed(1)}" y="${paddingTop}" width="${(xEnd - xStart).toFixed(1)}" height="${plotHeight.toFixed(1)}" fill="${color}" opacity="${ACTION_BAND_OPACITY}" />`;
         }
     }
 
@@ -7223,6 +7251,9 @@ const ON_OFF_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: 'var(-
 const BATTERY_ACTION_COLORS = {
     charging: {color: 'var(--color-accent)', label: 'Aktion: Netzladen'},
     passive: {color: 'var(--color-text-secondary)', label: 'Aktion: nicht laden/entladen'},
+    // Aktionstyp per Toggle aus (Nutzer-Feedback) - heller als "passive", damit eine wirklich
+    // deaktivierte Stunde nicht mit einer bewusst passiven (aber aktiven Plan-)Stunde verwechselt wird.
+    deactivated: {color: 'var(--color-border)', label: 'Aktion (deaktiviert)'},
 };
 
 function buildBatterySocForecastActualChart(labels, forecast, actual, actionHours, plannedHistory) {
@@ -7346,6 +7377,9 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
         }
     } else if (actionHours) {
         legendDotItem('var(--color-accent)', 'Aktion', ACTION_BAND_OPACITY);
+        // Aktionstyp per Toggle aus (Nutzer-Feedback) - der Optimierer plant trotzdem weiter damit,
+        // das Geraet wird aber nie wirklich angesteuert, siehe _action_hours_for in app.py.
+        if (actionHours.includes('deactivated')) legendDotItem('var(--color-border)', 'Aktion (deaktiviert)', ACTION_BAND_OPACITY);
     }
     wrapper.appendChild(legend);
 
@@ -7443,8 +7477,12 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
         for (let i = 0; i < labels.length; i++) {
             if (!actionHours[i]) continue;
             // actionColors (nur Ladestand Heimspeicher): actionHours[i] ist dann die Kategorie
-            // (z.B. "charging"/"not_discharging") statt true - eigene Farbe je Kategorie.
-            const color = actionColors ? (actionColors[actionHours[i]] || {}).color || 'var(--color-accent)' : 'var(--color-accent)';
+            // (z.B. "charging"/"passive"/"deactivated") statt "active" - eigene Farbe je Kategorie.
+            // Ohne actionColors gibt es nur "active" (gruen) und "deactivated" (hellgrau, Nutzer-
+            // Feedback: Aktionstyp per Toggle aus - der Optimierer plant trotzdem weiter damit).
+            const color = actionColors
+                ? (actionColors[actionHours[i]] || {}).color || 'var(--color-accent)'
+                : (actionHours[i] === 'deactivated' ? 'var(--color-border)' : 'var(--color-accent)');
             const xStart = xFor(i);
             const xEnd = i < lastIndex ? xFor(i + 1) : (width - paddingRight);
             actionBandsMarkup += `<rect x="${xStart.toFixed(1)}" y="${paddingTop}" width="${(xEnd - xStart).toFixed(1)}" height="${plotHeight.toFixed(1)}" fill="${color}" opacity="${ACTION_BAND_OPACITY}" />`;
