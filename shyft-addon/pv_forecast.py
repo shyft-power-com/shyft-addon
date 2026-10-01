@@ -64,17 +64,19 @@ SAFETY_OFFSET_KW = 0.1
 CALIBRATION_ALPHA = 0.25
 # Nur Stunden mit belastbarer Einstrahlung fliessen in die m2-Anpassung ein (sonst ist
 # gemessen / (irr * eta) numerisch instabil: bei kleinem irr_avg verstaerkt die Division jedes
-# Messrauschen extrem - frueher 50 W/m^2, das war in der Praxis noch zu niedrig (Nutzer-Beobachtung:
-# "362 kWh" PV-Prognose durch eine einzelne verzerrte Stunden-Kalibrierung, vermutlich an einer
-# Morgen-/Abendstunde knapp ueber der alten Schwelle). Auf 150 W/m^2 angehoben.
-CALIBRATION_MIN_IRRADIANCE_WM2 = 150
+# Messrauschen staerker). Die eigentliche Ursache der "362 kWh"-PV-Prognose war aber keine
+# Einstrahlungs-Numerik, sondern eine kontaminierte Messung: der PV-Sensor zaehlt bei vielen Nutzern
+# (HA-Vorlage aus Wechselrichter- + Batterie-DC) Netzladen-Leistung faelschlich als PV-Ertrag mit -
+# siehe _exclude_grid_charge_from_pv_history/_grid_charge_intervals in app.py, die genau diese
+# Stunden jetzt schon vor der Kalibrierung herausfiltern. Schwelle bleibt deshalb nah am
+# urspruenglichen Wert (Nutzer-Vorgabe: 150 War zu konservativ, haette zu viele echte bewoelkte
+# Stunden ausgeschlossen).
+CALIBRATION_MIN_IRRADIANCE_WM2 = 50
 # Zusaetzliche Ausreisser-Bremse: ein m2_implied, das mehr als CALIBRATION_MAX_IMPLIED_RATIO ueber
 # oder unter dem AKTUELLEN m2[hour] liegt, fliesst NICHT per EWMA ein (wird komplett uebersprungen,
-# auch nicht gedaempft) - ein einzelner Messwert-Ausreisser (Wolkenrand-Lensing-Effekt, kurzzeitiger
-# Sensor-Spike) kann sonst trotz EWMA-Daempfung ueber mehrere Kalibrierungslaeufe hinweg immer wieder
-# nachwirken, wenn er sich wiederholt (z.B. an aehnlichen Morgenstunden). Noch nie kalibrierte
-# Stunden (m2[hour] == 0, z.B. nach from_default) sind davon ausgenommen - da gibt es keinen
-# sinnvollen Referenzwert zum Vergleichen.
+# auch nicht gedaempft) - zweites Sicherheitsnetz fuer Faelle, die die Netzladen-Filterung oben nicht
+# abdeckt (z.B. ein einzelner echter Sensor-Spike). Noch nie kalibrierte Stunden (m2[hour] == 0, z.B.
+# nach from_default) sind davon ausgenommen - da gibt es keinen sinnvollen Referenzwert zum Vergleichen.
 CALIBRATION_MAX_IMPLIED_RATIO = 3
 CALIBRATION_SETUP_DAYS = 7
 

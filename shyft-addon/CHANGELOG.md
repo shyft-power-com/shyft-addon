@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.216
+
+* **Tatsächliche Ursache der „362 kWh"-PV-Prognose gefunden: Netzladen wird vom PV-Sensor fälschlich als Solarertrag gezählt.** Der PV-Produktionssensor ist eine Home-Assistant-Vorlage aus Wechselrichter-DC + Batterie-DC-Leistung - das setzt voraus, dass jede Batterieladung aus PV-Überschuss stammt. Lädt die Batterie stattdessen per „Batterie netzladen" aus dem Netz (eine normale, gewollte Shyft-Aktion, oft zu ähnlichen Tageszeiten), zählt die Vorlage die Netzladeleistung trotzdem als PV-Ertrag mit. Das speist sich direkt in die PV-Kalibrierung ein und verstärkt sich an diesen wiederkehrenden Stunden Tag für Tag, da nie genug Zeit zum Abklingen bleibt, bevor die nächste Netzladung erneut dieselbe Stunde verzerrt. Fix: Zeitfenster mit tatsächlich ausgeführtem Netzladen werden jetzt vor der Kalibrierung aus der PV-Sensorhistorie herausgefiltert (wie ein Sensorausfall behandelt), nicht erst nachträglich geglättet.
+* Einstrahlungs-Schwelle für die Kalibrierung wieder auf 50 W/m² gesenkt (zwischenzeitlich auf 150 angehoben) - mit der obigen Filterung ist das nicht mehr nötig, und 150 hätte zu viele echte, bewölkte Kalibrierungs-Stunden ausgeschlossen. Die Ausreißer-Ratio-Bremse (max. 3-fache Abweichung pro Lauf) aus 0.0.45.215 bleibt als zweites Sicherheitsnetz bestehen.
+
 ## 0.0.45.215
 
 * **Zurückgerollt:** die in 0.0.45.214 eingeführte Plausibilitätsprüfung für die PV-Prognose (Nutzer-Feedback: verschleiert echte Fehler, statt sie sichtbar zu machen).
