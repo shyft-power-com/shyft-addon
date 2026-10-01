@@ -9188,47 +9188,6 @@ def _pv_power_history_pairs(pv_entity_id, days):
     return pairs
 
 
-def _grid_charge_intervals():
-    """Zeitfenster (UTC-aware (start, end)-Paare), in denen 'Batterie netzladen' TATSAECHLICH aktiv
-    war/ist (dieselbe "really_ran_or_running"-Bedingung wie in _action_hours_for). Grund: der PV-
-    Produktionssensor ist bei vielen Nutzern eine HA-Vorlage aus Wechselrichter-DC + Batterie-DC
-    (siehe deren Template), unter der Annahme, jede Batterieladung stamme aus PV-Ueberschuss - beim
-    Netzladen stimmt das nicht, die Vorlage zaehlt dann die Netzladeleistung faelschlich als PV-
-    Ertrag mit. Diese Fenster werden aus der PV-Kalibrierung ausgeschlossen (siehe
-    calibrate_pv_forecast), sonst haelt der Optimierer jede Netzladen-Aktion faelschlich fuer PV-
-    Ertrag, und da Netzladen-Zeiten (billige Strompreise) sich Tag fuer Tag an aehnlichen Stunden
-    wiederholen, schaukelt sich die Kalibrierung fuer genau diese Stunden systematisch immer weiter
-    hoch (Nutzer-Beobachtung: "362 kWh"-PV-Prognose durch einzelne Stunden >100 kW)."""
-    try:
-        actions = _read_computed_actions()
-    except Exception as e:
-        print("[Shyft] Netzladen-Fenster (fuer PV-Kalibrierungs-Ausschluss) konnten nicht gelesen werden:", repr(e))
-        return []
-    intervals = []
-    for action in actions:
-        if action.get("Action Name") != BATTERY_GRID_CHARGE_ACTION_NAME:
-            continue
-        if action.get("Execution Status") not in ("yes, started", "yes, not finished", "yes, finished"):
-            continue
-        start_ms, end_ms = action.get("Date Start"), action.get("Date End")
-        if start_ms is None:
-            continue
-        start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
-        end_dt = (datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc)
-                  if end_ms is not None else start_dt + timedelta(hours=1))
-        intervals.append((start_dt, end_dt))
-    return intervals
-
-
-def _exclude_grid_charge_from_pv_history(pairs):
-    "Setzt jeden PV-Messpunkt innerhalb eines Netzladen-Fensters (siehe _grid_charge_intervals) auf None - behandelt ihn wie einen Sensorausfall (_hourly_measured_kw beendet dort die Gueltigkeit des vorherigen Werts, statt die kontaminierte Stunde als echten PV-Ertrag zu werten)."
-    intervals = _grid_charge_intervals()
-    if not intervals:
-        return pairs
-    return [(ts, None if (value is not None and any(start <= ts < end for start, end in intervals)) else value)
-            for ts, value in pairs]
-
-
 def calibrate_pv_forecast(from_default=False):
     """Kalibriert das m2-Aequivalent-Profil neu. Ohne from_default: taeglicher 22:00-Lauf mit den
     Messwerten des laufenden Tages. Mit from_default: Erstkalibrierung ueber pv_forecast.CALIBRATION_SETUP_DAYS
@@ -9245,7 +9204,6 @@ def calibrate_pv_forecast(from_default=False):
     if not pairs:
         print("[Shyft] PV-Kalibrierung: keine Historie, uebersprungen.")
         return
-    pairs = _exclude_grid_charge_from_pv_history(pairs)
     pv_forecast.calibrate(pairs, days=days, from_default=from_default)
 
 

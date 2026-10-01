@@ -1,9 +1,8 @@
 # Changelog
 
-## 0.0.45.216
+## 0.0.45.217
 
-* **Tatsächliche Ursache der „362 kWh"-PV-Prognose gefunden: Netzladen wird vom PV-Sensor fälschlich als Solarertrag gezählt.** Der PV-Produktionssensor ist eine Home-Assistant-Vorlage aus Wechselrichter-DC + Batterie-DC-Leistung - das setzt voraus, dass jede Batterieladung aus PV-Überschuss stammt. Lädt die Batterie stattdessen per „Batterie netzladen" aus dem Netz (eine normale, gewollte Shyft-Aktion, oft zu ähnlichen Tageszeiten), zählt die Vorlage die Netzladeleistung trotzdem als PV-Ertrag mit. Das speist sich direkt in die PV-Kalibrierung ein und verstärkt sich an diesen wiederkehrenden Stunden Tag für Tag, da nie genug Zeit zum Abklingen bleibt, bevor die nächste Netzladung erneut dieselbe Stunde verzerrt. Fix: Zeitfenster mit tatsächlich ausgeführtem Netzladen werden jetzt vor der Kalibrierung aus der PV-Sensorhistorie herausgefiltert (wie ein Sensorausfall behandelt), nicht erst nachträglich geglättet.
-* Einstrahlungs-Schwelle für die Kalibrierung wieder auf 50 W/m² gesenkt (zwischenzeitlich auf 150 angehoben) - mit der obigen Filterung ist das nicht mehr nötig, und 150 hätte zu viele echte, bewölkte Kalibrierungs-Stunden ausgeschlossen. Die Ausreißer-Ratio-Bremse (max. 3-fache Abweichung pro Lauf) aus 0.0.45.215 bleibt als zweites Sicherheitsnetz bestehen.
+* **Zurückgerollt:** der Netzladen-Ausschluss aus 0.0.45.216 für die PV-Kalibrierung. Nutzer-Korrektur: Die als Ursache vermutete Sensor-Vorlage ist bewusst so gebaut, dass sie reine PV-Leistung liefert (Korrektur eines bekannten Messfehlers der reinen Modbus-DC-Summe) - keine Vermischung mit Netzladen. Die eigentliche Ursache der „362 kWh"-PV-Prognose ist damit weiterhin ungeklärt; es wird nichts geändert, bis sie wirklich feststeht. Bleibt bestehen: die in 0.0.45.215 eingeführte Ausreißer-Ratio-Bremse (max. 3-fache Abweichung pro Kalibrierungslauf) und die 150-W/m²-Einstrahlungs-Schwelle.
 
 ## 0.0.45.215
 
