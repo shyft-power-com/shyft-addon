@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.214
+
+* **Fix: PV-Prognose zeigte wiederholt physikalisch unmögliche Ausreißer** (Nutzer-Beobachtung: „362 kWh für morgen“, einzelne Stunden über 100 kW). Der gecachte Optimierungslauf übernahm diese Werte unverändert; sie werden jetzt gegen eine frisch berechnete, garantiert plausible Referenz geprüft und bei Überschreitung (mehr als das 3-fache, und absolut über 1 kW) durch diese Referenz ersetzt, statt unverändert angezeigt zu werden.
+* **Fix: „Sonstiger Verbraucher“-Chart erschien weiterhin, obwohl das Gerät aus der Kachel entfernt war.** Geprüft wurde nur die (dabei bestehen bleibende) Sensor-Zuordnung, nicht die eigentliche Geräte-Zuordnung (`integrationMappings`) - dasselbe Muster, das an anderer Stelle im Code bereits für genau diesen Fall vorgesehen ist.
+
 ## 0.0.45.213
 
 * **Fix: „Laden verschieben“ war fälschlich grün statt grau.** Nutzer-Korrektur: „Laden verschieben“ bedeutet, dass die Batterie gerade NICHT lädt (wie „Entladen verschieben“ nicht entlädt) - beide zählen jetzt als „passiv“ (grau), nur noch das tatsächlich aktive Netzladen ist grün.

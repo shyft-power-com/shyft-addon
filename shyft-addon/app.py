@@ -72,6 +72,16 @@ DASHBOARD_CACHE_PATH = "/data/dashboard_cache.json"
 # ist, bleibt ihr zuletzt aufgezeichneter Wert unveraendert - das ist dann "die letzte Prognose vor
 # Eintritt der Stunde", der eigentliche Vergleichswert fuer die Prognosequalitaet.
 PV_FORECAST_SNAPSHOT_PATH = "/data/pv_forecast_snapshot.json"
+# Plausibilitaetsgrenze fuer die im Dashboard-Chart gezeigte PV-Prognose (siehe
+# readPvForecastVsActual) - der gecachte Optimierungslauf zeigte wiederholt einzelne, physikalisch
+# unmoegliche Ausreisser (Nutzer-Beobachtung: "362 kWh fuer morgen", einzelne Stunden >100 kW). Ein
+# Wert gilt als unplausibel, wenn er die frisch berechnete Referenz (pv_forecast.
+# compute_site_weather_fields, dieselbe Kalibrierung, garantiert aktuell) um mehr als das
+# PV_FORECAST_SANITY_FACTOR-fache uebersteigt UND absolut ueber PV_FORECAST_SANITY_FLOOR_KW liegt
+# (die Floor-Bedingung verhindert Fehlalarme bei winzigen Werten nachts, wo ein Faktor-Vergleich
+# numerisch instabil waere).
+PV_FORECAST_SANITY_FACTOR = 3
+PV_FORECAST_SANITY_FLOOR_KW = 1.0
 # Experimentelles Gegenstueck zu PV_FORECAST_SNAPSHOT_PATH fuer "Ladestand Heimspeicher": haelt je
 # bereits vergangener Stunde des heutigen Tages fest, was der zu diesem Zeitpunkt JUENGSTE
 # Optimierungslauf fuer sie geplant hatte (siehe _maybe_freeze_battery_soc_forecast_snapshot). Dient
@@ -1861,12 +1871,25 @@ def readPvForecastVsActual():
     # WEATHER_CACHE_PATH deckt also auch fruehe Stunden von heute bereits ab. compute_site_weather_
     # fields rechnet daraus dieselbe kW-Prognose wie sonst (gleiche Kalibrierung/Formel) - echte,
     # tageszeitabhaengige Werte statt eines konstanten Rueckwaerts-Auffuellens.
-    if any(v is None for v in forecast):
+    # Nutzer-Beobachtung: der gecachte Optimierungslauf (echo-/serverseitig gepusht ueber
+    # sync_site_data) zeigte wiederholt einzelne, physikalisch unmoegliche Ausreisser (z.B. "122.9"
+    # fuer eine Stunde, obwohl die Anlage nie mehr als ~5 kW gemessen hat) - unabhaengig davon, ob die
+    # Ursache in der eigenen Kalibrierung oder serverseitig liegt, wird ein Wert, der die FRISCH
+    # berechnete (garantiert plausible) Referenz um PV_FORECAST_SANITY_FACTOR uebersteigt, durch diese
+    # Referenz ersetzt statt unveraendert angezeigt zu werden. Reconstruction wird dafuer immer
+    # berechnet (billig: nur ein Cache-Read + Array-Rechnung), nicht nur bei fehlenden (None) Werten.
+    if forecast:
         try:
             reconstructed = pv_forecast.compute_site_weather_fields(hour_count, pv_sensor_configured=bool(entity_id))
             reconstructed_pv = [float(v) for v in reconstructed["pvPrediction"].split(",")]
             for i, v in enumerate(forecast):
-                if v is None and i < len(reconstructed_pv):
+                if i >= len(reconstructed_pv):
+                    continue
+                if v is None:
+                    forecast[i] = reconstructed_pv[i]
+                elif v > max(reconstructed_pv[i] * PV_FORECAST_SANITY_FACTOR, PV_FORECAST_SANITY_FLOOR_KW):
+                    print(f"[Shyft] PV-Prognose: unplausibler gecachter Wert {v} kW fuer Stunde {labels[i]} "
+                          f"(Referenz {reconstructed_pv[i]} kW) - durch Referenz ersetzt.")
                     forecast[i] = reconstructed_pv[i]
         except Exception as e:
             print("[Shyft] PV-Prognose (rueckwirkend aus Wetterdaten) konnte nicht rekonstruiert werden:", repr(e))
@@ -2016,11 +2039,16 @@ def readSonstigesGeraetForecastVsActual():
     Status 'success' mit Daten), wenn kein 'Sonstiger Verbraucher' zugeordnet ist - die Kachel soll
     dann im Dashboard gar nicht erst auftauchen."""
     config = _read_current_config()
-    entity_ids = _sonstiger_verbraucher_entity_ids(config)
-    if not entity_ids:
+    # Massgeblich ist die Geraete-Zuordnung (integrationMappings), NICHT die Sensor-Zuordnung
+    # (sensorMappings) - wird das Geraet aus der Kachel wieder entfernt, bleibt die Sensor-Zuordnung
+    # bestehen (dasselbe Muster wie bei _action_not_ready_warnings: "Geraet der Kachel wieder
+    # entfernt: die Sensor-/Aktions-Zuordnungen bleiben dabei stehen"). Ohne diese Pruefung haette ein
+    # laengst entferntes Geraet den Chart faelschlich weiter angezeigt (Nutzer-Beobachtung).
+    if not (config.get("integrationMappings", {}) or {}).get("sonstiger_verbraucher"):
         # Kein "Sonstiger Verbraucher" eingerichtet -> Kachel soll im Dashboard gar nicht erst
         # auftauchen (Nutzer-Vorgabe), statt eine leere 0%-Linie zu zeigen.
         return jsonify({"status": "success", "labels": [], "forecast": [], "actual": [], "actionHours": []})
+    entity_ids = _sonstiger_verbraucher_entity_ids(config)
     midnight_local = _hour_floor(_local_now().replace(hour=0))
     current_hour_local = _hour_floor(_local_now())
 
