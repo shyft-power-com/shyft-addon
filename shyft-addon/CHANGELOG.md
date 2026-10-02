@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.231
+
+* **Fix: Batterie-Test/-Aktion wartete je Entität das volle Zeitfenster, statt einmal insgesamt** (bei vier Entitäten bis zum Vierfachen; „Aktion beenden" hätte mit 150 s bis zu 10 Minuten gedauert und lief an Proxys in den Zeitlimit-Fehler). Alle Schreibvorgänge einer Aktion teilen sich jetzt ein gemeinsames Zeitfenster; der Test-Button wartet insgesamt höchstens 90 s.
+
 ## 0.0.45.230
 
 * **Batterie-„Testen"-Button wartet jetzt bis zu 150 s statt 20 s auf die Bestätigung** (Nutzer-Meldung: Tests für „PV-Überschuss" und „Netzladen" schlugen mit Fehler 500 fehl, obwohl Home Assistant die Werte etwa eine Minute später übernahm - die Entitäten reagieren verzögert).

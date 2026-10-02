@@ -6199,15 +6199,22 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
     max_charge_watts = round((config.get("batteryMaxChargeKw") or 0) * 1000) or None
 
     failed = []
+    # Gemeinsames Zeitfenster fuer alle Schreibvorgaenge dieser Aktion (statt je Entitaet das volle
+    # Fenster - bei vier Entitaeten sonst bis zum Vierfachen). Mindestens ein Wiederholungsabstand
+    # bleibt jedem Schreibvorgang, damit spaetere Entitaeten trotzdem einen echten Versuch bekommen.
+    deadline = time.time() + retry_timeout_seconds
+
+    def remaining_seconds():
+        return max(deadline - time.time(), BATTERY_RETRY_DELAY_SECONDS)
 
     def write_number(entity_id, watts, label):
-        if not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", watts, retry_timeout_seconds):
+        if not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", watts, remaining_seconds()):
             failed.append(label)
 
     def write_mode(mode_value, label):
         if not mode_value:
             return  # kein Modus-Wert konfiguriert - ueberspringen statt grundlos zu scheitern
-        if not _write_and_verify_battery_entity(mode_entity, "select", "select_option", "option", mode_value, retry_timeout_seconds):
+        if not _write_and_verify_battery_entity(mode_entity, "select", "select_option", "option", mode_value, remaining_seconds()):
             failed.append(label)
 
     if action_key == "battery_grid_charge":
@@ -6254,8 +6261,9 @@ def _battery_control_variant(config, action_key):
 # ============================================================================
 
 # Home-Assistant-Entitaeten mancher Wechselrichter (Cloud-/Modbus-Abgleich) uebernehmen Schreibbefehle erst
-# nach ~60-200 s - 20 s reichten im Test nie fuer eine Bestaetigung.
-BATTERY_DIRECT_TEST_TIMEOUT_SECONDS = 150
+# nach ~60 s - 20 s reichten im Test nie fuer eine Bestaetigung. Gilt als GEMEINSAMES Zeitfenster fuer alle
+# Entitaeten einer Aktion (siehe execute_battery_direct), damit der Klick unter dem Proxy-Limit (~100 s) bleibt.
+BATTERY_DIRECT_TEST_TIMEOUT_SECONDS = 90
 # Kleiner, ungefaehrlicher Testwert (kW) fuer die beiden Aktionstypen mit einem echten Zielwert -
 # kein reales Ladeziel, nur um die Schreib-/Verifikationskette tatsaechlich durchzuspielen.
 BATTERY_DIRECT_TEST_TARGET_KW = 0.5
