@@ -6253,7 +6253,9 @@ def _battery_control_variant(config, action_key):
 # durch den Optimierer wieder ausgeloest UND dabei erfolgreich war (siehe Nutzer-Nachfrage).
 # ============================================================================
 
-BATTERY_DIRECT_TEST_TIMEOUT_SECONDS = 20
+# Home-Assistant-Entitaeten mancher Wechselrichter (Cloud-/Modbus-Abgleich) uebernehmen Schreibbefehle erst
+# nach ~60-200 s - 20 s reichten im Test nie fuer eine Bestaetigung.
+BATTERY_DIRECT_TEST_TIMEOUT_SECONDS = 150
 # Kleiner, ungefaehrlicher Testwert (kW) fuer die beiden Aktionstypen mit einem echten Zielwert -
 # kein reales Ladeziel, nur um die Schreib-/Verifikationskette tatsaechlich durchzuspielen.
 BATTERY_DIRECT_TEST_TARGET_KW = 0.5
@@ -6400,6 +6402,7 @@ def testBatteryDirectControl(action_key):
             _note_action_outcome(label, "getestet", None)
         return jsonify({"success": True, "values": _battery_direct_field_values(config, action_key)})
     except Exception as e:
+        print(f"[Shyft] Batterie-Test '{action_key}' fehlgeschlagen (Version {VERSION}):", repr(e))
         return jsonify({"success": False, "message": str(e), "values": _battery_direct_field_values(config, action_key)}), 500
     finally:
         _revert_battery_test_after_delay(pre_test_state)
@@ -9717,6 +9720,7 @@ scheduler.start()
 
 
 if __name__ == "__main__":
+    print(f"[Shyft] Add-on-Version {VERSION}")
     try:
         with open(OPTIONS_PATH, "r") as f:
             options = json.load(f)

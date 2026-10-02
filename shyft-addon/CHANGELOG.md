@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.230
+
+* **Batterie-„Testen"-Button wartet jetzt bis zu 150 s statt 20 s auf die Bestätigung** (Nutzer-Meldung: Tests für „PV-Überschuss" und „Netzladen" schlugen mit Fehler 500 fehl, obwohl Home Assistant die Werte etwa eine Minute später übernahm - die Entitäten reagieren verzögert).
+* **Log: Add-on-Version beim Start und Fehlerdetails bei fehlgeschlagenem Batterie-Test** - erleichtert die Fehlersuche.
+
 ## 0.0.45.229
 
 * **Fix: Geräteverhalten-Abweichungsmeldung für "Batterie-Ladeleistungslimit (PV-Überschuss)" verglich Watt gegen Kilowatt** (Nutzer-Meldung: „Shyft erwartet 5.0 kW, gemessen werden 5000.0 kW" - der Sensor liefert tatsächlich Watt). Der beim Einführen der PV-Überschuss-Ladeleistungslimit-Entität vergessene Eintrag in der Einheiten-Umrechnungstabelle ist jetzt ergänzt.
