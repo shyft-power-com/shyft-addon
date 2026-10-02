@@ -40,6 +40,7 @@ EXPECTED_UNITS = {
     "photovoltaic_powerflow_battery": "kW",
     "battery_state_of_charge": "%",
     "battery_charge_limit_current": "kW",
+    "battery_charge_limit_current_pv_surplus": "kW",
     "battery_discharge_limit_current": "kW",
     "heatpump_dhw_tank_temp": "°C",
     "heatpump_dhw_target_temp": "°C",

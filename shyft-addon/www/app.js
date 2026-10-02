@@ -810,12 +810,11 @@ function scrollToIntegrationSection(sectionKey, fieldId) {
         sectionDiv.scrollIntoView({behavior: 'smooth', block: 'start'});
         if (fieldId) {
             // Wartet kurz, bis der obige Smooth-Scroll (in etwa) abgeschlossen ist, bevor das
-            // konkrete Feld per 'nearest' nachgescrollt wird - 'nearest' bewegt die Seite nur, wenn
-            // das Feld tatsaechlich noch nicht sichtbar ist, und dann nur so weit wie noetig, um es
-            // gerade eben ins Bild zu bringen (kein Ueberscrollen ueber die Kachel hinaus).
+            // konkrete Feld nachgescrollt wird - 'center' bringt es mittig ins Bild (Nutzer-Vorgabe),
+            // statt (wie zuvor 'nearest') nur gerade so weit wie noetig an den Rand.
             setTimeout(() => {
                 const fieldElement = document.getElementById(fieldId);
-                if (fieldElement) fieldElement.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+                if (fieldElement) fieldElement.scrollIntoView({behavior: 'smooth', block: 'center'});
             }, 400);
         }
     });
@@ -1088,9 +1087,11 @@ async function renderSystemHealth() {
     list.className = 'systemHealthProblemList';
     const errorFieldIds = [];
     for (const problem of problems) {
-        const fieldId = actionFailedFieldId(problem.id);
+        const availability = sensorAvailabilityProblemFieldAndSection(problem.id);
+        const fieldId = actionFailedFieldId(problem.id) || deviceDeviationProblemFieldId(problem.id) || availability.fieldId;
         if (fieldId) errorFieldIds.push(fieldId);
-        list.appendChild(buildProblemListItem(problem.message, actionFailedProblemSectionKey(problem.id), fieldId, sensorProblemHaLink(problem.id)));
+        const sectionKey = actionFailedProblemSectionKey(problem.id) || deviceDeviationProblemSectionKey(problem.id) || availability.sectionKey;
+        list.appendChild(buildProblemListItem(problem.message, sectionKey, fieldId, sensorProblemHaLink(problem.id)));
     }
     for (const warning of warnings) {
         errorFieldIds.push(...(warning.fieldIds || (warning.fieldId ? [warning.fieldId] : [])));
@@ -1236,6 +1237,71 @@ function actionFailedFieldId(problemId) {
     if (!problemId || !problemId.startsWith('action_failed:')) return null;
     const actionKey = ACTION_FAILED_SLUG_TO_ACTION_KEY[problemId.slice('action_failed:'.length)];
     return actionKey ? resolveActionControlFieldId(actionKey) : null;
+}
+
+// Ordnet ein "device_deviation:<key>"-Problem (siehe check_device_status_deviation in app.py) dem
+// betroffenen sensorMappings-Feld bzw. dessen Geraetekachel zu - fuer den "zu den Einstellungen"-
+// Link (Nutzer-Vorgabe: fuer ALLE Fehlermeldungen, die einen Sensor benennen, nicht nur
+// fehlgeschlagene Aktionen/fehlende Pflichtfelder). <key> ist derselbe feste Schluessel wie
+// serverseitig (siehe die _check_numeric_deviation/_check_raw_state_deviation-Aufrufe dort).
+const DEVICE_DEVIATION_KEY_TO_SENSOR_FIELD = {
+    battery_charge_limit: 'battery_charge_limit_current',
+    battery_charge_limit_pv_surplus: 'battery_charge_limit_current_pv_surplus',
+    battery_discharge_limit: 'battery_discharge_limit_current',
+    battery_mode: 'battery_storage_command_mode',
+    sonstiger_verbraucher: 'sonstiger_verbraucher_switch_entities',
+    heizung_soll_temp: 'heatpump_heating_target_temp_normal',
+    warmwasser_soll_temp: 'heatpump_dhw_target_temp',
+    auto_laden: 'wallbox_current_charging_power',
+};
+const DEVICE_DEVIATION_KEY_TO_SECTION = {
+    battery_charge_limit: 'batterie',
+    battery_charge_limit_pv_surplus: 'batterie',
+    battery_discharge_limit: 'batterie',
+    battery_mode: 'batterie',
+    sonstiger_verbraucher: 'sonstiger_verbraucher',
+    heizung_soll_temp: 'waermepumpe',
+    warmwasser_soll_temp: 'waermepumpe',
+    auto_laden: 'wallbox',
+};
+
+function deviceDeviationKey(problemId) {
+    return (problemId || '').startsWith('device_deviation:') ? problemId.slice('device_deviation:'.length) : null;
+}
+
+function deviceDeviationProblemSectionKey(problemId) {
+    const key = deviceDeviationKey(problemId);
+    return key ? (DEVICE_DEVIATION_KEY_TO_SECTION[key] || null) : null;
+}
+
+function deviceDeviationProblemFieldId(problemId) {
+    const key = deviceDeviationKey(problemId);
+    const sensorField = key ? DEVICE_DEVIATION_KEY_TO_SENSOR_FIELD[key] : null;
+    return sensorField ? sensorField + VALUE_POSTFIX : null;
+}
+
+// Welche sensorMappings-Feld gerade diese Entitaet haelt (Einzel- oder Mehrfachfeld) - Basis fuer den
+// "zu den Einstellungen"-Link bei "sensor_unavailable:<entity_id>"/"sensor_stale:<entity_id>"-
+// Problemen (Nutzer-Vorgabe, wie bei device_deviation oben), die sonst nur extern auf die
+// Home-Assistant-Integration/Entitaetenliste verlinken (siehe sensorProblemHaLink).
+function sensorFieldForEntityId(entityId) {
+    const sensorMappings = configData['sensorMappings'] || {};
+    for (const [field, value] of Object.entries(sensorMappings)) {
+        if (Array.isArray(value) ? value.includes(entityId) : value === entityId) return field;
+    }
+    return null;
+}
+
+function sensorFieldSectionKey(sensorField) {
+    const section = INTEGRATION_SECTIONS.find(s => s.sensors.includes(sensorField));
+    return section ? section.key : null;
+}
+
+function sensorAvailabilityProblemFieldAndSection(problemId) {
+    const prefix = ['sensor_unavailable:', 'sensor_stale:'].find(p => (problemId || '').startsWith(p));
+    if (!prefix) return {fieldId: null, sectionKey: null};
+    const field = sensorFieldForEntityId(problemId.slice(prefix.length));
+    return field ? {fieldId: field + VALUE_POSTFIX, sectionKey: sensorFieldSectionKey(field)} : {fieldId: null, sectionKey: null};
 }
 
 // Kurzer, klickbarer Hinweis ganz oben auf dem Dashboard, sobald es auf der Konfigurationsseite

@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.0.45.228
+## 0.0.45.229
+
+* **Fix: Geräteverhalten-Abweichungsmeldung für "Batterie-Ladeleistungslimit (PV-Überschuss)" verglich Watt gegen Kilowatt** (Nutzer-Meldung: „Shyft erwartet 5.0 kW, gemessen werden 5000.0 kW" - der Sensor liefert tatsächlich Watt). Der beim Einführen der PV-Überschuss-Ladeleistungslimit-Entität vergessene Eintrag in der Einheiten-Umrechnungstabelle ist jetzt ergänzt.
+* **„Zu den Einstellungen"-Link jetzt auch für Geräteverhalten-Abweichungen und nicht erreichbare/veraltete Sensoren** (Nutzer-Vorgabe) - scrollt direkt zum betroffenen Sensorfeld, statt nur zur Fehlermeldung selbst. Das Zielfeld wird dabei jetzt mittig statt nur knapp sichtbar ins Bild gescrollt (gilt für alle „Zu den Einstellungen"-Links, nicht nur die neuen).
 
 * **Fix: eine sofort beendete Aktion, die in derselben Stunde neu angelegt wurde, blieb auf „aktiv“, ohne das Gerät zu steuern** (Nutzer-Meldung „Batterie-Entladen verschieben“: Entladelimit stand auf 5000 W, obwohl die Aktion aktiv war). Die Aktions-ID hängt am Stundenbeginn; beim sofortigen Beenden (neuer Optimierungslauf enthält die Aktion für die laufende Stunde nicht mehr) blieb sie in `startedShyftActionIds`/`endedShyftActionIds` stehen. Legte ein späterer Lauf dieselbe Aktion in derselben Stunde neu an, hielt `process_shyft_actions` sie für „schon gestartet“ und löste weder Start noch späteres Ende aus. Die ID wird jetzt beim sofortigen Beenden aus beiden Listen entfernt.
 
