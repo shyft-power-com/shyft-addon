@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.45.233
+
+* **Fix: „Batterie-Aktion beenden" scheiterte bei Wechselrichtern, deren Lade-/Entladeleistungs-Entität weniger als „Max. Ladeleistung" erlaubt** (Nutzer-Log, Huawei LUNA2000: Entladeleistung und Ladeleistung max. 5000 W, „Max. Ladeleistung" 8,8 kW). Das Add-on schrieb 8800 W als „kein Limit", Home Assistant lehnte das mit einem 500er ab - das Zurücksetzen schlug dauerhaft fehl, ein Ladelimit blieb z.B. auf 100 W hängen. Geschrieben wird jetzt höchstens das Maximum der jeweiligen Entität.
+* **Fix: falsche Abweichungsmeldungen „Batterie-Entladeleistungslimit/-Ladeleistungslimit weicht ab: erwartet 8.8 kW, gemessen 5.0 kW".** Der erwartete „kein Limit"-Ruhewert wird ebenfalls auf das Maximum der Entität begrenzt; echte Abweichungen (z.B. Limit hängt auf 0,1 kW) werden weiter gemeldet.
+* **Fix: Abweichungsüberwachung für per Toggle ausgeschaltete Aktionstypen entfällt** (Batterie, Heizung, Warmwasser, Sonstiger Verbraucher, Auto laden). Dort wird nie etwas ans Gerät geschrieben, ein Unterschied zum Plan-Zielwert (z.B. „Heizungs-Solltemperatur: erwartet 20 °C, gemessen 18 °C") ist der Normalfall und keine Störung.
+* **Batterie-Steuerung: Schreibzugriffe werden immer seltener wiederholt** - sofort, nach 10 s, dann nach weiteren 20 s, 30 s, ... (statt alle 10 s). Zwischen den Schreibzugriffen wird nur alle 5 s der Zustand gelesen, damit eine verzögert übernommene Änderung sofort als Erfolg erkannt wird. Schont langsame oder fragile Wechselrichter-Verbindungen (z.B. Modbus).
+
 ## 0.0.45.232
 
 * **Batterie-Steuerung: nicht verfügbare Entitäten werden nicht mehr 2 Minuten lang bedrängt, sondern ausdrücklich gemeldet.** Steht eine Entität (z.B. Betriebsmodus oder Lade-/Entladeleistung) in Home Assistant auf „unavailable"/„unknown" - typisch, wenn die Integration die Verbindung zum Wechselrichter verloren hat -, wartet das Add-on höchstens 30 s (gemeinsam für alle Entitäten einer Aktion, falls es nur ein kurzer Aussetzer ist), schreibt dann nicht mehr auf diese Entität und bricht ab. Die Fehlermeldung (Fehlerkarte, „Testen"-Ergebnis, Push) nennt jetzt die betroffenen Entitäten samt Namen und den Hinweis, die Verbindung der Integration zum Wechselrichter zu prüfen. Verfügbare Entitäten der Aktion werden weiterhin gesetzt.

@@ -6112,7 +6112,11 @@ BATTERY_SHIFT_ACTOR_KEYS = {"battery_charge_shift_pv_surplus", "battery_discharg
 # waere ein eigener, groesserer Schritt (persistente HA-Helper-Entitaeten verwalten).
 # ============================================================================
 
+# Wiederholabstand zwischen zwei SCHREIBzugriffen waechst linear: BATTERY_RETRY_DELAY_SECONDS, dann das
+# Doppelte, Dreifache, ... (siehe _write_and_verify_battery_entity). Dazwischen wird alle
+# BATTERY_VERIFY_POLL_SECONDS nur der Zustand gelesen (kein Geraetezugriff).
 BATTERY_RETRY_DELAY_SECONDS = 10
+BATTERY_VERIFY_POLL_SECONDS = 5
 BATTERY_RETRY_TIMEOUT_SECONDS = 120
 # Steht eine zu schreibende Entitaet in Home Assistant auf "unavailable"/"unknown" (z.B. Integration/
 # Modbus-Verbindung zum Wechselrichter weg), bringt ein 2-Minuten-Wiederholen nichts - das haelt nur den
@@ -6159,15 +6163,26 @@ def _write_and_verify_battery_entity(entity_id, domain, service, data_key, targe
             homeassistant_adapter.call_service(domain, service, {"entity_id": entity_id, data_key: target_value})
         except Exception as e:
             print(f"[Shyft] Batterie-Steuerung: {domain}.{service} auf '{entity_id}' fehlgeschlagen (Versuch {attempt}):", repr(e))
-        try:
-            current_state = homeassistant_adapter.load_entity_state(entity_id)
-            if _battery_value_matches(current_state.state, target_value):
-                return True
-        except Exception as e:
-            print(f"[Shyft] Batterie-Steuerung: Status von '{entity_id}' nicht lesbar (Versuch {attempt}):", repr(e))
-        if time.time() >= deadline:
-            return False
-        time.sleep(BATTERY_RETRY_DELAY_SECONDS)
+        # Schreibzugriffe werden immer seltener wiederholt (Nutzer-Vorgabe: sofort, dann nach 10 s, dann
+        # nach weiteren 20 s, 30 s, ...) - ein langsamer oder fragiler Wechselrichter (z.B. Modbus mit
+        # wenigen Verbindungen) soll nicht mit Schreibbefehlen ueberrollt werden. Dazwischen wird nur der
+        # Zustand gelesen (reiner Home-Assistant-Zugriff, kein Geraetezugriff), damit eine verzoegert
+        # uebernommene Aenderung trotzdem sofort als Erfolg erkannt wird.
+        next_write_at = min(time.time() + attempt * BATTERY_RETRY_DELAY_SECONDS, deadline)
+        poll_seconds = min(BATTERY_VERIFY_POLL_SECONDS, BATTERY_RETRY_DELAY_SECONDS)
+        while True:
+            try:
+                current_state = homeassistant_adapter.load_entity_state(entity_id)
+                if _battery_value_matches(current_state.state, target_value):
+                    return True
+            except Exception as e:
+                print(f"[Shyft] Batterie-Steuerung: Status von '{entity_id}' nicht lesbar (Versuch {attempt}):", repr(e))
+            now = time.time()
+            if now >= deadline:
+                return False
+            if now >= next_write_at:
+                break
+            time.sleep(min(poll_seconds, next_write_at - now))
 
 
 def _battery_unavailable_hint(unavailable_labels):
@@ -6178,6 +6193,41 @@ def _battery_unavailable_hint(unavailable_labels):
     verb = "ist" if len(unavailable_labels) == 1 else "sind"
     return (f"{noun} {', '.join(unavailable_labels)} {verb} in Home Assistant nicht verfügbar (unavailable) - "
             f"bitte die Verbindung der Integration zum Wechselrichter prüfen")
+
+
+def _clamp_to_number_range(entity_id, value):
+    """Begrenzt value auf das min/max der number-Entitaet (Home Assistant lehnt Werte ausserhalb mit
+    einem 500er ab - z.B. 8800 W auf eine Entladeleistung mit max. 5000 W, siehe Nutzer-Log: das
+    Zuruecksetzen schlug dort dauerhaft fehl und liess ein Ladelimit auf 100 W haengen). Ohne lesbaren
+    Bereich bleibt value unveraendert."""
+    try:
+        low, high = homeassistant_adapter.get_number_min_max(entity_id)
+    except Exception:
+        return value
+    if high is not None and value > high:
+        value = high
+    if low is not None and value < low:
+        value = low
+    return value
+
+
+def _read_mapped_number_max_kw(config, sensor_key):
+    "Das 'max'-Attribut der zugeordneten number-Entitaet in kW (siehe convert_to_expected_unit) - None, wenn nicht zugeordnet/nicht lesbar. Grundlage fuer den erwarteten 'kein Limit'-Ruhewert in check_device_status_deviation."
+    entity_id = (config.get("sensorMappings", {}) or {}).get(sensor_key, "")
+    if not entity_id:
+        return None
+    try:
+        unit = homeassistant_adapter.load_entity_state(entity_id).unit
+        _low, high = homeassistant_adapter.get_number_min_max(entity_id)
+        return None if high is None else float(convert_to_expected_unit(sensor_key, high, unit)[0])
+    except Exception:
+        return None
+
+
+def _rest_limit_kw(config, sensor_key, max_charge_kw):
+    "Erwarteter 'kein Limit'-Ruhewert (kW) einer Lade-/Entladeleistungs-Entitaet: batteryMaxChargeKw, hoechstens aber das max. der Entitaet selbst (siehe _clamp_to_number_range - dorthin wird beim Zuruecksetzen tatsaechlich geschrieben)."
+    entity_max = _read_mapped_number_max_kw(config, sensor_key)
+    return max_charge_kw if entity_max is None else min(max_charge_kw, entity_max)
 
 
 def _notify_battery_control_failure(action_key, phase, failed_fields, config, unavailable_labels=()):
@@ -6267,8 +6317,13 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         return False
 
     def write_number(entity_id, watts, label):
-        if not is_available(entity_id) or \
-                not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", watts, remaining_seconds()):
+        if not is_available(entity_id):
+            failed.append(label)
+            return
+        # Auf den Wertebereich der Entitaet begrenzen: "kein Limit" (batteryMaxChargeKw, z.B. 8,8 kW) liegt
+        # bei manchen Wechselrichtern ueber dem max. der Lade-/Entladeleistungs-Entitaet (z.B. 5000 W).
+        watts = _clamp_to_number_range(entity_id, watts)
+        if not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", watts, remaining_seconds()):
             failed.append(label)
 
     def write_mode(mode_value, label):
@@ -6717,9 +6772,15 @@ def check_device_status_deviation(config):
         grid_charge = _active_computed_action(computed_actions, BATTERY_GRID_CHARGE_ACTION_NAME)
         charge_shift = _active_computed_action(computed_actions, BATTERY_CHARGE_SHIFT_ACTION_NAME)
         discharge_shift = _active_computed_action(computed_actions, BATTERY_DISCHARGE_SHIFT_ACTION_NAME)
-        grid_charge_direct = _battery_control_variant(config, "battery_grid_charge") == "direct"
-        charge_shift_direct = _battery_control_variant(config, "battery_charge_shift_pv_surplus") == "direct"
-        discharge_shift_direct = _battery_control_variant(config, "battery_discharge_shift") == "direct"
+        # Nur Aktionstypen mit eingeschaltetem Toggle werden ueberwacht: bei einem ausgeschalteten wird
+        # nie etwas ans Geraet geschrieben (Execution Status "no, deactivated"), eine Abweichung vom
+        # Plan-Zielwert waere dort der Normalfall, kein Fehler.
+        grid_charge_direct = (_battery_control_variant(config, "battery_grid_charge") == "direct"
+                              and is_action_type_enabled(config, BATTERY_GRID_CHARGE_ACTION_NAME))
+        charge_shift_direct = (_battery_control_variant(config, "battery_charge_shift_pv_surplus") == "direct"
+                               and is_action_type_enabled(config, BATTERY_CHARGE_SHIFT_ACTION_NAME))
+        discharge_shift_direct = (_battery_control_variant(config, "battery_discharge_shift") == "direct"
+                                  and is_action_type_enabled(config, BATTERY_DISCHARGE_SHIFT_ACTION_NAME))
         max_charge_kw = config.get("batteryMaxChargeKw")
         try:
             max_charge_kw = float(max_charge_kw) if max_charge_kw not in (None, "") else None
@@ -6737,7 +6798,7 @@ def check_device_status_deviation(config):
             if past_grace(grid_charge):
                 expected_charge_kw = grid_charge.get("Target Value")
         elif grid_charge_direct and max_charge_kw is not None and baseline_ok((BATTERY_GRID_CHARGE_ACTION_NAME,)):
-            expected_charge_kw = max_charge_kw
+            expected_charge_kw = _rest_limit_kw(config, "battery_charge_limit_current", max_charge_kw)
         live_charge_kw = _read_mapped_numeric(config, "battery_charge_limit_current")
         _check_numeric_deviation(
             "battery_charge_limit", expected_charge_kw, live_charge_kw,
@@ -6754,7 +6815,7 @@ def check_device_status_deviation(config):
             if past_grace(charge_shift):
                 expected_pv_surplus_charge_kw = charge_shift.get("Target Value")
         elif charge_shift_direct and max_charge_kw is not None and baseline_ok((BATTERY_CHARGE_SHIFT_ACTION_NAME,)):
-            expected_pv_surplus_charge_kw = max_charge_kw
+            expected_pv_surplus_charge_kw = _rest_limit_kw(config, "battery_charge_limit_current_pv_surplus", max_charge_kw)
         live_pv_surplus_charge_kw = _read_mapped_numeric(config, "battery_charge_limit_current_pv_surplus")
         _check_numeric_deviation(
             "battery_charge_limit_pv_surplus", expected_pv_surplus_charge_kw, live_pv_surplus_charge_kw,
@@ -6770,7 +6831,7 @@ def check_device_status_deviation(config):
             if past_grace(discharge_shift):
                 expected_discharge_kw = 0.0
         elif discharge_shift_direct and max_charge_kw is not None and baseline_ok((BATTERY_DISCHARGE_SHIFT_ACTION_NAME,)):
-            expected_discharge_kw = max_charge_kw
+            expected_discharge_kw = _rest_limit_kw(config, "battery_discharge_limit_current", max_charge_kw)
         live_discharge_kw = _read_mapped_numeric(config, "battery_discharge_limit_current")
         _check_numeric_deviation(
             "battery_discharge_limit", expected_discharge_kw, live_discharge_kw,
@@ -6806,7 +6867,7 @@ def check_device_status_deviation(config):
             _clear_device_deviation(key)
 
     # --- Sonstiger Verbraucher: Schalter an/aus (nur "direct"-gesteuert) ---
-    if configured("sonstiger_verbraucher") and resolve_control_variant("consumer_on_off", config) == "direct":
+    if configured("sonstiger_verbraucher") and resolve_control_variant("consumer_on_off", config) == "direct"             and is_action_type_enabled(config, OD_ACTION_NAME):
         od_action = _active_computed_action(computed_actions, OD_ACTION_NAME)
         expected_switch_state = None
         if od_action is not None:
@@ -6826,7 +6887,7 @@ def check_device_status_deviation(config):
         _clear_device_deviation("sonstiger_verbraucher")
 
     # --- Heizung Soll-Temperatur: nur waehrend aktiv (kein sinnvoller Ruhezustand-Wert bekannt) ---
-    if configured("waermepumpe") and resolve_control_variant("heating_target_temp", config) == "direct":
+    if configured("waermepumpe") and resolve_control_variant("heating_target_temp", config) == "direct"             and is_action_type_enabled(config, HEIZUNG_ACTION_NAME):
         heizung_action = _active_computed_action(computed_actions, HEIZUNG_ACTION_NAME)
         expected_temp = heizung_action.get("Target Value") if heizung_action is not None and past_grace(heizung_action) else None
         live_heizung_temp = _read_mapped_numeric(config, "heatpump_heating_target_temp_normal")
@@ -6841,7 +6902,7 @@ def check_device_status_deviation(config):
 
     # --- Warmwasser-Solltemperatur-Boost: nur waehrend "Warmwasser" aktiv, nur wenn eine
     # Solltemperatur-Entitaet zugeordnet ist (siehe _start_dhw_target_temp_boost) ---
-    if configured("waermepumpe") and _dhw_target_temp_entity(config):
+    if configured("waermepumpe") and _dhw_target_temp_entity(config) and is_action_type_enabled(config, DHW_ACTION_NAME):
         dhw_action = _active_computed_action(computed_actions, DHW_ACTION_NAME)
         expected_dhw_temp = dhw_action.get("Target Value") if dhw_action is not None and past_grace(dhw_action) else None
         live_dhw_temp = _read_mapped_numeric(config, DHW_TARGET_TEMP_SENSOR_FIELD)
@@ -6858,7 +6919,7 @@ def check_device_status_deviation(config):
     # Vergleich (die PV-Ueberschuss-Korrektur passt den tatsaechlichen Zielwert erst beim Start an,
     # siehe _apply_ev_pv_surplus_start_correction - ein Vergleich gegen den urspruenglichen
     # Optimierungswert waere dadurch unzuverlaessig). ---
-    if configured("auto") and configured("wallbox"):
+    if configured("auto") and configured("wallbox") and is_action_type_enabled(config, EV_CHARGE_ACTION_NAME):
         ev_action = _active_computed_action(computed_actions, EV_CHARGE_ACTION_NAME)
         if ev_action is not None and past_grace(ev_action):
             live_charging_kw = _read_mapped_numeric(config, "wallbox_current_charging_power")
