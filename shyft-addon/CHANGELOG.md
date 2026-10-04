@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.232
+
+* **Batterie-Steuerung: nicht verfügbare Entitäten werden nicht mehr 2 Minuten lang bedrängt, sondern ausdrücklich gemeldet.** Steht eine Entität (z.B. Betriebsmodus oder Lade-/Entladeleistung) in Home Assistant auf „unavailable"/„unknown" - typisch, wenn die Integration die Verbindung zum Wechselrichter verloren hat -, wartet das Add-on höchstens 30 s (gemeinsam für alle Entitäten einer Aktion, falls es nur ein kurzer Aussetzer ist), schreibt dann nicht mehr auf diese Entität und bricht ab. Die Fehlermeldung (Fehlerkarte, „Testen"-Ergebnis, Push) nennt jetzt die betroffenen Entitäten samt Namen und den Hinweis, die Verbindung der Integration zum Wechselrichter zu prüfen. Verfügbare Entitäten der Aktion werden weiterhin gesetzt.
+
 ## 0.0.45.231
 
 * **Fix: Batterie-Test/-Aktion wartete je Entität das volle Zeitfenster, statt einmal insgesamt** (bei vier Entitäten bis zum Vierfachen; „Aktion beenden" hätte mit 150 s bis zu 10 Minuten gedauert und lief an Proxys in den Zeitlimit-Fehler). Alle Schreibvorgänge einer Aktion teilen sich jetzt ein gemeinsames Zeitfenster; der Test-Button wartet insgesamt höchstens 90 s.

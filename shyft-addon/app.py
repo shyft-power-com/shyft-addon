@@ -6114,6 +6114,14 @@ BATTERY_SHIFT_ACTOR_KEYS = {"battery_charge_shift_pv_surplus", "battery_discharg
 
 BATTERY_RETRY_DELAY_SECONDS = 10
 BATTERY_RETRY_TIMEOUT_SECONDS = 120
+# Steht eine zu schreibende Entitaet in Home Assistant auf "unavailable"/"unknown" (z.B. Integration/
+# Modbus-Verbindung zum Wechselrichter weg), bringt ein 2-Minuten-Wiederholen nichts - das haelt nur den
+# Job-Thread belegt. Eine kurze Gnadenfrist bleibt (siehe Modulkommentar oben: Wechselrichter sind
+# manchmal nur kurzzeitig nicht erreichbar), danach wird die Entitaet nicht mehr beschrieben und dem
+# Nutzer ausdruecklich als "nicht verfuegbar" gemeldet. Die Frist gilt GEMEINSAM fuer alle Entitaeten
+# einer Aktion (beginnt bei der ersten nicht verfuegbaren), nicht je Entitaet.
+BATTERY_UNAVAILABLE_STATES = ("unavailable", "unknown")
+BATTERY_UNAVAILABLE_GRACE_SECONDS = 30
 # Watchdog-Wert (Sekunden) fuer die "Command Timeout"-Entitaet, je Aktionstyp verschieden:
 # beim Netzladen reicht 1 h, beim Entlade-Stopp soll der Befehl bis zu 10 h stehen bleiben.
 # Wird nur bei "Batterie netzladen" und "Batterie-Entladen verschieben" aufgefrischt (siehe deren
@@ -6162,10 +6170,25 @@ def _write_and_verify_battery_entity(entity_id, domain, service, data_key, targe
         time.sleep(BATTERY_RETRY_DELAY_SECONDS)
 
 
-def _notify_battery_control_failure(action_key, phase, failed_fields, config):
+def _battery_unavailable_hint(unavailable_labels):
+    "Klartext-Hinweis (ohne Schlusspunkt, den setzt der Aufrufer) fuer Fehlermeldungen/Push, wenn Entitaeten in Home Assistant nicht verfuegbar waren ('' ohne solche)."
+    if not unavailable_labels:
+        return ""
+    noun = "Die Entität" if len(unavailable_labels) == 1 else "Die Entitäten"
+    verb = "ist" if len(unavailable_labels) == 1 else "sind"
+    return (f"{noun} {', '.join(unavailable_labels)} {verb} in Home Assistant nicht verfügbar (unavailable) - "
+            f"bitte die Verbindung der Integration zum Wechselrichter prüfen")
+
+
+def _notify_battery_control_failure(action_key, phase, failed_fields, config, unavailable_labels=()):
     label = ACTION_TYPE_TOGGLE_KEYS.get(action_key, action_key)
     message = (f"Batterie-Steuerung für \"{label}\" ({phase}): {', '.join(failed_fields)} konnte(n) "
-               f"nach {BATTERY_RETRY_TIMEOUT_SECONDS // 60} Minuten nicht gesetzt werden.")
+               f"nicht gesetzt werden.")
+    hint = _battery_unavailable_hint(unavailable_labels)
+    if hint:
+        message += " " + hint + "."
+    else:
+        message = message[:-1] + f" (auch nach {BATTERY_RETRY_TIMEOUT_SECONDS // 60} Minuten Wiederholen)."
     try:
         target = config.get("notificationTargets", {}).get("phone", "")
         if target:
@@ -6207,14 +6230,52 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
     def remaining_seconds():
         return max(deadline - time.time(), BATTERY_RETRY_DELAY_SECONDS)
 
+    # Entitaeten, die in Home Assistant auf "unavailable"/"unknown" standen und es auch nach der
+    # Gnadenfrist noch waren (Anzeigetext "Friendly Name (entity_id)") - werden nicht beschrieben, sondern
+    # dem Nutzer ausdruecklich als nicht verfuegbar gemeldet (siehe Fehlertext unten).
+    unavailable_labels = []
+    unavailable_ids = set()
+    grace = {"deadline": None}
+
+    def unavailable_state(entity_id):
+        "'unavailable'/'unknown', wenn die Entitaet gerade so steht; sonst (auch bei nicht lesbar) None - dann entscheidet der normale Schreib-/Verifikationsweg."
+        try:
+            state = homeassistant_adapter.load_entity_state(entity_id)
+        except Exception:
+            return None, ""
+        return (state.state if state.state in BATTERY_UNAVAILABLE_STATES else None), getattr(state, "friendly_name", "")
+
+    def is_available(entity_id):
+        "True, wenn die Entitaet beschreibbar erscheint - ggf. nach kurzer, gemeinsamer Gnadenfrist. False, wenn sie dauerhaft nicht verfuegbar ist (wird dann gemerkt, nicht mehr beschrieben)."
+        if not entity_id:
+            return True  # nicht zugeordnet - das meldet der Schreibweg selbst als fehlgeschlagen
+        if entity_id in unavailable_ids:
+            return False
+        state, friendly_name = unavailable_state(entity_id)
+        if state is None:
+            return True
+        if grace["deadline"] is None:
+            grace["deadline"] = time.time() + BATTERY_UNAVAILABLE_GRACE_SECONDS
+        while time.time() < grace["deadline"]:
+            time.sleep(min(BATTERY_RETRY_DELAY_SECONDS, max(grace["deadline"] - time.time(), 0)))
+            state, friendly_name = unavailable_state(entity_id)
+            if state is None:
+                return True
+        unavailable_ids.add(entity_id)
+        unavailable_labels.append(f"{friendly_name} ({entity_id})" if friendly_name else entity_id)
+        print(f"[Shyft] Batterie-Steuerung: '{entity_id}' ist {state} - wird nicht beschrieben.")
+        return False
+
     def write_number(entity_id, watts, label):
-        if not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", watts, remaining_seconds()):
+        if not is_available(entity_id) or \
+                not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", watts, remaining_seconds()):
             failed.append(label)
 
     def write_mode(mode_value, label):
         if not mode_value:
             return  # kein Modus-Wert konfiguriert - ueberspringen statt grundlos zu scheitern
-        if not _write_and_verify_battery_entity(mode_entity, "select", "select_option", "option", mode_value, remaining_seconds()):
+        if not is_available(mode_entity) or \
+                not _write_and_verify_battery_entity(mode_entity, "select", "select_option", "option", mode_value, remaining_seconds()):
             failed.append(label)
 
     if action_key == "battery_grid_charge":
@@ -6242,8 +6303,10 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
 
     if failed:
         if notify_on_failure:
-            _notify_battery_control_failure(action_key, phase, failed, config)
-        raise Exception(f"Batterie-Steuerung unvollständig: {', '.join(failed)}")
+            _notify_battery_control_failure(action_key, phase, failed, config, unavailable_labels)
+        message = f"Batterie-Steuerung unvollständig: {', '.join(failed)}."
+        hint = _battery_unavailable_hint(unavailable_labels)
+        raise Exception(f"{message} {hint}" if hint else message[:-1])
 
 
 def _battery_control_variant(config, action_key):
