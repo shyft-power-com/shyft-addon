@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.240
+
+* **Add-on-Beschreibung: doppelter Schlusspunkt entfernt.** Home Assistant hängt beim Anzeigen der Beschreibung selbst einen Punkt an, die Beschreibung in `config.yaml` endete ebenfalls mit einem - im Add-on-Store stand dadurch „Batteriesteuerung..“.
+
 ## 0.0.45.239
 
 * **Stromtarif „Dynamischer Tarif + variable Netzentgelte (Modul 3)“: klarere Eingabe und Preisprüfung je Tarifstufe.** (1) Die drei Felder heißen jetzt „Fixe Preisbestandteile, Niedertarif / Hochtarif / Standardtarif (brutto)“ - gemeint ist, wie bisher gerechnet, der gesamte Aufschlag auf den Börsenpreis (zeitvariables Netzentgelt plus Abgaben, Umlagen, Stromsteuer, Lieferantenmarge und Mehrwertsteuer), nicht nur das Netzentgelt; Tooltips und Hinweistext sagen das jetzt auch. (2) Reihenfolge: erst die Zeitfenster und Quartale, dann die drei Tarifstufen. (3) Hinter jedem der drei Felder steht der heutige Gesamtpreis einer passenden Stunde, z. B. „heute 18-19 Uhr: Fix 18,0 + Börse 12,3 = 30,3 ct/kWh“ - die laufende Stunde, wenn sie in dieser Tarifstufe liegt, sonst die nächste spätere, sonst die zuletzt zurückliegende. Gibt es heute keine Stunde in dieser Stufe, steht dort „heute kein Zeitfenster“, bzw. „gilt im aktuellen Quartal nicht“, wenn das aktuelle Quartal nicht gewählt ist. Es ist eine Stunde statt einer Viertelstunde, weil die Strombörse (Awattar) nur Stundenpreise liefert und die Zeitfenster stundengenau sind. Die Anzeige aktualisiert sich beim Tippen sowie beim Ändern von Zeitfenstern und Quartalen. An der Preisberechnung für den Optimierer ändert sich nichts.
