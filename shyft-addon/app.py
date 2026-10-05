@@ -997,12 +997,55 @@ def electricity_price_preview():
     })
 
 
+def _contiguous_hour_blocks(hours, tariff):
+    "Zusammenhaengende Stundenfolgen (= Zeitfenster) einer Tarifstufe aus hours=[(utc, local, tariff)] als Liste von [(utc, local), ...] in zeitlicher Reihenfolge."
+    blocks, run = [], []
+    for hour_utc, hour_local, hour_tariff in hours:
+        if hour_tariff == tariff:
+            run.append((hour_utc, hour_local))
+        elif run:
+            blocks.append(run)
+            run = []
+    if run:
+        blocks.append(run)
+    return blocks
+
+
+def _pick_preview_hour(blocks, current_hour_utc):
+    """Waehlt die Stunde fuer die Preis-Pruefzeile einer Tarifstufe (blocks aus _contiguous_hour_blocks, nicht
+    leer) - nie die erste oder letzte Stunde eines Zeitfensters, weil ein Tarif auch mitten in einer Stunde
+    beginnen/enden kann und diese Randstunden dann gemischt sind: nach vorne (naechstes Fenster) die zweite
+    Stunde des Fensters (hat es nur eine, diese), nach hinten (zuletzt zurueckliegendes Fenster) die
+    vorletzte. Liegt die laufende Stunde im Fenster: eine Innenstunde bleibt, die erste Stunde wird zur zweiten
+    (nach vorne), die letzte zur vorletzten (nach hinten). Gibt es kein Fenster mit laufender Stunde, gilt das
+    naechste spaetere Fenster, sonst das letzte zurueckliegende."""
+    def forward(block):
+        return block[min(1, len(block) - 1)]
+
+    def backward(block):
+        return block[max(len(block) - 2, 0)]
+
+    for block in blocks:
+        for position, hour in enumerate(block):
+            if hour[0] == current_hour_utc:
+                if position == 0:
+                    return forward(block)
+                if position == len(block) - 1:
+                    return backward(block)
+                return hour
+    for block in blocks:
+        if block[0][0] > current_hour_utc:
+            return forward(block)
+    return backward(blocks[-1])
+
+
 @app.route("/electricity/variable-tariff-preview", methods=["POST"])
 def electricity_variable_tariff_preview():
     """Pruefzeile je Tarifstufe im Modus "Dynamischer Tarif + variable Netzentgelte" (Modul 3): zeigt fuer
     Niedertarif, Hochtarif und Standardtarif den Gesamtpreis (fixe Preisbestandteile + Boersen-Brutto) EINER
-    passenden Stunde von heute - die laufende Stunde, wenn sie in dieser Tarifstufe liegt, sonst die naechste
-    spaetere, sonst die zuletzt zurueckliegende. Eingaben kommen im Body (noch nicht gespeichert, waehrend der
+    passenden Stunde von heute - die laufende Stunde, wenn sie in einem Zeitfenster dieser Tarifstufe liegt,
+    sonst die des naechsten spaeteren, sonst des zuletzt zurueckliegenden Fensters; jeweils nie die erste oder
+    letzte Stunde eines Fensters (siehe _pick_preview_hour). Eingaben kommen im Body (noch nicht gespeichert, waehrend der
     Nutzer tippt): nt_ct/ht_ct/standard_ct (je optional), windows, quarters. Awattar liefert nur Stundenpreise,
     daher eine Stunde statt einer Viertelstunde. Antwort immer HTTP 200; je Tarifstufe ein "status":
     ok | no_window (heute keine Stunde in dieser Stufe) | quarter_inactive (HT/NT: aktuelles Quartal nicht
@@ -1048,14 +1091,12 @@ def electricity_variable_tariff_preview():
     quarter_active_today = ((today.month - 1) // 3 + 1) in quarters
     result = {}
     for tariff in ("nt", "ht", "standard"):
-        candidates = [(u, l) for u, l, t in hours if t == tariff]
-        if not candidates:
+        blocks = _contiguous_hour_blocks(hours, tariff)
+        if not blocks:
             result[tariff] = {"status": "quarter_inactive" if tariff != "standard" and not quarter_active_today else "no_window"}
             continue
-        current = [c for c in candidates if c[0] == current_hour_utc]
-        later = [c for c in candidates if c[0] > current_hour_utc]
-        chosen, relation = (current[0], "current") if current else ((later[0], "next") if later else (candidates[-1], "past"))
-        hour_start_utc, hour_start_local = chosen
+        hour_start_utc, hour_start_local = _pick_preview_hour(blocks, current_hour_utc)
+        relation = "current" if hour_start_utc == current_hour_utc else ("next" if hour_start_utc > current_hour_utc else "past")
         spot_eur = spot.get(int(hour_start_utc.timestamp() * 1000))
         if spot_eur is None:
             result[tariff] = {"status": "no_spot"}

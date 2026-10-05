@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.243
+
+* **Stromtarif Modul 3, Preis-Prüfzeilen: nie die erste oder letzte Stunde eines Zeitfensters.** Beginnt oder endet ein Tarif mitten in einer Stunde, ist der Preis der Randstunde gemischt. Deshalb zeigen die Zeilen jetzt für ein künftiges Fenster dessen zweite Stunde (hat es nur eine, diese), für ein zurückliegendes die vorletzte; liegt die laufende Stunde im Fenster, bleibt sie, solange sie keine Randstunde ist (sonst gilt dieselbe Regel). Ein Fenster ist eine zusammenhängende Folge von Stunden derselben Tarifstufe am heutigen Tag. Nur die Anzeige ändert sich, nicht die Preisberechnung für den Optimierer.
+
 ## 0.0.45.242
 
 * **Stromtarif-Zeitfenster: Liste übersichtlich nach Wochentag und Uhrzeit sortiert.** Die eingetragenen Zeitfenster stehen nicht mehr in Eingabereihenfolge durcheinander, sondern als ein Block je Wochentag (Montag bis Sonntag), darin nach Uhrzeit sortiert, z. B. „Montag: 0 - 6 Uhr, NT | 17 - 20 Uhr, HT | 22 - 24 Uhr, NT“. Nur die Anzeige ist sortiert, an den gespeicherten Daten und der Preisberechnung ändert sich nichts; Löschen entfernt weiterhin genau das angeklickte Zeitfenster.
