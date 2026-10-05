@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.235
+
+* **Fehlermeldungen nennen jetzt die tatsächliche Ursache.** (1) Batterie-Steuerung: Fällt eine Entität erst während der Wiederholversuche aus (z. B. Integration verliert die Verbindung zum Wechselrichter), wird sie in der Meldung jetzt ebenfalls als „nicht verfügbar (unavailable)" genannt - bisher stand dort nur die zuletzt geprüfte Entität, obwohl mehrere Felder gescheitert waren. (2) Warmwasser-Solltemperatur: Die Meldung „Solltemperatur konnte nicht auf X °C gesetzt werden" enthält jetzt in Klammern den Grund (Fehlertext von Home Assistant, Entität nicht verfügbar oder Entität steht unverändert auf dem alten Wert) - bisher stand das nur im Add-on-Log. Gilt auch für das Zurücksetzen und den Test-Button. Am Verhalten der Steuerung selbst ändert sich nichts.
+
 ## 0.0.45.234
 
 * **Batterie: „kein Limit" ist jetzt das Maximum der jeweiligen Entität - das Konfigurationsfeld „Max. Ladeleistung (kW)" entfällt.** „Batterie-Aktion beenden" setzt Entladeleistung, Netz-Ladeleistung und PV-Ladeleistung auf das `max`-Attribut der jeweiligen Home-Assistant-Entität zurück (statt auf einen einzigen, vom Nutzer eingetragenen Wert, der für die Lade-/Entladeleistungs-Entitäten nicht passen musste und dessen zweite Verwendung im Tooltip nie erklärt war). Nicht zugeordnete Limit-Entitäten werden dabei übersprungen, ein nicht lesbares Maximum führt zu einer ausdrücklichen Fehlermeldung. Dieselbe Quelle gilt für die Abweichungsüberwachung (erwarteter Ruhewert) und für die Deckelung des Zielwerts von „Batterie netzladen" (Maximum der Netz-Ladeleistungs-Entität, einmal je Berechnung gelesen). Ein bereits eingetragener Wert in bestehenden Konfigurationen wird nicht mehr ausgewertet.

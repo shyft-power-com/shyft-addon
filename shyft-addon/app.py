@@ -5076,12 +5076,15 @@ def maybe_compute_hw_soc_min():
         _write_current_config(config)
 
 
-def _write_and_verify_dhw_target_temp(entity_id, target_value, retry_timeout_seconds):
+def _write_and_verify_dhw_target_temp(entity_id, target_value, retry_timeout_seconds, detail=None):
     """Schreibt target_value auf die Warmwasser-Solltemperatur-Entitaet (number.set_value oder
     climate.set_temperature, je nach Domain) und prueft per Live-Status, ob sie ihn wirklich
     uebernommen hat - mit Retry alle DHW_TARGET_TEMP_RETRY_DELAY_SECONDS, bis zu
     retry_timeout_seconds. True bei Erfolg, False wenn nach Ablauf der Frist immer noch keine
-    Uebereinstimmung besteht (oder die Entitaet weder number- noch climate-Domain hat)."""
+    Uebereinstimmung besteht (oder die Entitaet weder number- noch climate-Domain hat).
+    detail (optional, dict): bekommt bei False unter "reason" einen Klartext, WARUM es nicht
+    geklappt hat (letzte Fehlermeldung von Home Assistant bzw. letzter gelesener Zustand) - bisher
+    stand das nur im Add-on-Log, nicht in der Nutzer-Fehlermeldung."""
     domain = entity_id.split(".")[0]
     if domain == "number":
         service, data_key = "set_value", "value"
@@ -5089,24 +5092,44 @@ def _write_and_verify_dhw_target_temp(entity_id, target_value, retry_timeout_sec
         service, data_key = "set_temperature", "temperature"
     else:
         print(f"[Shyft] Warmwasser-Solltemperatur: '{entity_id}' ist weder number- noch climate-Entity.")
+        if detail is not None:
+            detail["reason"] = f"'{entity_id}' ist weder eine number- noch eine climate-Entität"
         return False
     deadline = time.time() + retry_timeout_seconds
     attempt = 0
+    last_error = None
+    last_state = None
     while True:
         attempt += 1
         try:
             homeassistant_adapter.call_service(domain, service, {"entity_id": entity_id, data_key: target_value})
+            last_error = None
         except Exception as e:
+            last_error = str(e)
             print(f"[Shyft] Warmwasser-Solltemperatur: {domain}.{service} auf '{entity_id}' fehlgeschlagen (Versuch {attempt}):", repr(e))
         try:
             current_state = homeassistant_adapter.load_entity_state(entity_id)
+            last_state = current_state.state
             if abs(float(current_state.state) - float(target_value)) < 1e-6:
                 return True
         except Exception as e:
             print(f"[Shyft] Warmwasser-Solltemperatur: Status von '{entity_id}' nicht lesbar (Versuch {attempt}):", repr(e))
         if time.time() >= deadline:
+            if detail is not None:
+                detail["reason"] = _dhw_write_failure_reason(entity_id, last_error, last_state)
             return False
         time.sleep(DHW_TARGET_TEMP_RETRY_DELAY_SECONDS)
+
+
+def _dhw_write_failure_reason(entity_id, last_error, last_state):
+    "Klartext fuer die Nutzer-Fehlermeldung, warum die Warmwasser-Solltemperatur nicht uebernommen wurde (Prioritaet: nicht verfuegbar > Fehler von Home Assistant > Entitaet steht unveraendert)."
+    if last_state in BATTERY_UNAVAILABLE_STATES:
+        return f"Die Entität {entity_id} ist in Home Assistant nicht verfügbar ({last_state}) - bitte die Verbindung der Integration zur Wärmepumpe prüfen"
+    if last_error:
+        return f"Home Assistant meldet beim Schreiben auf {entity_id}: {last_error}"
+    if last_state is not None:
+        return f"Die Entität {entity_id} hat den Wert nicht übernommen und steht weiterhin auf {last_state}"
+    return f"Der Zustand von {entity_id} war nicht lesbar"
 
 
 def _start_dhw_target_temp_boost(action, config):
@@ -5127,8 +5150,9 @@ def _start_dhw_target_temp_boost(action, config):
     # Fehlschlag gemeldet wurde (Nutzer-Feedback).
     target_value = round(target_value)
     previous_value = _read_mapped_numeric(config, DHW_TARGET_TEMP_SENSOR_FIELD)
-    if not _write_and_verify_dhw_target_temp(entity_id, target_value, DHW_TARGET_TEMP_RETRY_TIMEOUT_SECONDS):
-        raise Exception(f"Solltemperatur konnte nicht auf {target_value} °C gesetzt werden")
+    detail = {}
+    if not _write_and_verify_dhw_target_temp(entity_id, target_value, DHW_TARGET_TEMP_RETRY_TIMEOUT_SECONDS, detail):
+        raise Exception(f"Solltemperatur konnte nicht auf {target_value} °C gesetzt werden ({detail.get('reason', 'Ursache unbekannt')})")
     action["_dhwTargetTempRestoreValue"] = previous_value
 
 
@@ -5149,8 +5173,9 @@ def _end_dhw_target_temp_restore(action, config):
     if restore_value is None:
         return
     restore_value = round(restore_value)  # siehe Rundungs-Kommentar in _start_dhw_target_temp_boost
-    if not _write_and_verify_dhw_target_temp(entity_id, restore_value, DHW_TARGET_TEMP_RETRY_TIMEOUT_SECONDS):
-        raise Exception(f"Solltemperatur konnte nicht auf {restore_value} °C zurückgesetzt werden")
+    detail = {}
+    if not _write_and_verify_dhw_target_temp(entity_id, restore_value, DHW_TARGET_TEMP_RETRY_TIMEOUT_SECONDS, detail):
+        raise Exception(f"Solltemperatur konnte nicht auf {restore_value} °C zurückgesetzt werden ({detail.get('reason', 'Ursache unbekannt')})")
 
 
 DHW_ACTIVATION_TEST_POLL_INTERVAL_SECONDS = 5
@@ -5366,9 +5391,10 @@ def testHotWaterTargetTemp():
         return jsonify({"success": False, "message": "Aktueller Sollwert nicht lesbar"}), 500
 
     boosted_value = original_value + DHW_TARGET_TEMP_TEST_BOOST_C
-    write_ok = _write_and_verify_dhw_target_temp(entity_id, boosted_value, DHW_TARGET_TEMP_TEST_TIMEOUT_SECONDS)
+    write_detail = {}
+    write_ok = _write_and_verify_dhw_target_temp(entity_id, boosted_value, DHW_TARGET_TEMP_TEST_TIMEOUT_SECONDS, write_detail)
     if not write_ok:
-        return jsonify({"success": False, "message": "Solltemperatur konnte nicht gesetzt/verifiziert werden",
+        return jsonify({"success": False, "message": f"Solltemperatur konnte nicht gesetzt/verifiziert werden ({write_detail.get('reason', 'Ursache unbekannt')})",
                          "originalValue": original_value, "boostedValue": boosted_value}), 500
 
     activate_error = None
@@ -6320,6 +6346,19 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         print(f"[Shyft] Batterie-Steuerung: '{entity_id}' ist {state} - wird nicht beschrieben.")
         return False
 
+    def note_unavailable_after_failure(entity_id):
+        """Eine Entitaet kann waehrend der Wiederholversuche ausfallen (Integration verliert die Verbindung) -
+        die Pruefung vorab sah sie dann noch als verfuegbar. Nach einem gescheiterten Schreibvorgang deshalb
+        noch einmal schauen, damit die Fehlermeldung ALLE nicht verfuegbaren Entitaeten nennt (nicht nur die
+        spaeter geprueften)."""
+        if entity_id in unavailable_ids:
+            return
+        state, friendly_name = unavailable_state(entity_id)
+        if state is not None:
+            unavailable_ids.add(entity_id)
+            unavailable_labels.append(f"{friendly_name} ({entity_id})" if friendly_name else entity_id)
+            print(f"[Shyft] Batterie-Steuerung: '{entity_id}' ist nach dem Schreibversuch {state}.")
+
     def write_number(entity_id, watts, label):
         if not is_available(entity_id):
             failed.append(label)
@@ -6329,6 +6368,7 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         watts = _clamp_to_number_range(entity_id, watts)
         if not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", watts, remaining_seconds()):
             failed.append(label)
+            note_unavailable_after_failure(entity_id)
 
     def write_rest_limit(entity_id, label):
         """Hebt das Limit auf: schreibt das Maximum (max-Attribut) der Entitaet selbst als "kein Limit".
@@ -6349,13 +6389,16 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
             return
         if not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", high, remaining_seconds()):
             failed.append(label)
+            note_unavailable_after_failure(entity_id)
 
     def write_mode(mode_value, label):
         if not mode_value:
             return  # kein Modus-Wert konfiguriert - ueberspringen statt grundlos zu scheitern
-        if not is_available(mode_entity) or \
-                not _write_and_verify_battery_entity(mode_entity, "select", "select_option", "option", mode_value, remaining_seconds()):
+        if not is_available(mode_entity):
             failed.append(label)
+        elif not _write_and_verify_battery_entity(mode_entity, "select", "select_option", "option", mode_value, remaining_seconds()):
+            failed.append(label)
+            note_unavailable_after_failure(mode_entity)
 
     if action_key == "battery_grid_charge":
         if timeout_entity:
