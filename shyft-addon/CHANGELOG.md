@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.246
+
+* **Warmwasser-Chart: gleichbleibende Verläufe grau statt grün.** Bisher wurde jedes Linienstück grün, sobald der Wert auch nur minimal stieg (Sensorrauschen/Rundungsdifferenzen im Zehntelgradbereich). Jetzt ist ein Stück nur noch bei einem Anstieg von mehr als 0,5 °C je Stunde grün (Aufheizen); darunter bleibt es grau, ein Abfall um 1 °C oder mehr bleibt rot. Gilt für Historie und Prognose, auch für die Ansicht ohne Ist-Vergleich. Die anderen Charts (Raumtemperatur, Ladestände) sind unverändert.
+
 ## 0.0.45.245
 
 * **Stromtarif Modul 3, Preis-Prüfzeilen: Börse brutto und netto, zwei Nachkommastellen.** Die Zeile zeigt jetzt z. B. „heute 21-22 Uhr: Fix 27,54 + Börse 23,82 brutto (20,02 netto) = 51,36 ct/kWh“. Der Nettowert ist der Börsenpreis ohne Mehrwertsteuer - so weisen ihn andere Apps (z. B. Tibber) als Spotpreis aus; gerechnet wird mit dem Bruttowert. Alle Werte mit zwei Nachkommastellen, damit die Summe ohne Rundungsabweichung aufgeht (vorher z. B. 27,5 + 23,8 = „51,4“).

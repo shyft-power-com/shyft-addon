@@ -7258,7 +7258,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     function colorForSlope(v0, v1) {
         if (!slopeBands) return 'var(--color-accent)';
         const delta = v1 - v0;
-        if (delta > 0) return slopeBands.riseColor;
+        if (delta > (slopeBands.riseThreshold ?? 0)) return slopeBands.riseColor;
         if (delta <= -(slopeBands.bigDropThreshold ?? 1)) return slopeBands.dropColor;
         return slopeBands.flatColor;
     }
@@ -7539,6 +7539,10 @@ function buildPvForecastActualChart(labels, forecast, actual) {
 // steigend - fuer Ladestand Heimspeicher/Warmwasser/Ladestand Auto/Sonstiges Geraet dieselben
 // Schwellen wie zuvor in den jeweiligen buildLineChart-Aufrufen (siehe Git-Historie), jetzt gebuendelt.
 const TEMPERATURE_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 1};
+// Warmwasser: gruen nur bei einem echten Anstieg (Aufheizen), nicht schon bei Sensorrauschen/Rundungsdifferenzen
+// im Zehntelgradbereich - ein gleichbleibender Verlauf soll grau bleiben (Nutzer-Feedback). Aufheizen steigt
+// um mehrere Grad pro Stunde, deshalb reicht ein Schwellwert deutlich unter 1 °C.
+const WARMWASSER_SLOPE_COLORS = {...TEMPERATURE_SLOPE_COLORS, riseThreshold: 0.5};
 const PERCENT_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 0.1};
 const ON_OFF_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 50};
 
@@ -7561,7 +7565,7 @@ function buildBatterySocForecastActualChart(labels, forecast, actual, actionHour
 }
 
 function buildWarmwasserForecastActualChart(labels, forecast, actual, actionHours) {
-    return buildForecastActualChart('Warmwasser: Prognose vs. Ist', '°C', labels, forecast, actual, {decimals: 1, actionHours, slopeColors: TEMPERATURE_SLOPE_COLORS});
+    return buildForecastActualChart('Warmwasser: Prognose vs. Ist', '°C', labels, forecast, actual, {decimals: 1, actionHours, slopeColors: WARMWASSER_SLOPE_COLORS});
 }
 
 function buildLadestandAutoForecastActualChart(labels, forecast, actual, actionHours) {
@@ -7733,7 +7737,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     function colorForSlope(v0, v1, fallback) {
         if (!slopeColors) return fallback;
         const delta = v1 - v0;
-        if (delta > 0) return slopeColors.riseColor;
+        if (delta > (slopeColors.riseThreshold ?? 0)) return slopeColors.riseColor;
         if (delta <= -(slopeColors.bigDropThreshold ?? 1)) return slopeColors.dropColor;
         return slopeColors.flatColor;
     }
@@ -9699,7 +9703,7 @@ async function loadDashboard() {
         }
         if (!warmwasserChartRendered) {
             updateOrAppendDashboardWidget(container, 'warmwasser', buildLineChart('Warmwasser', '°C', data.output_labels, data.t_hw, {
-                slopeBands: TEMPERATURE_SLOPE_COLORS,
+                slopeBands: WARMWASSER_SLOPE_COLORS,
             }));
         }
         // Ist-Teil (0 Uhr bis jetzt) aus der echten Sensorhistorie statt aus der Optimierer-Prognose
