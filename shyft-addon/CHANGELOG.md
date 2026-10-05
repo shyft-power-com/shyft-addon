@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.234
+
+* **Batterie: „kein Limit" ist jetzt das Maximum der jeweiligen Entität - das Konfigurationsfeld „Max. Ladeleistung (kW)" entfällt.** „Batterie-Aktion beenden" setzt Entladeleistung, Netz-Ladeleistung und PV-Ladeleistung auf das `max`-Attribut der jeweiligen Home-Assistant-Entität zurück (statt auf einen einzigen, vom Nutzer eingetragenen Wert, der für die Lade-/Entladeleistungs-Entitäten nicht passen musste und dessen zweite Verwendung im Tooltip nie erklärt war). Nicht zugeordnete Limit-Entitäten werden dabei übersprungen, ein nicht lesbares Maximum führt zu einer ausdrücklichen Fehlermeldung. Dieselbe Quelle gilt für die Abweichungsüberwachung (erwarteter Ruhewert) und für die Deckelung des Zielwerts von „Batterie netzladen" (Maximum der Netz-Ladeleistungs-Entität, einmal je Berechnung gelesen). Ein bereits eingetragener Wert in bestehenden Konfigurationen wird nicht mehr ausgewertet.
+
 ## 0.0.45.233
 
 * **Fix: „Batterie-Aktion beenden" scheiterte bei Wechselrichtern, deren Lade-/Entladeleistungs-Entität weniger als „Max. Ladeleistung" erlaubt** (Nutzer-Log, Huawei LUNA2000: Entladeleistung und Ladeleistung max. 5000 W, „Max. Ladeleistung" 8,8 kW). Das Add-on schrieb 8800 W als „kein Limit", Home Assistant lehnte das mit einem 500er ab - das Zurücksetzen schlug dauerhaft fehl, ein Ladelimit blieb z.B. auf 100 W hängen. Geschrieben wird jetzt höchstens das Maximum der jeweiligen Entität.
