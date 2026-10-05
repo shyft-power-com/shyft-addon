@@ -2209,7 +2209,7 @@ function buildElectricityTariffControl() {
             const standardField = centField('Fixe Preisbestandteile, Standardtarif (brutto)',
                 'Alles, was zu allen Zeiten ohne Hoch-/Niedertarif-Zeitfenster sowie außerhalb der gewählten Quartale zum Börsenpreis dazukommt: das Netzentgelt plus Abgaben, Umlagen, Stromsteuer, Lieferantenmarge und Mehrwertsteuer (brutto).',
                 'electricity_netzentgelt_standard_cent', 'electricityNetzentgeltStandardCent', 'z.B. 14');
-            panels.append(ntField, htField, standardField);
+            panels.append(ntField, standardField, htField);
             variableTariffPreview = buildNetzentgeltTariffPreviews({nt: ntField, ht: htField, standard: standardField});
             variableTariffPreview.refresh();
         } else {

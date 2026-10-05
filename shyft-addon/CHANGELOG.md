@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.244
+
+* **Stromtarif Modul 3: Reihenfolge der Tarifstufen-Felder.** Die drei Felder „Fixe Preisbestandteile“ stehen jetzt in der Reihenfolge Niedertarif, Standardtarif, Hochtarif (vorher Niedertarif, Hochtarif, Standardtarif). Nur die Anordnung ändert sich.
+
 ## 0.0.45.243
 
 * **Stromtarif Modul 3, Preis-Prüfzeilen: nie die erste oder letzte Stunde eines Zeitfensters.** Beginnt oder endet ein Tarif mitten in einer Stunde, ist der Preis der Randstunde gemischt. Deshalb zeigen die Zeilen jetzt für ein künftiges Fenster dessen zweite Stunde (hat es nur eine, diese), für ein zurückliegendes die vorletzte; liegt die laufende Stunde im Fenster, bleibt sie, solange sie keine Randstunde ist (sonst gilt dieselbe Regel). Ein Fenster ist eine zusammenhängende Folge von Stunden derselben Tarifstufe am heutigen Tag. Nur die Anzeige ändert sich, nicht die Preisberechnung für den Optimierer.
