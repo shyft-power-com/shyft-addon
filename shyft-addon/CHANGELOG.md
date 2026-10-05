@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.235
+
+* **Diagnose für unplausible PV-Prognosen (keine Änderung an der Prognose selbst).** Neuer Endpunkt `/debug/pv-forecast` zeigt in einem Aufruf m²-Kalibrierung, Wetter-Cache (max. Einstrahlung), die jetzt berechnete Prognose, den Tages-Snapshot und die PV-Spalte des gecachten Optimierungslaufs - damit lässt sich eingrenzen, an welcher Stelle ein Ausreißer (z.B. 37,8 kW) zuerst auftaucht. Zusätzlich schreibt das Add-on bei jedem Prognose-Push eine Log-Zeile (Maximum, Summe, m²-Maximum) und warnt ausführlich bei Stundenwerten über 15 kW.
+
 ## 0.0.45.234
 
 * **Batterie: „kein Limit" ist jetzt das Maximum der jeweiligen Entität - das Konfigurationsfeld „Max. Ladeleistung (kW)" entfällt.** „Batterie-Aktion beenden" setzt Entladeleistung, Netz-Ladeleistung und PV-Ladeleistung auf das `max`-Attribut der jeweiligen Home-Assistant-Entität zurück (statt auf einen einzigen, vom Nutzer eingetragenen Wert, der für die Lade-/Entladeleistungs-Entitäten nicht passen musste und dessen zweite Verwendung im Tooltip nie erklärt war). Nicht zugeordnete Limit-Entitäten werden dabei übersprungen, ein nicht lesbares Maximum führt zu einer ausdrücklichen Fehlermeldung. Dieselbe Quelle gilt für die Abweichungsüberwachung (erwarteter Ruhewert) und für die Deckelung des Zielwerts von „Batterie netzladen" (Maximum der Netz-Ladeleistungs-Entität, einmal je Berechnung gelesen). Ein bereits eingetragener Wert in bestehenden Konfigurationen wird nicht mehr ausgewertet.

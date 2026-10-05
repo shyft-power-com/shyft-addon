@@ -1076,6 +1076,7 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         # das letzte Stueck seines Horizonts (er haelt dann den letzten Wert konstant). 24 h Puffer
         # decken jede Tageszeit ab. Der open-meteo-Cache reicht dafuer (siehe OPEN_METEO_FORECAST_DAYS).
         weather_fields = pv_forecast.compute_site_weather_fields(optimizer_period + 24, _pv_sensor_configured(config))
+        _log_pv_push_diagnostics(weather_fields)
     except Exception as e:
         print("[Shyft] Wetter-/PV-Prognosefelder konnten nicht gebaut werden:", repr(e))
     submitted_at = datetime.now(timezone.utc)
@@ -9490,6 +9491,56 @@ def calibrate_pv_forecast(from_default=False):
         print("[Shyft] PV-Kalibrierung: keine Historie, uebersprungen.")
         return
     pv_forecast.calibrate(pairs, days=days, from_default=from_default)
+
+
+PV_DIAGNOSTIC_THRESHOLD_KW = 15
+
+
+def _log_pv_push_diagnostics(weather_fields):
+    "Eine Zeile je Push der PV-Prognose an den Server (Maximum, Summe, m2-Maximum) - bei Stundenwerten ueber PV_DIAGNOSTIC_THRESHOLD_KW zusaetzlich Warnung mit Einstrahlung und m2 der betroffenen Stunde. Rein diagnostisch, aendert die Prognose nicht."
+    values = [float(v) for v in str(weather_fields.get("pvPrediction", "")).split(",") if v != ""]
+    if not values:
+        return
+    peak = max(values)
+    peak_idx = values.index(peak)
+    peak_dt = datetime.fromtimestamp(weather_fields["datetimeWeatherMs"][peak_idx] / 1000, tz=timezone.utc).astimezone(get_ha_timezone())
+    m2, last_calibrated = pv_forecast._read_calibration()
+    print(f"[Shyft] PV-Prognose-Push: max {peak:.2f} kW um {peak_dt:%d.%m. %H:%M}, Summe {sum(values):.1f} kWh, "
+          f"m2 max {max(m2):.0f}, zuletzt kalibriert {last_calibrated}")
+    if peak > PV_DIAGNOSTIC_THRESHOLD_KW:
+        print(f"[Shyft] PV-Prognose-Push UNPLAUSIBEL: {peak:.1f} kW um {peak_dt:%d.%m. %H:%M} - m2={[round(v) for v in m2]}, "
+              f"Wetter-Cache-Alter {pv_forecast.weather_cache_age_hours()} h, Werte={values}")
+
+
+@app.route("/debug/pv-forecast", methods=["GET"])
+def debugPvForecast():
+    """Diagnose fuer unplausible PV-Prognosen: zeigt in einem Aufruf alle Stationen der Prognose - m2-Kalibrierung, Wetter-Cache (max. Einstrahlung), die JETZT berechnete Prognose, den
+    Tages-Snapshot und die PV-Spalte des gecachten Optimierungslaufs (mit Zeitstempeln) - und damit, an welcher Stelle ein Ausreisser (z.B. 37,8 kW um 10 Uhr) zuerst auftaucht."""
+    tz = get_ha_timezone()
+    m2, last_calibrated = pv_forecast._read_calibration()
+    weather = pv_forecast._read_json(pv_forecast.WEATHER_CACHE_PATH) or {}
+    gti = [g if g is not None else 0 for g in weather.get("gti", [])]
+    gti_max = max(gti) if gti else None
+    gti_max_at = (datetime.fromtimestamp(weather["time"][gti.index(gti_max)], tz=timezone.utc).astimezone(tz).isoformat() if gti else None)
+    computed = pv_forecast.compute_site_weather_fields(72, _pv_sensor_configured())
+    computed_by_hour = {datetime.fromtimestamp(ms / 1000, tz=timezone.utc).astimezone(tz).isoformat(): float(v)
+                        for ms, v in zip(computed["datetimeWeatherMs"], computed["pvPrediction"].split(","))}
+    cache_by_hour = {h.isoformat(): v for h, v in sorted(_read_future_pv_forecast_by_hour().items())}
+    snapshot = _read_pv_forecast_snapshot() or {}
+    snapshot_by_label = dict(zip(snapshot.get("labels", []), snapshot.get("pv_generation", [])))
+    try:
+        with open(DASHBOARD_CACHE_PATH, "r") as f:
+            creation_ms = json.load(f).get("creation_date")
+    except Exception:
+        creation_ms = None
+    return jsonify({
+        "m2": [round(v, 1) for v in m2], "last_calibrated": last_calibrated,
+        "weather_cache": {"fetched_at": weather.get("fetched_at"), "gti_max": gti_max, "gti_max_at": gti_max_at},
+        "computed_now_kw": computed_by_hour,
+        "dashboard_cache": {"creation_date": datetime.fromtimestamp(creation_ms / 1000, tz=timezone.utc).isoformat() if creation_ms else None,
+                            "pv_generation_kw": cache_by_hour},
+        "snapshot": {"date": snapshot.get("date"), "pv_generation_kw": snapshot_by_label},
+    })
 
 
 @app.route("/dashboard/weather", methods=["GET"])
