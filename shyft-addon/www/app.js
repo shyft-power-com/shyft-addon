@@ -2164,8 +2164,16 @@ function buildElectricityTariffControl() {
         return buildConfigNumberField({label, tooltip, id, configKey, placeholder, step: '1', min: '0', unit: 'ct/kWh'});
     }
 
+    // Pruefzeilen je Tarifstufe (nur im Modus 'dynamic_variable' belegt, siehe renderPanels). Jede Eingabe/
+    // Aenderung/Klick im Panel (Felder, Zeitfenster, Quartale) loest eine entprellte Neuberechnung aus.
+    let variableTariffPreview = null;
+    for (const eventName of ['input', 'change', 'click']) {
+        panels.addEventListener(eventName, () => { if (variableTariffPreview) variableTariffPreview.scheduleRefresh(); });
+    }
+
     function renderPanels(m) {
         panels.innerHTML = '';
+        variableTariffPreview = null;
         if (m === 'fixed') {
             panels.appendChild(centField('Kosten (brutto)',
                 'Dein fester Arbeitspreis pro Kilowattstunde.',
@@ -2186,21 +2194,24 @@ function buildElectricityTariffControl() {
         } else if (m === 'dynamic_variable') {
             const note = document.createElement('p');
             note.className = 'electricityHint';
-            note.textContent = 'Die Börsenpreise (Brutto, EPEX Day-Ahead) werden automatisch von der Strombörse abgerufen. Das Netzentgelt (deckt zugleich Abgaben, Steuer und Lieferantenmarge mit ab) ist zeitvariabel (§14a, Modul 3): in den unten gewählten Quartalen gilt in den Hochtarif-Zeitfenstern der Hochtarif, in den Niedertarif-Zeitfenstern der Niedertarif und zu allen übrigen Zeiten der Standardtarif - außerhalb der gewählten Quartale durchgehend der Standardtarif. Überlappen sich zwei Zeitfenster, gilt der Hochtarif.';
+            note.textContent = 'Die Börsenpreise (Brutto, EPEX Day-Ahead) werden automatisch von der Strombörse abgerufen. Lege zuerst fest, wann welche Tarifstufe gilt (§14a, Modul 3): in den unten gewählten Quartalen gilt in den Hochtarif-Zeitfenstern der Hochtarif, in den Niedertarif-Zeitfenstern der Niedertarif und zu allen übrigen Zeiten der Standardtarif - außerhalb der gewählten Quartale durchgehend der Standardtarif. Überlappen sich zwei Zeitfenster, gilt der Hochtarif. Trag danach pro Tarifstufe alle fixen Preisbestandteile ein (zeitvariables Netzentgelt plus Abgaben, Umlagen, Stromsteuer, Lieferantenmarge und Mehrwertsteuer) - sie werden auf den jeweiligen Börsen-Stundenpreis addiert.';
             panels.appendChild(note);
-            panels.appendChild(centField('Netzentgelte, Niedertarif (brutto)',
-                'Netzentgelt (inkl. Abgaben/Steuer/Marge) in den Niedertarif-Zeitfenstern, in den gewählten Quartalen.',
-                'electricity_netzentgelt_nt_cent', 'electricityNetzentgeltNtCent', 'z.B. 7'));
-            panels.appendChild(centField('Netzentgelte, Hochtarif (brutto)',
-                'Netzentgelt (inkl. Abgaben/Steuer/Marge) in den Hochtarif-Zeitfenstern, in den gewählten Quartalen.',
-                'electricity_netzentgelt_ht_cent', 'electricityNetzentgeltHtCent', 'z.B. 18'));
             panels.appendChild(buildHtWindowEditor('electricityNetzentgeltWindows',
                 'Noch keine Zeitfenster - ohne Fenster gilt durchgehend der Standardtarif.',
                 {withTariff: true}));
-            panels.appendChild(centField('Standardtarif (brutto)',
-                'Netzentgelt (inkl. Abgaben/Steuer/Marge) zu allen Zeiten ohne Hoch-/Niedertarif-Zeitfenster sowie außerhalb der gewählten Quartale.',
-                'electricity_netzentgelt_standard_cent', 'electricityNetzentgeltStandardCent', 'z.B. 14'));
             panels.appendChild(buildNetzentgeltQuarterField());
+            const ntField = centField('Fixe Preisbestandteile, Niedertarif (brutto)',
+                'Alles, was in den Niedertarif-Zeitfenstern zum Börsenpreis dazukommt: das zeitvariable Netzentgelt plus Abgaben, Umlagen, Stromsteuer, Lieferantenmarge und Mehrwertsteuer (brutto).',
+                'electricity_netzentgelt_nt_cent', 'electricityNetzentgeltNtCent', 'z.B. 7');
+            const htField = centField('Fixe Preisbestandteile, Hochtarif (brutto)',
+                'Alles, was in den Hochtarif-Zeitfenstern zum Börsenpreis dazukommt: das zeitvariable Netzentgelt plus Abgaben, Umlagen, Stromsteuer, Lieferantenmarge und Mehrwertsteuer (brutto).',
+                'electricity_netzentgelt_ht_cent', 'electricityNetzentgeltHtCent', 'z.B. 18');
+            const standardField = centField('Fixe Preisbestandteile, Standardtarif (brutto)',
+                'Alles, was zu allen Zeiten ohne Hoch-/Niedertarif-Zeitfenster sowie außerhalb der gewählten Quartale zum Börsenpreis dazukommt: das Netzentgelt plus Abgaben, Umlagen, Stromsteuer, Lieferantenmarge und Mehrwertsteuer (brutto).',
+                'electricity_netzentgelt_standard_cent', 'electricityNetzentgeltStandardCent', 'z.B. 14');
+            panels.append(ntField, htField, standardField);
+            variableTariffPreview = buildNetzentgeltTariffPreviews({nt: ntField, ht: htField, standard: standardField});
+            variableTariffPreview.refresh();
         } else {
             const note = document.createElement('p');
             note.className = 'electricityHint';
@@ -2443,6 +2454,78 @@ function buildNetzentgeltQuarterField() {
     }
     wrap.appendChild(list);
     return wrap;
+}
+
+// Pruefzeilen fuer den Modus "Dynamischer Tarif + variable Netzentgelte" (Modul 3): hinter jedem der drei
+// Preisbestandteil-Felder (fields = {nt, ht, standard}, je das von buildConfigNumberField gelieferte Element)
+// steht der Gesamtpreis einer passenden Stunde von heute - laufende Stunde, sonst die naechste, sonst die
+// zuletzt zurueckliegende dieser Tarifstufe (siehe /electricity/variable-tariff-preview). Stunde statt
+// Viertelstunde: die Boerse (Awattar) liefert nur Stundenpreise. Die Werte kommen live aus den Eingabefeldern
+// (auch waehrend des Tippens), Zeitfenster/Quartale aus configData.
+function buildNetzentgeltTariffPreviews(fields) {
+    const lines = {};
+    for (const [tariff, fieldEl] of Object.entries(fields)) {
+        const line = document.createElement('div');
+        line.className = 'electricityTariffPreviewLine';
+        const cells = fieldEl.querySelectorAll('td');
+        (cells[cells.length - 1] || fieldEl).appendChild(line);
+        lines[tariff] = line;
+    }
+    const inputIds = {
+        nt: 'electricity_netzentgelt_nt_cent',
+        ht: 'electricity_netzentgelt_ht_cent',
+        standard: 'electricity_netzentgelt_standard_cent',
+    };
+    const fmt = (n) => Number(n).toLocaleString('de-DE', {minimumFractionDigits: 1, maximumFractionDigits: 1});
+    let debounceTimer = null;
+    let requestCounter = 0;
+
+    function describe(tariff, info) {
+        if (!info) return '';
+        if (info.status === 'quarter_inactive') return 'gilt im aktuellen Quartal nicht';
+        if (info.status === 'no_window') return tariff === 'standard' ? 'heute keine Stunde im Standardtarif' : 'heute kein Zeitfenster';
+        if (info.status === 'no_spot') return 'Börsenpreis für diese Stunde nicht abrufbar';
+        const prefix = 'heute ' + info.start_hour + '-' + info.end_hour + ' Uhr: ';
+        if (info.fixed_ct === null || info.fixed_ct === undefined) {
+            return prefix + 'Börse ' + fmt(info.spot_ct) + ' ct/kWh (Fixe Preisbestandteile eintragen für den Gesamtpreis)';
+        }
+        return prefix + 'Fix ' + fmt(info.fixed_ct) + ' + Börse ' + fmt(info.spot_ct) + ' = ' + fmt(info.total_ct) + ' ct/kWh';
+    }
+
+    async function refresh() {
+        const ticket = ++requestCounter;
+        const centValue = (tariff) => {
+            const el = document.getElementById(inputIds[tariff]);
+            const parsed = parseFloat(el ? el.value : '');
+            return isNaN(parsed) ? null : parsed;
+        };
+        let result;
+        try {
+            result = await postJson(insideHomeAssistant + '/electricity/variable-tariff-preview', {
+                nt_ct: centValue('nt'),
+                ht_ct: centValue('ht'),
+                standard_ct: centValue('standard'),
+                windows: configData['electricityNetzentgeltWindows'] || [],
+                quarters: configData['electricityNetzentgeltQuarters'] || [],
+            });
+        } catch (e) {
+            console.log(e);
+            result = {ok: false};
+        }
+        if (ticket !== requestCounter) return;  // eine neuere Anfrage ist unterwegs/fertig
+        for (const [tariff, line] of Object.entries(lines)) {
+            line.textContent = result.ok
+                ? describe(tariff, (result.tariffs || {})[tariff])
+                : 'Börsenpreis ist derzeit nicht abrufbar (Awattar). Bitte später erneut prüfen.';
+        }
+    }
+
+    function scheduleRefresh() {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(refresh, 600);
+    }
+
+    return {refresh, scheduleRefresh};
 }
 
 // Pruefzeile fuer den dynamischen Stromtarif. getSurcharge() liefert den aktuell im Feld

@@ -830,6 +830,14 @@ def _netzentgelt_window_tariff(local_dt, windows):
     return None
 
 
+def _netzentgelt_tariff_for_hour(local_dt, windows, quarters):
+    "'ht' / 'nt' / 'standard' fuer eine Stunde (lokale Zeit) im Modul-3-Tarif: nur in den gewaehlten Kalenderquartalen gelten die Hoch-/Niedertarif-Fenster, sonst (und ausserhalb aller Fenster) der Standardtarif."
+    quarter = (local_dt.month - 1) // 3 + 1
+    if quarter in quarters:
+        return _netzentgelt_window_tariff(local_dt, windows) or "standard"
+    return "standard"
+
+
 def _hour_in_ht_windows(local_dt, windows):
     "True, wenn local_dt (lokale Zeit) in einem der HT-Zeitfenster liegt. Fenster: {weekday 0=Mo, from 0-23, to 1-24}; to<=from = ueber Mitternacht."
     wd, hour = local_dt.weekday(), local_dt.hour
@@ -935,13 +943,8 @@ def compute_price_buy_array(config, base_time_utc, hours):
                 raw_price = _resolve_fallback_price(h, by_hour, bubble_by_hour)
             if raw_price is None:
                 raw_price = prev_raw_price if prev_raw_price is not None else 0.0
-            local_dt = h.astimezone(get_ha_timezone())
-            quarter = (local_dt.month - 1) // 3 + 1
-            if quarter in quarters:
-                window_tariff = _netzentgelt_window_tariff(local_dt, windows)
-                netzentgelt = ht if window_tariff == "ht" else (nt if window_tariff == "nt" else standard)
-            else:
-                netzentgelt = standard
+            tariff = _netzentgelt_tariff_for_hour(h.astimezone(get_ha_timezone()), windows, quarters)
+            netzentgelt = ht if tariff == "ht" else (nt if tariff == "nt" else standard)
             out.append(round(raw_price + netzentgelt, 5))
             prev_raw_price = raw_price
         return out
@@ -992,6 +995,83 @@ def electricity_price_preview():
         "generated_at": now_local.isoformat(),
         "hour": {"start": hour_local.isoformat(), "total_ct": total_ct},
     })
+
+
+@app.route("/electricity/variable-tariff-preview", methods=["POST"])
+def electricity_variable_tariff_preview():
+    """Pruefzeile je Tarifstufe im Modus "Dynamischer Tarif + variable Netzentgelte" (Modul 3): zeigt fuer
+    Niedertarif, Hochtarif und Standardtarif den Gesamtpreis (fixe Preisbestandteile + Boersen-Brutto) EINER
+    passenden Stunde von heute - die laufende Stunde, wenn sie in dieser Tarifstufe liegt, sonst die naechste
+    spaetere, sonst die zuletzt zurueckliegende. Eingaben kommen im Body (noch nicht gespeichert, waehrend der
+    Nutzer tippt): nt_ct/ht_ct/standard_ct (je optional), windows, quarters. Awattar liefert nur Stundenpreise,
+    daher eine Stunde statt einer Viertelstunde. Antwort immer HTTP 200; je Tarifstufe ein "status":
+    ok | no_window (heute keine Stunde in dieser Stufe) | quarter_inactive (HT/NT: aktuelles Quartal nicht
+    gewaehlt) | no_spot (kein Boersenpreis fuer diese Stunde)."""
+    body = request.get_json(silent=True) or {}
+
+    def _ct(key):
+        try:
+            value = body.get(key)
+            return float(value) if value is not None and value != "" else None
+        except (TypeError, ValueError):
+            return None
+
+    windows = body.get("windows") or []
+    quarters = set()
+    for q in body.get("quarters") or []:
+        try:
+            quarters.add(int(q))
+        except (TypeError, ValueError):
+            continue
+    fixed_ct = {"nt": _ct("nt_ct"), "ht": _ct("ht_ct"), "standard": _ct("standard_ct")}
+
+    spot = _fetch_awattar_prices()  # {hour_start_epoch_ms: EUR/kWh brutto}
+    if not spot:
+        return jsonify({"ok": False, "reason": "no_spot"})
+
+    tz = get_ha_timezone()
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc.astimezone(tz)
+    today = now_local.date()
+    current_hour_utc = now_utc.replace(minute=0, second=0, microsecond=0)
+
+    # Alle Stunden des heutigen Kalendertags (lokal) - 23/25 an Zeitumstellungstagen.
+    hours = []
+    hour_utc = now_local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    while True:
+        hour_local = hour_utc.astimezone(tz)
+        if hour_local.date() != today:
+            break
+        hours.append((hour_utc, hour_local, _netzentgelt_tariff_for_hour(hour_local, windows, quarters)))
+        hour_utc += timedelta(hours=1)
+
+    quarter_active_today = ((today.month - 1) // 3 + 1) in quarters
+    result = {}
+    for tariff in ("nt", "ht", "standard"):
+        candidates = [(u, l) for u, l, t in hours if t == tariff]
+        if not candidates:
+            result[tariff] = {"status": "quarter_inactive" if tariff != "standard" and not quarter_active_today else "no_window"}
+            continue
+        current = [c for c in candidates if c[0] == current_hour_utc]
+        later = [c for c in candidates if c[0] > current_hour_utc]
+        chosen, relation = (current[0], "current") if current else ((later[0], "next") if later else (candidates[-1], "past"))
+        hour_start_utc, hour_start_local = chosen
+        spot_eur = spot.get(int(hour_start_utc.timestamp() * 1000))
+        if spot_eur is None:
+            result[tariff] = {"status": "no_spot"}
+            continue
+        spot_ct = round(spot_eur * 100.0, 2)
+        fixed = fixed_ct[tariff]
+        result[tariff] = {
+            "status": "ok",
+            "relation": relation,
+            "start_hour": hour_start_local.hour,
+            "end_hour": hour_start_local.hour + 1,
+            "spot_ct": spot_ct,
+            "fixed_ct": fixed,
+            "total_ct": round(spot_ct + fixed, 2) if fixed is not None else None,
+        }
+    return jsonify({"ok": True, "tariffs": result})
 
 
 def _optimizer_result_pending(cached_creation_date_ms):
