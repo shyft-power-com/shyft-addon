@@ -6456,7 +6456,7 @@ BATTERY_DIRECT_TEST_TARGET_KW = 0.5
 BATTERY_DIRECT_WRITTEN_SENSOR_KEYS = {
     "battery_grid_charge": [
         ("battery_command_timeout", "Timeout"),
-        ("battery_charge_limit_current", "Limit Ladeleistung"),
+        ("battery_charge_limit_current", "Ladeleistung"),
         ("battery_storage_command_mode", "Modus"),
     ],
     "battery_discharge_shift": [

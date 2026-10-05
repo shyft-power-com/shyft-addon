@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.236
+
+* **Kleine Textanpassungen** (Nutzer-Vorgabe): Im Testergebnis von „Batterie netzladen“ heißt die Anzeige jetzt „Ladeleistung“ statt „Limit Ladeleistung“. Die Karte „Ersparnis Haushaltsstrom / Batterie“ in der Gerätesteuerung zeigt keinen Status („aktiv“/„beendet“) mehr, da sie keine echte gestartete oder beendete Aktion ist.
+
 ## 0.0.45.235
 
 * **Fehlermeldungen nennen jetzt die tatsächliche Ursache.** (1) Batterie-Steuerung: Fällt eine Entität erst während der Wiederholversuche aus (z. B. Integration verliert die Verbindung zum Wechselrichter), wird sie in der Meldung jetzt ebenfalls als „nicht verfügbar (unavailable)" genannt - bisher stand dort nur die zuletzt geprüfte Entität, obwohl mehrere Felder gescheitert waren. (2) Warmwasser-Solltemperatur: Die Meldung „Solltemperatur konnte nicht auf X °C gesetzt werden" enthält jetzt in Klammern den Grund (Fehlertext von Home Assistant, Entität nicht verfügbar oder Entität steht unverändert auf dem alten Wert) - bisher stand das nur im Add-on-Log. Gilt auch für das Zurücksetzen und den Test-Button. Am Verhalten der Steuerung selbst ändert sich nichts.

@@ -6243,10 +6243,12 @@ function buildShyftActionCard(action) {
 
     const statusEl = document.createElement('div');
     statusEl.className = 'shyftActionStatus';
+    // Die Haushaltsstrom-Ersparnis ist keine echte, gestartete/beendete Aktion (siehe oben) -
+    // deshalb ohne Status-Text (Nutzer-Vorgabe), die Spalte bleibt fuer das Layout aber erhalten.
     const statusMain = document.createElement('div');
-    statusMain.textContent = baseStatus || '–';
+    statusMain.textContent = isHouseholdSavings ? '' : (baseStatus || '–');
     statusEl.appendChild(statusMain);
-    if (isDeactivated) {
+    if (isDeactivated && !isHouseholdSavings) {
         const statusSub = document.createElement('div');
         statusSub.className = 'shyftActionStatusSub';
         statusSub.textContent = '(deaktiviert)';
