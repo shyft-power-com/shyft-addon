@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.238
+
+* **Fix: Aktionsliste (Gerätesteuerung) konnte komplett leer werden - inklusive aller historischen Aktionen.** Ursache: Der lokale Aktions-Speicher wurde beim Schreiben zuerst gekürzt und dann neu befüllt, und ein nicht lesbarer Speicher galt als „leer". Wurde er genau dann gelesen (parallel laufender Job) oder brach das Schreiben durch einen Neustart/ein Update ab, schrieb der nächste Optimierungslauf bzw. Stundenwechsel die leere Liste zurück - alle Aktionen waren weg. Jetzt wird atomar geschrieben (temporäre Datei, dann austauschen), Lesen und Schreiben sind gegeneinander gesperrt, die vorherige Fassung bleibt als Sicherungskopie (`computed_actions.json.bak`) erhalten, und ein defekter Speicher wird aus dieser Kopie wiederhergestellt statt als leer behandelt. Bereits verlorene Aktionen kommen dadurch nicht zurück.
+
 ## 0.0.45.237
 
 * **Konfiguration: Warnung am Feld „Max. Vorlauftemperatur (°C)“, wenn die Warmwasser-Entität weniger annimmt.** Liegt der eingetragene Wert über dem Maximum der zugeordneten Warmwasser-Solltemperatur-Entität (`max` bei number-, `max_temp` bei climate-Entitäten), wird das Feld rot markiert, der Grund steht direkt darunter und zusätzlich in der Fehlerkarte oben (mit Sprung zum Feld). Hintergrund: Der Optimierer plant dann Zieltemperaturen, die die Wärmepumpe ablehnt, und die Aktion „Warmwasser“ schlägt fehl. Nur ein Hinweis - an der Steuerung und an den Optimierungsdaten ändert sich nichts. Ist das Maximum nicht lesbar, erscheint keine Warnung. Die Heizungs-Solltemperatur wird nicht verglichen (das ist eine Raumtemperatur, keine Vorlauftemperatur).
