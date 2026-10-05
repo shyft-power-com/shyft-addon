@@ -2465,9 +2465,13 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
     list.className = 'htWindowList';
     wrap.appendChild(list);
 
-    function describeWindow(w) {
+    function describeWindowTimes(w) {
         const tariffSuffix = withTariff ? `, ${w.tariff === 'nt' ? 'NT' : 'HT'}` : '';
-        return `${WEEKDAY_NAMES[w.weekday] || '?'}: ${w.from} - ${w.to} Uhr${tariffSuffix}`;
+        return `${w.from} - ${w.to} Uhr${tariffSuffix}`;
+    }
+
+    function describeWindow(w) {
+        return `${WEEKDAY_NAMES[w.weekday] || '?'}: ${describeWindowTimes(w)}`;
     }
 
     function render() {
@@ -2480,24 +2484,44 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
             list.appendChild(empty);
             return;
         }
+        // Pro Wochentag ein Block (Montag bis Sonntag), darin nach Uhrzeit sortiert. Nur die Anzeige ist
+        // sortiert - gespeichert bleibt die Eingabereihenfolge; idx verweist beim Loeschen auf den
+        // gespeicherten Eintrag.
+        const byDay = new Map();
         windows.forEach((w, idx) => {
-            const chip = document.createElement('div');
-            chip.className = 'htWindowChip';
-            const text = document.createElement('span');
-            text.textContent = describeWindow(w);
-            const del = document.createElement('button');
-            del.type = 'button';
-            del.className = 'htWindowDelete';
-            del.title = 'Zeitfenster entfernen';
-            del.textContent = '🗑';
-            del.addEventListener('click', () => {
-                configData[configKey].splice(idx, 1);
-                render();
-                autoSave();
-            });
-            chip.append(text, del);
-            list.appendChild(chip);
+            if (!byDay.has(w.weekday)) byDay.set(w.weekday, []);
+            byDay.get(w.weekday).push({w, idx});
         });
+        for (const weekday of [...byDay.keys()].sort((a, b) => a - b)) {
+            const entries = byDay.get(weekday).sort((a, b) => a.w.from - b.w.from || a.w.to - b.w.to);
+            const dayRow = document.createElement('div');
+            dayRow.className = 'htWindowDay';
+            const dayLabel = document.createElement('span');
+            dayLabel.className = 'htWindowDayLabel';
+            dayLabel.textContent = WEEKDAY_NAMES[weekday] || '?';
+            const chips = document.createElement('div');
+            chips.className = 'htWindowDayChips';
+            for (const {w, idx} of entries) {
+                const chip = document.createElement('div');
+                chip.className = 'htWindowChip';
+                const text = document.createElement('span');
+                text.textContent = describeWindowTimes(w);
+                const del = document.createElement('button');
+                del.type = 'button';
+                del.className = 'htWindowDelete';
+                del.title = `Zeitfenster ${describeWindow(w)} entfernen`;
+                del.textContent = '🗑';
+                del.addEventListener('click', () => {
+                    configData[configKey].splice(idx, 1);
+                    render();
+                    autoSave();
+                });
+                chip.append(text, del);
+                chips.appendChild(chip);
+            }
+            dayRow.append(dayLabel, chips);
+            list.appendChild(dayRow);
+        }
     }
 
     addBtn.addEventListener('click', () => {

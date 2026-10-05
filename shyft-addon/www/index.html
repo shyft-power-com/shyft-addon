@@ -729,8 +729,26 @@
         }
         .htWindowList {
             display: flex;
+            flex-direction: column;
+            gap: 0.5em;
+        }
+        /* Ein Block je Wochentag: Tagesname links, die Zeitfenster des Tages (nach Uhrzeit sortiert) daneben. */
+        .htWindowDay {
+            display: flex;
             flex-wrap: wrap;
-            gap: 0.6em;
+            align-items: center;
+            gap: 0.4em 0.8em;
+        }
+        .htWindowDayLabel {
+            flex: 0 0 7em;
+            font-weight: 600;
+            font-size: 0.9em;
+            color: var(--color-text);
+        }
+        .htWindowDayChips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5em;
         }
         .htWindowChip {
             display: flex;
