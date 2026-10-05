@@ -2404,9 +2404,50 @@ def _action_not_ready_warnings(config):
     return out
 
 
+def _read_entity_max_temperature(entity_id):
+    """Hoechste Solltemperatur, die die Entitaet selbst annimmt: 'max' bei number-Entitaeten, 'max_temp'
+    bei climate-/water_heater-Entitaeten (dort heisst das Attribut anders). None, wenn nicht lesbar oder
+    nicht numerisch - dann gibt es nichts zu vergleichen."""
+    try:
+        attributes = homeassistant_adapter.get_from_homeassistant(f"/api/states/{entity_id}").get("attributes", {}) or {}
+    except Exception:
+        return None
+    key = "max" if entity_id.split(".")[0] == "number" else "max_temp"
+    try:
+        return float(attributes[key])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _max_supply_temp_above_entity_max_warning(config):
+    """Die Konfiguration "Max. Vorlauftemperatur" liegt ueber dem Maximum, das die zugeordnete Warmwasser-
+    Solltemperatur-Entitaet selbst annimmt: der Optimierer plant dann Zieltemperaturen, die die Waermepumpe
+    ablehnt (Home Assistant antwortet mit einem Fehler) - die "Warmwasser"-Aktion schlaegt fehl. Nur die
+    Warmwasser-Entitaet wird verglichen; die Heizungs-Solltemperatur ist eine Raumtemperatur und hat mit der
+    Vorlauftemperatur nichts zu tun (ein Vergleich waere immer ein Fehlalarm)."""
+    if not _is_heatpump_configured(config):
+        return None
+    entity_id = _dhw_target_temp_entity(config)
+    if not entity_id:
+        return None
+    configured = float(config.get("hpMaxSupplyTempC") or HP_MAX_SUPPLY_TEMP_DEFAULT_C)
+    entity_max = _read_entity_max_temperature(entity_id)
+    if entity_max is None or configured <= entity_max:
+        return None
+    return {
+        "key": "hp_max_supply_temp_above_entity_max",
+        "sectionKey": "waermepumpe",
+        "fieldId": "hp_max_supply_temp",
+        "fieldHint": f"Die Warmwasser-Solltemperatur-Entität {entity_id} nimmt höchstens {entity_max:g} °C an.",
+        "message": (f"Max. Vorlauftemperatur ({configured:g} °C) liegt über dem Maximum der Warmwasser-Solltemperatur-Entität "
+                    f"({entity_max:g} °C, {entity_id}) - Solltemperaturen darüber lehnt die Wärmepumpe ab, die Aktion „Warmwasser“ "
+                    f"schlägt dann fehl. Bitte den Wert auf höchstens {entity_max:g} °C senken."),
+    }
+
+
 def compute_config_warnings():
     config = _read_current_config()
-    checks = [_wallbox_status_mapping_warning]
+    checks = [_wallbox_status_mapping_warning, _max_supply_temp_above_entity_max_warning]
     warnings = []
     for check in checks:
         warning = check(config)

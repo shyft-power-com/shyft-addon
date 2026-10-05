@@ -879,13 +879,27 @@ function buildProblemListItem(message, sectionKey, fieldId, haLink) {
 // Pflichtfeld) ausloesen - fieldIds ist eine flache Liste aller betroffenen DOM-Ids (siehe
 // actionFailedFieldId/computeMissingRequiredFieldsWarnings). Entfernt zuerst IMMER alle bisherigen
 // Markierungen, damit ein inzwischen behobenes Feld seinen roten Rahmen auch wieder verliert.
-function applyConfigFieldErrorHighlights(fieldIds) {
+// fieldHints (optional): {fieldId: Text} - zeigt den Text zusaetzlich direkt unter dem Feld (rot), nicht
+// nur in der Fehlerkarte oben (siehe 'fieldHint' der Konfigurations-Warnungen). Auch diese Hinweise werden
+// bei jedem Aufruf zuerst entfernt.
+function applyConfigFieldErrorHighlights(fieldIds, fieldHints = {}) {
     for (const el of document.querySelectorAll('.configFieldError')) {
         el.classList.remove('configFieldError');
+    }
+    for (const el of document.querySelectorAll('.configFieldErrorText')) {
+        el.remove();
     }
     for (const fieldId of fieldIds) {
         const el = document.getElementById(fieldId);
         if (el) el.classList.add('configFieldError');
+    }
+    for (const [fieldId, text] of Object.entries(fieldHints)) {
+        const el = document.getElementById(fieldId);
+        if (!el) continue;
+        const hint = document.createElement('div');
+        hint.className = 'configFieldErrorText';
+        hint.textContent = text;
+        (el.closest('td') || el.parentNode).appendChild(hint);
     }
 }
 
@@ -1097,7 +1111,11 @@ async function renderSystemHealth() {
         list.appendChild(buildProblemListItem(warning.message, warning.sectionKey, warning.fieldId));
     }
     container.appendChild(list);
-    applyConfigFieldErrorHighlights(errorFieldIds);
+    const fieldHints = {};
+    for (const warning of warnings) {
+        if (warning.fieldId && warning.fieldHint) fieldHints[warning.fieldId] = warning.fieldHint;
+    }
+    applyConfigFieldErrorHighlights(errorFieldIds, fieldHints);
     renderDeviceNav(problems, warnings);
 }
 

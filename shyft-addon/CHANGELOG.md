@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.237
+
+* **Konfiguration: Warnung am Feld „Max. Vorlauftemperatur (°C)“, wenn die Warmwasser-Entität weniger annimmt.** Liegt der eingetragene Wert über dem Maximum der zugeordneten Warmwasser-Solltemperatur-Entität (`max` bei number-, `max_temp` bei climate-Entitäten), wird das Feld rot markiert, der Grund steht direkt darunter und zusätzlich in der Fehlerkarte oben (mit Sprung zum Feld). Hintergrund: Der Optimierer plant dann Zieltemperaturen, die die Wärmepumpe ablehnt, und die Aktion „Warmwasser“ schlägt fehl. Nur ein Hinweis - an der Steuerung und an den Optimierungsdaten ändert sich nichts. Ist das Maximum nicht lesbar, erscheint keine Warnung. Die Heizungs-Solltemperatur wird nicht verglichen (das ist eine Raumtemperatur, keine Vorlauftemperatur).
+
 ## 0.0.45.236
 
 * **Kleine Textanpassungen** (Nutzer-Vorgabe): Im Testergebnis von „Batterie netzladen“ heißt die Anzeige jetzt „Ladeleistung“ statt „Limit Ladeleistung“. Die Karte „Ersparnis Haushaltsstrom / Batterie“ in der Gerätesteuerung zeigt keinen Status („aktiv“/„beendet“) mehr, da sie keine echte gestartete oder beendete Aktion ist.
