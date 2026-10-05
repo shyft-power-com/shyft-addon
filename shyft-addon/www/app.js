@@ -2623,7 +2623,7 @@ function buildNetzentgeltTariffPreviews(fields) {
         ht: 'electricity_netzentgelt_ht_cent',
         standard: 'electricity_netzentgelt_standard_cent',
     };
-    const fmt = (n) => Number(n).toLocaleString('de-DE', {minimumFractionDigits: 1, maximumFractionDigits: 1});
+    const fmt = (n) => Number(n).toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     let debounceTimer = null;
     let requestCounter = 0;
 
@@ -2633,10 +2633,12 @@ function buildNetzentgeltTariffPreviews(fields) {
         if (info.status === 'no_window') return tariff === 'standard' ? 'heute keine Stunde im Standardtarif' : 'heute kein Zeitfenster';
         if (info.status === 'no_spot') return 'Börsenpreis für diese Stunde nicht abrufbar';
         const prefix = 'heute ' + info.start_hour + '-' + info.end_hour + ' Uhr: ';
+        // Börse brutto UND netto: andere Apps (z.B. Tibber) zeigen den Spotpreis netto, die Summe rechnet mit brutto.
+        const spot = 'Börse ' + fmt(info.spot_ct) + ' brutto (' + fmt(info.spot_ct_netto) + ' netto)';
         if (info.fixed_ct === null || info.fixed_ct === undefined) {
-            return prefix + 'Börse ' + fmt(info.spot_ct) + ' ct/kWh (Fixe Preisbestandteile eintragen für den Gesamtpreis)';
+            return prefix + spot + ' ct/kWh - Fixe Preisbestandteile eintragen für den Gesamtpreis';
         }
-        return prefix + 'Fix ' + fmt(info.fixed_ct) + ' + Börse ' + fmt(info.spot_ct) + ' = ' + fmt(info.total_ct) + ' ct/kWh';
+        return prefix + 'Fix ' + fmt(info.fixed_ct) + ' + ' + spot + ' = ' + fmt(info.total_ct) + ' ct/kWh';
     }
 
     async function refresh() {

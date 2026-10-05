@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.245
+
+* **Stromtarif Modul 3, Preis-Prüfzeilen: Börse brutto und netto, zwei Nachkommastellen.** Die Zeile zeigt jetzt z. B. „heute 21-22 Uhr: Fix 27,54 + Börse 23,82 brutto (20,02 netto) = 51,36 ct/kWh“. Der Nettowert ist der Börsenpreis ohne Mehrwertsteuer - so weisen ihn andere Apps (z. B. Tibber) als Spotpreis aus; gerechnet wird mit dem Bruttowert. Alle Werte mit zwei Nachkommastellen, damit die Summe ohne Rundungsabweichung aufgeht (vorher z. B. 27,5 + 23,8 = „51,4“).
+
 ## 0.0.45.244
 
 * **Stromtarif Modul 3: Reihenfolge der Tarifstufen-Felder.** Die drei Felder „Fixe Preisbestandteile“ stehen jetzt in der Reihenfolge Niedertarif, Standardtarif, Hochtarif (vorher Niedertarif, Hochtarif, Standardtarif). Nur die Anordnung ändert sich.

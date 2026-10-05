@@ -1109,6 +1109,7 @@ def electricity_variable_tariff_preview():
             "start_hour": hour_start_local.hour,
             "end_hour": hour_start_local.hour + 1,
             "spot_ct": spot_ct,
+            "spot_ct_netto": round(spot_ct / AWATTAR_VAT_FACTOR, 2),  # Boerse ohne Mehrwertsteuer (andere Apps, z.B. Tibber, zeigen den Spotpreis netto)
             "fixed_ct": fixed,
             "total_ct": round(spot_ct + fixed, 2) if fixed is not None else None,
         }
