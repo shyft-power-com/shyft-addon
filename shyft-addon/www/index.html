@@ -672,6 +672,35 @@
             width: auto;
             flex: 0 0 auto;
         }
+        /* Wochentag-Mehrfachauswahl im Tarif-Zeitfenster-Editor (siehe buildWeekdayMultiPicker): passt sich
+           der Textbreite an statt der vollen Breite der Geraeteauswahl, Schnellwahl-Links oben im Panel. */
+        .htWindowForm .weekdayPicker {
+            width: auto;
+            min-width: 12em;
+            max-width: none;
+            flex: 0 0 auto;
+        }
+        .weekdayPicker .integrationPickerList {
+            max-height: none;
+            overflow-y: visible;
+        }
+        .weekdayPickerShortcuts {
+            display: flex;
+            gap: 0.4em;
+            padding: 0 0.3em 0.4em;
+        }
+        .weekdayPickerShortcut {
+            border: 1px solid var(--color-input-border);
+            background: var(--color-bg);
+            color: var(--color-text);
+            border-radius: 4px;
+            padding: 0.15em 0.6em;
+            font-size: 0.8em;
+            cursor: pointer;
+        }
+        .weekdayPickerShortcut:hover {
+            border-color: var(--color-accent);
+        }
         .htWindowFormLabel {
             color: var(--color-text-secondary);
             font-size: 0.9em;

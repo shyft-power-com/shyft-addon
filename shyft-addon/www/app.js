@@ -2265,6 +2265,120 @@ function htWindowsOverlap(a, b) {
     return false;
 }
 
+const WEEKDAY_SHORT_NAMES = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+
+// Kurztext der gewaehlten Wochentage fuer den Picker-Button: mindestens drei zusammenhaengende Tage als
+// Bereich ("Mo-Fr"), sonst Aufzaehlung ("Mo, Mi"); alle sieben = "Alle Tage"; keiner = Platzhalter.
+function summarizeWeekdays(days) {
+    const sorted = [...days].sort((a, b) => a - b);
+    if (sorted.length === 0) return 'Wochentage wählen';
+    if (sorted.length === 7) return 'Alle Tage';
+    const parts = [];
+    let i = 0;
+    while (i < sorted.length) {
+        let j = i;
+        while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
+        parts.push(j - i >= 2
+            ? WEEKDAY_SHORT_NAMES[sorted[i]] + '-' + WEEKDAY_SHORT_NAMES[sorted[j]]
+            : sorted.slice(i, j + 1).map(d => WEEKDAY_SHORT_NAMES[d]).join(', '));
+        i = j + 1;
+    }
+    return parts.join(', ');
+}
+
+// Dropdown mit Haekchen fuer die Wochentage eines Tarif-Zeitfensters (mehrere Tage auf einmal; fuer jeden
+// gewaehlten Tag entsteht beim Hinzufuegen ein eigenes Fenster, siehe buildHtWindowEditor). Nutzt die
+// Klassen/das Schliessverhalten der Geraeteauswahl (openIntegrationPicker). Mit Schnellwahl
+// "Mo-Fr" / "Sa-So" / "Alle".
+function buildWeekdayMultiPicker() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'integrationPicker weekdayPicker';
+
+    const button = document.createElement('div');
+    button.className = 'integrationPickerButton';
+    button.setAttribute('role', 'button');
+    button.tabIndex = 0;
+    button.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            button.click();
+        }
+    });
+    const buttonText = document.createElement('span');
+    buttonText.className = 'integrationPickerButtonText';
+    const buttonArrow = document.createElement('span');
+    buttonArrow.className = 'integrationPickerButtonArrow';
+    buttonArrow.textContent = '▾';
+    button.append(buttonText, buttonArrow);
+    wrapper.appendChild(button);
+
+    const panel = document.createElement('div');
+    panel.className = 'integrationPickerPanel';
+    panel.hidden = true;
+    wrapper.appendChild(panel);
+
+    const selected = new Set();
+    const checkboxes = [];
+
+    function sync() {
+        buttonText.textContent = summarizeWeekdays(selected);
+        checkboxes.forEach((cb, day) => { cb.checked = selected.has(day); });
+        button.classList.remove('configFieldError');
+    }
+
+    const shortcuts = document.createElement('div');
+    shortcuts.className = 'weekdayPickerShortcuts';
+    for (const [label, days] of [['Mo-Fr', [0, 1, 2, 3, 4]], ['Sa-So', [5, 6]], ['Alle', [0, 1, 2, 3, 4, 5, 6]]]) {
+        const shortcut = document.createElement('button');
+        shortcut.type = 'button';
+        shortcut.className = 'weekdayPickerShortcut';
+        shortcut.textContent = label;
+        shortcut.addEventListener('click', () => {
+            selected.clear();
+            days.forEach(d => selected.add(d));
+            sync();
+        });
+        shortcuts.appendChild(shortcut);
+    }
+    panel.appendChild(shortcuts);
+
+    const list = document.createElement('div');
+    list.className = 'integrationPickerList';
+    WEEKDAY_NAMES.forEach((name, day) => {
+        const optionLabel = document.createElement('label');
+        optionLabel.className = 'integrationPickerOption';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) selected.add(day); else selected.delete(day);
+            sync();
+        });
+        checkboxes[day] = checkbox;
+        const text = document.createElement('span');
+        text.textContent = name;
+        optionLabel.append(checkbox, text);
+        list.appendChild(optionLabel);
+    });
+    panel.appendChild(list);
+
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const wasOpen = !panel.hidden;
+        closeOpenIntegrationPicker();
+        if (wasOpen) return;
+        panel.hidden = false;
+        openIntegrationPicker = {wrapper, panel};
+    });
+
+    sync();
+    return {
+        element: wrapper,
+        getSelected: () => [...selected].sort((a, b) => a - b),
+        // Hinzufuegen ohne gewaehlten Tag: Auswahl kurz rot markieren statt stumm zu ignorieren.
+        markMissing: () => button.classList.add('configFieldError'),
+    };
+}
+
 // Wochentag/Stundenfenster-Editor fuer Tarif-Zeitfenster - von 'ht_nt' und 'dynamic_variable'
 // geteilt (je eigener configKey: electricityHtWindows bzw. electricityNetzentgeltWindows), da beide
 // Tarifarten eigene, unabhaengige Zeitfenster brauchen koennen (unterschiedliche Vertraege).
@@ -2277,14 +2391,7 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
 
     const form = document.createElement('div');
     form.className = 'htWindowForm';
-    const wdSel = document.createElement('select');
-    wdSel.className = 'sensorInput';
-    WEEKDAY_NAMES.forEach((n, i) => {
-        const o = document.createElement('option');
-        o.value = String(i);
-        o.textContent = n;
-        wdSel.appendChild(o);
-    });
+    const weekdayPicker = buildWeekdayMultiPicker();
     const fromSel = document.createElement('select');
     fromSel.className = 'sensorInput';
     for (let h = 0; h < 24; h++) {
@@ -2340,9 +2447,9 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
             tariffSel.appendChild(o);
         }
         tariffSel.addEventListener('change', () => tariffSel.classList.remove('status-error'));
-        form.append(wdSel, lbl('von'), fromSel, lbl('bis'), toSel, lbl('gilt der'), tariffSel, addBtn);
+        form.append(weekdayPicker.element, lbl('von'), fromSel, lbl('bis'), toSel, lbl('gilt der'), tariffSel, addBtn);
     } else {
-        form.append(wdSel, lbl('von'), fromSel, lbl('bis'), toSel, addBtn);
+        form.append(weekdayPicker.element, lbl('von'), fromSel, lbl('bis'), toSel, addBtn);
     }
     wrap.appendChild(form);
 
@@ -2394,8 +2501,15 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
     }
 
     addBtn.addEventListener('click', () => {
-        const w = {weekday: parseInt(wdSel.value, 10), from: parseInt(fromSel.value, 10), to: parseInt(toSel.value, 10)};
-        if (w.to === w.from) return;
+        const days = weekdayPicker.getSelected();
+        if (days.length === 0) {
+            weekdayPicker.markMissing();
+            return;
+        }
+        const from = parseInt(fromSel.value, 10);
+        const to = parseInt(toSel.value, 10);
+        if (to === from) return;
+        let tariff = null;
         if (tariffSel) {
             if (!tariffSel.value) {
                 // ohne Tarifoption kein Fenster - Auswahlfeld kurz hervorheben statt stumm zu ignorieren
@@ -2404,17 +2518,26 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
                 return;
             }
             tariffSel.classList.remove('status-error');
-            w.tariff = tariffSel.value;
+            tariff = tariffSel.value;
         }
+        // Ein Fenster je gewaehltem Tag (gleiche Uhrzeiten/gleicher Tarif) - das Datenmodell bleibt
+        // unveraendert. Alles oder nichts: ueberschneidet sich auch nur ein Tag, wird keiner hinzugefuegt.
+        const newWindows = days.map(weekday => {
+            const w = {weekday, from, to};
+            if (tariff) w.tariff = tariff;
+            return w;
+        });
         configData[configKey] = configData[configKey] || [];
-        const conflict = configData[configKey].find(existing => htWindowsOverlap(existing, w));
-        if (conflict) {
-            errorEl.textContent = `Dieses Zeitfenster überschneidet sich mit "${describeWindow(conflict)}". Zeitfenster dürfen sich nicht überschneiden - passe von/bis an oder entferne das andere Fenster zuerst.`;
-            errorEl.hidden = false;
-            return;
+        for (const w of newWindows) {
+            const conflict = configData[configKey].find(existing => htWindowsOverlap(existing, w));
+            if (conflict) {
+                errorEl.textContent = `Dieses Zeitfenster überschneidet sich mit "${describeWindow(conflict)}". Zeitfenster dürfen sich nicht überschneiden - passe Tage bzw. von/bis an oder entferne das andere Fenster zuerst.${newWindows.length > 1 ? ' Es wurde kein Zeitfenster hinzugefügt.' : ''}`;
+                errorEl.hidden = false;
+                return;
+            }
         }
         clearError();
-        configData[configKey].push(w);
+        configData[configKey].push(...newWindows);
         render();
         autoSave();
     });

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.241
+
+* **Stromtarif-Zeitfenster: mehrere Wochentage auf einmal wählen.** Die Tagesauswahl im Zeitfenster-Editor (Hoch-/Niedertarif und Modul 3) ist jetzt ein Dropdown mit Häkchen statt einer Einzelauswahl, mit Schnellwahl „Mo-Fr“, „Sa-So“ und „Alle“. Beim Hinzufügen entsteht für jeden gewählten Tag ein eigenes Zeitfenster (gleiche Uhrzeiten, gleicher Tarif) - das gespeicherte Format ist unverändert. Überschneidet sich auch nur ein Tag mit einem bestehenden Fenster, wird kein Fenster hinzugefügt und die Meldung nennt das kollidierende. Ohne gewählten Tag wird die Auswahl rot markiert.
+
 ## 0.0.45.240
 
 * **Add-on-Beschreibung: doppelter Schlusspunkt entfernt.** Home Assistant hängt beim Anzeigen der Beschreibung selbst einen Punkt an, die Beschreibung in `config.yaml` endete ebenfalls mit einem - im Add-on-Store stand dadurch „Batteriesteuerung..“.
