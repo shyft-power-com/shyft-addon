@@ -7161,20 +7161,63 @@ EV_PV_SURPLUS_B_EV_MAX_KW = 0.3
 EV_PV_SURPLUS_GR_EV_MAX_KW = 0.3
 
 
+COMPUTED_ACTIONS_BACKUP_PATH = COMPUTED_ACTIONS_PATH + ".bak"
+# Scheduler-Jobs und Flask-Requests lesen/schreiben den Store aus verschiedenen Threads.
+_computed_actions_file_lock = threading.RLock()
+
+
+def _load_actions_file(path):
+    "Liste aus einer Aktionsdatei - wirft bei fehlender/defekter Datei oder wenn der Inhalt keine Liste ist."
+    with open(path, "r") as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError("Aktionsdatei enthaelt keine Liste")
+    return data
+
+
 def _read_computed_actions():
-    try:
-        with open(COMPUTED_ACTIONS_PATH, "r") as f:
-            return json.load(f)
-    except Exception:
-        return []
+    """Fehlende Datei = leerer Store (Erstinstallation). Eine DEFEKTE Datei gilt dagegen NICHT als leerer
+    Store: sonst schreibt der naechste Abgleich/Stundenwechsel die leere Liste zurueck und die gesamte
+    Historie ist weg (so passiert nach einem Neustart waehrend eines Schreibvorgangs). Stattdessen wird auf
+    die letzte gute Kopie (.bak, siehe _write_computed_actions) zurueckgegriffen."""
+    with _computed_actions_file_lock:
+        try:
+            return _load_actions_file(COMPUTED_ACTIONS_PATH)
+        except FileNotFoundError:
+            return []
+        except Exception as e:
+            print("[Shyft] Aktions-Store nicht lesbar, versuche Sicherungskopie:", repr(e))
+        try:
+            actions = _load_actions_file(COMPUTED_ACTIONS_BACKUP_PATH)
+            print(f"[Shyft] Aktions-Store aus Sicherungskopie wiederhergestellt ({len(actions)} Aktionen).")
+            return actions
+        except Exception as e:
+            print("[Shyft] Auch die Sicherungskopie des Aktions-Stores ist nicht lesbar:", repr(e))
+            return []
 
 
 def _write_computed_actions(actions):
-    try:
-        with open(COMPUTED_ACTIONS_PATH, "w") as f:
-            json.dump(actions, f)
-    except Exception as e:
-        print("[Shyft] Berechnete Aktionen konnten nicht gespeichert werden:", repr(e))
+    """Atomar: erst in eine temporaere Datei schreiben, dann per os.replace austauschen - ein Abbruch
+    (Neustart/Update) mitten im Schreiben laesst die alte Datei unversehrt. Die jeweils vorherige, noch
+    lesbare Fassung bleibt als .bak erhalten."""
+    if not isinstance(actions, list):
+        print("[Shyft] Berechnete Aktionen nicht gespeichert: keine Liste:", type(actions).__name__)
+        return
+    tmp_path = COMPUTED_ACTIONS_PATH + ".tmp"
+    with _computed_actions_file_lock:
+        try:
+            with open(tmp_path, "w") as f:
+                json.dump(actions, f)
+                f.flush()
+                os.fsync(f.fileno())
+            try:
+                _load_actions_file(COMPUTED_ACTIONS_PATH)
+                shutil.copyfile(COMPUTED_ACTIONS_PATH, COMPUTED_ACTIONS_BACKUP_PATH)
+            except Exception:
+                pass  # keine (lesbare) vorherige Fassung - die vorhandene .bak nicht ueberschreiben
+            os.replace(tmp_path, COMPUTED_ACTIONS_PATH)
+        except Exception as e:
+            print("[Shyft] Berechnete Aktionen konnten nicht gespeichert werden:", repr(e))
 
 
 def _update_computed_action(updated_action):

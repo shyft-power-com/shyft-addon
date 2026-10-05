@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.238
+
+* **Fix: Aktionsliste (Gerätesteuerung) konnte komplett leer werden - inklusive aller historischen Aktionen.** Ursache: Der lokale Aktions-Speicher wurde beim Schreiben zuerst gekürzt und dann neu befüllt, und ein nicht lesbarer Speicher galt als „leer". Wurde er genau dann gelesen (parallel laufender Job) oder brach das Schreiben durch einen Neustart/ein Update ab, schrieb der nächste Optimierungslauf bzw. Stundenwechsel die leere Liste zurück - alle Aktionen waren weg. Jetzt wird atomar geschrieben (temporäre Datei, dann austauschen), Lesen und Schreiben sind gegeneinander gesperrt, die vorherige Fassung bleibt als Sicherungskopie (`computed_actions.json.bak`) erhalten, und ein defekter Speicher wird aus dieser Kopie wiederhergestellt statt als leer behandelt. Bereits verlorene Aktionen kommen dadurch nicht zurück.
+
 ## 0.0.45.233
 
 * **Fix: „Batterie-Aktion beenden" scheiterte bei Wechselrichtern, deren Lade-/Entladeleistungs-Entität weniger als „Max. Ladeleistung" erlaubt** (Nutzer-Log, Huawei LUNA2000: Entladeleistung und Ladeleistung max. 5000 W, „Max. Ladeleistung" 8,8 kW). Das Add-on schrieb 8800 W als „kein Limit", Home Assistant lehnte das mit einem 500er ab - das Zurücksetzen schlug dauerhaft fehl, ein Ladelimit blieb z.B. auf 100 W hängen. Geschrieben wird jetzt höchstens das Maximum der jeweiligen Entität.
