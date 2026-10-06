@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.249
+
+* **Zurückgenommen: „Kein Limit“ der Batterie wieder aus der Eingabe „Max. Ladeleistung (kW)“ statt aus dem `max`-Attribut der Entität (Änderung aus 0.0.45.234).** Das `max` der Lade-/Entladeleistungs-Entitäten ist bei manchen Integrationen nicht die echte Leistungsgrenze, sondern nur der erlaubte Eingabebereich - bei SolarEdge z. B. 1.000.000 W statt der tatsächlichen 5.000 W. „Batterie-Aktion beenden“ setzte dort die Limits dadurch auf 1.000.000 W. Das Konfigurationsfeld „Max. Ladeleistung (kW)“ ist deshalb wieder da und wird für das Zurücksetzen der Limits, die Abweichungsüberwachung und die Deckelung von „Batterie netzladen“ genutzt (jeweils zusätzlich auf das `max` der Entität begrenzt, damit Home Assistant den Wert annimmt). **Bitte den Wert in der Konfiguration (Batterie-Kachel) kontrollieren bzw. neu eintragen** - ohne Wert werden beim Beenden keine Limits zurückgesetzt. Die Verfügbarkeits-Hinweise aus 0.0.45.235 bleiben.
+
 ## 0.0.45.248
 
 * **Gerätesteuerung: Aktionen mit Fehler zeigen „Fehler“ und bleiben rot.** Bisher war die Karte nur rot, solange der aktuelle Status „Fehler“ war; klappte das Beenden/Starten beim nächsten Poll doch noch (z. B. nach einem kurzen Verbindungsabbruch zum Wechselrichter), stand sie wieder als normal „beendet“ da und der Fehler war nur im Log zu finden. Jetzt merkt sich die Aktion dauerhaft, dass sie auf einen Fehler gelaufen ist (neues Feld „Had Error“): die Karte bleibt rot umrandet und zeigt als Status „Fehler“ statt „beendet“; der Fehlertext steht im aufklappbaren Log. Gilt auch für bereits gespeicherte Aktionen mit einem „Fehler beim Starten/Beenden“ im Log. Aktive/geplante Aktionen behalten ihren Status-Text, werden aber ebenfalls rot umrandet.

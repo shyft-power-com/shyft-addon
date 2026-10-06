@@ -6401,14 +6401,6 @@ def _battery_unavailable_hint(unavailable_labels):
             f"bitte die Verbindung der Integration zum Wechselrichter prüfen")
 
 
-def _battery_no_max_hint(entity_ids):
-    "Hinweis (ohne Schlusspunkt), wenn das max-Attribut von Limit-Entitaeten nicht lesbar war und deshalb kein 'kein Limit'-Wert bestimmt werden konnte ('' ohne solche)."
-    if not entity_ids:
-        return ""
-    return (f"Das Maximum (max-Attribut) von {', '.join(entity_ids)} ist in Home Assistant nicht lesbar - "
-            f"das Limit konnte nicht aufgehoben werden (die Entität muss eine number-Entität mit Wertebereich sein)")
-
-
 def _clamp_to_number_range(entity_id, value):
     """Begrenzt value auf das min/max der number-Entitaet (Home Assistant lehnt Werte ausserhalb mit
     einem 500er ab - z.B. 8800 W auf eine Entladeleistung mit max. 5000 W, siehe Nutzer-Log: das
@@ -6436,6 +6428,12 @@ def _read_mapped_number_max_kw(config, sensor_key):
         return None if high is None else float(convert_to_expected_unit(sensor_key, high, unit)[0])
     except Exception:
         return None
+
+
+def _rest_limit_kw(config, sensor_key, max_charge_kw):
+    "Erwarteter 'kein Limit'-Ruhewert (kW) einer Lade-/Entladeleistungs-Entitaet: batteryMaxChargeKw, hoechstens aber das max. der Entitaet selbst (siehe _clamp_to_number_range - dorthin wird beim Zuruecksetzen tatsaechlich geschrieben)."
+    entity_max = _read_mapped_number_max_kw(config, sensor_key)
+    return max_charge_kw if entity_max is None else min(max_charge_kw, entity_max)
 
 
 def _notify_battery_control_failure(action_key, phase, failed_fields, config, unavailable_labels=()):
@@ -6477,11 +6475,9 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
     timeout_entity = sensor_mappings.get("battery_command_timeout")
     netzladen_mode_value = config.get("batteryModeNetzladenValue")
     self_consumption_mode_value = config.get("batteryModeSelfConsumptionValue")
+    max_charge_watts = round((config.get("batteryMaxChargeKw") or 0) * 1000) or None
 
     failed = []
-    # Entitaeten, deren Maximum (max-Attribut) in Home Assistant nicht lesbar war - dann laesst sich
-    # kein "kein Limit"-Wert bestimmen (siehe write_rest_limit).
-    no_max_labels = []
     # Gemeinsames Zeitfenster fuer alle Schreibvorgaenge dieser Aktion (statt je Entitaet das volle
     # Fenster - bei vier Entitaeten sonst bis zum Vierfachen). Mindestens ein Wiederholungsabstand
     # bleibt jedem Schreibvorgang, damit spaetere Entitaeten trotzdem einen echten Versuch bekommen.
@@ -6543,31 +6539,10 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         if not is_available(entity_id):
             failed.append(label)
             return
-        # Auf den Wertebereich der Entitaet begrenzen: Home Assistant lehnt Werte ausserhalb mit einem
-        # 500er ab (z.B. ein Ladeziel ueber dem max. der Netz-Ladeleistungs-Entitaet).
+        # Auf den Wertebereich der Entitaet begrenzen: "kein Limit" (batteryMaxChargeKw, z.B. 8,8 kW) liegt
+        # bei manchen Wechselrichtern ueber dem max. der Lade-/Entladeleistungs-Entitaet (z.B. 5000 W).
         watts = _clamp_to_number_range(entity_id, watts)
         if not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", watts, remaining_seconds()):
-            failed.append(label)
-            note_unavailable_after_failure(entity_id)
-
-    def write_rest_limit(entity_id, label):
-        """Hebt das Limit auf: schreibt das Maximum (max-Attribut) der Entitaet selbst als "kein Limit".
-        Nicht zugeordnete Entitaeten werden uebersprungen (dann nutzt der Nutzer diesen Aktionstyp nicht);
-        ist das Maximum nicht lesbar, laesst sich kein "kein Limit"-Wert bestimmen -> Fehler."""
-        if not entity_id:
-            return
-        if not is_available(entity_id):
-            failed.append(label)
-            return
-        try:
-            _low, high = homeassistant_adapter.get_number_min_max(entity_id)
-        except Exception:
-            high = None
-        if high is None:
-            no_max_labels.append(entity_id)
-            failed.append(label)
-            return
-        if not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", high, remaining_seconds()):
             failed.append(label)
             note_unavailable_after_failure(entity_id)
 
@@ -6594,18 +6569,21 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         write_number(pv_surplus_charge_limit_entity, round((target_kw or 0) * 1000), "Limit Ladeleistung (PV-Überschuss)")
     elif action_key == "battery_action_stop":
         write_mode(self_consumption_mode_value, "Modus")
-        # Alle Limit-Entitaeten auf ihr eigenes Maximum zuruecksetzen ("kein Limit mehr") - unabhaengig
-        # davon, welche der Aktionen tatsaechlich aktiv war (Netzladen UND PV-Ueberschuss, siehe oben).
-        write_rest_limit(discharge_limit_entity, "Entladeleistung")
-        write_rest_limit(charge_limit_entity, "Limit Ladeleistung (Netzladen)")
-        write_rest_limit(pv_surplus_charge_limit_entity, "Limit Ladeleistung (PV-Überschuss)")
+        # Kein eigenes "maximale Entladeleistung"-Konfigurationsfeld vorhanden - nutzt denselben
+        # Wert wie die Ladeleistungs-Grenze als bestmoegliche Annaeherung an "kein Limit mehr".
+        # Beide Ladeleistungslimit-Entitaeten zuruecksetzen (Netzladen UND PV-Ueberschuss, siehe
+        # oben) - unabhaengig davon, welche der beiden Aktionen tatsaechlich aktiv war.
+        if max_charge_watts:
+            write_number(discharge_limit_entity, max_charge_watts, "Entladeleistung")
+            write_number(charge_limit_entity, max_charge_watts, "Limit Ladeleistung (Netzladen)")
+            write_number(pv_surplus_charge_limit_entity, max_charge_watts, "Limit Ladeleistung (PV-Überschuss)")
 
     if failed:
         if notify_on_failure:
             _notify_battery_control_failure(action_key, phase, failed, config, unavailable_labels)
         message = f"Batterie-Steuerung unvollständig: {', '.join(failed)}."
-        hints = [h for h in (_battery_unavailable_hint(unavailable_labels), _battery_no_max_hint(no_max_labels)) if h]
-        raise Exception(f"{message} {'; '.join(hints)}" if hints else message[:-1])
+        hint = _battery_unavailable_hint(unavailable_labels)
+        raise Exception(f"{message} {hint}" if hint else message[:-1])
 
 
 def _battery_control_variant(config, action_key):
@@ -7025,12 +7003,14 @@ def check_device_status_deviation(config):
                                and is_action_type_enabled(config, BATTERY_CHARGE_SHIFT_ACTION_NAME))
         discharge_shift_direct = (_battery_control_variant(config, "battery_discharge_shift") == "direct"
                                   and is_action_type_enabled(config, BATTERY_DISCHARGE_SHIFT_ACTION_NAME))
-
-        # Ruhezustand ("kein Limit") = das Maximum der jeweiligen Entitaet selbst (max-Attribut, siehe
-        # write_rest_limit in execute_battery_direct) - ist es nicht lesbar, gibt es keine Erwartung.
+        max_charge_kw = config.get("batteryMaxChargeKw")
+        try:
+            max_charge_kw = float(max_charge_kw) if max_charge_kw not in (None, "") else None
+        except (TypeError, ValueError):
+            max_charge_kw = None
 
         # Ladeleistungslimit (Netzladen): von "Batterie netzladen" auf deren Target Value gesetzt,
-        # sonst (Ruhezustand) auf das Maximum der Entitaet. Eigene, unabhaengige Entitaet seit der
+        # sonst (Ruhezustand) auf batteryMaxChargeKw. Eigene, unabhaengige Entitaet seit der
         # Trennung von der PV-Ueberschuss-Begrenzung (Nutzer-Vorgabe: manche Wechselrichter haben
         # dafuer zwei getrennte Steuerungen) - der Ruhezustand-Vergleich braucht deshalb nur noch
         # Rueckschluesse aus "Batterie netzladen" selbst, nicht mehr zusaetzlich aus der (jetzt
@@ -7039,8 +7019,8 @@ def check_device_status_deviation(config):
         if grid_charge is not None and grid_charge_direct:
             if past_grace(grid_charge):
                 expected_charge_kw = grid_charge.get("Target Value")
-        elif grid_charge_direct and baseline_ok((BATTERY_GRID_CHARGE_ACTION_NAME,)):
-            expected_charge_kw = _read_mapped_number_max_kw(config, "battery_charge_limit_current")
+        elif grid_charge_direct and max_charge_kw is not None and baseline_ok((BATTERY_GRID_CHARGE_ACTION_NAME,)):
+            expected_charge_kw = _rest_limit_kw(config, "battery_charge_limit_current", max_charge_kw)
         live_charge_kw = _read_mapped_numeric(config, "battery_charge_limit_current")
         _check_numeric_deviation(
             "battery_charge_limit", expected_charge_kw, live_charge_kw,
@@ -7050,14 +7030,14 @@ def check_device_status_deviation(config):
         )
 
         # Ladeleistungslimit (PV-Ueberschuss): von "Batterie-Laden verschieben (PV-Ueberschuss)" auf
-        # deren (kleinen) Target Value gesetzt, sonst (Ruhezustand) auf das Maximum der Entitaet - eigene
+        # deren (kleinen) Target Value gesetzt, sonst (Ruhezustand) auf batteryMaxChargeKw - eigene
         # Entitaet, siehe oben.
         expected_pv_surplus_charge_kw = None
         if charge_shift is not None and charge_shift_direct:
             if past_grace(charge_shift):
                 expected_pv_surplus_charge_kw = charge_shift.get("Target Value")
-        elif charge_shift_direct and baseline_ok((BATTERY_CHARGE_SHIFT_ACTION_NAME,)):
-            expected_pv_surplus_charge_kw = _read_mapped_number_max_kw(config, "battery_charge_limit_current_pv_surplus")
+        elif charge_shift_direct and max_charge_kw is not None and baseline_ok((BATTERY_CHARGE_SHIFT_ACTION_NAME,)):
+            expected_pv_surplus_charge_kw = _rest_limit_kw(config, "battery_charge_limit_current_pv_surplus", max_charge_kw)
         live_pv_surplus_charge_kw = _read_mapped_numeric(config, "battery_charge_limit_current_pv_surplus")
         _check_numeric_deviation(
             "battery_charge_limit_pv_surplus", expected_pv_surplus_charge_kw, live_pv_surplus_charge_kw,
@@ -7067,13 +7047,13 @@ def check_device_status_deviation(config):
         )
 
         # Entladeleistungslimit: von "Batterie-Entladen verschieben" auf 0 gesetzt, sonst
-        # (Ruhezustand) auf das Maximum der Entitaet.
+        # (Ruhezustand) auf batteryMaxChargeKw.
         expected_discharge_kw = None
         if discharge_shift is not None and discharge_shift_direct:
             if past_grace(discharge_shift):
                 expected_discharge_kw = 0.0
-        elif discharge_shift_direct and baseline_ok((BATTERY_DISCHARGE_SHIFT_ACTION_NAME,)):
-            expected_discharge_kw = _read_mapped_number_max_kw(config, "battery_discharge_limit_current")
+        elif discharge_shift_direct and max_charge_kw is not None and baseline_ok((BATTERY_DISCHARGE_SHIFT_ACTION_NAME,)):
+            expected_discharge_kw = _rest_limit_kw(config, "battery_discharge_limit_current", max_charge_kw)
         live_discharge_kw = _read_mapped_numeric(config, "battery_discharge_limit_current")
         _check_numeric_deviation(
             "battery_discharge_limit", expected_discharge_kw, live_discharge_kw,
@@ -8092,16 +8072,14 @@ def compute_battery_grid_charge_actions(config, output_rows, input_rows, start, 
     Keine Aktion, wenn fuer dieselbe Stunde schon "Batterie-Entladen verschieben" reserviert ist
     (siehe _discharge_shift_reserved_for_hour) - das hat Vorrang. In Stunden mit vorhergesagtem
     Sonnenschein greift zusaetzlich die 95%-Deckelung (siehe BATTERY_SUNSHINE_SOC_CAP_PCT).
-    Unabhaengig davon wird der Zielwert immer sicherheitshalber gedeckelt: sowohl auf das Maximum
-    (max-Attribut) der zugeordneten Netz-Ladeleistungs-Entitaet "battery_charge_limit_current" als
-    auch auf deren aktuellen Live-Wert - der niedrigere Wert gewinnt."""
+    Unabhaengig davon wird der Zielwert immer sicherheitshalber gedeckelt: sowohl auf den statisch
+    konfigurierten "Max. Ladeleistung"-Wert (batteryMaxChargeKw) als auch, falls zugeordnet, auf den
+    praeziseren Live-Sensor "battery_charge_limit_current" - der niedrigere Wert gewinnt."""
     result = {}
     if not _is_battery_configured(config):
         return result
 
     battery_capacity_kwh = config.get("batteryCapacityKwh")
-    # Einmal je Berechnung lesen (zwei Home-Assistant-Zugriffe), nicht je Stunde.
-    entity_max_charge_kw = _read_mapped_number_max_kw(config, "battery_charge_limit_current")
 
     row_count = len(output_rows)
     for i in range(row_count):
@@ -8128,14 +8106,15 @@ def compute_battery_grid_charge_actions(config, output_rows, input_rows, start, 
                 max_kwh_this_hour = (BATTERY_SUNSHINE_SOC_CAP_PCT - soc_now) / 100 * battery_capacity_kwh
                 energy = min(energy, max(0.0, max_kwh_this_hour))
 
-        # Sicherheitshalber immer zusaetzlich gedeckelt - sowohl auf das Maximum der Entitaet (der
+        # Sicherheitshalber immer zusaetzlich gedeckelt - sowohl auf den statisch konfigurierten
+        # Wert (batteryMaxChargeKw, siehe compute_battery_grid_charge_actions-Docstring: der
         # Optimierer nimmt intern pauschal 50% der Kapazitaet als Leistungsgrenze an, was von der
-        # echten Geraetegrenze abweichen kann; frueher stattdessen ein vom Nutzer eingetragener
-        # "Max. Ladeleistung"-Wert) als auch auf den LIVE-Wert (falls zugeordnet - die tatsaechlich
-        # erlaubte Ladeleistung kann z.B. temperatur-/BMS-abhaengig schwanken) - der jeweils niedrigere
-        # Wert gewinnt.
-        if entity_max_charge_kw is not None:
-            energy = min(energy, max(0.0, entity_max_charge_kw))
+        # echten Geraetegrenze abweichen kann) als auch auf den LIVE-Sensor (falls zugeordnet, praeziser
+        # als der statische Wert, da die tatsaechlich erlaubte Ladeleistung z.B. temperatur-/BMS-
+        # abhaengig schwanken kann) - der jeweils niedrigere Wert gewinnt.
+        static_max_charge_kw = config.get("batteryMaxChargeKw")
+        if static_max_charge_kw:
+            energy = min(energy, max(0.0, static_max_charge_kw))
         live_max_charge_kw = _read_mapped_numeric(config, "battery_charge_limit_current")
         if live_max_charge_kw is not None:
             energy = min(energy, max(0.0, live_max_charge_kw))

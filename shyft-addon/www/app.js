@@ -735,6 +735,7 @@ async function saveConfigurationNow() {
         "hpHeatingCurveSlope": configData["hpHeatingCurveSlope"] ?? 1.2,
         "batteryCapacityKwh": configData["batteryCapacityKwh"] ?? 10,
         "batterySocMinPercent": configData["batterySocMinPercent"] ?? 10,
+        "batteryMaxChargeKw": configData["batteryMaxChargeKw"] ?? null,
         "batteryModeNetzladenValue": batteryModeNetzladenValue,
         "batteryModeSelfConsumptionValue": batteryModeSelfConsumptionValue,
         "coPriceGas": configData["coPriceGas"] ?? 0.1,
@@ -3339,6 +3340,7 @@ function renderSectionBody(bodyDiv, section, entryIds) {
             bodyDiv.appendChild(buildBatteryFlowSignOverrideField());
             bodyDiv.appendChild(buildBatteryCapacityField());
             bodyDiv.appendChild(buildBatterySocMinField());
+            bodyDiv.appendChild(buildBatteryMaxChargeKwField());
             bodyDiv.appendChild(buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntities));
         }
         if (section.key === 'auto') {
@@ -3817,6 +3819,24 @@ function buildBatteryCapacityField() {
         placeholder: 'z.B. 10',
         defaultValue: 10,
         step: '0.5',
+    });
+}
+
+// Statischer, vom Nutzer eingetragener Sicherheitswert - deckelt den Zielwert von "Batterie
+// netzladen" im Addon direkt (siehe compute_battery_grid_charge_actions in app.py), zusaetzlich
+// zum optionalen Live-Sensor "Aktuelle max. Ladeleistung". Hintergrund: der Optimierer nimmt
+// intern pauschal 50% der Batteriekapazitaet als maximale Lade-/Entladeleistung an (siehe
+// run_SHEMS.jl), was von der tatsaechlichen Geraetegrenze abweichen kann - kleine Abweichungen der
+// Optimierung sind unproblematisch, diese Deckelung ist nur ein Sicherheitsnetz.
+function buildBatteryMaxChargeKwField() {
+    return buildConfigNumberField({
+        label: 'Max. Ladeleistung (kW)',
+        tooltip: 'Sicherheitsgrenze für "Batterie netzladen": der berechnete Zielwert wird im Addon nie über diesen Wert hinaus gesetzt, unabhängig davon, was die Optimierung ausrechnet.',
+        id: 'battery_max_charge_kw',
+        configKey: 'batteryMaxChargeKw',
+        placeholder: 'z.B. 5',
+        step: '0.5',
+        unit: 'kW',
     });
 }
 
