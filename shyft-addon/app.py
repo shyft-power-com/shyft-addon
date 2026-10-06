@@ -5542,8 +5542,15 @@ def _fail_action(action, config, exec_status, msg, prev_exec, verb):
     # Bleibt dauerhaft gesetzt, auch wenn ein spaeterer Versuch noch klappt (z.B. Beenden beim naechsten Poll):
     # die Anzeige zeigt die Aktion dann als "Fehler" (rot) statt als normal "beendet".
     action["Had Error"] = True
-    note = f"{_local_now().strftime('%H:%M Uhr')}: Fehler beim {verb} - {msg}"
-    action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+    # Zeitpunkt des ERSTEN Fehlers dieses Versuchs (bis zum naechsten Erfolg) - Grundlage der schnellen
+    # Wiederholungen der Batterie-Aktionen (siehe retry_failed_battery_actions) und fuer das Unterdruecken
+    # wiederholter Push-Benachrichtigungen/Log-Zeilen bei jedem weiteren Versuch.
+    action.setdefault("Error First At", int(time.time() * 1000))
+    text = f"Fehler beim {verb} - {msg}"
+    note = f"{_local_now().strftime('%H:%M Uhr')}: {text}"
+    last_line = (action.get("Log") or "").rsplit("\n", 1)[-1]
+    if not last_line.endswith(text):  # bei Wiederholungen mit derselben Ursache keine Log-Zeile je Versuch
+        action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
     _update_computed_action(action)
     if prev_exec != exec_status:
         notify_action_event(config, action, f"Fehler beim {verb}", is_error=True)
@@ -6454,7 +6461,16 @@ def _notify_battery_control_failure(action_key, phase, failed_fields, config, un
     print("[Shyft]", message)
 
 
-def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_seconds=BATTERY_RETRY_TIMEOUT_SECONDS, notify_on_failure=True):
+def _battery_retry_kwargs(action):
+    """Zusatzargumente fuer execute_battery_direct, wenn eine Aktion nach einem Fehler erneut versucht wird (siehe
+    retry_failed_battery_actions): dann KEIN weiterer Push je Versuch (der erste Fehlschlag hat schon einen geschickt)
+    und keine Gnadenfrist fuer nicht verfuegbare Entitaeten - der naechste Versuch folgt ohnehin in
+    BATTERY_ACTION_RETRY_INTERVAL_SECONDS."""
+    retrying = bool(action.get("Error First At"))
+    return {"notify_on_failure": not retrying, "unavailable_grace_seconds": 0 if retrying else None}
+
+
+def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_seconds=BATTERY_RETRY_TIMEOUT_SECONDS, notify_on_failure=True, unavailable_grace_seconds=None):
     """Fuehrt die 'direkte Entitaets-Steuerung'-Variante eines Batterie-Aktionstyps aus (siehe
     Modulkommentar oben). target_kw ist der Target Value der Aktion (kW) - fuer "Batterie netzladen"
     der Ladezielwert, fuer "Batterie-Laden verschieben" der (kleine) Begrenzungswert, sonst
@@ -6492,6 +6508,7 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
     unavailable_labels = []
     unavailable_ids = set()
     grace = {"deadline": None}
+    grace_seconds = BATTERY_UNAVAILABLE_GRACE_SECONDS if unavailable_grace_seconds is None else unavailable_grace_seconds
 
     def unavailable_state(entity_id):
         "'unavailable'/'unknown', wenn die Entitaet gerade so steht; sonst (auch bei nicht lesbar) None - dann entscheidet der normale Schreib-/Verifikationsweg."
@@ -6511,7 +6528,7 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         if state is None:
             return True
         if grace["deadline"] is None:
-            grace["deadline"] = time.time() + BATTERY_UNAVAILABLE_GRACE_SECONDS
+            grace["deadline"] = time.time() + grace_seconds
         while time.time() < grace["deadline"]:
             time.sleep(min(BATTERY_RETRY_DELAY_SECONDS, max(grace["deadline"] - time.time(), 0)))
             state, friendly_name = unavailable_state(entity_id)
@@ -7239,7 +7256,7 @@ def handle_shyft_action_start(action, actions_enabled, config):
         actor_key = ACTION_NAME_TO_ACTOR_KEY[label]
         try:
             if _battery_control_variant(config, actor_key) == "direct":
-                execute_battery_direct(actor_key, "gestartet", target, config)
+                execute_battery_direct(actor_key, "gestartet", target, config, **_battery_retry_kwargs(action))
             else:
                 automation_entity_id = config.get("actorMappings", {}).get(actor_key)
                 trigger_ha_automation(automation_entity_id, "start", target)
@@ -7270,6 +7287,7 @@ def handle_shyft_action_start(action, actions_enabled, config):
 
     action["Execution Status"] = "yes, started"
     action.pop("Error Message", None)
+    action.pop("Error First At", None)
     _update_computed_action(action)
 
     notify_action_event(config, action, "gestartet")
@@ -7314,7 +7332,7 @@ def handle_shyft_action_end(action, actions_enabled, config):
             # shared across all three battery Aktionstypen - see BATTERY_SHIFT_ACTOR_KEYS - and no
             # target value, unlike the start: "stop the current battery action" has nothing to aim for
             if _battery_control_variant(config, "battery_action_stop") == "direct":
-                execute_battery_direct("battery_action_stop", "beendet", None, config)
+                execute_battery_direct("battery_action_stop", "beendet", None, config, **_battery_retry_kwargs(action))
             else:
                 automation_entity_id = config.get("actorMappings", {}).get("battery_action_stop")
                 trigger_ha_automation(automation_entity_id, "stop", None)
@@ -7342,6 +7360,7 @@ def handle_shyft_action_end(action, actions_enabled, config):
 
     action["Execution Status"] = "yes, finished"
     action.pop("Error Message", None)
+    action.pop("Error First At", None)
     _update_computed_action(action)
     notify_action_event(config, action, "beendet")
 
@@ -8830,6 +8849,14 @@ def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms
         _reconcile_computed_actions(config, BATTERY_CHARGE_SHIFT_ACTION_NAME, BATTERY_CHARGE_SHIFT_ID_PREFIX, battery_charge_shift_actions, start, hour_window=full_hour_window)
     except Exception as e:
         print("[Shyft] Aktionsberechnung aus Optimierungslauf fehlgeschlagen:", repr(e))
+        return
+    # Beendet der neue Lauf eine laufende Aktion (z.B. "Batterie netzladen" wird abgeloest) und legt deren Ersatz an,
+    # soll der Ersatz SOFORT starten - nicht erst beim naechsten Viertelstunden-Poll (bis zu 15 Minuten ohne Steuerung,
+    # Limits/Modus waeren in der Zwischenzeit zurueckgesetzt).
+    try:
+        process_shyft_actions(blocking=False)
+    except Exception as e:
+        print("[Shyft] Sofortstart nach Optimierungslauf fehlgeschlagen:", repr(e))
 
 
 def _find_next_hour_action(group, current):
@@ -8840,7 +8867,18 @@ def _find_next_hour_action(group, current):
     return next((a for a in group if a.get("Date Start") == date_end and (a.get("Status") or "").lower() == "geplant"), None)
 
 
+# Stundenwechsel, 15-Minuten-Poll, Wiederholungen fehlgeschlagener Batterie-Aktionen und der Sofortstart nach einem neuen
+# Optimierungslauf lesen/schreiben dieselben Aktions-/Konfigurationsdaten und steuern dasselbe Geraet - sie laufen daher
+# nacheinander, nie gleichzeitig (sonst koennten z.B. zwei Threads dieselbe Aktion doppelt starten).
+_action_processing_lock = threading.RLock()
+
+
 def run_hourly_action_transition():
+    with _action_processing_lock:
+        _run_hourly_action_transition_unlocked()
+
+
+def _run_hourly_action_transition_unlocked():
     """Allgemeiner, aktionstyp-uebergreifender Stundenwechsel-Mechanismus (siehe Scheduler-Cron,
     minute=0) - gilt fuer jeden "Action Name" im lokalen Store (COMPUTED_ACTIONS_PATH), nicht nur
     "Auto laden":
@@ -8911,7 +8949,9 @@ def run_hourly_action_transition():
                     handle_shyft_action_end(current, was_really_started, config)
                 except Exception as e:
                     print(f"[Shyft] Stundenwechsel: Beenden von '{name}' fehlgeschlagen:", repr(e))
-                ended_ids.add(action_id)
+                # "yes, not finished": Beenden schlug fehl -> nicht vormerken, der Poll/die Wiederholung versucht es erneut
+                if current.get("Execution Status") != "yes, not finished":
+                    ended_ids.add(action_id)
                 if was_really_started:
                     try:
                         energy_archive.archive_completed_action(current)
@@ -8936,7 +8976,9 @@ def run_hourly_action_transition():
                 handle_shyft_action_start(action, enabled, config)
             except Exception as e:
                 print(f"[Shyft] Stundenwechsel: Start von '{name}' fehlgeschlagen:", repr(e))
-            started_ids.add(action_id)
+            # "no, error": Start schlug fehl -> nicht vormerken, der Poll/die Wiederholung versucht es erneut
+            if action.get("Execution Status") != "no, error":
+                started_ids.add(action_id)
 
     if changed:
         result_actions = [a for a in actions if a.get("_id") not in to_remove_ids]
@@ -8946,7 +8988,17 @@ def run_hourly_action_transition():
         _write_current_config(config)
 
 
-def process_shyft_actions():
+def process_shyft_actions(blocking=True):
+    """blocking=False (Wiederholungen/Sofortstart): ueberspringt den Lauf, wenn gerade Stundenwechsel/Poll laufen."""
+    if not _action_processing_lock.acquire(blocking=blocking):
+        return
+    try:
+        _process_shyft_actions_unlocked()
+    finally:
+        _action_processing_lock.release()
+
+
+def _process_shyft_actions_unlocked():
     """Checks the addon's own locally computed action list (COMPUTED_ACTIONS_PATH, see
     recompute_actions_from_optimizer_run - no Bubble call anymore) and fires start/end hooks based
     on timing, independent of what's currently recorded as Status (see
@@ -9972,6 +10024,40 @@ def process_shyft_actions_periodically():
     with app.app_context():
         process_shyft_actions()
 
+
+# Eine Batterie-Aktion, deren Start/Ende fehlschlug (z.B. Integration zum Wechselrichter kurz "unavailable"), wird in den
+# ersten BATTERY_ACTION_RETRY_WINDOW_SECONDS nach dem ersten Fehler alle BATTERY_ACTION_RETRY_INTERVAL_SECONDS erneut
+# versucht - danach nur noch im normalen 15-Minuten-Poll (der bis zum Ende der Aktion ebenfalls weiter versucht).
+BATTERY_ACTION_RETRY_INTERVAL_SECONDS = 30
+BATTERY_ACTION_RETRY_WINDOW_SECONDS = 15 * 60
+BATTERY_ACTION_NAMES = (BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_DISCHARGE_SHIFT_ACTION_NAME, BATTERY_CHARGE_SHIFT_ACTION_NAME)
+
+
+def _battery_retry_due(actions, now_ms):
+    "True, wenn mindestens eine Batterie-Aktion in einem Fehlerzustand (Start bzw. Ende fehlgeschlagen) ist, dessen erster Fehler hoechstens BATTERY_ACTION_RETRY_WINDOW_SECONDS zurueckliegt."
+    for action in actions:
+        if action.get("Action Name") not in BATTERY_ACTION_NAMES:
+            continue
+        if action.get("Execution Status") not in ("no, error", "yes, not finished"):
+            continue
+        first_error = action.get("Error First At")
+        if first_error is not None and now_ms - first_error <= BATTERY_ACTION_RETRY_WINDOW_SECONDS * 1000:
+            return True
+    return False
+
+
+def retry_failed_battery_actions():
+    "Stoesst process_shyft_actions an, solange eine Batterie-Aktion im Wiederholungsfenster steht (siehe BATTERY_ACTION_RETRY_*): process_shyft_actions versucht fehlgeschlagene Starts/Enden ohnehin immer wieder (sie sind nicht als erledigt vorgemerkt)."
+    if is_demo_mode():
+        return
+    if _battery_retry_due(_read_computed_actions(), time.time() * 1000):
+        process_shyft_actions(blocking=False)
+
+
+def retry_failed_battery_actions_periodically():
+    with app.app_context():
+        retry_failed_battery_actions()
+
 def run_hourly_action_transition_periodically():
     with app.app_context():
         run_hourly_action_transition()
@@ -10097,6 +10183,7 @@ scheduler.add_job(sync_dashboard_chart_data_periodically, 'date', run_date=datet
 scheduler.add_job(process_shyft_actions_periodically, 'cron', minute="0,15,30,45")
 # Allgemeiner Beenden/Starten/Verlaengern-Mechanismus zur vollen Stunde, siehe run_hourly_action_transition
 scheduler.add_job(run_hourly_action_transition_periodically, 'cron', minute="0")
+scheduler.add_job(retry_failed_battery_actions_periodically, 'interval', seconds=BATTERY_ACTION_RETRY_INTERVAL_SECONDS, max_instances=1, coalesce=True)
 # Energie-Archiv (Analyse-Tab): 3 Minuten nach der Stunde, damit der frische Optimierungslauf von
 # sync_dashboard_chart_data_periodically (Minute 0) den letzten Plan-Beitrag der GERADE
 # abgelaufenen Stunde schon abgegeben hat, bevor sie hier abgeschlossen wird (siehe
