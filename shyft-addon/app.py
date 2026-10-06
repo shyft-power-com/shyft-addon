@@ -77,6 +77,10 @@ class _TimestampedStream:
         self._lock = threading.Lock()
 
     def write(self, text):
+        # click.echo (Flask-Startbanner) schreibt BYTES in den Stream, sobald er ihn fuer einen Binaerstream haelt (write(b"")
+        # klappt) - ohne diese Umwandlung brach das Add-on beim Start mit einem TypeError ab.
+        if isinstance(text, (bytes, bytearray)):
+            text = bytes(text).decode("utf-8", "replace")
         if not text:
             return 0
         with self._lock:

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.256
+
+* **Fix: Add-on startete seit 0.0.45.254 nicht mehr.** Der neue Zeitstempel für jede Protokollzeile (0.0.45.254) konnte nur Text verarbeiten; beim Start schreibt Flask über `click.echo` aber Bytes in den Stream (Server-Banner „Running on …“) - das Add-on brach mit „TypeError: endswith first arg must be bytes or a tuple of bytes, not str“ ab und stand auf „Fehler“. Der Zeitstempel-Stream wandelt Bytes jetzt in Text um. Geprüft durch einen echten Start von `app.py` (läuft bis „Running on …“) und Regressionstests für den click-Pfad.
+
 ## 0.0.45.255
 
 * **Steuerungs-Schalter auf die Gerätesteuerung-Seite verschoben.** Die Schalter zum Aktivieren/Deaktivieren der Steuerungen (Warmwasser, Heizung, Batterie netzladen, Batterie schonen (PV-Überschuss), Batterie-Entladen verschieben, Wallbox, Verbraucher) stehen jetzt oben auf der Gerätesteuerung-Seite als Kartenraster mit Symbol, Beschriftung und Schalter, darunter die Überschrift „Verlauf“. Sie sind aus den Geräte-Kacheln der Konfiguration entfallen; nur „PV: Einspeisung begrenzen“ und „Verbrauch begrenzen §14a“ (SPiNE-Gateway, standardmäßig aus) behalten ihren Schalter dort. Gezeigt wird eine Karte nur, wenn das Gerät eingebunden ist: nicht der reine Demomodus, sondern ein echtes Gerät mit mindestens einer hinterlegten Home-Assistant-Entität. Die Leiste klebt unter der Kopfzeile, blendet sich beim Herunterscrollen aus und beim Hinaufscrollen (bzw. ganz oben) wieder ein; auf schmalen Bildschirmen (unter 760 px) scrollt sie einfach mit der Seite weg. Die Schalter speichern wie bisher sofort; gespeicherte Einstellungen bleiben unverändert.
