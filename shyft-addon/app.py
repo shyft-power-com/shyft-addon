@@ -1814,9 +1814,13 @@ def _compute_einsatzplan_kpis(rows, pv_values):
         eingekaufte Netzenergie = GR_sum pro Stunde bei 0 gekappt (Einspeisung ignoriert). Dadurch
         von Natur aus zwischen 0% und 100%: kein Deckel noetig, aber Netzladen des Hausspeichers
         kann die Kennzahl bis auf 0% druecken (dessen Bezug steckt in GR_sum, nicht in X_sum).
-      - Eigenverbrauch (%) = (Summe(X_sum) - Summe(eingekaufter Netzenergie)) / PV-Erzeugung * 100,
-        gedeckelt auf 100% (mehr als 100% der PV-Erzeugung kann nicht selbst verbraucht werden) -
-        nutzt wie ø Netzstrom nur den eingekauften (nicht-negativen) Anteil.
+      - Eigenverbrauch (%) = (1 - Summe(PV_GR) / Summe(PV_sum_44)) * 100 - die uebliche Eigenverbrauchsquote:
+        der Anteil der tatsaechlich genutzten PV-Erzeugung, der NICHT ins Netz eingespeist wird (PV_GR =
+        PV -> Netz, PV_sum_44 = alle PV-Fluesse: Haus, Batterie, Waermepumpe, Zusatzgeraet, Auto, Netz).
+        PV, die in die Batterie geladen wird, zaehlt damit sofort als Eigenverbrauch. Die frueher genutzte
+        Formel (Verbrauch - Netzbezug) / PV-Prognose wertete eingespeicherte PV erst bei der spaeteren
+        Entladung und zog Netzladen der Batterie ab - sie lag dadurch oft deutlich zu niedrig. Fehlen die
+        beiden Spalten (aeltere Laeufe), gilt weiterhin die alte Formel.
       - Stromertrag (EUR) = Summe(profits_opt) - der Verguetungserloes aus Netzeinspeisung, direkt
         vom Optimierer berechnet (separate Spalte, nicht aus GR_sum abgeleitet)."""
     if not rows:
@@ -1853,7 +1857,13 @@ def _compute_einsatzplan_kpis(rows, pv_values):
     # sondern eindeutig 0% Eigenverbrauch (von nichts kann nichts selbst verbraucht worden sein) -
     # deshalb 0 statt None/"-".
     eigenverbrauch_pct = 0
-    if pv_sum > EINSATZPLAN_ZERO_THRESHOLD:
+    has_pv_flow_columns = any(row.get("PV_sum_44") not in (None, "") and row.get("PV_GR") not in (None, "") for row in rows)
+    if has_pv_flow_columns:
+        pv_used_sum = _sum_column("PV_sum_44")
+        if pv_used_sum > EINSATZPLAN_ZERO_THRESHOLD:
+            pv_fed_in_sum = _sum_column("PV_GR", clamp_non_negative=True)
+            eigenverbrauch_pct = round(max(0.0, min(100.0, (1 - pv_fed_in_sum / pv_used_sum) * 100)))
+    elif pv_sum > EINSATZPLAN_ZERO_THRESHOLD:
         self_consumed = max(0.0, min(x_sum - gr_purchased_sum, pv_sum))
         eigenverbrauch_pct = round(max(0.0, min(100.0, self_consumed / pv_sum * 100)))
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.247
+
+* **Einsatzplan: „Eigenverbrauch“ nach der üblichen Definition berechnet.** Der Wert ist jetzt der Anteil der genutzten PV-Erzeugung, der nicht ins Netz eingespeist wird: (1 − Σ Einspeisung ÷ Σ genutzte PV) × 100, aus den Optimierer-Spalten `PV_GR` und `PV_sum_44`. PV, die in die Batterie geladen wird, zählt damit sofort als Eigenverbrauch. Bisher war es (Verbrauch − Netzbezug) ÷ PV-Prognose: eingespeicherte PV wurde erst bei der späteren Entladung gezählt (blieb Energie am Tagesende im Speicher, fehlte sie), Netzladen der Batterie wurde abgezogen und die PV-Prognose roh (vor Wechselrichterverlusten) als Nenner genommen - das ergab oft einen deutlich zu niedrigen Wert (z. B. 74 % für einen PV-starken Tag). Fehlen die Spalten (ältere Läufe), gilt weiter die alte Formel. „Autarkie“ und die übrigen Kennzahlen sind unverändert.
+
 ## 0.0.45.246
 
 * **Warmwasser-Chart: gleichbleibende Verläufe grau statt grün.** Bisher wurde jedes Linienstück grün, sobald der Wert auch nur minimal stieg (Sensorrauschen/Rundungsdifferenzen im Zehntelgradbereich). Jetzt ist ein Stück nur noch bei einem Anstieg von mehr als 0,5 °C je Stunde grün (Aufheizen); darunter bleibt es grau, ein Abfall um 1 °C oder mehr bleibt rot. Gilt für Historie und Prognose, auch für die Ansicht ohne Ist-Vergleich. Die anderen Charts (Raumtemperatur, Ladestände) sind unverändert.
