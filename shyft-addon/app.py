@@ -6467,10 +6467,11 @@ def _battery_retry_kwargs(action):
     und keine Gnadenfrist fuer nicht verfuegbare Entitaeten - der naechste Versuch folgt ohnehin in
     BATTERY_ACTION_RETRY_INTERVAL_SECONDS."""
     retrying = bool(action.get("Error First At"))
-    return {"notify_on_failure": not retrying, "unavailable_grace_seconds": 0 if retrying else None}
+    return {"notify_on_failure": not retrying, "unavailable_grace_seconds": 0 if retrying else None,
+            "normalize_others": bool(action.get("_supersedes"))}
 
 
-def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_seconds=BATTERY_RETRY_TIMEOUT_SECONDS, notify_on_failure=True, unavailable_grace_seconds=None):
+def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_seconds=BATTERY_RETRY_TIMEOUT_SECONDS, notify_on_failure=True, unavailable_grace_seconds=None, normalize_others=False):
     """Fuehrt die 'direkte Entitaets-Steuerung'-Variante eines Batterie-Aktionstyps aus (siehe
     Modulkommentar oben). target_kw ist der Target Value der Aktion (kW) - fuer "Batterie netzladen"
     der Ladezielwert, fuer "Batterie-Laden verschieben" der (kleine) Begrenzungswert, sonst
@@ -6572,16 +6573,42 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
             failed.append(label)
             note_unavailable_after_failure(mode_entity)
 
+    def write_rest_if_needed(entity_id, label):
+        """Nur bei Abloesung (normalize_others): eine Entitaet, die nicht zur NEUEN Aktion gehoert, aber noch den Wert der
+        abgeloesten haelt (z.B. Entladelimit 0 W vom Entladen-Verschieben), wieder auf den Ruhewert setzen - weil die alte
+        Aktion nicht beendet wurde. Nur schreiben, wenn der aktuelle Wert abweicht; ohne eingetragenen Ruhewert nichts."""
+        if not entity_id or not max_charge_watts:
+            return
+        target = _clamp_to_number_range(entity_id, max_charge_watts)
+        try:
+            if abs(float(homeassistant_adapter.load_entity_state(entity_id).state) - target) < 1:
+                return
+        except (TypeError, ValueError):
+            pass  # nicht numerisch/nicht lesbar -> sicherheitshalber schreiben
+        except Exception:
+            pass
+        write_number(entity_id, max_charge_watts, label)
+
     if action_key == "battery_grid_charge":
+        if normalize_others:
+            write_rest_if_needed(discharge_limit_entity, "Entladeleistung")
+            write_rest_if_needed(pv_surplus_charge_limit_entity, "Limit Ladeleistung (PV-Überschuss)")
         if timeout_entity:
             write_number(timeout_entity, BATTERY_COMMAND_TIMEOUT_SECONDS["battery_grid_charge"], "Timeout")
         write_number(charge_limit_entity, round((target_kw or 0) * 1000), "Limit Ladeleistung")
         write_mode(netzladen_mode_value, "Modus")
     elif action_key == "battery_discharge_shift":
+        if normalize_others:
+            write_mode(self_consumption_mode_value, "Modus")
+            write_rest_if_needed(charge_limit_entity, "Limit Ladeleistung (Netzladen)")
+            write_rest_if_needed(pv_surplus_charge_limit_entity, "Limit Ladeleistung (PV-Überschuss)")
         if timeout_entity:
             write_number(timeout_entity, BATTERY_COMMAND_TIMEOUT_SECONDS["battery_discharge_shift"], "Timeout")
         write_number(discharge_limit_entity, 0, "Entladeleistung")
     elif action_key == "battery_charge_shift_pv_surplus":
+        if normalize_others:
+            write_rest_if_needed(discharge_limit_entity, "Entladeleistung")
+            write_rest_if_needed(charge_limit_entity, "Limit Ladeleistung (Netzladen)")
         write_mode(self_consumption_mode_value, "Modus")
         write_number(pv_surplus_charge_limit_entity, round((target_kw or 0) * 1000), "Limit Ladeleistung (PV-Überschuss)")
     elif action_key == "battery_action_stop":
@@ -7288,6 +7315,7 @@ def handle_shyft_action_start(action, actions_enabled, config):
     action["Execution Status"] = "yes, started"
     action.pop("Error Message", None)
     action.pop("Error First At", None)
+    action.pop("_supersedes", None)
     _update_computed_action(action)
 
     notify_action_event(config, action, "gestartet")
@@ -8558,7 +8586,7 @@ TARGET_VALUE_UNIT_BY_ACTION_NAME = {
 }
 
 
-def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour, start, hour_window, replace_running=False):
+def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour, start, hour_window, replace_running=False, deferred_ends=None):
     """Ersetzt alle vorhandenen Aktionen vom Typ action_name im lokalen Store, deren Stundenfenster
     zum aktuellen Lauf gehoert (Stunden 0..hour_window-1 ab start), durch die frisch berechneten
     (computed_by_hour, siehe compute_ev_charge_actions) - mit Sonderbehandlung fuer die laufende
@@ -8595,16 +8623,24 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
     if 0 in computed_by_hour:
         if hour0_existing and replace_running:
             was_really_started = hour0_existing.get("Execution Status") == "yes, started"
-            try:
-                handle_shyft_action_end(hour0_existing, was_really_started, config)
-            except Exception as e:
-                print(f"[Shyft] Abloesen (Beenden) von '{action_name}' fehlgeschlagen:", repr(e))
+            replacement = computed_by_hour[0]
+            if was_really_started and is_action_type_enabled(config, action_name):
+                # Die neu berechnete Aktion loest die laufende AB: kein Beenden (das wuerde Modus/Limits zuruecksetzen, um
+                # sie sofort wieder zu setzen), der Start der neuen Aktion ueberschreibt die Werte direkt.
+                replacement["_supersedes"] = action_name
+                note = f"{_local_now().strftime('%H:%M Uhr')}: löst die laufende Aktion ab (neuer Optimierungslauf)"
+                replacement["Log"] = (replacement.get("Log") + "\n" + note) if replacement.get("Log") else note
+            else:
+                try:
+                    handle_shyft_action_end(hour0_existing, was_really_started, config)
+                except Exception as e:
+                    print(f"[Shyft] Abloesen (Beenden) von '{action_name}' fehlgeschlagen:", repr(e))
             started_ids = set(config.get("startedShyftActionIds", []))
             if hour0_existing.get("_id") in started_ids:
                 started_ids.discard(hour0_existing.get("_id"))
                 config["startedShyftActionIds"] = sorted(started_ids)
                 config_changed = True
-            kept.append(computed_by_hour[0])
+            kept.append(replacement)
         elif hour0_existing:
             new_target = computed_by_hour[0]["Target Value"]
             if hour0_existing.get("Target Value") != new_target:
@@ -8627,10 +8663,15 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
         # der Aktionstyp koennte zwischen Start und jetzt deaktiviert worden sein, ohne dass die
         # tatsaechlich laufende Steuerung das mitbekommen haette - dann muss trotzdem echt beendet werden.
         was_really_started = hour0_existing.get("Execution Status") == "yes, started"
-        try:
-            handle_shyft_action_end(hour0_existing, was_really_started, config)
-        except Exception as e:
-            print(f"[Shyft] Sofortiges Beenden von '{action_name}' fehlgeschlagen:", repr(e))
+        if deferred_ends is not None and action_name in BATTERY_ACTION_NAMES:
+            # Erst nach allen Batterie-Abgleichen entscheiden: startet im selben Lauf eine andere Batterie-Aktion, loest sie
+            # diese ab (kein Beenden), sonst wird wirklich beendet (siehe _resolve_deferred_battery_ends).
+            deferred_ends.append((hour0_existing, was_really_started))
+        else:
+            try:
+                handle_shyft_action_end(hour0_existing, was_really_started, config)
+            except Exception as e:
+                print(f"[Shyft] Sofortiges Beenden von '{action_name}' fehlgeschlagen:", repr(e))
         # Die ID haengt am Stundenbeginn: legt ein spaeterer Lauf in derselben Stunde die Aktion neu an
         # (Bedingung wieder erfuellt), muss process_shyft_actions sie als frische Aktion starten UND
         # beenden - sonst gilt sie wegen der alten IDs als "schon gestartet"/"schon beendet", steht
@@ -8796,6 +8837,31 @@ def log_cached_plan_diagnostic():
         print("[Shyft] Plan-vs-Base-Diagnose beim Start fehlgeschlagen:", repr(e))
 
 
+def _resolve_deferred_battery_ends(deferred, config):
+    """Entfallene laufende Batterie-Aktionen (der neue Lauf plant fuer die laufende Stunde keine mehr): startet im selben Lauf
+    eine andere Batterie-Aktion, loest sie die entfallene ab (kein Beenden - der Start stellt Modus/Limits direkt um), sonst
+    wird die entfallene wirklich beendet."""
+    if not deferred:
+        return
+    now_ms = time.time() * 1000
+    started_ids = set(_read_current_config().get("startedShyftActionIds", []))
+    successor = next((a for a in _read_computed_actions()
+                      if a.get("Action Name") in BATTERY_ACTION_NAMES
+                      and (a.get("Status") or "").lower().startswith("aktiv")
+                      and a.get("Date Start") is not None and a["Date Start"] <= now_ms
+                      and a.get("_id") not in started_ids
+                      and is_action_type_enabled(config, a.get("Action Name"))), None)
+    for old, was_really_started in deferred:
+        if successor is not None and was_really_started:
+            successor["_supersedes"] = old.get("Action Name")
+            _update_computed_action(successor)
+            continue
+        try:
+            handle_shyft_action_end(old, was_really_started, config)
+        except Exception as e:
+            print(f"[Shyft] Sofortiges Beenden von '{old.get('Action Name')}' fehlgeschlagen:", repr(e))
+
+
 def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id, base=None):
     """Wird bei jedem frischen Optimierungslauf aufgerufen (siehe _write_dashboard_cache) - berechnet und reconciled alle addon-seitigen Aktionstypen neu: 'Auto laden', 'Warmwasser', 'Heizung Soll-Temperatur', 'Verbraucher an', 'Batterie-Entladen verschieben', 'Batterie netzladen' und 'Batterie-Laden verschieben (PV-Ueberschuss)' - alle sieben bisher geplanten Aktionstypen sind damit umgesetzt.
 
@@ -8841,12 +8907,14 @@ def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms
         # Stand aus DIESEM Lauf, nicht den von der letzten Optimierung. Die umgekehrte Pruefung
         # (compute_battery_discharge_shift_actions gibt "Batterie netzladen" Vorrang) rechnet GR_B
         # direkt aus output_csv nach, ist also unabhaengig von der Reihenfolge hier korrekt.
+        deferred_battery_ends = []
         battery_discharge_shift_actions = _suppress_near_boundary_singleton(compute_battery_discharge_shift_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
-        _reconcile_computed_actions(config, BATTERY_DISCHARGE_SHIFT_ACTION_NAME, BATTERY_DISCHARGE_SHIFT_ID_PREFIX, battery_discharge_shift_actions, start, hour_window=full_hour_window)
+        _reconcile_computed_actions(config, BATTERY_DISCHARGE_SHIFT_ACTION_NAME, BATTERY_DISCHARGE_SHIFT_ID_PREFIX, battery_discharge_shift_actions, start, hour_window=full_hour_window, deferred_ends=deferred_battery_ends)
         battery_grid_charge_actions = _suppress_near_boundary_singleton(compute_battery_grid_charge_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
-        _reconcile_computed_actions(config, BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_GRID_CHARGE_ID_PREFIX, battery_grid_charge_actions, start, hour_window=full_hour_window, replace_running=True)
+        _reconcile_computed_actions(config, BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_GRID_CHARGE_ID_PREFIX, battery_grid_charge_actions, start, hour_window=full_hour_window, replace_running=True, deferred_ends=deferred_battery_ends)
         battery_charge_shift_actions = _suppress_near_boundary_singleton(compute_battery_charge_shift_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
-        _reconcile_computed_actions(config, BATTERY_CHARGE_SHIFT_ACTION_NAME, BATTERY_CHARGE_SHIFT_ID_PREFIX, battery_charge_shift_actions, start, hour_window=full_hour_window)
+        _reconcile_computed_actions(config, BATTERY_CHARGE_SHIFT_ACTION_NAME, BATTERY_CHARGE_SHIFT_ID_PREFIX, battery_charge_shift_actions, start, hour_window=full_hour_window, deferred_ends=deferred_battery_ends)
+        _resolve_deferred_battery_ends(deferred_battery_ends, config)
     except Exception as e:
         print("[Shyft] Aktionsberechnung aus Optimierungslauf fehlgeschlagen:", repr(e))
         return
@@ -8865,6 +8933,57 @@ def _find_next_hour_action(group, current):
     if date_end is None:
         return None
     return next((a for a in group if a.get("Date Start") == date_end and (a.get("Status") or "").lower() == "geplant"), None)
+
+
+# "Abgeloest" statt "beendet": Wird eine Aktion durch eine andere ihrer Familie abgeloest, die im selben Moment startet
+# (Batterie: Netzladen / Entladen verschieben / Laden verschieben untereinander; Heizung: neue Solltemperatur), wird die
+# alte NICHT beendet - Beenden wuerde Modus/Limits bzw. die Solltemperatur auf den Ruhewert zuruecksetzen, nur damit der
+# Start der neuen sie sofort wieder umstellt. Die alte Aktion bekommt den Status "abgelöst", die neue startet einfach.
+SUPERSESSION_FAMILIES = (
+    {BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_DISCHARGE_SHIFT_ACTION_NAME, BATTERY_CHARGE_SHIFT_ACTION_NAME},
+    {HEIZUNG_ACTION_NAME},
+)
+SUPERSEDED_STATUS = "abgelöst"
+# Die ablösende Aktion muss so nah am Ende der alten beginnen (Stundenwechsel bzw. verspaeteter Poll).
+SUPERSESSION_START_TOLERANCE_MS = 5 * 60 * 1000
+
+
+def _supersession_family(action_name):
+    return next((family for family in SUPERSESSION_FAMILIES if action_name in family), None)
+
+
+def _find_superseding(action, actions, now_ms, config):
+    """Die Aktion derselben Familie, die genau jetzt anstelle von action uebernimmt (aktiv oder faellig geplant, Start
+    innerhalb SUPERSESSION_START_TOLERANCE_MS um das Ende von action, Aktionstyp wirklich eingeschaltet) - sonst None,
+    dann wird action regulaer beendet."""
+    family = _supersession_family(action.get("Action Name"))
+    date_end = action.get("Date End")
+    if family is None or date_end is None:
+        return None
+    for other in actions:
+        if other is action or other.get("_id") == action.get("_id") or other.get("Action Name") not in family:
+            continue
+        start = other.get("Date Start")
+        status = (other.get("Status") or "").lower()
+        if start is None or start > now_ms + 1000 or abs(start - date_end) > SUPERSESSION_START_TOLERANCE_MS:
+            continue
+        if not (status.startswith("aktiv") or status == "geplant"):
+            continue
+        if not is_action_type_enabled(config, other.get("Action Name")):
+            continue  # wuerde nur simuliert - das Geraet bliebe sonst im Zustand der alten Aktion
+        return other
+    return None
+
+
+def _mark_superseded(action, other):
+    """Markiert action als durch other abgeloest (kein Beenden am Geraet). other bekommt den Hinweis, wen sie abloest -
+    der Start stellt dann auch die Entitaeten der abgeloesten Aktion auf Ruhewert (siehe execute_battery_direct)."""
+    action["Status"] = SUPERSEDED_STATUS
+    if action.get("Execution Status") == "yes, started":
+        action["Execution Status"] = "yes, finished"
+    note = f"{_local_now().strftime('%H:%M Uhr')}: abgelöst durch \"{other.get('Action Name')}\""
+    action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+    other["_supersedes"] = action.get("Action Name")
 
 
 # Stundenwechsel, 15-Minuten-Poll, Wiederholungen fehlgeschlagener Batterie-Aktionen und der Sofortstart nach einem neuen
@@ -8941,6 +9060,18 @@ def _run_hourly_action_transition_unlocked():
                 changed = True
                 continue
             action_id = current.get("_id")
+            superseding = _find_superseding(current, actions, now_ms, config) if action_id and action_id not in ended_ids else None
+            if superseding is not None:
+                was_really_started = current.get("Execution Status") == "yes, started"
+                _mark_superseded(current, superseding)
+                ended_ids.add(action_id)
+                if was_really_started:
+                    try:
+                        energy_archive.archive_completed_action(current)
+                    except Exception as e:
+                        print("[Shyft] Energie-Archiv: Aktion konnte nicht archiviert werden:", repr(e))
+                changed = True
+                continue
             if action_id and action_id not in ended_ids:
                 # wie bei _reconcile_computed_actions: der Toggle zum jetzigen Zeitpunkt ist nicht
                 # massgeblich, sondern ob die Aktion beim Start wirklich ausgefuehrt wurde
@@ -9037,6 +9168,13 @@ def _process_shyft_actions_unlocked():
         date_end = action.get("Date End")
         end_passed = date_end is not None and date_end <= now_ms
         if end_passed and action_id and action_id not in ended_ids:
+            superseding = _find_superseding(action, actions, now_ms, config)
+            if superseding is not None:
+                _mark_superseded(action, superseding)
+                _update_computed_action(action)
+                _update_computed_action(superseding)  # Hinweis "_supersedes" festhalten, bevor deren Start folgt
+                ended_ids.add(action_id)
+                continue
             # der aktuelle Toggle-Zustand ist hier nicht massgeblich (koennte sich seit dem Start
             # geaendert haben) - entscheidend ist, ob die Aktion beim Start wirklich ausgefuehrt wurde
             was_really_started = action.get("Execution Status") in ("yes, started", "yes, not finished", "yes, finished")
