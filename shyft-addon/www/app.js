@@ -486,6 +486,10 @@ const ACTION_TYPE_TOGGLE_KEYS = new Set([
     'battery_discharge_shift', 'battery_grid_charge', 'hot_water', 'car_charge_start', 'consumer_on'
 ]);
 
+// Aktionstypen, deren Steuerungs-Schalter weiterhin auf der Konfigurationsseite stehen: die zwei SPiNE-Gateway-Automationen
+// (standardmaessig aus, nur fuer wenige Nutzer) - alle anderen Schalter stehen auf der Gerätesteuerung-Seite.
+const CONFIG_PAGE_TOGGLE_KEYS = new Set(['pv_feed_in_limit', 'consumption_limit_14a']);
+
 const NOTIFICATION_TYPES = {
     'action_start_end': 'Aktionen starten / beenden (alle)',
     'action_start_end_errors_only': 'Aktionen starten / beenden (nur bei Fehlern)',
@@ -4094,8 +4098,12 @@ function buildAutoActionTitle(control, toggleKey) {
     checkmark.textContent = ' ✓';
     checkmark.hidden = true;
     title.appendChild(checkmark);
-    const toggleChecked = (configData["actionTypeEnabled"] || {})[toggleKey] !== false;
-    title.appendChild(buildToggleSwitch(toggleKey + ACTION_TOGGLE_POSTFIX, toggleChecked));
+    // Die Steuerungs-Schalter der uebrigen Aktionstypen stehen auf der Gerätesteuerung-Seite (siehe
+    // renderControlToggles); hier bleiben nur die beiden SPiNE-Gateway-Automationen, die es dort nicht gibt.
+    if (CONFIG_PAGE_TOGGLE_KEYS.has(toggleKey)) {
+        const toggleChecked = (configData["actionTypeEnabled"] || {})[toggleKey] !== false;
+        title.appendChild(buildToggleSwitch(toggleKey + ACTION_TOGGLE_POSTFIX, toggleChecked));
+    }
     return {title, checkmark};
 }
 
@@ -5519,7 +5527,8 @@ function buildMappingTable(keys, mappingData, helpInfo, valuePostfix, getDatalis
 
     const tbody = document.createElement('tbody');
     for (const key of keys) {
-        const hasToggle = !!toggleData && ACTION_TYPE_TOGGLE_KEYS.has(key);
+        // Schalter stehen seit 0.0.45.255 auf der Gerätesteuerung-Seite (siehe renderControlToggles) - hier keine mehr.
+        const hasToggle = false;
         tbody.appendChild(buildMappingRow(key, mappingData[key] || '', helpInfo, valuePostfix, getDatalistId(key), showLiveValue, hasToggle ? (toggleData[key] !== false) : null, onChange));
     }
     table.appendChild(tbody);
@@ -5820,14 +5829,8 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     checkmark.textContent = ' ✓';
     checkmark.hidden = true;
     if (gated) headingRow.appendChild(checkmark);
-    const actionTypeEnabled = configData['actionTypeEnabled'] || {};
-    const toggle = buildToggleSwitch(actionKey + ACTION_TOGGLE_POSTFIX, actionTypeEnabled[actionKey] !== false);
-    // margin-left:auto statt eines generischen Gaps auf .integrationHeadingRow (das wird auch fuer
-    // die Geraete-Abschnitts-Ueberschriften mit anderer Kindanzahl verwendet) - schiebt hier gezielt
-    // nur diesen Toggle an den rechten Rand, mit spuerbarem Abstand zum Info-"?" davor (siehe
-    // Nutzer-Screenshot: beide sassen ohne Abstand direkt nebeneinander).
-    toggle.style.marginLeft = 'auto';
-    headingRow.appendChild(toggle);
+    // Der Steuerungs-Schalter dieses Batterie-Aktionstyps steht auf der Gerätesteuerung-Seite (siehe
+    // renderControlToggles), nicht mehr hier.
     wrapper.appendChild(headingRow);
     const hint = buildTestGateHint();
     if (gated) {
@@ -6857,7 +6860,90 @@ function maybeAutoScrollToActiveShyftActions() {
     });
 }
 
+// --- Gerätesteuerung: Schalter "Steuerung aktivieren/deaktivieren" je Aktionstyp --------------------------
+// Karten wie auf der Seite oben (siehe #shyftControlToggles): Symbol, Beschriftung, Schalter. Der Schalter nutzt dieselbe
+// Id (<Aktionstyp>_toggle) und dieselbe Speicherlogik (buildToggleSwitch) wie frueher auf der Konfigurationsseite -
+// saveConfigurationNow liest ihn weiter ueber diese Id. Gezeigt wird nur, was eingebunden ist (siehe
+// controlSectionHasRealDevice).
+const CONTROL_TOGGLE_ICONS = {
+    thermometer: '<path d="M14 14.76V5a2 2 0 0 0-4 0v9.76a4 4 0 1 0 4 0z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
+    radiator: '<path d="M5 5v14M10 5v14M15 5v14M20 5v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+    battery: '<rect x="2" y="7" width="17" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="20" y="10" width="2" height="4" fill="currentColor"/><rect x="5" y="10" width="6" height="4" fill="currentColor"/>',
+    car: '<path d="M5 17H3v-5l2-6h14l2 6v5h-2M3 12h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="7.5" cy="17" r="1.6" fill="currentColor"/><circle cx="16.5" cy="17" r="1.6" fill="currentColor"/>',
+    plug: '<path d="M9 3v5M15 3v5M7 8h10v4a5 5 0 0 1-10 0V8zM12 17v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+};
+
+const CONTROL_TOGGLE_CARDS = [
+    {key: 'hot_water', sectionKey: 'waermepumpe', label: 'Warmwasser steuern', icon: 'thermometer'},
+    {key: 'heating_target_temp', sectionKey: 'waermepumpe', label: 'Heizung steuern', icon: 'radiator'},
+    {key: 'battery_grid_charge', sectionKey: 'batterie', label: 'Batterie netzladen', icon: 'battery'},
+    {key: 'battery_charge_shift_pv_surplus', sectionKey: 'batterie', label: 'Batterie schonen (PV-Überschuss)', icon: 'battery'},
+    {key: 'battery_discharge_shift', sectionKey: 'batterie', label: 'Batterie-Entladen verschieben', icon: 'battery'},
+    {key: 'car_charge_start', sectionKey: 'wallbox', label: 'Wallbox steuern', icon: 'car'},
+    {key: 'consumer_on', sectionKey: 'sonstiger_verbraucher', label: 'Verbraucher steuern', icon: 'plug'},
+];
+
+// Ein Geraet gilt als eingebunden, wenn die Kachel ein ECHTES Geraet (nicht nur das Demo-Geraet) ausgewaehlt hat UND mindestens
+// eine Home-Assistant-Entitaet dafuer hinterlegt ist - ein reiner Demomodus oder eine leere Kachel zeigt keine Schalter.
+function controlSectionHasRealDevice(sectionKey) {
+    const section = INTEGRATION_SECTIONS.find(s => s.key === sectionKey);
+    if (!section) return false;
+    const ids = (configData['integrationMappings'] || {})[sectionKey] || [];
+    if (!ids.some(id => id !== DEMO_INTEGRATION_ID)) return false;
+    const sensors = configData['sensorMappings'] || {};
+    return section.sensors.some(key => {
+        const value = sensors[key];
+        return Array.isArray(value) ? value.some(Boolean) : !!value;
+    });
+}
+
+function renderControlToggles() {
+    const bar = document.getElementById('shyftControlToggles');
+    if (!bar) return;
+    const cards = CONTROL_TOGGLE_CARDS.filter(card => controlSectionHasRealDevice(card.sectionKey));
+    const enabled = configData['actionTypeEnabled'] || {};
+    const structure = cards.map(card => card.key).join('|');
+    if (bar.dataset.structure === structure) {
+        // gleiche Karten: nur die Schalterstellung angleichen (z.B. nach einer Aenderung auf der Konfigurationsseite)
+        for (const card of cards) {
+            const input = document.getElementById(card.key + ACTION_TOGGLE_POSTFIX);
+            if (input) input.checked = enabled[card.key] !== false;
+        }
+        return;
+    }
+    bar.dataset.structure = structure;
+    bar.innerHTML = '';
+    bar.hidden = cards.length === 0;
+    for (const card of cards) {
+        const item = document.createElement('div');
+        item.className = 'shyftControlToggle';
+        const icon = document.createElement('span');
+        icon.className = 'shyftControlToggleIcon';
+        icon.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${CONTROL_TOGGLE_ICONS[card.icon] || ''}</svg>`;
+        const label = document.createElement('span');
+        label.className = 'shyftControlToggleLabel';
+        label.textContent = card.label;
+        item.append(icon, label, buildToggleSwitch(card.key + ACTION_TOGGLE_POSTFIX, enabled[card.key] !== false));
+        bar.appendChild(item);
+    }
+}
+
+// Blendet die Schalter-Leiste beim Herunterscrollen aus und beim Hinaufscrollen (bzw. ganz oben) wieder ein - sie klebt
+// sonst unter der Kopfzeile und nimmt auf dem Handy viel Platz weg.
+function setupControlTogglesAutoHide() {
+    const bar = document.getElementById('shyftControlToggles');
+    if (!bar) return;
+    let lastY = window.scrollY;
+    window.addEventListener('scroll', () => {
+        const y = window.scrollY;
+        if (y <= 24 || y < lastY - 4) bar.classList.remove('is-hidden');
+        else if (y > lastY + 4) bar.classList.add('is-hidden');
+        lastY = y;
+    }, {passive: true});
+}
+
 async function loadShyftActions() {
+    renderControlToggles();
     const container = document.getElementById('shyftActionsBody');
     if (!container) return;
 
@@ -10058,6 +10144,7 @@ async function loadAnalyse() {
 }
 
 function setupTabs() {
+    setupControlTogglesAutoHide();
     const buttons = document.querySelectorAll('.tabButton');
     for (const button of buttons) {
         button.addEventListener('click', () => {

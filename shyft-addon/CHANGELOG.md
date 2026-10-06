@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.255
+
+* **Steuerungs-Schalter auf die Gerätesteuerung-Seite verschoben.** Die Schalter zum Aktivieren/Deaktivieren der Steuerungen (Warmwasser, Heizung, Batterie netzladen, Batterie schonen (PV-Überschuss), Batterie-Entladen verschieben, Wallbox, Verbraucher) stehen jetzt oben auf der Gerätesteuerung-Seite als Kartenraster mit Symbol, Beschriftung und Schalter, darunter die Überschrift „Verlauf“. Sie sind aus den Geräte-Kacheln der Konfiguration entfallen; nur „PV: Einspeisung begrenzen“ und „Verbrauch begrenzen §14a“ (SPiNE-Gateway, standardmäßig aus) behalten ihren Schalter dort. Gezeigt wird eine Karte nur, wenn das Gerät eingebunden ist: nicht der reine Demomodus, sondern ein echtes Gerät mit mindestens einer hinterlegten Home-Assistant-Entität. Die Leiste klebt unter der Kopfzeile, blendet sich beim Herunterscrollen aus und beim Hinaufscrollen (bzw. ganz oben) wieder ein; auf schmalen Bildschirmen (unter 760 px) scrollt sie einfach mit der Seite weg. Die Schalter speichern wie bisher sofort; gespeicherte Einstellungen bleiben unverändert.
+
 ## 0.0.45.254
 
 * **Add-on-Protokoll: jede Zeile mit Datum und Uhrzeit.** Im Protokoll in Home Assistant standen bei den meisten Zeilen (Meldungen des Add-ons, Zugriffs- und Scheduler-Zeilen) keine Uhrzeiten, die Suche nach einem bestimmten Zeitpunkt war kaum möglich. Jetzt beginnt jede Zeile mit „JJJJ-MM-TT HH:MM:SS“ in der Zeitzone von Home Assistant (in den allerersten Startzeilen, bevor sie bekannt ist, in UTC und mit „UTC“ gekennzeichnet). Die Zeitstempel in den Aktions-Logs der Gerätesteuerung gab es schon und sind unverändert.
