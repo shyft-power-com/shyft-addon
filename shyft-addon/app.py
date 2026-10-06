@@ -1553,6 +1553,10 @@ def readShyftActions():
     visible = [a for a in all_actions
                if (a.get("Date End") is None or a.get("Date End") >= cutoff_ms)
                and (a.get("Date Start") is None or a.get("Date Start") <= forward_cutoff_ms)]
+    for a in visible:
+        # Auch schon gespeicherte Aktionen (vor Einfuehrung von "Had Error"): ein Fehler-Eintrag im Log genuegt.
+        if not a.get("Had Error") and re.search(r"Fehler beim (Starten|Beenden)", a.get("Log") or ""):
+            a["Had Error"] = True
     return jsonify({"status": "success",
                     "response": {"actions": visible, "display_max_days": SHYFT_ACTIONS_DISPLAY_MAX_DAYS}})
 
@@ -5535,6 +5539,9 @@ def _fail_action(action, config, exec_status, msg, prev_exec, verb):
     nur, wenn sich der Execution Status dadurch aendert (kein Spam bei Retry jedes Polls)."""
     action["Execution Status"] = exec_status
     action["Error Message"] = msg
+    # Bleibt dauerhaft gesetzt, auch wenn ein spaeterer Versuch noch klappt (z.B. Beenden beim naechsten Poll):
+    # die Anzeige zeigt die Aktion dann als "Fehler" (rot) statt als normal "beendet".
+    action["Had Error"] = True
     note = f"{_local_now().strftime('%H:%M Uhr')}: Fehler beim {verb} - {msg}"
     action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
     _update_computed_action(action)

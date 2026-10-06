@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.248
+
+* **Gerätesteuerung: Aktionen mit Fehler zeigen „Fehler“ und bleiben rot.** Bisher war die Karte nur rot, solange der aktuelle Status „Fehler“ war; klappte das Beenden/Starten beim nächsten Poll doch noch (z. B. nach einem kurzen Verbindungsabbruch zum Wechselrichter), stand sie wieder als normal „beendet“ da und der Fehler war nur im Log zu finden. Jetzt merkt sich die Aktion dauerhaft, dass sie auf einen Fehler gelaufen ist (neues Feld „Had Error“): die Karte bleibt rot umrandet und zeigt als Status „Fehler“ statt „beendet“; der Fehlertext steht im aufklappbaren Log. Gilt auch für bereits gespeicherte Aktionen mit einem „Fehler beim Starten/Beenden“ im Log. Aktive/geplante Aktionen behalten ihren Status-Text, werden aber ebenfalls rot umrandet.
+
 ## 0.0.45.247
 
 * **Einsatzplan: „Eigenverbrauch“ nach der üblichen Definition berechnet.** Der Wert ist jetzt der Anteil der genutzten PV-Erzeugung, der nicht ins Netz eingespeist wird: (1 − Σ Einspeisung ÷ Σ genutzte PV) × 100, aus den Optimierer-Spalten `PV_GR` und `PV_sum_44`. PV, die in die Batterie geladen wird, zählt damit sofort als Eigenverbrauch. Bisher war es (Verbrauch − Netzbezug) ÷ PV-Prognose: eingespeicherte PV wurde erst bei der späteren Entladung gezählt (blieb Energie am Tagesende im Speicher, fehlte sie), Netzladen der Batterie wurde abgezogen und die PV-Prognose roh (vor Wechselrichterverlusten) als Nenner genommen - das ergab oft einen deutlich zu niedrigen Wert (z. B. 74 % für einen PV-starken Tag). Fehlen die Spalten (ältere Läufe), gilt weiter die alte Formel. „Autarkie“ und die übrigen Kennzahlen sind unverändert.

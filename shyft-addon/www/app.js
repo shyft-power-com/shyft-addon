@@ -6385,8 +6385,10 @@ function buildShyftActionCard(action) {
     const baseStatus = status.replace(/\s*\(deaktiviert\)/i, '').trim();
     // "no, error" = Start nicht moeglich (nicht eingerichtet/getestet ODER Geraetefehler),
     // "yes, not finished" = Beenden fehlgeschlagen - beides rot umranden (siehe .shyftActionCard.is-error).
+    // "Had Error" (Backend, bleibt dauerhaft gesetzt): auch eine Aktion, bei der ein spaeterer Versuch doch noch
+    // klappte (z.B. Beenden beim naechsten Poll), bleibt rot und zeigt statt "beendet" den Status "Fehler".
     const exec = (action['Execution Status'] || '').toLowerCase();
-    const isError = exec === 'no, error' || exec === 'yes, not finished';
+    const isError = exec === 'no, error' || exec === 'yes, not finished' || action['Had Error'] === true;
 
     const card = document.createElement('div');
     card.className = 'shyftActionCard' + (isActive ? ' is-active' : '') + (isDeactivated ? ' is-deactivated' : '') + (isError ? ' is-error' : '');
@@ -6496,7 +6498,7 @@ function buildShyftActionCard(action) {
     // Die Haushaltsstrom-Ersparnis ist keine echte, gestartete/beendete Aktion (siehe oben) -
     // deshalb ohne Status-Text (Nutzer-Vorgabe), die Spalte bleibt fuer das Layout aber erhalten.
     const statusMain = document.createElement('div');
-    statusMain.textContent = isHouseholdSavings ? '' : (baseStatus || '–');
+    statusMain.textContent = isHouseholdSavings ? '' : ((isError && baseStatus.toLowerCase() === 'beendet') ? 'Fehler' : (baseStatus || '–'));
     statusEl.appendChild(statusMain);
     if (isDeactivated && !isHouseholdSavings) {
         const statusSub = document.createElement('div');
