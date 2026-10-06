@@ -8423,6 +8423,16 @@ function buildTripPlanButtonRow() {
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+// Farbe des aktuellen Strompreises ueber dem Strommast im Energiefluss-Widget - dieselben Farben wie die Preisbaender
+// im Strompreis-Chart (guenstig = Akzent/gruen, mittel = grau, teuer = rot); die Einstufung kommt vom Backend
+// (priceLevel, dieselben Schwellen wie der Chart). WICHTIG: als Inline-Style setzen - die CSS-Klasse
+// .energyFlowLabel legt fill fest und ueberstimmt ein fill-Attribut (der Preis blieb deshalb immer dunkelblau).
+function energyFlowPriceColor(level) {
+    if (level === 'hoch') return 'var(--color-error)';
+    if (level === 'niedrig') return 'var(--color-accent)';
+    return 'var(--color-text-secondary)';
+}
+
 function svgEl(tag, attrs = {}, children = []) {
     const el = document.createElementNS(SVG_NS, tag);
     for (const [key, value] of Object.entries(attrs)) {
@@ -8921,7 +8931,7 @@ function buildEnergyFlowSvgDesktop(data) {
         if (line) svg.appendChild(line);
         // Feste Farben statt der theme-abhaengigen --color-error/--color-text-secondary - das
         // Widget bleibt immer hell (siehe .energyFlowWidget), Dark-Mode-Toene waeren hier blass.
-        const priceColor = data.grid.priceLevel === 'hoch' ? '#e74c3c' : data.grid.priceLevel === 'niedrig' ? 'var(--color-accent)' : '#5b6b8c';
+        const priceColor = energyFlowPriceColor(data.grid.priceLevel);
         const priceText = data.grid.priceCent !== null ? `${data.grid.priceCent.toLocaleString('de-DE')} Cent` : '';
         // kW-Wert mittig ueber der Leitung (horizontaler Fluss -> Beschriftung ueber der Leitung),
         // Mittelpunkt der Strecke Mast->Haus. Der Strompreis bleibt dagegen wie urspruenglich ueber
@@ -8932,7 +8942,7 @@ function buildEnergyFlowSvgDesktop(data) {
         if (priceText) {
             // Kein Zeitstempel hier - der Strompreis kommt nicht direkt aus HA (siehe
             // _read_current_price_info in app.py), sondern aus dem shyft-Cache.
-            svg.appendChild(svgEl('text', {x: pylonCx, y: pylonCy - 54, 'text-anchor': 'middle', class: 'energyFlowLabel', fill: priceColor}, [document.createTextNode(priceText)]));
+            svg.appendChild(svgEl('text', {x: pylonCx, y: pylonCy - 54, 'text-anchor': 'middle', class: 'energyFlowLabel', style: `fill:${priceColor}`}, [document.createTextNode(priceText)]));
         }
     }
     if (data.pv && data.pv.configured) {
@@ -9203,14 +9213,14 @@ function buildEnergyFlowSvgMobile(data) {
         svg.appendChild(buildPylonIcon(pylonCx, pylonCy));
         const line = buildFlowLine(pylonCx + 24, pylonCy, houseX, houseCy, data.grid.kw, {reversed: (data.grid.kw || 0) < 0, thresholdKw: 0.1});
         if (line) svg.appendChild(line);
-        const priceColor = data.grid.priceLevel === 'hoch' ? '#e74c3c' : data.grid.priceLevel === 'niedrig' ? 'var(--color-accent)' : '#5b6b8c';
+        const priceColor = energyFlowPriceColor(data.grid.priceLevel);
         const priceText = data.grid.priceCent !== null ? `${data.grid.priceCent.toLocaleString('de-DE')} Cent` : '';
         const gridLabelX = (pylonCx + 24 + houseX) / 2;
         const pylonTopY = pylonCy - 44;
         const gridLabelY = pylonTopY - 16;
         svg.appendChild(buildEnergyFlowLabel(gridLabelX, gridLabelY, [withStaleness(formatKwValue(data.grid.kw), data.grid.updatedAt, INVERTER_STALE_MINUTES)], {anchor: 'middle', noWrap: true}));
         if (priceText) {
-            svg.appendChild(svgEl('text', {x: pylonCx, y: gridLabelY - 26, 'text-anchor': 'middle', class: 'energyFlowLabel', fill: priceColor}, [document.createTextNode(priceText)]));
+            svg.appendChild(svgEl('text', {x: pylonCx, y: gridLabelY - 26, 'text-anchor': 'middle', class: 'energyFlowLabel', style: `fill:${priceColor}`}, [document.createTextNode(priceText)]));
         }
     }
 

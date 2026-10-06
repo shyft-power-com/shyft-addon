@@ -4472,9 +4472,10 @@ def _read_current_price_info():
         price_cent = round(_safe_float(rows[index].get("p_buy")) * 100, 1)
     except (TypeError, ValueError):
         return None
-    if price_cent > PRICE_HIGH_THRESHOLD_CENT:
+    # Grenzen wie im Strompreis-Chart (colorBands in www/app.js: ab Schwelle teuer, bis Schwelle guenstig - jeweils inklusive)
+    if price_cent >= PRICE_HIGH_THRESHOLD_CENT:
         level = "hoch"
-    elif price_cent < PRICE_LOW_THRESHOLD_CENT:
+    elif price_cent <= PRICE_LOW_THRESHOLD_CENT:
         level = "niedrig"
     else:
         level = "mittel"
