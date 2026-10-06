@@ -1107,7 +1107,8 @@ async function renderSystemHealth() {
     for (const problem of problems) {
         const availability = sensorAvailabilityProblemFieldAndSection(problem.id);
         const fieldId = actionFailedFieldId(problem.id) || deviceDeviationProblemFieldId(problem.id) || availability.fieldId;
-        if (fieldId) errorFieldIds.push(fieldId);
+        // Abweichungen (device_deviation) nur melden, das Sensorfeld nicht rot umranden: an der Sensorauswahl laesst sich nichts aendern.
+        if (fieldId && !deviceDeviationKey(problem.id)) errorFieldIds.push(fieldId);
         const sectionKey = actionFailedProblemSectionKey(problem.id) || deviceDeviationProblemSectionKey(problem.id) || availability.sectionKey;
         list.appendChild(buildProblemListItem(problem.message, sectionKey, fieldId, sensorProblemHaLink(problem.id)));
     }

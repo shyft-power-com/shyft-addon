@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.258
+
+* **Abweichungsmeldungen färben das Sensorfeld nicht mehr rot.** Meldet die Geräteüberwachung eine Abweichung (z. B. „Batterie-Ladelimit weicht ab“), erscheint nur noch die Meldung im Problemkasten (inkl. Link „zu den Einstellungen“). Das Sensorfeld in der Konfiguration bleibt unmarkiert, weil sich an der Sensorauswahl nichts ändern lässt – die Abweichung entsteht in der Regel durch manuelle Änderungen am Gerät.
+
 ## 0.0.45.257
 
 * **Batterie-Konfiguration: „Max. Ladeleistung (kW)“ heißt jetzt „Max. Lade/Entladeleistung (kW)“.** Der Wert gilt schon bisher auch für die Entladeleistung (Rückstellwert „kein Limit“ nach einer Batterie-Aktion), das war aus Beschriftung und Tooltip nicht ersichtlich. Der Tooltip beschreibt jetzt alle drei Verwendungen: Sicherheitsgrenze für „Batterie netzladen“, „kein Limit“-Wert für Lade- und Entladeleistungs-Limit nach einer Aktion, erwarteter Ruhewert. Nur Beschriftung/Text, keine Änderung am Verhalten; der gespeicherte Wert bleibt unverändert.
