@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.250
+
+* **Fix: Am Stundenwechsel läuft das Beenden der alten Aktion jetzt immer vor dem Start der neuen.** Bisher wurden Start und Ende pro Aktionstyp nacheinander abgearbeitet, je nach Reihenfolge im Speicher also manchmal erst der Start der neuen und danach das Beenden der alten Batterie-Aktion. Da „Batterie-Aktion beenden“ Modus und Limits zurücksetzt, überschrieb es den gerade gesetzten Start (z. B. Netzladen-Limit 600 W um 04:00:00, um 04:00:21 wieder auf dem Maximum - der Speicher lud bis zum nächsten Poll unbegrenzt; oder „Entladen verschieben“ 0 W um 03:00:00, 21 s später zurückgesetzt). Jetzt werden im stündlichen Wechsel und im 15-Minuten-Poll zuerst alle Enden (über alle Aktionstypen), dann alle Starts ausgeführt. Es gibt weiterhin immer nur eine Batterie-Aktion zur selben Zeit - geändert ist nur die Reihenfolge der Ausführung.
+
 ## 0.0.45.249
 
 * **Zurückgenommen: „Kein Limit“ der Batterie wieder aus der Eingabe „Max. Ladeleistung (kW)“ statt aus dem `max`-Attribut der Entität (Änderung aus 0.0.45.234).** Das `max` der Lade-/Entladeleistungs-Entitäten ist bei manchen Integrationen nicht die echte Leistungsgrenze, sondern nur der erlaubte Eingabebereich - bei SolarEdge z. B. 1.000.000 W statt der tatsächlichen 5.000 W. „Batterie-Aktion beenden“ setzte dort die Limits dadurch auf 1.000.000 W. Das Konfigurationsfeld „Max. Ladeleistung (kW)“ ist deshalb wieder da und wird für das Zurücksetzen der Limits, die Abweichungsüberwachung und die Deckelung von „Batterie netzladen“ genutzt (jeweils zusätzlich auf das `max` der Entität begrenzt, damit Home Assistant den Wert annimmt). **Bitte den Wert in der Konfiguration (Batterie-Kachel) kontrollieren bzw. neu eintragen** - ohne Wert werden beim Beenden keine Limits zurückgesetzt. Die Verfügbarkeits-Hinweise aus 0.0.45.235 bleiben.

@@ -8871,6 +8871,11 @@ def run_hourly_action_transition():
 
     to_remove_ids = set()
     changed = False
+    # Alle Enden laufen VOR allen Starts - ueber alle Aktionstypen hinweg, nicht je Typ nacheinander. Sonst
+    # haengt es an der (zufaelligen) Reihenfolge im Speicher, ob das Beenden der alten Batterie-Aktion NACH dem
+    # Start der neuen laeuft und dessen Limits/Modus wieder ueberschreibt ("Aktion beenden" setzt die Limits
+    # zurueck) - beobachtet am Stundenwechsel (z.B. Netzladen-Limit direkt nach dem Start wieder auf Maximum).
+    pending_starts = []  # (name, enabled, action)
 
     for name, group in by_name.items():
         enabled = is_action_type_enabled(config, name)
@@ -8921,14 +8926,17 @@ def run_hourly_action_transition():
                and a.get("_id") not in to_remove_ids]
         for action in due:
             action["Status"] = "aktiv"
-            action_id = action.get("_id")
-            if action_id and action_id not in started_ids:
-                try:
-                    handle_shyft_action_start(action, enabled, config)
-                except Exception as e:
-                    print(f"[Shyft] Stundenwechsel: Start von '{name}' fehlgeschlagen:", repr(e))
-                started_ids.add(action_id)
+            pending_starts.append((name, enabled, action))
             changed = True
+
+    for name, enabled, action in pending_starts:
+        action_id = action.get("_id")
+        if action_id and action_id not in started_ids:
+            try:
+                handle_shyft_action_start(action, enabled, config)
+            except Exception as e:
+                print(f"[Shyft] Stundenwechsel: Start von '{name}' fehlgeschlagen:", repr(e))
+            started_ids.add(action_id)
 
     if changed:
         result_actions = [a for a in actions if a.get("_id") not in to_remove_ids]
@@ -8967,11 +8975,26 @@ def process_shyft_actions():
     now_ms = time.time() * 1000
     seen_ids = set()
 
+    # Zwei Durchlaeufe: zuerst alle Enden, dann alle Starts (siehe run_hourly_action_transition - sonst kann das
+    # Beenden einer alten Batterie-Aktion den Start der neuen im selben Poll wieder ueberschreiben).
     for action in actions:
         action_id = action.get("_id")
         if action_id:
             seen_ids.add(action_id)
 
+        date_end = action.get("Date End")
+        end_passed = date_end is not None and date_end <= now_ms
+        if end_passed and action_id and action_id not in ended_ids:
+            # der aktuelle Toggle-Zustand ist hier nicht massgeblich (koennte sich seit dem Start
+            # geaendert haben) - entscheidend ist, ob die Aktion beim Start wirklich ausgefuehrt wurde
+            was_really_started = action.get("Execution Status") in ("yes, started", "yes, not finished", "yes, finished")
+            handle_shyft_action_end(action, was_really_started, config)
+            # "yes, not finished": Ende schlug fehl -> nicht als beendet vormerken, naechster Poll erneut.
+            if action.get("Execution Status") != "yes, not finished":
+                ended_ids.add(action_id)
+
+    for action in actions:
+        action_id = action.get("_id")
         enabled = is_action_type_enabled(config, action.get("Action Name"))
 
         # Kann Status/Date Start umbiegen (Aufschub bei vollem Speicher + PV-Ueberschuss, siehe
@@ -8993,15 +9016,6 @@ def process_shyft_actions():
             # der naechste Poll versucht es erneut, bis der Nutzer das Geraet fixt.
             if action.get("Execution Status") != "no, error":
                 started_ids.add(action_id)
-
-        if end_passed and action_id and action_id not in ended_ids:
-            # der aktuelle Toggle-Zustand ist hier nicht massgeblich (koennte sich seit dem Start
-            # geaendert haben) - entscheidend ist, ob die Aktion beim Start wirklich ausgefuehrt wurde
-            was_really_started = action.get("Execution Status") in ("yes, started", "yes, not finished", "yes, finished")
-            handle_shyft_action_end(action, was_really_started, config)
-            # "yes, not finished": Ende schlug fehl -> nicht als beendet vormerken, naechster Poll erneut.
-            if action.get("Execution Status") != "yes, not finished":
-                ended_ids.add(action_id)
 
     # only keep ids that could still turn up in a future poll, so these don't grow forever
     config["startedShyftActionIds"] = sorted(started_ids & seen_ids)
