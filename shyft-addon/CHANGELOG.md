@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.257
+
+* **Batterie-Konfiguration: „Max. Ladeleistung (kW)“ heißt jetzt „Max. Lade/Entladeleistung (kW)“.** Der Wert gilt schon bisher auch für die Entladeleistung (Rückstellwert „kein Limit“ nach einer Batterie-Aktion), das war aus Beschriftung und Tooltip nicht ersichtlich. Der Tooltip beschreibt jetzt alle drei Verwendungen: Sicherheitsgrenze für „Batterie netzladen“, „kein Limit“-Wert für Lade- und Entladeleistungs-Limit nach einer Aktion, erwarteter Ruhewert. Nur Beschriftung/Text, keine Änderung am Verhalten; der gespeicherte Wert bleibt unverändert.
+
 ## 0.0.45.256
 
 * **Fix: Add-on startete seit 0.0.45.254 nicht mehr.** Der neue Zeitstempel für jede Protokollzeile (0.0.45.254) konnte nur Text verarbeiten; beim Start schreibt Flask über `click.echo` aber Bytes in den Stream (Server-Banner „Running on …“) - das Add-on brach mit „TypeError: endswith first arg must be bytes or a tuple of bytes, not str“ ab und stand auf „Fehler“. Der Zeitstempel-Stream wandelt Bytes jetzt in Text um. Geprüft durch einen echten Start von `app.py` (läuft bis „Running on …“) und Regressionstests für den click-Pfad.

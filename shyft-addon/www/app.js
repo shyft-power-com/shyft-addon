@@ -3834,8 +3834,8 @@ function buildBatteryCapacityField() {
 // Optimierung sind unproblematisch, diese Deckelung ist nur ein Sicherheitsnetz.
 function buildBatteryMaxChargeKwField() {
     return buildConfigNumberField({
-        label: 'Max. Ladeleistung (kW)',
-        tooltip: 'Sicherheitsgrenze für "Batterie netzladen": der berechnete Zielwert wird im Addon nie über diesen Wert hinaus gesetzt, unabhängig davon, was die Optimierung ausrechnet.',
+        label: 'Max. Lade/Entladeleistung (kW)',
+        tooltip: 'Maximale Lade- bzw. Entladeleistung deiner Batterie (laut Datenblatt/Wechselrichter). Shyft nutzt diesen Wert dreifach: (1) als Sicherheitsgrenze für "Batterie netzladen" - der berechnete Zielwert wird nie darüber hinaus gesetzt, egal was die Optimierung ausrechnet; (2) als "kein Limit"-Wert: nach einer Batterie-Aktion setzt Shyft das Lade- und das Entladeleistungs-Limit der Batterie auf diesen Wert zurück (höchstens auf das Maximum der jeweiligen Entität); (3) als erwarteter Ruhewert, wenn gerade keine Aktion läuft. Ohne Wert werden die Limits nach einer Aktion nicht zurückgesetzt.',
         id: 'battery_max_charge_kw',
         configKey: 'batteryMaxChargeKw',
         placeholder: 'z.B. 5',

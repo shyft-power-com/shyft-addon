@@ -8170,7 +8170,7 @@ def compute_battery_grid_charge_actions(config, output_rows, input_rows, start, 
     (siehe _discharge_shift_reserved_for_hour) - das hat Vorrang. In Stunden mit vorhergesagtem
     Sonnenschein greift zusaetzlich die 95%-Deckelung (siehe BATTERY_SUNSHINE_SOC_CAP_PCT).
     Unabhaengig davon wird der Zielwert immer sicherheitshalber gedeckelt: sowohl auf den statisch
-    konfigurierten "Max. Ladeleistung"-Wert (batteryMaxChargeKw) als auch, falls zugeordnet, auf den
+    konfigurierten "Max. Lade/Entladeleistung"-Wert (batteryMaxChargeKw) als auch, falls zugeordnet, auf den
     praeziseren Live-Sensor "battery_charge_limit_current" - der niedrigere Wert gewinnt."""
     result = {}
     if not _is_battery_configured(config):
