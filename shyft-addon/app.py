@@ -53,6 +53,51 @@ def load_build_branch():
         return ""
 
 
+def _log_timestamp_prefix():
+    """Datum/Uhrzeit-Praefix fuer jede Zeile des Add-on-Protokolls: in der von Home Assistant konfigurierten Zeitzone, sobald
+    sie bekannt ist (siehe get_ha_timezone - bewusst nur der Cache, kein HA-Aufruf: der koennte selbst loggen), davor UTC (mit
+    Kennzeichnung "UTC")."""
+    now = datetime.now(timezone.utc)
+    try:
+        tz = _ha_timezone_cache["tz"]
+    except NameError:  # sehr frueh beim Start, Cache noch nicht definiert
+        tz = None
+    if tz is not None:
+        return now.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S ")
+    return now.strftime("%Y-%m-%d %H:%M:%S UTC ")
+
+
+class _TimestampedStream:
+    """Setzt jeder Ausgabezeile (print UND logging) Datum und Uhrzeit voran - im Add-on-Protokoll von Home Assistant stand
+    sonst bei den meisten Zeilen keine Uhrzeit. Gibt sonst alles unveraendert an den echten Stream weiter."""
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._at_line_start = True
+        self._lock = threading.Lock()
+
+    def write(self, text):
+        if not text:
+            return 0
+        with self._lock:
+            out = []
+            for part in text.splitlines(keepends=True):
+                if self._at_line_start and part.strip():
+                    out.append(_log_timestamp_prefix())
+                out.append(part)
+                self._at_line_start = part.endswith("\n")
+            self._stream.write("".join(out))
+        return len(text)
+
+    def flush(self):
+        self._stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+sys.stdout = _TimestampedStream(sys.stdout)
+sys.stderr = _TimestampedStream(sys.stderr)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 app = Flask(__name__, static_folder="www", static_url_path="")
 
@@ -10357,6 +10402,10 @@ scheduler.start()
 
 
 if __name__ == "__main__":
+    try:
+        get_ha_timezone()  # Zeitzone frueh laden, damit auch die Startzeilen in lokaler Zeit stehen
+    except Exception:
+        pass
     print(f"[Shyft] Add-on-Version {VERSION}")
     try:
         with open(OPTIONS_PATH, "r") as f:

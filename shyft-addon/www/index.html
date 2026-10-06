@@ -2056,6 +2056,13 @@
             stroke-width: 2px;
             pointer-events: none;
         }
+        /* Dauerhaft sichtbarer Punkt bei "jetzt" (ohne Mouse-over), gleiches Aussehen wie der Hover-Punkt. */
+        .dashboardChartNowDot {
+            fill: var(--color-text);
+            stroke: var(--color-bg);
+            stroke-width: 2px;
+            pointer-events: none;
+        }
 
         /* Chart optisch "deaktiviert" darstellen (siehe blurredLabel in buildLineChart), z.B.
            Raumtemperatur-Chart, solange "Heizung aktiviert?" auf Aus steht - Werte bleiben

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.254
+
+* **Add-on-Protokoll: jede Zeile mit Datum und Uhrzeit.** Im Protokoll in Home Assistant standen bei den meisten Zeilen (Meldungen des Add-ons, Zugriffs- und Scheduler-Zeilen) keine Uhrzeiten, die Suche nach einem bestimmten Zeitpunkt war kaum möglich. Jetzt beginnt jede Zeile mit „JJJJ-MM-TT HH:MM:SS“ in der Zeitzone von Home Assistant (in den allerersten Startzeilen, bevor sie bekannt ist, in UTC und mit „UTC“ gekennzeichnet). Die Zeitstempel in den Aktions-Logs der Gerätesteuerung gab es schon und sind unverändert.
+* **Dashboard-Charts: aktuelle Uhrzeit mit Punkt auf der Linie.** Der senkrechte „Jetzt“-Strich war zu unauffällig, zusätzlich steht jetzt ein dauerhaft sichtbarer Punkt (gleiches Aussehen wie beim Mouse-over) an der aktuellen Stunde auf der Linie - in allen Charts mit „Jetzt“-Markierung (z. B. Strompreis, Raumtemperatur, PV, Warmwasser, Ladestand). Beim Mouse-over/Touch erscheint wie bisher die Beschriftung mit dem Hover-Punkt; der „Jetzt“-Punkt bleibt dabei stehen.
+
 ## 0.0.45.253
 
 * **Dashboard: Der aktuelle Strompreis über dem Strommast ist jetzt wirklich farbig.** Die Einstufung (günstig/mittel/teuer, dieselben Schwellen wie im Strompreis-Chart: bis 25 ct grün, ab 35 ct rot, dazwischen grau) wurde schon berechnet, aber die Schriftfarbe der Beschriftung wurde von der Stylesheet-Regel des Widgets überschrieben - der Preis stand immer in Dunkelblau. Die Farbe wird jetzt als Inline-Style gesetzt und nutzt dieselben Farbvariablen wie der Chart (hell/dunkel passend). Die Grenzwerte 25/35 ct gelten wie im Chart jeweils inklusive. Die violette Stufe des Charts (ab 80 ct) gibt es beim Preis über dem Mast nicht - dort bleibt es bei rot.

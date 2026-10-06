@@ -7403,6 +7403,12 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     if (nowIndex >= 0 && nowIndex <= lastIndex) {
         const x = (paddingLeft + (nowIndex / lastIndex) * plotWidth).toFixed(1);
         nowMarkup = `<line x1="${x}" y1="${paddingTop}" x2="${x}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
+        // Zusaetzlich ein dauerhaft sichtbarer Punkt auf der Linie (der Strich allein ist zu unauffaellig) - gleiches
+        // Aussehen wie der Punkt beim Mouse-over (dashboardChartMarker), aber eigene Klasse, damit er nicht mit dem
+        // verschiebbaren Hover-Punkt verwechselt wird (der per querySelector gesucht wird).
+        for (const p of [points[nowIndex], points2 && points2[nowIndex]]) {
+            if (p) nowMarkup += `<circle class="dashboardChartNowDot" r="4.5" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" />`;
+        }
     }
 
     // Anwesenheitsprognose overlay: one cell per point in THIS chart's own x-scale (not the
@@ -7790,6 +7796,15 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
         const x = xFor(lastActualIndex).toFixed(1);
         nowMarkup = `<line x1="${x}" y1="${paddingTop}" x2="${x}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
     }
+    // Dauerhaft sichtbarer Punkt auf der Linie bei "jetzt" (der Strich allein ist zu unauffaellig) - wird UEBER den
+    // Linien gezeichnet (siehe nowDotMarkup im SVG unten), nicht wie der Strich darunter.
+    let nowDotMarkup = '';
+    if (lastActualIndex >= 0) {
+        const nowDotValue = actual[lastActualIndex] ?? prognose[lastActualIndex];
+        if (nowDotValue !== null && nowDotValue !== undefined) {
+            nowDotMarkup = `<circle class="dashboardChartNowDot" r="4.5" cx="${xFor(lastActualIndex).toFixed(1)}" cy="${yFor(nowDotValue).toFixed(1)}" />`;
+        }
+    }
 
     // Aktions-Indikator: eine Stunde mit Aktion (siehe actionHours) bekommt eine volldeckende
     // Hintergrundflaeche ueber die volle Chart-Hoehe, eine Stunde ohne bleibt einfach unbelegt (=
@@ -7835,6 +7850,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
             ${nowMarkup}
             ${forecastPath}
             ${actualPath}
+            ${nowDotMarkup}
             ${dayBoundaryMarkup}
             ${yLabels}
             ${xLabels}
