@@ -538,6 +538,121 @@
         .autoActionValue.testSuccess {
             color: var(--color-accent);
         }
+        .testPopupOverlay {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            background: rgba(9, 23, 71, 0.55);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+        .testPopup {
+            background: var(--color-bg);
+            color: var(--color-text);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+            width: min(720px, 100%);
+            max-height: min(80vh, 640px);
+            display: flex;
+            flex-direction: column;
+            padding: 16px 18px;
+            gap: 12px;
+        }
+        .testPopupTitle {
+            margin: 0;
+            font-size: 1.1em;
+        }
+        .testPopupLog {
+            flex: 1 1 auto;
+            min-height: 160px;
+            overflow-y: auto;
+            background: var(--color-bg-card);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.82em;
+            line-height: 1.45;
+        }
+        .testPopupLine {
+            display: flex;
+            gap: 8px;
+            align-items: baseline;
+        }
+        .testPopupLine .testPopupTime {
+            flex: 0 0 auto;
+            color: var(--color-text-secondary);
+        }
+        .testPopupLine .testPopupIcon {
+            flex: 0 0 1.2em;
+            text-align: center;
+            font-weight: 700;
+        }
+        .testPopupLine .testPopupText {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+        }
+        .testPopupLine.level-ok .testPopupIcon,
+        .testPopupLine.level-ok .testPopupText {
+            color: var(--color-accent);
+        }
+        .testPopupLine.level-error .testPopupIcon,
+        .testPopupLine.level-error .testPopupText {
+            color: var(--color-error);
+        }
+        .testPopupLine.level-warn .testPopupIcon,
+        .testPopupLine.level-warn .testPopupText {
+            color: var(--color-warning);
+        }
+        .testPopupLine.level-wait .testPopupText {
+            color: var(--color-text-secondary);
+        }
+        .testPopupLine.level-result .testPopupText {
+            font-weight: 700;
+        }
+        .testPopupFooter {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .testPopupStatus {
+            color: var(--color-text-secondary);
+            font-size: 0.9em;
+        }
+        .testPopupStatus.status-ok {
+            color: var(--color-accent);
+            font-weight: 700;
+        }
+        .testPopupStatus.status-error {
+            color: var(--color-error);
+            font-weight: 700;
+        }
+        .testPopupStatus.status-warn {
+            color: var(--color-warning);
+            font-weight: 700;
+        }
+        .testPopupFooter button {
+            border: 1px solid var(--color-input-border);
+            background: var(--color-input-bg);
+            color: var(--color-text);
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-size: 0.9em;
+            cursor: pointer;
+        }
+        .testPopupFooter button:hover:not(:disabled) {
+            border-color: var(--color-accent);
+        }
+        .testPopupFooter button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
         .batteryTestStatusIcon {
             font-weight: 700;
             font-size: 1.1em;

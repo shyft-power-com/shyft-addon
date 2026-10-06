@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.259
+
+* **Test-Popup mit Live-Protokoll für alle „Testen“-Buttons.** Ein Klick auf einen Test (Batterie-Aktionen, Warmwasser, Auto laden, Heizung Soll-Temperatur, Sonstige Verbraucher) öffnet ein Popup, in dem Zeile für Zeile zu sehen ist, was der Test gerade tut: welche Entität auf welchen Wert gesetzt wird, ob der Schritt geklappt hat, worauf gerade gewartet wird (mit dem aktuellen Zustand der Entität) und am Ende das Ergebnis. „Abbrechen“ beendet den Test sauber: Sollwerte bzw. Limits werden dabei wieder auf ihre Ausgangswerte zurückgesetzt, ein abgebrochener Test gilt weder als bestanden noch als fehlgeschlagen. Nach dem Ende (erfolgreich, fehlgeschlagen oder abgebrochen) bleibt das Popup mit „Schließen“ offen; beim Batterie-Test zeigt es auch das Zurücksetzen der Entitäten samt Kontrolle der Zustände. Ein nach einem Neuladen der Seite noch laufender Heizungs-Test wird im Popup wieder aufgegriffen. Technisch: Der Server sammelt die Zeilen je Test-Sitzung (Header `X-Shyft-Test-Id`, `GET /actions/test-log/<id>`, `POST /actions/test-log/<id>/cancel`); echte Aktionen sind davon unberührt.
+* **Batterie-Test: Ergebniszeile verschwindet nach einem erfolgreichen Test.** Die grüne Werte-Zeile („Entladeleistung: … | Limit Ladeleistung …“) wird 10 Sekunden nach dem Schließen des Popups ausgeblendet (die Werte wurden ohnehin schon zurückgesetzt und zeigten nur den Testwert). Fehlgeschlagene Tests bleiben stehen.
+
 ## 0.0.45.258
 
 * **Abweichungsmeldungen färben das Sensorfeld nicht mehr rot.** Meldet die Geräteüberwachung eine Abweichung (z. B. „Batterie-Ladelimit weicht ab“), erscheint nur noch die Meldung im Problemkasten (inkl. Link „zu den Einstellungen“). Das Sensorfeld in der Konfiguration bleibt unmarkiert, weil sich an der Sensorauswahl nichts ändern lässt – die Abweichung entsteht in der Regel durch manuelle Änderungen am Gerät.

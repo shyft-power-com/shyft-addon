@@ -361,6 +361,182 @@ async function getJson(url) {
     return result;
 }
 
+// Test-Popup fuer die "Testen"-Buttons der Konfigurationsseite: zeigt Zeile fuer Zeile, was der Test gerade tut
+// (Schritt, Wartezeit, aktueller Zustand der Entitaet, Ergebnis) und kann per "Abbrechen" beendet werden; nach dem
+// Ende (erfolgreich, fehlgeschlagen oder abgebrochen) bleibt es offen, bis der Nutzer es mit "Schliessen" schliesst.
+// Der Server sammelt die Zeilen unter der hier erzeugten Sitzungs-ID (Header X-Shyft-Test-Id, siehe
+// _with_test_session/test_log in app.py) und liefert sie per GET /actions/test-log/<id>; Abbrechen setzt dort nur ein
+// Flag, der Test raeumt danach selbst auf (Sollwert/Limits zuruecksetzen). Rueckgabe:
+//   headers          - an JEDEN Test-Request dieses Popups haengen (fetch(..., {headers: {...popup.headers}}))
+//   log(text, level) - eigene (clientseitige) Zeile, level: info|ok|warn|error|wait
+//   isCancelRequested()
+//   finish(result)   - Test ist zu Ende: result {success, cancelled, message}; holt zuerst noch Zeilen von
+//                      Hintergrundschritten (z.B. Zuruecksetzen), zeigt dann das Ergebnis und "Schliessen"
+//   closed           - Promise, die beim Schliessen des Popups aufgeloest wird
+// options.sessionId: an einen bereits laufenden Test anhaengen (z.B. Heizungs-Test nach Seiten-Neuladen).
+const TEST_POPUP_LEVEL_ICONS = {ok: '✓', error: '✗', warn: '!', wait: '…', info: '•', result: '►'};
+
+function openTestPopup(title, options = {}) {
+    const sessionId = options.sessionId || ('t' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+    const logUri = insideHomeAssistant + '/actions/test-log/' + sessionId;
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    const overlay = document.createElement('div');
+    overlay.className = 'testPopupOverlay';
+    const box = document.createElement('div');
+    box.className = 'testPopup';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    const heading = document.createElement('h3');
+    heading.className = 'testPopupTitle';
+    heading.textContent = title;
+    const logEl = document.createElement('div');
+    logEl.className = 'testPopupLog';
+    const footer = document.createElement('div');
+    footer.className = 'testPopupFooter';
+    const statusEl = document.createElement('span');
+    statusEl.className = 'testPopupStatus';
+    statusEl.textContent = 'Test läuft …';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.textContent = 'Abbrechen';
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.textContent = 'Schließen';
+    closeButton.hidden = true;
+    footer.appendChild(statusEl);
+    footer.appendChild(cancelButton);
+    footer.appendChild(closeButton);
+    box.appendChild(heading);
+    box.appendChild(logEl);
+    box.appendChild(footer);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    cancelButton.focus();
+
+    let nextIndex = 0;
+    let finished = false;
+    let cancelRequested = false;
+    let resolveClosed = () => {};
+    const closed = new Promise(resolve => { resolveClosed = resolve; });
+
+    function addLine(line) {
+        const level = line.level || 'info';
+        const row = document.createElement('div');
+        row.className = 'testPopupLine level-' + level;
+        const time = document.createElement('span');
+        time.className = 'testPopupTime';
+        time.textContent = line.t || new Date().toLocaleTimeString('de-DE');
+        const icon = document.createElement('span');
+        icon.className = 'testPopupIcon';
+        icon.textContent = TEST_POPUP_LEVEL_ICONS[level] || '•';
+        const text = document.createElement('span');
+        text.className = 'testPopupText';
+        text.textContent = line.text;
+        row.appendChild(time);
+        row.appendChild(icon);
+        row.appendChild(text);
+        logEl.appendChild(row);
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    async function pollOnce() {
+        try {
+            const result = await getJson(logUri + '?since=' + nextIndex);
+            for (const line of result.lines || []) addLine(line);
+            nextIndex = result.next || nextIndex;
+            return result;
+        } catch (err) {
+            console.log(err);
+            return null;
+        }
+    }
+
+    // Abfragen nacheinander, damit keine Zeile doppelt erscheint (Intervall + finish() koennten sich ueberlappen).
+    let pollChain = Promise.resolve();
+    let pollQueued = false;
+    function pollSerial() {
+        pollChain = pollChain.then(pollOnce);
+        return pollChain;
+    }
+    const timer = setInterval(() => {
+        if (pollQueued || finished) return;
+        pollQueued = true;
+        pollSerial().finally(() => { pollQueued = false; });
+    }, 1000);
+
+    function close() {
+        clearInterval(timer);
+        document.removeEventListener('keydown', onKeyDown);
+        overlay.remove();
+        resolveClosed();
+    }
+    function onKeyDown(event) {
+        if (event.key === 'Escape' && finished) close();
+    }
+    document.addEventListener('keydown', onKeyDown);
+    closeButton.addEventListener('click', close);
+
+    cancelButton.addEventListener('click', async () => {
+        cancelRequested = true;
+        cancelButton.disabled = true;
+        cancelButton.textContent = 'Wird abgebrochen …';
+        try {
+            const response = await fetch(logUri + '/cancel', {method: 'POST'});
+            if (!response.ok) {
+                // Der Server kennt die Sitzung (noch) nicht - der Test-Request ist evtl. noch nicht angekommen: nochmal klicken.
+                cancelRequested = false;
+                cancelButton.disabled = false;
+                cancelButton.textContent = 'Abbrechen';
+            }
+        } catch (err) {
+            console.log(err);
+            cancelRequested = false;
+            cancelButton.disabled = false;
+            cancelButton.textContent = 'Abbrechen';
+        }
+    });
+
+    async function finish(result) {
+        if (finished) return;
+        finished = true;
+        const outcome = result || {success: false, message: 'Der Test konnte nicht abgeschlossen werden (Verbindung zum Add-on unterbrochen?)'};
+        statusEl.textContent = 'Räume auf …';
+        cancelButton.hidden = true;  // ab hier laeuft nur noch das Aufraeumen/Zuruecksetzen - das soll nicht mehr unterbrochen werden
+        // Hintergrundschritte des Tests (z.B. Zuruecksetzen der Batterie-Entitaeten) laufen nach der Antwort noch eine Weile.
+        for (let i = 0; i < 20; i++) {
+            const state = await pollSerial();
+            if (!state || !state.busy) break;
+            await sleep(1000);
+        }
+        cancelButton.hidden = true;
+        closeButton.hidden = false;
+        closeButton.focus();
+        if (outcome.cancelled) {
+            statusEl.textContent = 'Test abgebrochen';
+            statusEl.className = 'testPopupStatus status-warn';
+            addLine({level: 'result', text: 'Ergebnis: Test abgebrochen.' + (outcome.message && outcome.message !== 'Test abgebrochen' ? ' ' + outcome.message : '')});
+        } else if (outcome.success) {
+            statusEl.textContent = 'Test erfolgreich';
+            statusEl.className = 'testPopupStatus status-ok';
+            addLine({level: 'result', text: 'Ergebnis: Test erfolgreich.'});
+        } else {
+            statusEl.textContent = 'Test fehlgeschlagen';
+            statusEl.className = 'testPopupStatus status-error';
+            addLine({level: 'result', text: 'Ergebnis: Test fehlgeschlagen' + (outcome.message ? ' – ' + outcome.message : '.')});
+        }
+    }
+
+    return {
+        id: sessionId,
+        headers: {'X-Shyft-Test-Id': sessionId},
+        log: (text, level = 'info') => addLine({level, text}),
+        isCancelRequested: () => cancelRequested,
+        finish,
+        closed,
+    };
+}
+
 // Historie-abgeleitete Formsignale (negativ? Tag/Nacht-Muster wie PV? bidirektional wie Netz/
 // Batterie?) fuer die uebergebenen Entities - siehe /entity-history-signals in app.py und
 // scoreSensorEntityForField. Best-effort: {} bei jedem Fehler oder leerer Eingabe, der Aufrufer
@@ -4500,6 +4676,13 @@ function buildAutoManagedNumberControl(control) {
     }
 
     function handleTestResult(result) {
+        if (result.cancelled) {
+            // Abgebrochen: weder bestanden noch fehlgeschlagen - Bereitschafts-Haken bleibt unveraendert.
+            valueDisplay.textContent = result.message || 'Test abgebrochen';
+            valueDisplay.className = 'autoActionValue';
+            setTimeout(refreshStatus, 4000);
+            return;
+        }
         if (readyKey) markActionTested(readyKey, !!result.success);
         if (control.onlyIncrement) {
             if (result.success) {
@@ -4569,7 +4752,11 @@ function buildAutoManagedNumberControl(control) {
             // Feedback) - applyTestGate() in handleTestResult() blendet ihn danach wieder passend ein.
             hint.hidden = true;
             valueDisplay.textContent = 'Teste … ' + (status.progress || '');
-            handleTestResult(await pollTestUntilDone());
+            // Laeuft noch ein Test (Seite neu geladen), das Test-Popup wieder daran anhaengen.
+            const popup = status.sessionId ? openTestPopup('Test: ' + control.titleLabel, {sessionId: status.sessionId}) : null;
+            const result = await pollTestUntilDone();
+            handleTestResult(result);
+            if (popup) await popup.finish(result);
         } catch (err) {
             console.log(err);
         } finally {
@@ -4589,13 +4776,15 @@ function buildAutoManagedNumberControl(control) {
         // generische Delta-Test.
         valueDisplay.textContent = control.onlyIncrement ? 'Teste … (kann mehrere Minuten dauern)' : 'Teste...';
         pinnedTestError = null;
+        const popup = openTestPopup('Test: ' + control.titleLabel);
+        let result = null;
         try {
             const response = await fetch(insideHomeAssistant + '/actions/' + control.key + '/test', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', ...popup.headers},
                 body: JSON.stringify({delta})
             });
-            let result = await response.json();
+            result = await response.json();
             // Langer Heizungs-Test: der POST startet ihn nur, das Ergebnis kommt per Abfrage (siehe
             // pollTestUntilDone) - eine einzige lange Anfrage brach an Proxys mit Zeitlimit ab.
             if (control.onlyIncrement && result.running) result = await pollTestUntilDone();
@@ -4608,6 +4797,7 @@ function buildAutoManagedNumberControl(control) {
         } finally {
             if (minusButton) minusButton.disabled = false;
             plusButton.disabled = false;
+            await popup.finish(result);
         }
     }
 
@@ -4775,6 +4965,8 @@ function buildAutoManagedSwitchControl(control) {
 
     testButton.addEventListener('click', async () => {
         const phase = nextPhase;
+        const popup = openTestPopup('Test: ' + control.titleLabel + ' (' + (phase === 'start' ? 'Start' : 'Ende') + ')');
+        let outcome = null;
         testButton.disabled = true;
         valueDisplay.textContent = 'Teste...';
         valueDisplay.className = 'autoActionValue testing';
@@ -4782,11 +4974,12 @@ function buildAutoManagedSwitchControl(control) {
         try {
             const response = await fetch(insideHomeAssistant + '/actions/' + control.key + '/test', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', ...popup.headers},
                 body: JSON.stringify({phase})
             });
             const result = await response.json();
-            markActionTested(readyKey, !!result.success);
+            outcome = result;
+            if (!result.cancelled) markActionTested(readyKey, !!result.success);
             if (result.success) {
                 const phaseLabel = phase === 'start' ? 'Start' : 'Ende';
                 if (variant === 'ha_automation') {
@@ -4800,7 +4993,7 @@ function buildAutoManagedSwitchControl(control) {
                 }
                 valueDisplay.className = 'autoActionValue testSuccess';
             } else {
-                valueDisplay.textContent = 'Fehler: ' + (result.message || 'unbekannt');
+                valueDisplay.textContent = result.cancelled ? 'Test abgebrochen' : 'Fehler: ' + (result.message || 'unbekannt');
                 valueDisplay.className = 'autoActionValue';
             }
             applyTestGate(readyKey, checkmark, hint, true);
@@ -4810,6 +5003,7 @@ function buildAutoManagedSwitchControl(control) {
             valueDisplay.className = 'autoActionValue';
         } finally {
             testButton.disabled = false;
+            await popup.finish(outcome);
         }
     });
 
@@ -5267,13 +5461,16 @@ function buildCarChargeControl() {
         testButton.disabled = true;
         wallboxStatusDisplay.className = 'autoActionValue testing';
         carChargeHint.hidden = true;
+        const popup = openTestPopup('Test: Laden starten und beenden');
         let startedCharging = false;
         let ok = true;
+        let cancelled = false;
         let failMessage = '';
         let unverifiedSteps = 0;
         try {
             for (const targetKw of [2.3, 6.9]) {
                 const kwLabel = targetKw.toFixed(1).replace('.', ',');
+                popup.log(`Teil ${targetKw === 2.3 ? 1 : 2} von 2: mit ${kwLabel} kW laden`, 'info');
                 // three sequential HA calls with a 10s pause between each (see
                 // CHARGING_STAGE_DELAY_SECONDS in app.py) add up to a noticeable wait - let the
                 // user know it's not stuck
@@ -5281,13 +5478,19 @@ function buildCarChargeControl() {
                 status.className = 'autoActionStatus';
                 const response = await fetch(insideHomeAssistant + '/actions/car_charge_start/test', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {'Content-Type': 'application/json', ...popup.headers},
                     body: JSON.stringify({targetKw})
                 });
                 const result = await response.json();
                 // commandsSent: die Befehle sind rausgegangen (auch wenn die Wallbox danach nicht laedt) - "Laden
                 // beenden" muss dann trotzdem folgen.
                 if (result.commandsSent) startedCharging = true;
+                if (result.cancelled) {
+                    cancelled = true;
+                    ok = false;
+                    failMessage = 'Test abgebrochen';
+                    break;
+                }
                 if (!result.success) {
                     ok = false;
                     failMessage = `Fehler bei ${kwLabel} kW: ` + (result.message || 'unbekannt');
@@ -5296,23 +5499,34 @@ function buildCarChargeControl() {
                 if (result.verified === false) unverifiedSteps++;
                 startedCharging = true;
                 refreshWallboxStatus();
+                popup.log(`Pause ${WALLBOX_TEST_STEP_PAUSE_MS / 1000} s, damit der Wallbox-Status nachzieht …`, 'wait');
                 await new Promise(resolve => setTimeout(resolve, WALLBOX_TEST_STEP_PAUSE_MS));
+                if (popup.isCancelRequested()) {
+                    cancelled = true;
+                    ok = false;
+                    failMessage = 'Test abgebrochen';
+                    break;
+                }
             }
             // Laden auch nach einem fehlgeschlagenen Zwischenschritt beenden, wenn tatsaechlich
             // gestartet wurde - die Wallbox soll nach einem Testlauf nie einfach weiterladen.
             if (startedCharging) {
                 status.textContent = 'Teste: Laden beenden...';
                 status.className = 'autoActionStatus';
-                const stopResponse = await fetch(insideHomeAssistant + '/actions/car_charge_stop/test', {method: 'POST'});
+                const stopResponse = await fetch(insideHomeAssistant + '/actions/car_charge_stop/test', {method: 'POST', headers: popup.headers});
                 const stopResult = await stopResponse.json();
                 if (!stopResult.success) {
                     ok = false;
                     failMessage = failMessage || ('Fehler beim Beenden: ' + (stopResult.message || 'unbekannt'));
                 }
             }
-            markActionTested('car_charge_start', ok);
+            if (!cancelled) markActionTested('car_charge_start', ok);
             applyTestGate('car_charge_start', checkmark, carChargeHint, true);
-            if (ok) {
+            if (cancelled) {
+                status.textContent = 'Test abgebrochen' + (startedCharging ? ' - das Laden wurde beendet. Bitte prüfe kurz in deiner Wallbox-App, ob die Wallbox nicht mehr lädt.' : '.');
+                status.className = 'autoActionStatus';
+                wallboxStatusDisplay.className = 'autoActionValue';
+            } else if (ok) {
                 status.textContent = 'Erfolgreich: 2,3 kW → 6,9 kW → Laden beendet.'
                     + (unverifiedSteps > 0 ? ' (Ladeleistung konnte nicht geprüft werden - Sensor "Wallbox: Ladestrom" nicht lesbar.)' : ' Die Wallbox hat erfolgreich geladen. Bitte prüfe kurz in deiner Wallbox-App, ob das Laden auch erfolgreich beendet wurde.');
                 status.className = 'autoActionStatus status-ok';
@@ -5327,11 +5541,14 @@ function buildCarChargeControl() {
             status.textContent = 'Fehler beim Testen';
             status.className = 'autoActionStatus status-error';
             wallboxStatusDisplay.className = 'autoActionValue';
+            ok = false;
+            failMessage = failMessage || 'Fehler beim Testen';
             markActionTested('car_charge_start', false);
             applyTestGate('car_charge_start', checkmark, carChargeHint, true);
         } finally {
             testButton.disabled = false;
             setTimeout(refreshWallboxStatus, 4000);
+            await popup.finish({success: ok && !cancelled, cancelled, message: failMessage});
         }
     });
 
@@ -5475,13 +5692,19 @@ function buildHotWaterControl() {
         status.className = 'autoActionStatus';
         statusDisplay.className = 'autoActionValue testing';
         hotWaterHint.hidden = true;
+        const popup = openTestPopup('Test: Warmwasserbereitung');
+        let outcome = null;
         let success = false;
         try {
-            const response = await fetch(insideHomeAssistant + '/actions/hot_water_target_temp/test', {method: 'POST'});
+            const response = await fetch(insideHomeAssistant + '/actions/hot_water_target_temp/test', {method: 'POST', headers: popup.headers});
             const result = await response.json();
+            outcome = result;
             success = !!result.success;
-            markActionTested('hot_water', success);
-            if (success) {
+            if (!result.cancelled) markActionTested('hot_water', success);
+            if (result.cancelled) {
+                status.textContent = 'Test abgebrochen.';
+                status.className = 'autoActionStatus';
+            } else if (success) {
                 status.textContent = `Erfolgreich: Solltemperatur ${result.originalValue} °C → ${result.boostedValue} °C → zurückgesetzt, "Warmwasser gerade erwärmt?" ist auf An gesprungen.`;
                 status.className = 'autoActionStatus status-ok';
             } else {
@@ -5510,6 +5733,7 @@ function buildHotWaterControl() {
             // erfolgreichem Test erst DANACH auf Gruen ueberschreiben, siehe Anforderung "geänderten
             // Wert in grün anzeigen".
             if (success) statusDisplay.className = 'autoActionValue testSuccess';
+            await popup.finish(outcome);
         }
     });
 
@@ -5711,6 +5935,16 @@ function buildBatteryCoupledEntityField(sensorKey, datalistId, onChange, suggest
 // Aktionstypen die dort konfigurierte(n) Entitaet(en) zurueck (siehe execute_battery_direct) - ein
 // Testklick vor deren Einrichtung wuerde deshalb nur mit "Entitaet fehlt" scheitern. Button bleibt
 // dann dauerhaft deaktiviert, mit Begruendung statt der Live-Werte.
+const BATTERY_TEST_TITLES = {
+    battery_grid_charge: 'Batterie netzladen',
+    battery_discharge_shift: 'Batterie-Entladen verschieben',
+    battery_charge_shift_pv_surplus: 'Batterie-Laden verschieben (PV-Überschuss)',
+    battery_action_stop: 'Batterie-Aktion beenden',
+};
+// So lange (ms) nach dem Schliessen des Test-Popups bleibt das gruene Ergebnis ("Entladeleistung: ... | Limit ...")
+// einer erfolgreichen Testzeile stehen, bevor es verschwindet (die Werte wurden ohnehin schon zurueckgesetzt).
+const BATTERY_TEST_RESULT_VISIBLE_MS = 10000;
+
 function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
     const wrapper = document.createElement('div');
     wrapper.className = 'autoActionControl';
@@ -5748,24 +5982,35 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
         }
     }
 
+    let resultClearTimer = null;
     button.addEventListener('click', async () => {
+        clearTimeout(resultClearTimer);
+        const popup = openTestPopup('Test: ' + (BATTERY_TEST_TITLES[actionKey] || actionKey));
+        let outcome = null;
         button.disabled = true;
         statusIcon.hidden = true;
         valuesDisplay.textContent = 'Teste...';
         valuesDisplay.className = 'autoActionValue testing';
         if (hint) hint.hidden = true;
         try {
-            const response = await fetch(insideHomeAssistant + '/actions/battery/' + actionKey + '/test', {method: 'POST'});
+            const response = await fetch(insideHomeAssistant + '/actions/battery/' + actionKey + '/test', {method: 'POST', headers: popup.headers});
             const result = await response.json();
+            outcome = result;
             renderValues(result.values);
-            statusIcon.textContent = result.success ? '✓' : '!';
-            statusIcon.className = 'batteryTestStatusIcon ' + (result.success ? 'status-ok' : 'status-error');
-            statusIcon.title = result.success ? '' : (result.message || 'Test fehlgeschlagen');
-            statusIcon.hidden = false;
-            valuesDisplay.className = 'autoActionValue' + (result.success ? ' testSuccess' : '');
-            if (checkmark) {
-                markActionTested(actionKey, !!result.success);
-                applyTestGate(actionKey, checkmark, hint, true);
+            if (result.cancelled) {
+                // Abgebrochen: weder bestanden noch fehlgeschlagen - Bereitschafts-Haken bleibt unveraendert.
+                valuesDisplay.textContent = 'Test abgebrochen';
+                valuesDisplay.className = 'autoActionValue';
+            } else {
+                statusIcon.textContent = result.success ? '✓' : '!';
+                statusIcon.className = 'batteryTestStatusIcon ' + (result.success ? 'status-ok' : 'status-error');
+                statusIcon.title = result.success ? '' : (result.message || 'Test fehlgeschlagen');
+                statusIcon.hidden = false;
+                valuesDisplay.className = 'autoActionValue' + (result.success ? ' testSuccess' : '');
+                if (checkmark) {
+                    markActionTested(actionKey, !!result.success);
+                    applyTestGate(actionKey, checkmark, hint, true);
+                }
             }
         } catch (err) {
             console.log(err);
@@ -5780,6 +6025,19 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
             // Der Testausgang ist serverseitig in actionTestFailed/actionTestPassed hinterlegt -
             // Fehlerkarte + Geraete-Navigation ("!" statt grünem Haken) sofort neu bewerten.
             renderSystemHealth();
+            // Das Ergebnis steht im Popup; die gruene Werte-Zeile verschwindet nach einer Weile wieder (nur bei Erfolg -
+            // ein Fehler bleibt stehen, bis neu getestet wird).
+            popup.closed.then(() => {
+                if (outcome && outcome.success) {
+                    resultClearTimer = setTimeout(() => {
+                        valuesDisplay.textContent = '';
+                        valuesDisplay.className = 'autoActionValue';
+                    }, BATTERY_TEST_RESULT_VISIBLE_MS);
+                } else if (outcome && outcome.cancelled) {
+                    refreshValues();
+                }
+            });
+            await popup.finish(outcome);
         }
     });
 

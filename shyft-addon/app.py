@@ -19,6 +19,7 @@ import time
 import csv
 import io
 import functools
+import contextlib
 import threading
 import requests
 from datetime import datetime, timezone, timedelta, date
@@ -3930,6 +3931,190 @@ def log_error_to_shyft(context, error_type, error_message, service_called=None, 
         print("[Shyft] Fehlerreport an shyft-power fehlgeschlagen:", repr(e))
 
 
+# ============================================================================
+# Live-Testprotokoll fuer die "Testen"-Buttons der Konfigurationsseite: Beim Klick oeffnet das Frontend ein Popup
+# (openTestPopup in www/app.js), das Zeile fuer Zeile zeigt, was der Test gerade tut (Schritt, Wartezeit, aktueller
+# Zustand der Entitaet, Ergebnis) und per "Abbrechen" beendet werden kann. Das Frontend schickt dazu bei jedem
+# Test-Request den Header X-Shyft-Test-Id; der Test schreibt seine Zeilen ueber test_log() in die gleichnamige
+# Sitzung, das Popup holt sie per GET /actions/test-log/<id>. Ausserhalb eines Tests (echte Aktionen) sind
+# test_log/test_sleep wirkungslos bzw. ein normales time.sleep - die geteilten Schreib-/Verifikationsfunktionen
+# koennen sie deshalb ohne Verhaltensaenderung nutzen. Abbrechen setzt nur ein Flag: der Test bricht beim naechsten
+# test_sleep()/test_check_cancel() ab (_TestCancelled), raeumt dabei aber IMMER auf (Sollwert/Limits zuruecksetzen,
+# siehe _test_uninterruptible - dort wird nicht mehr abgebrochen).
+# ============================================================================
+class _TestCancelled(BaseException):
+    "Der Nutzer hat den laufenden Test abgebrochen (BaseException, damit ein breites 'except Exception' im Test sie nicht verschluckt)."
+
+
+class _TestSession:
+    def __init__(self, session_id):
+        self.id = session_id
+        self.lines = []
+        self.cancelled = False
+        self.created_at = time.time()
+        self._holds = 0
+        self._lock = threading.Lock()
+
+    def log(self, text, level="info"):
+        with self._lock:
+            self.lines.append({"t": _local_now().strftime("%H:%M:%S"), "level": level, "text": str(text)})
+
+    def hold(self):
+        with self._lock:
+            self._holds += 1
+
+    def release(self):
+        with self._lock:
+            self._holds = max(0, self._holds - 1)
+
+    def snapshot(self, since):
+        with self._lock:
+            return {"lines": self.lines[since:], "next": len(self.lines), "busy": self._holds > 0, "cancelled": self.cancelled}
+
+
+_test_sessions = {}
+_test_sessions_lock = threading.Lock()
+_test_ctx = threading.local()
+_TEST_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
+_TEST_SESSION_MAX_AGE_SECONDS = 3600
+
+
+def _get_test_session(session_id, create=False):
+    if not session_id or not _TEST_SESSION_ID_RE.match(session_id):
+        return None
+    with _test_sessions_lock:
+        now = time.time()
+        for old_id in [k for k, v in _test_sessions.items() if now - v.created_at > _TEST_SESSION_MAX_AGE_SECONDS]:
+            del _test_sessions[old_id]
+        session = _test_sessions.get(session_id)
+        if session is None and create:
+            session = _test_sessions[session_id] = _TestSession(session_id)
+        return session
+
+
+def _current_test_session():
+    return getattr(_test_ctx, "session", None)
+
+
+def test_log(text, level="info"):
+    "Eine Zeile ins Test-Popup (level: info|ok|warn|error|wait). Ausserhalb eines Tests wirkungslos."
+    session = _current_test_session()
+    if session is not None:
+        session.log(text, level)
+
+
+def test_check_cancel():
+    session = _current_test_session()
+    if session is not None and session.cancelled and not getattr(_test_ctx, "uninterruptible", 0):
+        raise _TestCancelled()
+
+
+def test_sleep(seconds):
+    "time.sleep, das im Test-Kontext auf einen Abbruch durch den Nutzer reagiert (alle 0,25 s)."
+    if _current_test_session() is None:
+        time.sleep(seconds)
+        return
+    end = time.time() + seconds
+    while True:
+        test_check_cancel()
+        remaining = end - time.time()
+        if remaining <= 0:
+            return
+        time.sleep(min(0.25, remaining))
+
+
+def _test_pause(seconds, reason):
+    test_log(f"Warte {seconds} s ({reason}) …", "wait")
+    test_sleep(seconds)
+
+
+@contextlib.contextmanager
+def _test_uninterruptible():
+    "Aufraeumschritte (Sollwert/Limits zuruecksetzen) duerfen auch nach einem Abbruch nicht mehr abgebrochen werden."
+    _test_ctx.uninterruptible = getattr(_test_ctx, "uninterruptible", 0) + 1
+    try:
+        yield
+    finally:
+        _test_ctx.uninterruptible -= 1
+
+
+@contextlib.contextmanager
+def _test_session_bound(session):
+    "Bindet eine Test-Sitzung an den aktuellen Thread (Hintergrund-Threads eines Tests, z.B. Heizungs-Test/Zuruecksetzen)."
+    previous = getattr(_test_ctx, "session", None)
+    _test_ctx.session = session
+    try:
+        yield
+    finally:
+        _test_ctx.session = previous
+
+
+class _TestStateLog:
+    "Protokolliert gelesene Zustaende, ohne jede Abfrage zu wiederholen: nur bei Aenderung oder alle 15 s."
+
+    def __init__(self, label, target=None):
+        self.label = label
+        self.target = target
+        self.last = object()
+        self.last_at = 0
+
+    def __call__(self, state):
+        if _current_test_session() is None:
+            return
+        now = time.time()
+        if state != self.last or now - self.last_at >= 15:
+            suffix = "" if self.target is None else f" (Ziel: {self.target})"
+            test_log(f"{self.label}: {state}{suffix} – warte …", "wait")
+            self.last, self.last_at = state, now
+
+
+def _with_test_session(fn):
+    "Decorator fuer die /actions/**/test-Handler: bindet die vom Frontend per Header X-Shyft-Test-Id benannte Test-Sitzung an den Request und faengt einen Nutzer-Abbruch ab."
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        session = _get_test_session(request.headers.get("X-Shyft-Test-Id"), create=True)
+        if session is None:
+            return fn(*args, **kwargs)
+        session.hold()
+        try:
+            with _test_session_bound(session):
+                try:
+                    return fn(*args, **kwargs)
+                except _TestCancelled:
+                    session.log("Test abgebrochen.", "warn")
+                    return jsonify({"success": False, "cancelled": True, "message": "Test abgebrochen"})
+        finally:
+            session.release()
+    return wrapper
+
+
+@app.route("/actions/test-log/<session_id>", methods=["GET"])
+def readTestLog(session_id):
+    "Neue Protokollzeilen einer Test-Sitzung ab Index 'since' (Test-Popup, siehe openTestPopup in app.js)."
+    session = _get_test_session(session_id)
+    if session is None:
+        return jsonify({"lines": [], "next": 0, "busy": False, "cancelled": False, "known": False})
+    try:
+        since = max(0, int(request.args.get("since", "0")))
+    except ValueError:
+        since = 0
+    result = session.snapshot(since)
+    result["known"] = True
+    return jsonify(result)
+
+
+@app.route("/actions/test-log/<session_id>/cancel", methods=["POST"])
+def cancelTest(session_id):
+    "Bricht den laufenden Test ab (Flag - der Test reagiert beim naechsten Warte-/Pruefschritt und raeumt dabei auf)."
+    session = _get_test_session(session_id)
+    if session is None:
+        return jsonify({"success": False, "message": "unbekannte Test-Sitzung"}), 404
+    if not session.cancelled:
+        session.cancelled = True
+        session.log("Abbruch angefordert – der Test wird beendet und räumt dabei auf …", "warn")
+    return jsonify({"success": True})
+
+
 def call_recipe_stage(stage, branch_key=None, extra_data=None, integration_key="wallbox"):
     """Calls one configured recipe stage's Home Assistant service (e.g. an "Auto laden" stage, or
     the single-stage "Warmwasserbereitung aktivieren" recipe) with its shared fields (the same for
@@ -3963,14 +4148,17 @@ def call_recipe_stage(stage, branch_key=None, extra_data=None, integration_key="
             data["device_id"] = fallback_device_id
 
     print(f"[Shyft] Rufe {domain}.{service_name} auf mit Daten {data}")
+    test_log(f"Rufe {domain}.{service_name} auf (Daten: {data}) …")
     try:
         homeassistant_adapter.call_service(domain, service_name, data)
+        test_log(f"{domain}.{service_name}: von Home Assistant angenommen.", "ok")
     except Exception as e:
         # Home Assistant's own response usually has no more detail than this for a 500 (the real
         # traceback - e.g. from a bug in the integration's own service handler - only shows up in
         # Home Assistant Core's own log, not in the REST response) - logging what we actually sent
         # at least lets you cross-reference the two.
         print(f"[Shyft] {domain}.{service_name} fehlgeschlagen: {e!r}")
+        test_log(f"{domain}.{service_name} fehlgeschlagen: {e}", "error")
         raise RecipeCallError(str(e), service, data) from e
 
 
@@ -5326,26 +5514,32 @@ def _write_and_verify_dhw_target_temp(entity_id, target_value, retry_timeout_sec
     attempt = 0
     last_error = None
     last_state = None
+    state_log = _TestStateLog(f"Zustand von {entity_id}", target_value)
     while True:
         attempt += 1
+        test_log(f"Schreibe {target_value} auf {entity_id} (Versuch {attempt}) …")
         try:
             homeassistant_adapter.call_service(domain, service, {"entity_id": entity_id, data_key: target_value})
             last_error = None
         except Exception as e:
+            test_log(f"Home Assistant meldet beim Schreiben einen Fehler: {e}", "error")
             last_error = str(e)
             print(f"[Shyft] Warmwasser-Solltemperatur: {domain}.{service} auf '{entity_id}' fehlgeschlagen (Versuch {attempt}):", repr(e))
         try:
             current_state = homeassistant_adapter.load_entity_state(entity_id)
             last_state = current_state.state
+            state_log(current_state.state)
             if abs(float(current_state.state) - float(target_value)) < 1e-6:
+                test_log(f"{entity_id} hat den Wert {target_value} übernommen.", "ok")
                 return True
         except Exception as e:
             print(f"[Shyft] Warmwasser-Solltemperatur: Status von '{entity_id}' nicht lesbar (Versuch {attempt}):", repr(e))
         if time.time() >= deadline:
             if detail is not None:
                 detail["reason"] = _dhw_write_failure_reason(entity_id, last_error, last_state)
+            test_log(f"Wert nicht übernommen: {_dhw_write_failure_reason(entity_id, last_error, last_state)}", "error")
             return False
-        time.sleep(DHW_TARGET_TEMP_RETRY_DELAY_SECONDS)
+        test_sleep(DHW_TARGET_TEMP_RETRY_DELAY_SECONDS)
 
 
 def _dhw_write_failure_reason(entity_id, last_error, last_state):
@@ -5572,7 +5766,10 @@ def _records_action_test(ready_key=None, record_success=True):
             key = ready_key if ready_key is not None else (args[0] if args else next(iter(kwargs.values()), None))
             try:
                 body = resp[0] if isinstance(resp, tuple) else resp
-                ok = bool((body.get_json(silent=True) or {}).get("success"))
+                payload = body.get_json(silent=True) or {}
+                ok = bool(payload.get("success"))
+                if payload.get("cancelled"):
+                    return resp  # vom Nutzer abgebrochen: weder bestanden noch fehlgeschlagen - nichts festhalten
             except Exception:
                 ok = False
             if ok and not record_success:
@@ -5608,6 +5805,7 @@ def _fail_action(action, config, exec_status, msg, prev_exec, verb):
 
 @app.route("/actions/hot_water_target_temp/test", methods=["POST"])
 @_records_action_test("hot_water")
+@_with_test_session
 def testHotWaterTargetTemp():
     """Ein einziger Test fuer die komplette Warmwasserbereitung (ersetzt die frueher getrennten
     "Test: Warmwasserbereitung"/"Test: Solltemperatur"-Buttons): erhoeht den aktuell gelesenen
@@ -5623,44 +5821,78 @@ def testHotWaterTargetTemp():
     if not entity_id:
         return jsonify({"success": False, "message": "Keine Entität für die Solltemperatur zugeordnet"}), 400
 
+    test_log(f"Solltemperatur-Entität: {entity_id}")
     original_value = _read_mapped_numeric(config, DHW_TARGET_TEMP_SENSOR_FIELD)
     if original_value is None:
+        test_log("Der aktuelle Sollwert ist nicht lesbar.", "error")
         return jsonify({"success": False, "message": "Aktueller Sollwert nicht lesbar"}), 500
+    test_log(f"Aktueller Sollwert: {original_value} °C")
 
     boosted_value = original_value + DHW_TARGET_TEMP_TEST_BOOST_C
-    write_detail = {}
-    write_ok = _write_and_verify_dhw_target_temp(entity_id, boosted_value, DHW_TARGET_TEMP_TEST_TIMEOUT_SECONDS, write_detail)
-    if not write_ok:
-        return jsonify({"success": False, "message": f"Solltemperatur konnte nicht gesetzt/verifiziert werden ({write_detail.get('reason', 'Ursache unbekannt')})",
-                         "originalValue": original_value, "boostedValue": boosted_value}), 500
-
+    cancelled = False
+    activate_attempted = False
     activate_error = None
-    try:
-        execute_hot_water_activate()
-    except Exception as e:
-        activate_error = str(e)
-
     heating_confirmed = False
-    if activate_error is None:
-        status_entity_id = config.get("sensorMappings", {}).get("heatpump_dhw_on_off", "")
-        can_force_refresh = bool(status_entity_id) and not is_demo_sensor(config, "heatpump_dhw_on_off")
-        deadline = time.time() + DHW_ACTIVATION_TEST_POLL_TIMEOUT_SECONDS
-        next_refresh = time.time() + DHW_ACTIVATION_TEST_REFRESH_INTERVAL_SECONDS
-        while True:
-            if _read_mapped_bool_on(config, "heatpump_dhw_on_off") is True:
-                heating_confirmed = True
-                break
-            if time.time() >= deadline:
-                break
-            if can_force_refresh and time.time() >= next_refresh:
-                next_refresh = time.time() + DHW_ACTIVATION_TEST_REFRESH_INTERVAL_SECONDS
-                try:
-                    homeassistant_adapter.call_service("homeassistant", "update_entity", {"entity_id": status_entity_id})
-                except Exception as e:
-                    print(f"[Shyft] update_entity für {status_entity_id} fehlgeschlagen: {e}")
-            time.sleep(DHW_ACTIVATION_TEST_POLL_INTERVAL_SECONDS)
+    try:
+        test_log(f"Schritt 1/3: Sollwert testweise auf {boosted_value} °C erhöhen …")
+        write_detail = {}
+        write_ok = _write_and_verify_dhw_target_temp(entity_id, boosted_value, DHW_TARGET_TEMP_TEST_TIMEOUT_SECONDS, write_detail)
+        if not write_ok:
+            return jsonify({"success": False, "message": f"Solltemperatur konnte nicht gesetzt/verifiziert werden ({write_detail.get('reason', 'Ursache unbekannt')})",
+                             "originalValue": original_value, "boostedValue": boosted_value}), 500
 
-    revert_ok = _write_and_verify_dhw_target_temp(entity_id, original_value, DHW_TARGET_TEMP_RETRY_TIMEOUT_SECONDS)
+        test_log("Schritt 2/3: Löse die Warmwasserbereitung aus …")
+        activate_attempted = True
+        try:
+            execute_hot_water_activate()
+            test_log("Warmwasserbereitung ausgelöst.", "ok")
+        except Exception as e:
+            activate_error = str(e)
+            test_log(f"Auslösen fehlgeschlagen: {e}", "error")
+
+        if activate_error is None:
+            status_entity_id = config.get("sensorMappings", {}).get("heatpump_dhw_on_off", "")
+            can_force_refresh = bool(status_entity_id) and not is_demo_sensor(config, "heatpump_dhw_on_off")
+            test_log(f"Schritt 3/3: Warte bis zu {DHW_ACTIVATION_TEST_POLL_TIMEOUT_SECONDS} s darauf, dass „Warmwasser gerade erwärmt?“ ({status_entity_id or 'kein Sensor zugeordnet'}) auf An springt …", "wait")
+            state_log = _TestStateLog("Warmwasser gerade erwärmt?")
+            deadline = time.time() + DHW_ACTIVATION_TEST_POLL_TIMEOUT_SECONDS
+            next_refresh = time.time() + DHW_ACTIVATION_TEST_REFRESH_INTERVAL_SECONDS
+            while True:
+                heating_state = _read_mapped_bool_on(config, "heatpump_dhw_on_off")
+                state_log({True: "An", False: "Aus"}.get(heating_state, "unbekannt"))
+                if heating_state is True:
+                    heating_confirmed = True
+                    test_log("Die Wärmepumpe erwärmt jetzt Warmwasser.", "ok")
+                    break
+                if time.time() >= deadline:
+                    test_log("„Warmwasser gerade erwärmt?“ ist innerhalb der Frist nicht auf An gesprungen.", "error")
+                    break
+                if can_force_refresh and time.time() >= next_refresh:
+                    next_refresh = time.time() + DHW_ACTIVATION_TEST_REFRESH_INTERVAL_SECONDS
+                    test_log(f"Frage den Status bei der Integration aktiv an (update_entity {status_entity_id}) …")
+                    try:
+                        homeassistant_adapter.call_service("homeassistant", "update_entity", {"entity_id": status_entity_id})
+                    except Exception as e:
+                        print(f"[Shyft] update_entity für {status_entity_id} fehlgeschlagen: {e}")
+                        test_log(f"update_entity fehlgeschlagen: {e}", "warn")
+                test_sleep(DHW_ACTIVATION_TEST_POLL_INTERVAL_SECONDS)
+    except _TestCancelled:
+        cancelled = True
+        test_log("Abbruch angefordert – setze die Solltemperatur auf den ursprünglichen Wert zurück …", "warn")
+
+    with _test_uninterruptible():
+        test_log(f"Setze die Solltemperatur zurück auf {original_value} °C …")
+        revert_ok = _write_and_verify_dhw_target_temp(entity_id, original_value, DHW_TARGET_TEMP_RETRY_TIMEOUT_SECONDS)
+        if revert_ok:
+            test_log("Solltemperatur zurückgesetzt.", "ok")
+        else:
+            test_log("Die Solltemperatur konnte nicht zurückgesetzt werden – bitte in der Wärmepumpen-App prüfen.", "error")
+
+    activated = activate_attempted and activate_error is None
+    if cancelled:
+        message = "Test abgebrochen" + ("" if revert_ok else " - Solltemperatur konnte nicht zurückgesetzt werden")
+        return jsonify({"success": False, "cancelled": True, "message": message, "activated": activated,
+                        "originalValue": original_value, "boostedValue": boosted_value})
 
     if activate_error is None and heating_confirmed and revert_ok:
         _note_action_outcome(DHW_ACTION_NAME, "getestet", None)
@@ -5676,7 +5908,7 @@ def testHotWaterTargetTemp():
         message += " - Solltemperatur konnte außerdem nicht zurückgesetzt werden"
     # activated: die Aktivierung wurde ausgeloest (auch wenn der Status nicht rechtzeitig umsprang) -
     # das Frontend weist dann darauf hin, dass der Test die Warmwasserbereitung nicht wieder beendet.
-    return jsonify({"success": False, "message": message, "activated": activate_error is None,
+    return jsonify({"success": False, "message": message, "activated": activated,
                     "originalValue": original_value, "boostedValue": boosted_value}), 500
 
 
@@ -5783,18 +6015,26 @@ def _verify_car_charging_started(config):
     (Sensor lesbar, aber keine Ladeleistung) oder 'unverifiable' (kein Sensor zugeordnet bzw. nie lesbar - dann
     bleibt es bei der bisherigen Bewertung ohne Pruefung)."""
     if not (config.get("sensorMappings") or {}).get("wallbox_current_charging_power"):
+        test_log("Kein Sensor „Wallbox: Ladestrom“ zugeordnet – ob die Wallbox lädt, kann nicht geprüft werden.", "warn")
         return "unverifiable", None
+    test_log(f"Prüfe bis zu {CAR_CHARGE_TEST_VERIFY_TIMEOUT_SECONDS} s, ob die Wallbox wirklich lädt (Ladeleistung ≥ {CAR_CHARGE_TEST_MIN_CHARGING_KW} kW) …", "wait")
+    state_log = _TestStateLog("Wallbox-Ladeleistung")
     deadline = time.time() + CAR_CHARGE_TEST_VERIFY_TIMEOUT_SECONDS
     last_kw = None
     while True:
         kw = _read_mapped_numeric(config, "wallbox_current_charging_power")
         if kw is not None:
             last_kw = kw
+            state_log(f"{kw} kW")
             if kw >= CAR_CHARGE_TEST_MIN_CHARGING_KW:
+                test_log(f"Die Wallbox lädt mit {kw} kW.", "ok")
                 return "charging", kw
+        else:
+            state_log("nicht lesbar")
         if time.time() >= deadline:
             break
-        time.sleep(CAR_CHARGE_TEST_VERIFY_INTERVAL_SECONDS)
+        test_sleep(CAR_CHARGE_TEST_VERIFY_INTERVAL_SECONDS)
+    test_log("Die Wallbox lädt nicht." if last_kw is not None else "Die Ladeleistung war nie lesbar.", "error")
     return ("not_charging" if last_kw is not None else "unverifiable"), last_kw
 
 
@@ -5817,70 +6057,97 @@ def _car_charge_verification_response(config, extra=None):
 
 @app.route("/actions/car_charge_start/test", methods=["POST"])
 @_records_action_test("car_charge_start")
+@_with_test_session
 def testCarChargeStart():
+    try:
+        return _test_car_charge_start()
+    except _TestCancelled:
+        test_log("Test abgebrochen – das Laden wird anschließend beendet.", "warn")
+        # commandsSent: es koennen schon Befehle raus sein - das Frontend schickt dann in jedem Fall noch "Laden beenden".
+        return jsonify({"success": False, "cancelled": True, "commandsSent": True, "message": "Test abgebrochen"})
+
+
+def _test_car_charge_start():
     "Runs the exact same kW -> Phasen/Ampere pipeline as a real shyft-power action (see execute_car_charge_start), so this test is a faithful dry run rather than a simplified stand-in."
     config = _read_current_config()
     recipe = config.get("carChargeRecipe", {})
     recipe_type = recipe.get("type")
     if recipe_type not in ("three_stage", "ha_automation"):
+        test_log("Keine Variante ausgewählt.", "error")
         return jsonify({"success": False, "message": "Keine Variante ausgewählt"}), 400
 
     body = request.get_json(force=True, silent=True) or {}
     target_kw = body.get("targetKw")
+    test_log(f"Ziel-Ladeleistung: {str(target_kw).replace('.', ',')} kW")
 
     if recipe_type == "ha_automation":
         try:
+            test_log(f"Löse die Automation {recipe.get('haAutomationEntityId')} aus (Phase: start) …")
             trigger_ha_automation_recipe(recipe, "start", target_kw)
+            test_log("Automation ausgelöst – was sie danach tut, kann Shyft nur über die Ladeleistung prüfen.", "ok")
         except Exception as e:
+            test_log(f"Auslösen fehlgeschlagen: {e}", "error")
             log_error_to_shyft("car_charge_start_test", classify_error(str(e)), str(e))
             return jsonify({"success": False, "message": str(e)}), 500
         return _car_charge_verification_response(config)
 
     try:
         if needs_stop_before_phase_change(target_kw):
+            test_log("Die Wallbox lädt evtl. mit einer anderen Phasenzahl – beende zuerst das Laden …")
             call_recipe_stage(recipe.get("control", {}), branch_key="stop")
-            time.sleep(CHARGING_STAGE_DELAY_SECONDS)
+            _test_pause(CHARGING_STAGE_DELAY_SECONDS, "die Wallbox soll den Stopp verarbeiten")
 
         phase_count, amps = compute_charging_phases_and_amps(target_kw)
+        test_log(f"Berechnet: {phase_count} Phase(n), {amps} A")
+        test_log("Schritt 1/3: Phasenanzahl setzen …")
         call_recipe_stage(recipe.get("phaseCount", {}), branch_key=str(phase_count))
-        time.sleep(CHARGING_STAGE_DELAY_SECONDS)
+        _test_pause(CHARGING_STAGE_DELAY_SECONDS, "die Wallbox soll den Phasenwechsel verarbeiten")
 
         amperage_stage = recipe.get("amperage", {})
         amount_fields = amperage_stage.get("amountFields") or []
         if not amount_fields:
             raise Exception("Kein Feld für die Amperezahl konfiguriert")
+        test_log("Schritt 2/3: Stromstärke setzen …")
         call_recipe_stage(amperage_stage, extra_data={f: amps for f in amount_fields})
-        time.sleep(CHARGING_STAGE_DELAY_SECONDS)
+        _test_pause(CHARGING_STAGE_DELAY_SECONDS, "die Wallbox soll die Stromstärke verarbeiten")
 
+        test_log("Schritt 3/3: Laden starten …")
         call_recipe_stage(recipe.get("control", {}), branch_key="start")
         return _car_charge_verification_response(config, {"phaseCount": phase_count, "amps": amps})
     except RecipeCallError as e:
         log_error_to_shyft("car_charge_start_test", "service_call_failed", str(e), service_called=e.service, data_sent=e.data)
         return jsonify({"success": False, "message": str(e)}), 500
     except Exception as e:
+        test_log(f"Fehler: {e}", "error")
         log_error_to_shyft("car_charge_start_test", classify_error(str(e)), str(e))
         return jsonify({"success": False, "message": str(e)}), 500
 
 
 @app.route("/actions/car_charge_stop/test", methods=["POST"])
 @_records_action_test("car_charge_start", record_success=False)
+@_with_test_session
 def testCarChargeStop():
     config = _read_current_config()
     recipe = config.get("carChargeRecipe", {})
+    test_log("Beende das Laden …")
     if recipe.get("type") == "ha_automation":
         try:
             trigger_ha_automation_recipe(recipe, "stop", None)
+            test_log("Automation (Phase: stop) ausgelöst.", "ok")
             return jsonify({"success": True})
         except Exception as e:
+            test_log(f"Auslösen fehlgeschlagen: {e}", "error")
             log_error_to_shyft("car_charge_stop_test", classify_error(str(e)), str(e))
             return jsonify({"success": False, "message": str(e)}), 500
     try:
         call_recipe_stage(recipe.get("control", {}), branch_key="stop")
+        test_log("Stopp-Befehl gesendet.", "ok")
         return jsonify({"success": True})
     except RecipeCallError as e:
         log_error_to_shyft("car_charge_stop_test", "service_call_failed", str(e), service_called=e.service, data_sent=e.data)
         return jsonify({"success": False, "message": str(e)}), 500
     except Exception as e:
+        test_log(f"Fehler: {e}", "error")
         log_error_to_shyft("car_charge_stop_test", classify_error(str(e)), str(e))
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -6123,22 +6390,32 @@ def _write_and_verify_auto_managed_number(control_key, entity_id, target_value, 
     Frist, "timeout" wenn der Wert nicht rechtzeitig uebernommen wurde, "call_failed" wenn schon der Skriptaufruf
     selbst fehlschlug (detail = Ursache aus dem HA-Log) - dann wurde nichts an das Geraet gesendet."""
     control = AUTO_MANAGED_CONTROLS[control_key]
+    test_log(f"Rufe script.{control['script_id']} mit Zielwert {target_value} auf …")
     try:
         homeassistant_adapter.call_service("script", control["script_id"], {"target_value": target_value})
     except Exception as e:
         print(f"[Shyft] '{control_key}': Skript-Aufruf fehlgeschlagen:", repr(e))
-        return "call_failed", _script_failure_reason(control["script_id"], e)
+        reason = _script_failure_reason(control["script_id"], e)
+        test_log(f"Skript-Aufruf fehlgeschlagen: {reason}", "error")
+        return "call_failed", reason
+    test_log(f"Skript aufgerufen. Warte bis zu {int(poll_timeout_seconds)} s darauf, dass {entity_id} den Wert {target_value} übernimmt "
+             f"(Cloud-Wärmepumpen brauchen dafür oft 1–3 Minuten) …", "wait")
+    state_log = _TestStateLog(f"Wert von {entity_id}", target_value)
     deadline = time.time() + poll_timeout_seconds
     while True:
         try:
             current = homeassistant_adapter.read_entity_numeric_value(entity_id)
+            state_log(current)
             if current is not None and abs(current - target_value) < 1e-6:
+                test_log(f"{entity_id} hat den Wert {target_value} übernommen.", "ok")
                 return "confirmed", None
         except Exception as e:
             print(f"[Shyft] '{control_key}': Status von '{entity_id}' nicht lesbar:", repr(e))
+            state_log("nicht lesbar")
         if time.time() >= deadline:
+            test_log(f"Wert nicht innerhalb von {int(poll_timeout_seconds)} s übernommen.", "warn")
             return "timeout", None
-        time.sleep(poll_interval_seconds)
+        test_sleep(poll_interval_seconds)
 
 
 # Der Heizungs-Test dauert wegen der Cloud-Latenz der Waermepumpe mehrere Minuten (Erhoehen + Bestaetigen +
@@ -6146,7 +6423,7 @@ def _write_and_verify_auto_managed_number(control_key, entity_id, target_value, 
 # Nabu Casa) ab: das Frontend zeigte "Fehler beim Testen", obwohl der Test im Hintergrund erfolgreich durchlief.
 # Deshalb startet der POST den Test nur (Hintergrund-Thread) und das Frontend fragt den Fortschritt per GET ab.
 _heating_test_lock = threading.Lock()
-_heating_test_job = {"state": "idle", "progress": "", "result": None, "startedAt": None}
+_heating_test_job = {"state": "idle", "progress": "", "result": None, "startedAt": None, "sessionId": None}
 
 
 def _set_heating_test_progress(text):
@@ -6156,21 +6433,36 @@ def _set_heating_test_progress(text):
 
 def _run_heating_target_temp_test(control_key, entity_id, original_value, boosted_value):
     """Der eigentliche (langsame) Test: erhoeht den Sollwert um HEATING_TARGET_TEMP_TEST_STEP_C, wartet auf die
-    Bestaetigung durch den zugeordneten Sensor und setzt DANACH immer den urspruenglichen Wert zurueck. Rueckgabe:
-    (success, Ergebnis-dict fuers Frontend)."""
+    Bestaetigung durch den zugeordneten Sensor und setzt DANACH immer den urspruenglichen Wert zurueck (auch nach einem
+    Abbruch durch den Nutzer). Rueckgabe: (success, Ergebnis-dict fuers Frontend)."""
+    test_log(f"Entität: {entity_id}, aktueller Wert: {original_value} °C")
+    test_log(f"Schritt 1/2: Erhöhe den Sollwert testweise auf {boosted_value} °C …")
     _set_heating_test_progress(f"Erhöhung auf {boosted_value}°C gesendet, warte auf Bestätigung der Wärmepumpe …")
-    boost_status, boost_detail = _write_and_verify_auto_managed_number(
-        control_key, entity_id, boosted_value, HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS)
+    cancelled = False
+    try:
+        boost_status, boost_detail = _write_and_verify_auto_managed_number(
+            control_key, entity_id, boosted_value, HEATING_TARGET_TEMP_TEST_POLL_TIMEOUT_SECONDS)
+    except _TestCancelled:
+        cancelled = True
+        boost_status, boost_detail = "cancelled", None
+        test_log("Abbruch angefordert – der ursprüngliche Wert wird wiederhergestellt …", "warn")
     if boost_status == "call_failed":
         # Der Befehl kam gar nicht erst beim Geraet an - es gibt nichts zurueckzusetzen (und das Warten aufs
         # Bestaetigen bzw. der Rueckstell-Versuch waeren sinnlos).
         return False, {"success": False, "message": f"Die Wärmepumpe konnte nicht angesteuert werden: {boost_detail}. Es wurde nichts geändert.",
                        "originalValue": original_value, "boostedValue": boosted_value}
     confirmed = boost_status == "confirmed"
+    test_log(f"Schritt 2/2: Setze den Sollwert zurück auf {original_value} °C …")
     _set_heating_test_progress(f"Zurücksetzen auf {original_value}°C, warte auf Bestätigung der Wärmepumpe …")
-    revert_status, revert_detail = _write_and_verify_auto_managed_number(
-        control_key, entity_id, original_value, HEATING_TARGET_TEMP_TEST_REVERT_TIMEOUT_SECONDS)
+    with _test_uninterruptible():
+        revert_status, revert_detail = _write_and_verify_auto_managed_number(
+            control_key, entity_id, original_value, HEATING_TARGET_TEMP_TEST_REVERT_TIMEOUT_SECONDS)
     revert_ok = revert_status == "confirmed"
+
+    if cancelled:
+        message = "Test abgebrochen - " + (f"der Sollwert wurde wieder auf {original_value}°C gesetzt" if revert_ok
+                                           else f"das Zurücksetzen auf {original_value}°C wurde nicht bestätigt, bitte in der Wärmepumpen-App prüfen")
+        return False, {"success": False, "cancelled": True, "message": message, "originalValue": original_value, "boostedValue": boosted_value}
 
     if confirmed and revert_ok:
         return True, {"success": True, "originalValue": original_value, "boostedValue": boosted_value}
@@ -6186,44 +6478,62 @@ def _run_heating_target_temp_test(control_key, entity_id, original_value, booste
     return False, {"success": False, "message": message, "originalValue": original_value, "boostedValue": boosted_value}
 
 
-def _heating_test_worker(control_key, entity_id, original_value, boosted_value):
+def _heating_test_worker(control_key, entity_id, original_value, boosted_value, session=None):
     try:
-        success, result = _run_heating_target_temp_test(control_key, entity_id, original_value, boosted_value)
-    except Exception as e:
-        print("[Shyft] Heizungs-Test fehlgeschlagen:", repr(e))
-        success, result = False, {"success": False, "message": f"Der Test ist unerwartet fehlgeschlagen: {e}",
-                                  "originalValue": original_value, "boostedValue": boosted_value}
-    _record_action_test_result("heating_target_temp", success)
+        with _test_session_bound(session):
+            try:
+                success, result = _run_heating_target_temp_test(control_key, entity_id, original_value, boosted_value)
+            except Exception as e:
+                print("[Shyft] Heizungs-Test fehlgeschlagen:", repr(e))
+                test_log(f"Der Test ist unerwartet fehlgeschlagen: {e}", "error")
+                success, result = False, {"success": False, "message": f"Der Test ist unerwartet fehlgeschlagen: {e}",
+                                          "originalValue": original_value, "boostedValue": boosted_value}
+            except _TestCancelled:
+                success, result = False, {"success": False, "cancelled": True, "message": "Test abgebrochen"}
+    finally:
+        if session is not None:
+            session.release()
+    if not result.get("cancelled"):
+        _record_action_test_result("heating_target_temp", success)
     with _heating_test_lock:
         _heating_test_job["result"] = result
         _heating_test_job["state"] = "done"
 
 
 @app.route("/actions/heating_target_temp/test", methods=["POST"])
+@_with_test_session
 def testHeatingTargetTempBoost():
     """Startet den Test fuer 'Heizung Soll-Temperatur' im Hintergrund (Ablauf siehe _run_heating_target_temp_test) und
-    antwortet sofort mit {"running": true}; den Fortschritt/das Ergebnis liefert /actions/heating_target_temp/test/status.
+    antwortet sofort mit {"running": true}; den Fortschritt/das Ergebnis liefert /actions/heating_target_temp/test/status
+    (die Einzelschritte zusaetzlich das Test-Popup ueber /actions/test-log).
     Vorab-Pruefungen (Variante, Entity, aktueller Wert) schlagen weiterhin direkt mit 4xx/5xx fehl."""
     control_key = "heating_target_temp"
     control = AUTO_MANAGED_CONTROLS[control_key]
     config = _read_current_config()
     if resolve_control_variant(control_key, config) != "direct":
+        test_log("Nur für 'Direkt steuern' verfügbar.", "error")
         return jsonify({"success": False, "message": "Nur für 'Direkt steuern' verfügbar"}), 400
     entity_id = config.get("sensorMappings", {}).get(control["sensor_field"], "")
     if not entity_id:
+        test_log("Keine Entität zugeordnet.", "error")
         return jsonify({"success": False, "message": "Keine Entity zugeordnet"}), 400
 
     original_value = _read_mapped_numeric(config, control["sensor_field"])
     if original_value is None:
+        test_log("Der aktuelle Wert ist nicht lesbar.", "error")
         _record_action_test_result(control_key, False)
         return jsonify({"success": False, "message": "Aktueller Wert nicht lesbar"}), 500
 
     boosted_value = original_value + HEATING_TARGET_TEMP_TEST_STEP_C
+    session = _current_test_session()
     with _heating_test_lock:
         if _heating_test_job["state"] == "running":
-            return jsonify({"running": True, "progress": _heating_test_job["progress"]}), 202
-        _heating_test_job.update({"state": "running", "progress": "Test startet …", "result": None, "startedAt": time.time()})
-    threading.Thread(target=_heating_test_worker, args=(control_key, entity_id, original_value, boosted_value), daemon=True).start()
+            return jsonify({"running": True, "progress": _heating_test_job["progress"], "sessionId": _heating_test_job.get("sessionId")}), 202
+        _heating_test_job.update({"state": "running", "progress": "Test startet …", "result": None, "startedAt": time.time(),
+                                  "sessionId": session.id if session is not None else None})
+    if session is not None:
+        session.hold()  # bleibt "busy", bis der Hintergrund-Thread fertig ist (siehe _heating_test_worker)
+    threading.Thread(target=_heating_test_worker, args=(control_key, entity_id, original_value, boosted_value, session), daemon=True).start()
     return jsonify({"running": True}), 202
 
 
@@ -6231,12 +6541,36 @@ def testHeatingTargetTempBoost():
 def statusHeatingTargetTempTest():
     "Fortschritt bzw. Ergebnis des im Hintergrund laufenden Heizungs-Tests: {state: idle|running|done, progress, result}."
     with _heating_test_lock:
-        return jsonify({"state": _heating_test_job["state"], "progress": _heating_test_job["progress"],
+        return jsonify({"state": _heating_test_job["state"], "progress": _heating_test_job["progress"], "sessionId": _heating_test_job.get("sessionId"),
                         "result": _heating_test_job["result"] if _heating_test_job["state"] == "done" else None})
+
+
+def _test_watch_switch_states(entity_ids, expected, timeout_seconds=12, interval_seconds=3):
+    "Beobachtet nach einem Schaltbefehl kurz, ob alle Entitaeten den erwarteten Zustand melden - nur fuers Protokoll im Test-Popup, das Testergebnis haengt nicht davon ab (Cloud-Geraete melden oft verzoegert)."
+    deadline = time.time() + timeout_seconds
+    loggers = {entity_id: _TestStateLog(f"Zustand von {entity_id}", expected) for entity_id in entity_ids}
+    while True:
+        pending = []
+        for entity_id in entity_ids:
+            try:
+                state = homeassistant_adapter.load_entity_state(entity_id).state
+            except Exception as e:
+                state = f"nicht lesbar ({e})"
+            loggers[entity_id](state)
+            if state != expected:
+                pending.append(entity_id)
+        if not pending:
+            test_log("Alle Entitäten haben den Zustand übernommen.", "ok")
+            return
+        if time.time() >= deadline:
+            test_log(f"Noch nicht übernommen: {', '.join(pending)} – manche Geräte melden den Zustand verzögert; der Befehl wurde gesendet.", "warn")
+            return
+        test_sleep(interval_seconds)
 
 
 @app.route("/actions/<control_key>/test", methods=["POST"])
 @_records_action_test()
+@_with_test_session
 def testAutoManagedControl(control_key):
     control = AUTO_MANAGED_CONTROLS.get(control_key)
     if not control:
@@ -6252,9 +6586,12 @@ def testAutoManagedControl(control_key):
             delta = body.get("delta", 0)
             automation_entity_id = actor_mappings.get(control_key)
             try:
+                test_log(f"Löse die Automation {automation_entity_id} aus (Zielwert {delta}) …")
                 trigger_ha_automation(automation_entity_id, "start", delta)
+                test_log("Automation ausgelöst – was sie danach tut, kann Shyft nicht prüfen.", "ok")
                 return jsonify({"success": True, "value": delta, "confirmed": False})
             except Exception as e:
+                test_log(f"Auslösen fehlgeschlagen: {e}", "error")
                 log_error_to_shyft(f"{control_key}_test", classify_error(str(e)), str(e),
                                     service_called="automation.trigger", data_sent={"target": delta})
                 return jsonify({"success": False, "message": str(e)}), 500
@@ -6262,15 +6599,19 @@ def testAutoManagedControl(control_key):
             phase = body.get("phase", "start")
             automation_entity_id = actor_mappings.get("consumer_on" if phase == "start" else "consumer_off")
             try:
+                test_log(f"Löse die Automation {automation_entity_id} aus (Phase: {phase}) …")
                 trigger_ha_automation(automation_entity_id, phase, None)
+                test_log("Automation ausgelöst – was sie danach tut, kann Shyft nicht prüfen.", "ok")
                 return jsonify({"success": True, "value": phase, "confirmed": False})
             except Exception as e:
+                test_log(f"Auslösen fehlgeschlagen: {e}", "error")
                 log_error_to_shyft(f"{control_key}_test", classify_error(str(e)), str(e),
                                     service_called="automation.trigger", data_sent={"phase": phase})
                 return jsonify({"success": False, "message": str(e)}), 500
 
     entity_ids = _control_entity_ids(control, config)
     if not entity_ids:
+        test_log("Keine Entität zugeordnet.", "error")
         return jsonify({"success": False, "message": "Keine Entity zugeordnet"}), 400
 
     if control["type"] == "number":
@@ -6279,13 +6620,17 @@ def testAutoManagedControl(control_key):
         try:
             current_value = homeassistant_adapter.read_entity_numeric_value(entity_id)
             new_value = current_value + delta
+            test_log(f"Entität {entity_id}: aktueller Wert {current_value}, Zielwert {new_value}")
+            test_log(f"Rufe script.{control['script_id']} mit Zielwert {new_value} auf …")
             homeassistant_adapter.call_service("script", control["script_id"], {"target_value": new_value})
+            test_log("Skript aufgerufen. Geräte, die nur über die Hersteller-Cloud erreichbar sind, übernehmen den Wert oft erst nach Minuten.", "ok")
             # Cloud-connected devices (e.g. a heat pump reachable only via the manufacturer's
             # cloud API) can take much longer than a second or two to actually report the new
             # value back, so we return the optimistic value immediately instead of blocking
             # here and risking showing the stale one. The frontend re-checks shortly after.
             return jsonify({"success": True, "value": new_value, "confirmed": False})
         except Exception as e:
+            test_log(f"Fehlgeschlagen: {e}", "error")
             log_error_to_shyft(f"{control_key}_test", classify_error(str(e)), str(e),
                                 service_called=f"script.{control['script_id']}", data_sent={"target_value": delta})
             return jsonify({"success": False, "message": str(e)}), 500
@@ -6294,9 +6639,13 @@ def testAutoManagedControl(control_key):
         turn_on = phase == "start"
         try:
             # alle zugeordneten Verbraucher gemeinsam schalten (der Status je Geraet kommt danach aus /status)
+            test_log(f"Schalte {len(entity_ids)} Entität(en) {'ein' if turn_on else 'aus'}: {', '.join(entity_ids)} …")
             homeassistant_adapter.call_service("homeassistant", "turn_on" if turn_on else "turn_off", {"entity_id": entity_ids})
+            test_log("Befehl an Home Assistant gesendet.", "ok")
+            _test_watch_switch_states(entity_ids, "on" if turn_on else "off")
             return jsonify({"success": True, "value": "on" if turn_on else "off", "confirmed": False})
         except Exception as e:
+            test_log(f"Fehlgeschlagen: {e}", "error")
             log_error_to_shyft(f"{control_key}_test", classify_error(str(e)), str(e),
                                 service_called="homeassistant.turn_on" if turn_on else "homeassistant.turn_off",
                                 data_sent={"entity_id": entity_ids})
@@ -6417,15 +6766,19 @@ def _write_and_verify_battery_entity(entity_id, domain, service, data_key, targe
     zu zwei Minuten blockiert). True bei Erfolg, False wenn nach Ablauf der Frist immer noch keine
     Uebereinstimmung besteht (oder keine Entitaet zugeordnet ist)."""
     if not entity_id:
+        test_log("Keine Entität zugeordnet.", "error")
         return False
     deadline = time.time() + retry_timeout_seconds
     attempt = 0
+    state_log = _TestStateLog(f"Zustand von {entity_id}", target_value)
     while True:
         attempt += 1
+        test_log(f"Schreibe {target_value} auf {entity_id} (Versuch {attempt}) …")
         try:
             homeassistant_adapter.call_service(domain, service, {"entity_id": entity_id, data_key: target_value})
         except Exception as e:
             print(f"[Shyft] Batterie-Steuerung: {domain}.{service} auf '{entity_id}' fehlgeschlagen (Versuch {attempt}):", repr(e))
+            test_log(f"Home Assistant meldet beim Schreiben einen Fehler: {e}", "error")
         # Schreibzugriffe werden immer seltener wiederholt (Nutzer-Vorgabe: sofort, dann nach 10 s, dann
         # nach weiteren 20 s, 30 s, ...) - ein langsamer oder fragiler Wechselrichter (z.B. Modbus mit
         # wenigen Verbindungen) soll nicht mit Schreibbefehlen ueberrollt werden. Dazwischen wird nur der
@@ -6436,16 +6789,20 @@ def _write_and_verify_battery_entity(entity_id, domain, service, data_key, targe
         while True:
             try:
                 current_state = homeassistant_adapter.load_entity_state(entity_id)
+                state_log(current_state.state)
                 if _battery_value_matches(current_state.state, target_value):
+                    test_log(f"{entity_id} hat den Wert {target_value} übernommen.", "ok")
                     return True
             except Exception as e:
                 print(f"[Shyft] Batterie-Steuerung: Status von '{entity_id}' nicht lesbar (Versuch {attempt}):", repr(e))
+                state_log("nicht lesbar")
             now = time.time()
             if now >= deadline:
+                test_log(f"{entity_id} hat den Wert {target_value} innerhalb von {int(retry_timeout_seconds)} s nicht übernommen.", "error")
                 return False
             if now >= next_write_at:
                 break
-            time.sleep(min(poll_seconds, next_write_at - now))
+            test_sleep(min(poll_seconds, next_write_at - now))
 
 
 def _battery_unavailable_hint(unavailable_labels):
@@ -6580,14 +6937,17 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
             return True
         if grace["deadline"] is None:
             grace["deadline"] = time.time() + grace_seconds
+        test_log(f"{entity_id} ist in Home Assistant {state} – warte bis zu {grace_seconds} s darauf, dass sie wieder verfügbar wird …", "warn")
         while time.time() < grace["deadline"]:
-            time.sleep(min(BATTERY_RETRY_DELAY_SECONDS, max(grace["deadline"] - time.time(), 0)))
+            test_sleep(min(BATTERY_RETRY_DELAY_SECONDS, max(grace["deadline"] - time.time(), 0)))
             state, friendly_name = unavailable_state(entity_id)
             if state is None:
+                test_log(f"{entity_id} ist wieder verfügbar.", "ok")
                 return True
         unavailable_ids.add(entity_id)
         unavailable_labels.append(f"{friendly_name} ({entity_id})" if friendly_name else entity_id)
         print(f"[Shyft] Batterie-Steuerung: '{entity_id}' ist {state} - wird nicht beschrieben.")
+        test_log(f"{entity_id} ist weiterhin {state} – wird nicht beschrieben.", "error")
         return False
 
     def note_unavailable_after_failure(entity_id):
@@ -6604,24 +6964,37 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
             print(f"[Shyft] Batterie-Steuerung: '{entity_id}' ist nach dem Schreibversuch {state}.")
 
     def write_number(entity_id, watts, label):
+        test_log(f"{label}: setze auf {watts} W …")
         if not is_available(entity_id):
             failed.append(label)
+            test_log(f"{label}: Entität nicht verfügbar – übersprungen.", "error")
             return
         # Auf den Wertebereich der Entitaet begrenzen: "kein Limit" (batteryMaxChargeKw, z.B. 8,8 kW) liegt
         # bei manchen Wechselrichtern ueber dem max. der Lade-/Entladeleistungs-Entitaet (z.B. 5000 W).
-        watts = _clamp_to_number_range(entity_id, watts)
+        clamped = _clamp_to_number_range(entity_id, watts)
+        if clamped != watts:
+            test_log(f"{label}: Wert auf den Bereich der Entität begrenzt ({watts} → {clamped} W).")
+        watts = clamped
         if not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", watts, remaining_seconds()):
             failed.append(label)
+            test_log(f"{label}: fehlgeschlagen.", "error")
             note_unavailable_after_failure(entity_id)
+        else:
+            test_log(f"{label}: gesetzt ({watts} W).", "ok")
 
     def write_mode(mode_value, label):
         if not mode_value:
             return  # kein Modus-Wert konfiguriert - ueberspringen statt grundlos zu scheitern
+        test_log(f"{label}: setze auf „{mode_value}“ …")
         if not is_available(mode_entity):
             failed.append(label)
+            test_log(f"{label}: Entität nicht verfügbar – übersprungen.", "error")
         elif not _write_and_verify_battery_entity(mode_entity, "select", "select_option", "option", mode_value, remaining_seconds()):
             failed.append(label)
+            test_log(f"{label}: fehlgeschlagen.", "error")
             note_unavailable_after_failure(mode_entity)
+        else:
+            test_log(f"{label}: gesetzt („{mode_value}“).", "ok")
 
     def write_rest_if_needed(entity_id, label):
         """Nur bei Abloesung (normalize_others): eine Entitaet, die nicht zur NEUEN Aktion gehoert, aber noch den Wert der
@@ -6794,6 +7167,7 @@ def _capture_battery_pre_test_state(config, action_key):
         except Exception as e:
             print(f"[Shyft] Batterie-Test: Ausgangswert von '{entity_id}' nicht lesbar, kein Rueckstellen moeglich:", repr(e))
             continue
+        test_log(f"Ausgangswert von {entity_id}: {original_value}")
         if sensor_key == "battery_storage_command_mode":
             result.append((entity_id, "select", "select_option", "option", original_value))
         else:
@@ -6806,16 +7180,40 @@ def _capture_battery_pre_test_state(config, action_key):
 
 
 def _revert_battery_test_after_delay(pre_test_state):
-    "Schreibt den von _capture_battery_pre_test_state gelesenen Ausgangszustand nach BATTERY_TEST_REVERT_DELAY_SECONDS zurueck - einmaliger, unverifizierter Best-Effort-Schreibversuch (kein Retry: ein Testklick soll nicht minutenlang nachwirken)."
+    "Schreibt den von _capture_battery_pre_test_state gelesenen Ausgangszustand nach BATTERY_TEST_REVERT_DELAY_SECONDS zurueck - einmaliger Best-Effort-Schreibversuch (kein Retry: ein Testklick soll nicht minutenlang nachwirken). Laeuft ein Test-Popup, bleibt die Sitzung bis dahin offen und zeigt das Zuruecksetzen samt Kontrolle der Zustaende."
     if not pre_test_state:
         return
+    session = _current_test_session()
+    if session is not None:
+        session.hold()
+    test_log(f"Die Entitäten werden in {BATTERY_TEST_REVERT_DELAY_SECONDS} s auf ihre Ausgangswerte zurückgesetzt.", "wait")
 
     def revert():
-        for entity_id, domain, service, data_key, original_value in pre_test_state:
-            try:
-                homeassistant_adapter.call_service(domain, service, {"entity_id": entity_id, data_key: original_value})
-            except Exception as e:
-                print(f"[Shyft] Batterie-Test: Ruecksetzen von '{entity_id}' auf Ausgangswert fehlgeschlagen:", repr(e))
+        try:
+            with _test_session_bound(session), _test_uninterruptible():
+                test_log("Setze die Entitäten auf ihre Ausgangswerte zurück …")
+                for entity_id, domain, service, data_key, original_value in pre_test_state:
+                    test_log(f"Setze {entity_id} auf {original_value} …")
+                    try:
+                        homeassistant_adapter.call_service(domain, service, {"entity_id": entity_id, data_key: original_value})
+                    except Exception as e:
+                        print(f"[Shyft] Batterie-Test: Ruecksetzen von '{entity_id}' auf Ausgangswert fehlgeschlagen:", repr(e))
+                        test_log(f"Zurücksetzen von {entity_id} fehlgeschlagen: {e}", "error")
+                if session is not None:
+                    test_sleep(4)
+                    for entity_id, _domain, _service, _data_key, original_value in pre_test_state:
+                        try:
+                            state = homeassistant_adapter.load_entity_state(entity_id).state
+                        except Exception as e:
+                            test_log(f"Zustand von {entity_id} nicht lesbar: {e}", "warn")
+                            continue
+                        if _battery_value_matches(state, original_value):
+                            test_log(f"{entity_id} steht wieder auf {state}.", "ok")
+                        else:
+                            test_log(f"{entity_id} meldet noch {state} (Ausgangswert: {original_value}) – manche Integrationen melden einen geschriebenen Wert erst verzögert zurück.", "warn")
+        finally:
+            if session is not None:
+                session.release()
 
     timer = threading.Timer(BATTERY_TEST_REVERT_DELAY_SECONDS, revert)
     timer.daemon = True
@@ -6832,19 +7230,29 @@ def batteryDirectControlStatus(action_key):
 
 @app.route("/actions/battery/<action_key>/test", methods=["POST"])
 @_records_action_test()
+@_with_test_session
 def testBatteryDirectControl(action_key):
     if action_key not in BATTERY_DIRECT_TEST_FIELDS:
         return jsonify({"success": False, "message": "unbekannte Steuerung"}), 404
     config = _read_current_config()
+    title = ACTION_TYPE_TOGGLE_KEYS.get(action_key, "Batterie-Aktion beenden")
+    test_log(f"Teste „{title}“ (direkte Entitäts-Steuerung) – dieselbe Logik wie bei einer echten Aktion, ohne Push-Benachrichtigung.")
     pre_test_state = _capture_battery_pre_test_state(config, action_key)
     try:
+        if action_key in ("battery_grid_charge", "battery_charge_shift_pv_surplus"):
+            test_log(f"Testwert für das Ladelimit: {BATTERY_DIRECT_TEST_TARGET_KW} kW")
         execute_battery_direct(action_key, "getestet", BATTERY_DIRECT_TEST_TARGET_KW, config,
                                 retry_timeout_seconds=BATTERY_DIRECT_TEST_TIMEOUT_SECONDS, notify_on_failure=False)
         for label in _battery_test_problem_labels(action_key):
             _note_action_outcome(label, "getestet", None)
+        test_log("Alle Werte wurden von den Entitäten übernommen.", "ok")
         return jsonify({"success": True, "values": _battery_direct_field_values(config, action_key)})
+    except _TestCancelled:
+        test_log("Test abgebrochen.", "warn")
+        return jsonify({"success": False, "cancelled": True, "message": "Test abgebrochen", "values": _battery_direct_field_values(config, action_key)})
     except Exception as e:
         print(f"[Shyft] Batterie-Test '{action_key}' fehlgeschlagen (Version {VERSION}):", repr(e))
+        test_log(f"Test fehlgeschlagen: {e}", "error")
         return jsonify({"success": False, "message": str(e), "values": _battery_direct_field_values(config, action_key)}), 500
     finally:
         _revert_battery_test_after_delay(pre_test_state)
