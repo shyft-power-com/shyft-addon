@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.45.262
+
+* **„Auto laden“: Ladekontrolle prüft, ob die Wallbox tatsächlich lädt.** Solange eine Auto-laden-Aktion läuft (Optimierer-Aktion und PV-Überschussladen), vergleicht das Add-on jede Minute die gemessene Wallbox-Ladeleistung mit dem Sollwert: Sie muss größer als 0 sein und innerhalb von ±2 kW um den Sollwert liegen. Die ersten 3 Minuten nach dem Start (bzw. 2 Minuten nach einer Wiederholung) zählen nicht, weil die Wallbox erst anläuft.
+  * **Log:** Lädt die Wallbox nicht, steht im Log der Aktion „Wallbox lädt nicht (gemessen … kW, Soll … kW)“; weicht die Leistung um mehr als 2 kW ab, „Ladeleistung weicht ab …“. Es wird nur beim Wechsel protokolliert (nach 2 aufeinanderfolgenden Messungen), nicht jede Minute; eine Erholung wird ebenfalls vermerkt.
+  * **Wiederholung:** Lädt die Wallbox nicht, wird der Startbefehl alle 3 Minuten erneut gesendet (höchstens 10-mal, jeweils im Log vermerkt).
+  * **Fehler:** Wurde über die geplante Zeit der Aktion (Stunde) überwiegend nicht geladen (mehr als die Hälfte ohne Ladeleistung), wird die Aktion rot umrandet und nach ihrem Ende als „Fehler“ statt „beendet“ angezeigt; dazu kommt eine Push-Benachrichtigung. Eine Ladeleistung außerhalb der Toleranz, aber über 0, wird nur protokolliert und zählt nicht als „nicht geladen“.
+  * **Nicht bewertet:** Zeiten, in denen das Auto nicht ladebereit ist oder schon voll geladen ist (≥ 99 %), sowie Aktionen ohne zugeordneten Sensor „Wallbox: Ladestrom“.
+
 ## 0.0.45.261
 
 * **„Dein Stromverbrauch“: Ist-Verlauf alle 5 Minuten.** Der bisherige Stundenwert für heute wird durch den tatsächlichen Verlauf in 5-Minuten-Schritten ersetzt (mittlere Leistung je Schritt aus der Haushalts-Sensor-Historie, in kW = kWh pro Stunde, also auf derselben Achse wie die Stundenwerte). Die gestrichelte Shyft-Plan-Linie setzt direkt am letzten Ist-Punkt an; im Tooltip erscheint der Ist-Wert des 5-Minuten-Schritts. Ohne Haushalts-Sensor bleibt es bei den Stundenwerten. Neuer Endpunkt `/dashboard/usage-fine` (60 s zwischengespeichert).
