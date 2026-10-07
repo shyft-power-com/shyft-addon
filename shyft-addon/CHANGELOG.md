@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.267
+
+* **Steuerungs-Schalter kompakter.** Die Leiste auf der Gerätesteuerung-Seite ist deutlich kleiner: kleinere Schrift, Schalter und Symbole, weniger Abstand, linksbündige Beschriftung und bis zu 4 Karten pro Zeile (bei schmaleren Fenstern 3 bzw. 2/1). Nur Optik.
+
 ## 0.0.45.266
 
 * **Steuerungs-Schalter: „Wallbox steuern“ heißt jetzt „Auto laden“.** Nur die Beschriftung der Karte auf der Gerätesteuerung-Seite, keine Änderung am Verhalten.

@@ -1216,9 +1216,9 @@
             top: var(--topbar-height, 60px);
             z-index: 14;
             display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 0.7em;
-            padding: 0.8em 0;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.4em;
+            padding: 0.4em 0;
             background: var(--color-bg);
             transition: transform 0.25s ease, opacity 0.25s ease;
         }
@@ -1233,20 +1233,20 @@
         .shyftControlToggle {
             display: flex;
             align-items: center;
-            gap: 0.6em;
-            padding: 0.55em 0.8em;
+            gap: 0.4em;
+            padding: 0.25em 0.5em;
             border: 1px solid var(--color-accent);
-            border-radius: 6px;
+            border-radius: 5px;
             background: var(--color-bg-card);
-            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
-            font-size: 0.95em;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            font-size: 0.78em;
             color: var(--color-text);
         }
         .shyftControlToggleIcon {
             display: inline-flex;
             flex: none;
-            width: 22px;
-            height: 22px;
+            width: 16px;
+            height: 16px;
         }
         .shyftControlToggleIcon svg {
             width: 100%;
@@ -1255,8 +1255,13 @@
         .shyftControlToggleLabel {
             flex: 1;
             min-width: 0;
-            text-align: center;
-            line-height: 1.25;
+            text-align: left;
+            line-height: 1.2;
+        }
+        @media (max-width: 1000px) {
+            .shyftControlToggles {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
         }
         @media (max-width: 760px) {
             /* Schmale Bildschirme: nicht "klebend" - mehrere Zeilen Karten wuerden beim kleinsten Hinaufscrollen den
