@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.45.261
+
+* **„Dein Stromverbrauch“: Ist-Verlauf alle 5 Minuten.** Der bisherige Stundenwert für heute wird durch den tatsächlichen Verlauf in 5-Minuten-Schritten ersetzt (mittlere Leistung je Schritt aus der Haushalts-Sensor-Historie, in kW = kWh pro Stunde, also auf derselben Achse wie die Stundenwerte). Die gestrichelte Shyft-Plan-Linie setzt direkt am letzten Ist-Punkt an; im Tooltip erscheint der Ist-Wert des 5-Minuten-Schritts. Ohne Haushalts-Sensor bleibt es bei den Stundenwerten. Neuer Endpunkt `/dashboard/usage-fine` (60 s zwischengespeichert).
+* **Strompreis-Chart: optionale Stromverbrauch-Linie.** Unter dem Titel steht ein Legenden-Eintrag „Stromverbrauch“ (graue Markierung), standardmäßig ausgegraut. Ein Klick blendet den Verbrauch als graue Linie mit eigener Skala rechts ein: Ist durchgezogen (5-Minuten-Auflösung), Prognose (Shyft-Plan) gestrichelt; ein weiterer Klick blendet sie wieder aus. Die Wahl wird im Browser gemerkt.
+
+## 0.0.45.260
+
+* **Prognose-Linie bei „Prognose vs. Ist“-Charts ohne Lücke an der aktuellen Stunde.** Bisher war die gestrichelte Prognose-Linie zwischen der Vorstunde, „jetzt“ und der Folgestunde unterbrochen. Jetzt läuft sie vom Prognosewert der Vorstunde über den „Jetzt“-Punkt (Ist-Wert) weiter zum Prognosewert der nächsten Stunde. Gilt für alle Prognose-vs.-Ist-Charts auf dem Dashboard (Ladestand Heimspeicher, Warmwasser, Raumtemperatur, Ladestand Auto, Sonstiges Gerät, PV). Nur die gezeichnete Linie ändert sich, Tooltips und Skalierung bleiben unverändert.
+
 ## 0.0.45.259
 
 * **Test-Popup mit Live-Protokoll für alle „Testen“-Buttons.** Ein Klick auf einen Test (Batterie-Aktionen, Warmwasser, Auto laden, Heizung Soll-Temperatur, Sonstige Verbraucher) öffnet ein Popup, in dem Zeile für Zeile zu sehen ist, was der Test gerade tut: welche Entität auf welchen Wert gesetzt wird, ob der Schritt geklappt hat, worauf gerade gewartet wird (mit dem aktuellen Zustand der Entität) und am Ende das Ergebnis. „Abbrechen“ beendet den Test sauber: Sollwerte bzw. Limits werden dabei wieder auf ihre Ausgangswerte zurückgesetzt, ein abgebrochener Test gilt weder als bestanden noch als fehlgeschlagen. Nach dem Ende (erfolgreich, fehlgeschlagen oder abgebrochen) bleibt das Popup mit „Schließen“ offen; beim Batterie-Test zeigt es auch das Zurücksetzen der Entitäten samt Kontrolle der Zustände. Ein nach einem Neuladen der Seite noch laufender Heizungs-Test wird im Popup wieder aufgegriffen. Technisch: Der Server sammelt die Zeilen je Test-Sitzung (Header `X-Shyft-Test-Id`, `GET /actions/test-log/<id>`, `POST /actions/test-log/<id>/cancel`); echte Aktionen sind davon unberührt.

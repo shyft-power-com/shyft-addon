@@ -10030,7 +10030,70 @@ def _household_usage_kwh(start, end, config=None):
     return usage_kwh
 
 
-HOUSEHOLD_USAGE_BACKFILL_DAYS = 9  # etwa so weit reicht die HA-Historie (Recorder-Standard 10 Tage)
+USAGE_FINE_BIN_MINUTES = 5
+USAGE_FINE_CACHE_SECONDS = 60
+_usage_fine_cache = {"key": None, "at": 0.0, "points": []}
+
+
+def _household_usage_fine_points(config=None):
+    """Ist-Verbrauch des Haushalts von heute 0 Uhr (lokal) bis jetzt in USAGE_FINE_BIN_MINUTES-Minuten-
+    Schritten, aus der HA-Historie des Sensors 'Haushalt: Aktuelle Leistung' (photovoltaic_powerflow_load).
+    Je Schritt der zeitgewichtete Mittelwert der Leistung (Treppenfunktion wie in _sensor_history_kwh) -
+    in kW, was zugleich "kWh pro Stunde" ist und damit auf derselben Achse liegt wie die stuendlichen
+    kWh-Werte der Verbrauchs-Charts. Liste von [Schritt-Beginn (ISO, UTC), kW]; leer ohne Sensor/Historie.
+    Kurz zwischengespeichert, da der Dashboard-Refresh alle 30 s fragt."""
+    now = datetime.now(timezone.utc)
+    midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
+    key = midnight_utc.isoformat()
+    if _usage_fine_cache["key"] == key and time.time() - _usage_fine_cache["at"] < USAGE_FINE_CACHE_SECONDS:
+        return _usage_fine_cache["points"]
+    points = []
+    try:
+        raw = _history_raw_converted_kw("photovoltaic_powerflow_load", midnight_utc, now, config or _read_current_config())
+    except Exception as e:
+        print("[Shyft] Ist-Verbrauch (feine Auflösung) konnte nicht geladen werden:", repr(e))
+        raw = None
+    if raw:
+        parsed = []
+        for t, state in raw:
+            try:
+                parsed.append((t, float(state)))
+            except (TypeError, ValueError):
+                continue  # "unknown"/"unavailable"
+        bin_delta = timedelta(minutes=USAGE_FINE_BIN_MINUTES)
+        bin_start = midnight_utc
+        idx = 0
+        while bin_start < now and parsed:
+            bin_end = min(bin_start + bin_delta, now)
+            # Zustand, der zu Beginn des Schritts galt: letztes Ereignis <= bin_start
+            while idx + 1 < len(parsed) and parsed[idx + 1][0] <= bin_start:
+                idx += 1
+            weighted = covered = 0.0
+            j = idx
+            while j < len(parsed) and parsed[j][0] < bin_end:
+                seg_start = max(parsed[j][0], bin_start)
+                seg_end = min(parsed[j + 1][0] if j + 1 < len(parsed) else bin_end, bin_end)
+                seconds = (seg_end - seg_start).total_seconds()
+                if seconds > 0:
+                    weighted += parsed[j][1] * seconds
+                    covered += seconds
+                j += 1
+            if covered > 0:
+                points.append([bin_start.isoformat(), round(weighted / covered, 3)])
+            bin_start += bin_delta
+    _usage_fine_cache.update({"key": key, "at": time.time(), "points": points})
+    return points
+
+
+@app.route("/dashboard/usage-fine", methods=["GET"])
+def readUsageFine():
+    "Ist-Stromverbrauch heute in 5-Minuten-Schritten (kW), siehe _household_usage_fine_points - fuer 'Dein Stromverbrauch' und die optionale Verbrauchslinie im Strompreis-Chart."
+    if is_demo_mode():
+        return jsonify({"status": "success", "binMinutes": USAGE_FINE_BIN_MINUTES, "points": []})
+    return jsonify({"status": "success", "binMinutes": USAGE_FINE_BIN_MINUTES, "points": _household_usage_fine_points()})
+
+
+HOUSEHOLD_USAGE_BACKFILL_DAYS = 9 # etwa so weit reicht die HA-Historie (Recorder-Standard 10 Tage)
 HOUSEHOLD_USAGE_BACKFILL_BATCH = 72
 
 

@@ -7443,7 +7443,7 @@ function computeNiceTicks(min, max, targetCount = 4) {
 }
 
 function buildLineChart(title, unit, labels, values, options = {}) {
-    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null} = options;
+    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, usageToggle = null} = options;
     const width = 600, height = 220;
     // presenceForecast reserves an extra strip just above the x-axis labels for the
     // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
@@ -7517,7 +7517,28 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     // allein wuerden das nicht selbsterklaerend machen. primaryLabel (statt subtitle/title) laesst
     // sich unabhaengig vom Chart-Titel beschriften (Nutzer-Vorgabe: Titel bleibt "Raumtemperatur
     // (°C)", die Legende darunter zeigt trotzdem "Heizung-Soll").
-    if (secondSeries) {
+    // usageToggle (Strompreis-Chart, Nutzer-Vorgabe): anklickbarer Legenden-Eintrag "Stromverbrauch" -
+    // standardmaessig ausgegraut (Linie aus), ein Klick blendet die graue Verbrauchslinie (Ist
+    // durchgezogen + Prognose gestrichelt) ein bzw. wieder aus. Der Aufrufer baut den Chart bei
+    // onToggle neu (secondSeries nur bei aktivem Zustand), der Zustand liegt dort.
+    if (usageToggle) {
+        const legend = document.createElement('div');
+        legend.className = 'dashboardChartLegend';
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'dashboardChartLegendItem dashboardChartLegendToggle' + (usageToggle.active ? ' active' : '');
+        item.setAttribute('aria-pressed', usageToggle.active ? 'true' : 'false');
+        item.style.cssText = 'background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;' + (usageToggle.active ? '' : 'opacity:0.45;');
+        const dot = document.createElement('span');
+        dot.className = 'dashboardChartLegendDot';
+        dot.style.background = 'var(--color-text-secondary)';
+        item.appendChild(dot);
+        item.appendChild(document.createTextNode(usageToggle.label));
+        item.addEventListener('click', () => usageToggle.onToggle());
+        legend.appendChild(item);
+        wrapper.appendChild(legend);
+    }
+    if (secondSeries && !usageToggle) {
         const legend = document.createElement('div');
         legend.className = 'dashboardChartLegend';
         for (const [color, label] of [
@@ -7574,14 +7595,15 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     if (secondSeries) {
         merged2 = secondSeries.actual ? labels.map((_, i) => (secondSeries.actual[i] ?? secondSeries.forecast[i])) : secondSeries.values;
         const defined2 = merged2.filter(v => v !== null && v !== undefined);
-        const rawMin2 = Math.min(...defined2);
+        if (secondSeries.fine) defined2.push(...secondSeries.fine.map(p => p[1]));
+        const rawMin2 = secondSeries.zeroBased ? 0 : Math.min(...defined2);
         const rawMax2 = Math.max(...defined2);
         const valueRange2 = (rawMax2 - rawMin2) || 1;
         // absolutePadding (z.B. 0.2 °C beim Innenraum): fester Abstand in Einheiten des Werts statt
         // 10 % der Spanne - bei einer kleinen Spanne (Innentemperatur schwankt nur um Zehntel Grad)
         // verlaeuft die Kurve dadurch deutlich flacher, statt die volle Diagrammhoehe auszufuellen.
         const pad2 = secondSeries.absolutePadding ?? valueRange2 * 0.1;
-        yMin2 = rawMin2 - pad2;
+        yMin2 = secondSeries.zeroBased ? 0 : rawMin2 - pad2;
         yMax2 = rawMax2 + pad2;
         yRange2 = yMax2 - yMin2;
         points2 = merged2.map((v, i) => (v === null || v === undefined ? null : [
@@ -7589,7 +7611,34 @@ function buildLineChart(title, unit, labels, values, options = {}) {
             paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight,
         ]));
         const color2 = secondSeries.color || 'var(--color-text-secondary)';
-        if (secondSeries.actual) {
+        if (secondSeries.fine && secondSeries.fine.length >= 2) {
+            // Ist in feiner Aufloesung (z.B. 5 Minuten, Punkte [ms, Wert]) durchgezogen, danach ab dem
+            // letzten Ist-Punkt gestrichelt mit der stuendlichen Prognose der kommenden Stunden.
+            const firstMs2 = new Date(labels[0]).getTime();
+            const xMs = ms => paddingLeft + ((ms - firstMs2) / 3600000 / lastIndex) * plotWidth;
+            const yVal2 = v => paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight;
+            const binMs = secondSeries.binMs || 300000;
+            const parts = [];
+            let run = [];
+            const flush = () => { if (run.length >= 2) parts.push(`<path d="${run.join(' ')}" fill="none" stroke="${color2}" stroke-width="2" />`); run = []; };
+            let prevMs = null;
+            for (const [ms, v] of secondSeries.fine) {
+                if (prevMs !== null && ms - prevMs > binMs * 2) flush();
+                run.push(`${run.length ? 'L' : 'M'}${xMs(ms + binMs / 2).toFixed(1)},${yVal2(v).toFixed(1)}`);
+                prevMs = ms;
+            }
+            flush();
+            const last = secondSeries.fine[secondSeries.fine.length - 1];
+            const dash = [`M${xMs(last[0] + binMs / 2).toFixed(1)},${yVal2(last[1]).toFixed(1)}`];
+            for (let i = 0; i < labels.length; i++) {
+                if (new Date(labels[i]).getTime() <= last[0]) continue;
+                const fv = secondSeries.forecast[i];
+                if (fv === null || fv === undefined) break;
+                dash.push(`L${xMs(new Date(labels[i]).getTime()).toFixed(1)},${yVal2(fv).toFixed(1)}`);
+            }
+            if (dash.length >= 2) parts.push(`<path d="${dash.join(' ')}" fill="none" stroke="${color2}" stroke-width="2" stroke-dasharray="5,4" />`);
+            secondLineMarkup = parts.join('');
+        } else if (secondSeries.actual) {
             const parts = [];
             for (let i = 0; i < points2.length - 1; i++) {
                 if (!points2[i] || !points2[i + 1]) continue;
@@ -8117,7 +8166,16 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
 
     const actualPath = buildSegmentedPath(actual, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-text)'), dashed: false}));
     // "Prognose" (siehe prognose-Merge oben): immer gestrichelt, auch der plannedHistory-Abschnitt.
-    const forecastPath = buildSegmentedPath(prognose, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-accent)'), dashed: true}));
+    // Die Prognose-Linie wird an der "Jetzt"-Stunde nicht unterbrochen (Nutzer-Vorgabe, gilt fuer alle
+    // Prognose-vs-Ist-Charts): die laufende Stunde hat bewusst keinen eigenen Prognosewert (siehe
+    // Backend), deshalb wird dort - NUR fuer die gezeichnete Linie, nicht fuer Tooltip/Skala - der
+    // Ist-Wert (= Position des "Jetzt"-Punkts) eingesetzt: Prognose der Vorstunde -> jetzt -> Prognose der Folgestunde.
+    const nowIdxForPath = actual.reduce((last, v, i) => (v !== null && v !== undefined ? i : last), -1);
+    const prognosePathValues = prognose.slice();
+    if (nowIdxForPath >= 0 && (prognosePathValues[nowIdxForPath] === null || prognosePathValues[nowIdxForPath] === undefined)) {
+        prognosePathValues[nowIdxForPath] = actual[nowIdxForPath];
+    }
+    const forecastPath = buildSegmentedPath(prognosePathValues, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-accent)'), dashed: true}));
 
     const tickCount = Math.min(6, labels.length);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
@@ -8269,7 +8327,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
 // base_case.py / /dashboard/chart-data: opt_cost/opt_usage vs. base_cost/base_usage) auf
 // gemeinsamer Stundenachse. Bewusst eigene Funktion (wie buildPvForecastActualChart): zwei Reihen
 // ohne Luecken, Summen in der Legende, "(Beta)" im Titel.
-function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false, actualValues = null} = {}) {
+function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false, actualValues = null, actualFine = null} = {}) {
     const width = 600, height = 220;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -8340,7 +8398,12 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
     wrapper.appendChild(legend);
 
     const n = Math.min(labels.length, Math.max(optValues.length, baseValues.length, (actualValues || []).length));
-    const defined = [...optValues.slice(0, n), ...baseValues.slice(0, n), ...(actualValues || []).slice(0, n)].filter(v => Number.isFinite(v));
+    // actualFine (Nutzer-Vorgabe, nur "Dein Stromverbrauch"): Ist-Verlauf in 5-Minuten-Schritten
+    // [[ISO, Wert], ...] statt der Stundenwerte - Wert = mittlere Leistung im Schritt (kW = kWh pro Stunde,
+    // liegt damit auf derselben Achse wie die Stundenwerte).
+    const fine = (actualFine || []).map(([t, v]) => [new Date(t).getTime(), v]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v));
+    const useFine = fine.length >= 2 && actualValues;
+    const defined = [...optValues.slice(0, n), ...baseValues.slice(0, n), ...(actualValues || []).slice(0, n), ...(useFine ? fine.map(p => p[1]) : [])].filter(v => Number.isFinite(v));
     if (n === 0 || defined.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'shyftActionsEmpty';
@@ -8393,7 +8456,36 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
     // Linie im Ladestand-Heimspeicher-Chart.
     const basePathMarkup = seriesPath(baseValues, 'var(--color-text-secondary)', true);
     const isHistorical = i => !!(actualValues && Number.isFinite(actualValues[i]));
-    const optPathMarkup = actualValues
+    const firstMs = new Date(labels[0]).getTime();
+    const xForMs = ms => paddingLeft + ((ms - firstMs) / 3600000 / lastIndex) * plotWidth;
+    let finePathMarkup = '';
+    if (useFine) {
+        // Ist durchgezogen aus den 5-Minuten-Werten (Luecken > 2 Schritte unterbrechen die Linie),
+        // dann ab dem letzten Ist-Punkt gestrichelt weiter mit dem Shyft-Plan der kommenden Stunden.
+        const binMs = Math.max(60000, fine.length > 1 ? fine[1][0] - fine[0][0] : 300000);
+        const parts = [];
+        let run = [];
+        const flush = () => { if (run.length >= 2) parts.push(`<path d="${run.join(' ')}" fill="none" stroke="var(--color-accent)" stroke-width="2" />`); run = []; };
+        let prevMs = null;
+        for (const [ms, v] of fine) {
+            if (prevMs !== null && ms - prevMs > binMs * 2) flush();
+            run.push(`${run.length ? 'L' : 'M'}${xForMs(ms + binMs / 2).toFixed(1)},${yFor(v).toFixed(1)}`);
+            prevMs = ms;
+        }
+        flush();
+        const last = fine[fine.length - 1];
+        const lastX = xForMs(last[0] + binMs / 2), lastY = yFor(last[1]);
+        let curIdx = -1;
+        for (let i = 0; i < n; i++) if (new Date(labels[i]).getTime() <= last[0]) curIdx = i;
+        const dash = [`M${lastX.toFixed(1)},${lastY.toFixed(1)}`];
+        for (let i = curIdx + 1; i < n; i++) {
+            if (!Number.isFinite(optValues[i])) break;
+            dash.push(`L${xFor(i).toFixed(1)},${yFor(optValues[i]).toFixed(1)}`);
+        }
+        if (dash.length >= 2) parts.push(`<path d="${dash.join(' ')}" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-dasharray="6,4" />`);
+        finePathMarkup = parts.join('');
+    }
+    const optPathMarkup = useFine ? finePathMarkup : actualValues
         ? segmentedPath(
             Array.from({length: n}, (_, i) => (isHistorical(i) ? actualValues[i] : optValues[i])),
             i => !isHistorical(i),
@@ -8458,10 +8550,18 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
         const dateText = new Date(labels[idx]).toLocaleString('de-DE', {weekday: 'short', hour: '2-digit', minute: '2-digit'}).replace('.', '');
         const o = optValues[idx], b = baseValues[idx];
         const parts = [];
+        // Mit 5-Minuten-Ist: den naechstgelegenen Ist-Schritt zum Cursor zeigen (nur wo der Ist-Verlauf reicht)
+        let fineHit = null;
+        if (useFine) {
+            const cursorMs = firstMs + (((clientX - rect.left) / scale - paddingLeft) / plotWidth * lastIndex) * 3600000;
+            const binMs = fine.length > 1 ? fine[1][0] - fine[0][0] : 300000;
+            for (const p of fine) if (Math.abs(p[0] + binMs / 2 - cursorMs) <= binMs / 2 + 1) { fineHit = p; break; }
+            if (fineHit) parts.push(`Ist ${fmt(fineHit[1])} ${unit === 'kWh' ? 'kW' : unit}`);
+        }
         if (Number.isFinite(o)) parts.push(`Shyft ${fmt(o)} ${unit}`);
         if (Number.isFinite(b)) parts.push(`ohne ${fmt(b)} ${unit}`);
         tooltip.textContent = `${dateText}: ${parts.join(' / ') || '–'}`;
-        const my = yFor(Number.isFinite(o) ? o : (Number.isFinite(b) ? b : yMin));
+        const my = yFor(fineHit ? fineHit[1] : Number.isFinite(o) ? o : (Number.isFinite(b) ? b : yMin));
         tooltip.style.left = (xFor(idx) * scale).toFixed(1) + 'px';
         tooltip.style.top = (my * scale).toFixed(1) + 'px';
         tooltip.hidden = false;
@@ -10001,7 +10101,47 @@ async function loadDashboard() {
         } catch (err) {
             console.log(err);
         }
-        updateOrAppendDashboardWidget(container, 'strompreis', buildLineChart('Strompreis', 'Cent/kWh', strompreisLabels, strompreisValues, {
+        // Ist-Verbrauch in 5-Minuten-Schritten (best-effort, siehe /dashboard/usage-fine) - auch fuer die
+        // optionale Stromverbrauch-Linie im Strompreis-Chart (Legenden-Eintrag, standardmaessig aus).
+        let usageFinePoints = [], usageFineBinMs = 300000;
+        try {
+            const usageFine = await getJson(insideHomeAssistant + '/dashboard/usage-fine');
+            if (usageFine.status === 'success') {
+                usageFinePoints = usageFine.points.map(([t, v]) => [new Date(t).getTime(), v]);
+                usageFineBinMs = (usageFine.binMinutes || 5) * 60000;
+            }
+        } catch (err) {
+            console.log(err);
+        }
+        const buildStrompreisChart = () => {
+            const showUsage = getStrompreisShowUsage();
+            let secondSeries = null;
+            if (showUsage && strompreisLabels.length > 0 && (usageFinePoints.length > 0 || (data.comparison_opt_usage || []).length > 0)) {
+                const labelMs = strompreisLabels.map(l => new Date(l).getTime());
+                const lastFineMs = usageFinePoints.length ? usageFinePoints[usageFinePoints.length - 1][0] : -Infinity;
+                const optByMs = new Map((data.comparison_labels || []).map((l, k) => [new Date(l).getTime(), (data.comparison_opt_usage || [])[k]]));
+                // Stundenwerte fuer Tooltip/Skalierung: Ist = Mittel der 5-Minuten-Schritte der Stunde (fuer die
+                // laufende und vergangene Stunden), Prognose = Shyft-Plan fuer die Stunden danach.
+                const actual = labelMs.map(ms => {
+                    const bins = usageFinePoints.filter(p => p[0] >= ms && p[0] < ms + 3600000);
+                    return bins.length ? bins.reduce((a, p) => a + p[1], 0) / bins.length : null;
+                });
+                const forecast = labelMs.map((ms, k) => (actual[k] === null && ms > lastFineMs && Number.isFinite(optByMs.get(ms)) ? optByMs.get(ms) : null));
+                secondSeries = {
+                    label: 'Stromverbrauch', unit: 'kW', decimals: 1, color: 'var(--color-text-secondary)',
+                    actual, forecast, fine: usageFinePoints.length >= 2 ? usageFinePoints : null, binMs: usageFineBinMs, zeroBased: true,
+                };
+            }
+            return buildLineChart('Strompreis', 'Cent/kWh', strompreisLabels, strompreisValues, {
+                usageToggle: {
+                    label: 'Stromverbrauch',
+                    active: showUsage,
+                    onToggle: () => {
+                        setStrompreisShowUsage(!getStrompreisShowUsage());
+                        updateOrAppendDashboardWidget(container, 'strompreis', buildStrompreisChart());
+                    },
+                },
+                secondSeries,
             subtitle: 'Bezug',
             stepped: true,
             valueScale: 100,
@@ -10012,7 +10152,9 @@ async function loadDashboard() {
             // Nutzer-Vorgabe: alle veroeffentlichten Awattar-Werte durchgezogen zeichnen (auch in der
             // Zukunft - die sind bekannt, keine Prognose), erst danach gestrichelt.
             dashedFromIndex: strompreisDashedFromIndex,
-        }));
+        });
+        };
+        updateOrAppendDashboardWidget(container, 'strompreis', buildStrompreisChart());
         let aussentemperaturLabels = data.labels, aussentemperaturValues = data.temperature;
         try {
             const aussentemperaturData = await getJson(insideHomeAssistant + '/dashboard/aussentemperatur');
@@ -10217,12 +10359,22 @@ async function loadDashboard() {
                 {decimals: 2, summary: data.cost_summary, badgeLabel: 'Ersparnis', highlightPositive: true, actualValues: data.actual_cost || []}));
             updateOrAppendDashboardWidget(container, 'verbrauchVergleich', buildComparisonChart(
                 'Dein Stromverbrauch', 'kWh', data.comparison_labels, data.comparison_opt_usage || [], data.comparison_base_usage || [],
-                {decimals: 1, summary: data.usage_summary, badgeLabel: 'Differenz', actualValues: data.actual_usage || []}));
+                {decimals: 1, summary: data.usage_summary, badgeLabel: 'Differenz', actualValues: data.actual_usage || [],
+                 actualFine: usageFinePoints.map(([ms, v]) => [new Date(ms).toISOString(), v])}));
         }
     } catch (err) {
         console.log(err);
         showDashboardChartLoadError(container, 'Diagrammdaten konnten nicht geladen werden.');
     }
+}
+
+// Strompreis-Chart: Stromverbrauch-Linie ein/aus (Legenden-Klick) - nur eine Anzeige-Vorliebe pro Browser,
+// daher localStorage (kann fehlen/werfen, dann gilt der Standard "aus").
+function getStrompreisShowUsage() {
+    try { return localStorage.getItem('shyftStrompreisShowUsage') === '1'; } catch (e) { return false; }
+}
+function setStrompreisShowUsage(on) {
+    try { localStorage.setItem('shyftStrompreisShowUsage', on ? '1' : '0'); } catch (e) { /* egal */ }
 }
 
 // Gemeinsames Intervall fuer alle periodischen Hintergrund-Refreshs (Dashboard, Gerätesteuerung, ...).
