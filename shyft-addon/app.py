@@ -8279,6 +8279,9 @@ EV_CHARGE_CHECK_MAX_SAMPLE_GAP_SECONDS = 120
 EV_CHARGE_CHECK_DEV_LOG_MIN_INTERVAL_SECONDS = 600
 EV_CHARGE_CHECK_MIN_OBSERVED_SECONDS = 120
 EV_CHARGE_CHECK_EV_FULL_SOC = 99
+# Ab diesem Ladestand des Autos wird NUR noch geprueft, ob ueberhaupt geladen wird (> 0), nicht mehr die Abweichung vom Sollwert:
+# darueber drosselt das Auto die Ladeleistung selbst (Ladekurve), eine niedrigere Leistung als vorgegeben ist dann normal.
+EV_CHARGE_CHECK_DEVIATION_MAX_SOC = 90
 EV_CHARGE_RETRY_INTERVAL_SECONDS = 180
 EV_CHARGE_RETRY_MAX = 10
 
@@ -8287,16 +8290,16 @@ def _ev_check_kw(value):
     return f"{value:.1f}".replace(".", ",")
 
 
-def _ev_check_classify(live_kw, target_kw):
-    "'off' (laedt nicht), 'ok' (laedt wie vorgegeben) oder 'dev' (laedt, aber ausserhalb der Toleranz um den Sollwert)."
+def _ev_check_classify(live_kw, target_kw, check_deviation=True):
+    "'off' (laedt nicht), 'ok' (laedt wie vorgegeben) oder 'dev' (laedt, aber ausserhalb der Toleranz um den Sollwert - nur wenn check_deviation, siehe EV_CHARGE_CHECK_DEVIATION_MAX_SOC)."
     if live_kw <= EV_CHARGE_CHECK_NOT_CHARGING_KW:
         return "off"
-    if target_kw is None or abs(live_kw - target_kw) <= EV_CHARGE_CHECK_TOLERANCE_KW:
+    if not check_deviation or target_kw is None or abs(live_kw - target_kw) <= EV_CHARGE_CHECK_TOLERANCE_KW:
         return "ok"
     return "dev"
 
 
-def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, window_start_ms, window_end_ms):
+def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, window_start_ms, window_end_ms, check_deviation=True):
     """Ein Prueftakt fuer eine laufende 'Auto laden'-Aktion; aendert 'state' (der Zaehlerstand der Aktion, wird vom
     Aufrufer mit der Aktion gespeichert) und liefert {"messages": [Logzeilen ohne Uhrzeit], "retry": bool,
     "error": Fehlertext oder None}. paused_reason (Text oder None): keine Pruefung, solange z.B. das Auto nicht
@@ -8324,7 +8327,7 @@ def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, windo
     if live_kw is None or now_ms < (state.get("grace_until_ms") or 0):
         return result
 
-    sample = _ev_check_classify(live_kw, target_kw)
+    sample = _ev_check_classify(live_kw, target_kw, check_deviation)
     key = {"ok": "ok_s", "dev": "dev_s", "off": "off_s"}[sample]
     state[key] = state.get(key, 0.0) + dt
 
@@ -8404,11 +8407,11 @@ def _append_action_log(action, text):
     action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
 
 
-def _ev_check_computed_action(action, config, live_kw, paused_reason, now_ms):
+def _ev_check_computed_action(action, config, live_kw, paused_reason, now_ms, check_deviation=True):
     "Prueftakt fuer eine laufende Optimierer-'Auto laden'-Aktion; speichert die Aktion bei Aenderungen."
     state = action.setdefault("_evCheck", {})
     target_kw = action.get("Target Value")
-    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, action.get("Date Start"), action.get("Date End"))
+    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, action.get("Date Start"), action.get("Date End"), check_deviation)
     for message in result["messages"]:
         _append_action_log(action, message)
     if result["retry"]:
@@ -8424,11 +8427,11 @@ def _ev_check_computed_action(action, config, live_kw, paused_reason, now_ms):
     _update_computed_action(action)
 
 
-def _ev_check_pv_session(session, config, live_kw, paused_reason, now_ms):
+def _ev_check_pv_session(session, config, live_kw, paused_reason, now_ms, check_deviation=True):
     "Prueftakt fuer eine aktive PV-Ueberschuss-Fallback-Session; der Aufrufer speichert die Sessions."
     state = session.setdefault("ev_check", {})
     target_kw = session.get("target_kw")
-    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, session.get("start_ms"), session.get("planned_end_ms"))
+    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, session.get("start_ms"), session.get("planned_end_ms"), check_deviation)
     for message in result["messages"]:
         _append_pv_surplus_log(session, target_kw or 0, note=message)
     if result["retry"]:
@@ -8447,6 +8450,8 @@ def _monitor_ev_charging_locked(config):
     now_ms = time.time() * 1000
     live_kw = _read_mapped_numeric(config, "wallbox_current_charging_power")
     paused_reason = _ev_check_paused_reason(config)
+    ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
+    check_deviation = ev_soc is None or ev_soc < EV_CHARGE_CHECK_DEVIATION_MAX_SOC  # ohne Ladestand-Sensor wie bisher immer pruefen
 
     for action in _read_computed_actions():
         if action.get("Action Name") != EV_CHARGE_ACTION_NAME:
@@ -8455,7 +8460,7 @@ def _monitor_ev_charging_locked(config):
                       and not action.get("_convertedToPvSurplusFallback"))
         if is_running:
             if live_kw is not None or paused_reason:
-                _ev_check_computed_action(action, config, live_kw, paused_reason, now_ms)
+                _ev_check_computed_action(action, config, live_kw, paused_reason, now_ms, check_deviation)
         elif "_evCheck" in action and not action["_evCheck"].get("final"):
             error = ev_charge_check_finalize(action["_evCheck"])
             if error:
@@ -8469,7 +8474,7 @@ def _monitor_ev_charging_locked(config):
     for session in sessions:
         if session.get("active"):
             if live_kw is not None or paused_reason:
-                _ev_check_pv_session(session, config, live_kw, paused_reason, now_ms)
+                _ev_check_pv_session(session, config, live_kw, paused_reason, now_ms, check_deviation)
                 changed = True
         elif "ev_check" in session and not session["ev_check"].get("final"):
             error = ev_charge_check_finalize(session["ev_check"])

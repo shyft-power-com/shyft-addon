@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.263
+
+* **„Auto laden“-Ladekontrolle: Abweichung vom Sollwert nur bei Auto-Ladestand unter 90 %.** Ab 90 % drosselt das Auto die Ladeleistung selbst, eine niedrigere Leistung als vorgegeben ist dann normal. Ab 90 % wird deshalb nur noch geprüft, ob überhaupt geladen wird (Ladeleistung > 0) – Log-Eintrag „Ladeleistung weicht ab“, Wiederholung und Fehler-Bewertung gelten dann nur noch für „lädt gar nicht“. Ohne zugeordneten Sensor für den Auto-Ladestand wird wie bisher immer gegen den Sollwert geprüft.
+
 ## 0.0.45.262
 
 * **„Auto laden“: Ladekontrolle prüft, ob die Wallbox tatsächlich lädt.** Solange eine Auto-laden-Aktion läuft (Optimierer-Aktion und PV-Überschussladen), vergleicht das Add-on jede Minute die gemessene Wallbox-Ladeleistung mit dem Sollwert: Sie muss größer als 0 sein und innerhalb von ±2 kW um den Sollwert liegen. Die ersten 3 Minuten nach dem Start (bzw. 2 Minuten nach einer Wiederholung) zählen nicht, weil die Wallbox erst anläuft.
