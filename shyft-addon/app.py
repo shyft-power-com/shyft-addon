@@ -5117,6 +5117,7 @@ def _pv_surplus_session_to_action(session, config):
         "costsbase": costsbase,
         "costsopt": costsopt,
         "Log": "\n".join(session.get("log", [])),
+        "Had Error": bool(session.get("had_error")),
     }
 
 
@@ -8252,6 +8253,265 @@ def _recheck_active_pv_surplus_optimizer_action(config):
     _write_pv_surplus_actions(actions)
 
 
+# ============================================================================
+# Ladekontrolle "Auto laden": prueft waehrend einer laufenden Aktion (Optimierer-Aktion UND PV-Ueberschuss-
+# Fallback-Session) jede Minute, ob die Wallbox TATSAECHLICH laedt - gemessene Ladeleistung > 0 und innerhalb von
+# +-EV_CHARGE_CHECK_TOLERANCE_KW des Sollwerts. Der Befehl kann von Home Assistant fehlerfrei angenommen und trotzdem von
+# Wallbox/Integration ignoriert werden (Auto nicht eingesteckt/freigegeben, Lastmanagement ...), ohne dass das
+# Add-on es merkt.
+#  - Abweichungen ("Wallbox laedt nicht" / "Ladeleistung weicht ab") werden im Log der Aktion vermerkt (nur beim
+#    Wechsel, entprellt ueber EV_CHARGE_CHECK_DEBOUNCE_SAMPLES Messungen - kein Eintrag je Minute).
+#  - Laedt die Wallbox nicht, wird der Startbefehl alle EV_CHARGE_RETRY_INTERVAL_SECONDS erneut gesendet (max.
+#    EV_CHARGE_RETRY_MAX Mal).
+#  - Wurde ueber die Aktion (Stunde) ueberwiegend NICHT geladen (mehr als die Haelfte der geplanten Zeit ohne
+#    Ladeleistung), bekommt sie "Had Error" (rot umrandet, nach Ende als "Fehler" gelabelt) und eine Push-Meldung.
+# Nicht gezaehlt wird: die Anlaufzeit nach Start/Wiederholung (EV_CHARGE_CHECK_GRACE_SECONDS), Zeiten ohne
+# ladebereites Auto und ein voll geladenes Auto (kein Fehler des Add-ons). Eine Ladeleistung ausserhalb der Toleranz
+# (aber > 0) wird protokolliert, zaehlt aber nicht als "nicht geladen".
+# ============================================================================
+EV_CHARGE_CHECK_INTERVAL_SECONDS = 60
+EV_CHARGE_CHECK_GRACE_SECONDS = 180
+EV_CHARGE_RETRY_GRACE_SECONDS = 120
+EV_CHARGE_CHECK_NOT_CHARGING_KW = 0.1
+EV_CHARGE_CHECK_TOLERANCE_KW = 2.0
+EV_CHARGE_CHECK_DEBOUNCE_SAMPLES = 2
+EV_CHARGE_CHECK_MAX_SAMPLE_GAP_SECONDS = 120
+EV_CHARGE_CHECK_DEV_LOG_MIN_INTERVAL_SECONDS = 600
+EV_CHARGE_CHECK_MIN_OBSERVED_SECONDS = 120
+EV_CHARGE_CHECK_EV_FULL_SOC = 99
+EV_CHARGE_RETRY_INTERVAL_SECONDS = 180
+EV_CHARGE_RETRY_MAX = 10
+
+
+def _ev_check_kw(value):
+    return f"{value:.1f}".replace(".", ",")
+
+
+def _ev_check_classify(live_kw, target_kw):
+    "'off' (laedt nicht), 'ok' (laedt wie vorgegeben) oder 'dev' (laedt, aber ausserhalb der Toleranz um den Sollwert)."
+    if live_kw <= EV_CHARGE_CHECK_NOT_CHARGING_KW:
+        return "off"
+    if target_kw is None or abs(live_kw - target_kw) <= EV_CHARGE_CHECK_TOLERANCE_KW:
+        return "ok"
+    return "dev"
+
+
+def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, window_start_ms, window_end_ms):
+    """Ein Prueftakt fuer eine laufende 'Auto laden'-Aktion; aendert 'state' (der Zaehlerstand der Aktion, wird vom
+    Aufrufer mit der Aktion gespeichert) und liefert {"messages": [Logzeilen ohne Uhrzeit], "retry": bool,
+    "error": Fehlertext oder None}. paused_reason (Text oder None): keine Pruefung, solange z.B. das Auto nicht
+    ladebereit/voll ist. window_start_ms/window_end_ms: geplantes Zeitfenster der Aktion (Grundlage fuer 'ueberwiegend
+    nicht geladen')."""
+    result = {"messages": [], "retry": False, "error": None}
+    if state.get("first_seen_ms") is None:
+        state["first_seen_ms"] = now_ms
+        state["grace_until_ms"] = now_ms + EV_CHARGE_CHECK_GRACE_SECONDS * 1000
+    last_ms = state.get("last_ms")
+    dt = 0.0 if last_ms is None else max(0.0, min((now_ms - last_ms) / 1000.0, EV_CHARGE_CHECK_MAX_SAMPLE_GAP_SECONDS))
+    state["last_ms"] = now_ms
+
+    if paused_reason:
+        if state.get("paused") != paused_reason:
+            state["paused"] = paused_reason
+            result["messages"].append(f"{paused_reason} - Ladekontrolle pausiert")
+        state["pending"], state["pending_n"] = None, 0
+        return result
+    if state.get("paused"):
+        state["paused"] = None
+        state["grace_until_ms"] = max(state.get("grace_until_ms") or 0, now_ms + EV_CHARGE_RETRY_GRACE_SECONDS * 1000)
+        result["messages"].append("Ladekontrolle läuft wieder")
+        return result
+    if live_kw is None or now_ms < (state.get("grace_until_ms") or 0):
+        return result
+
+    sample = _ev_check_classify(live_kw, target_kw)
+    key = {"ok": "ok_s", "dev": "dev_s", "off": "off_s"}[sample]
+    state[key] = state.get(key, 0.0) + dt
+
+    if sample == state.get("pending"):
+        state["pending_n"] = state.get("pending_n", 0) + 1
+    else:
+        state["pending"], state["pending_n"] = sample, 1
+    if state["pending_n"] >= EV_CHARGE_CHECK_DEBOUNCE_SAMPLES and sample != state.get("committed"):
+        state["committed"] = sample
+        announced = state.get("announced", "ok")
+        target_text = "" if target_kw is None else f", Soll {_ev_check_kw(target_kw)} kW"
+        if sample == "off" and announced != "off":
+            state["announced"] = "off"
+            result["messages"].append(f"Wallbox lädt nicht (gemessen {_ev_check_kw(live_kw)} kW{target_text})")
+        elif sample == "dev":
+            if now_ms - state.get("dev_log_ms", 0) >= EV_CHARGE_CHECK_DEV_LOG_MIN_INTERVAL_SECONDS * 1000 and announced != "dev":
+                state["dev_log_ms"] = now_ms
+                state["announced"] = "dev"
+                result["messages"].append(f"Ladeleistung weicht ab (gemessen {_ev_check_kw(live_kw)} kW{target_text}, erlaubt ±{_ev_check_kw(EV_CHARGE_CHECK_TOLERANCE_KW)} kW)")
+        elif sample == "ok" and announced != "ok":
+            state["announced"] = "ok"
+            result["messages"].append(
+                f"Wallbox lädt wieder ({_ev_check_kw(live_kw)} kW)" if announced == "off" else f"Ladeleistung wieder wie vorgegeben ({_ev_check_kw(live_kw)} kW)")
+
+    # Wiederholung des Startbefehls, solange die Wallbox (entprellt) nicht laedt
+    if sample == "off" and state.get("committed") == "off" and target_kw is not None:
+        retries = state.get("retries", 0)
+        last_retry_ms = state.get("last_retry_ms")
+        if retries >= EV_CHARGE_RETRY_MAX:
+            if not state.get("retries_exhausted"):
+                state["retries_exhausted"] = True
+                result["messages"].append(f"Keine weiteren Wiederholungen (max. {EV_CHARGE_RETRY_MAX})")
+        elif last_retry_ms is None or now_ms - last_retry_ms >= EV_CHARGE_RETRY_INTERVAL_SECONDS * 1000:
+            state["retries"] = retries + 1
+            state["last_retry_ms"] = now_ms
+            state["grace_until_ms"] = now_ms + EV_CHARGE_RETRY_GRACE_SECONDS * 1000
+            result["retry"] = True
+            result["messages"].append(f"Wiederholung {retries + 1}/{EV_CHARGE_RETRY_MAX}: Startbefehl wird erneut gesendet (Soll {_ev_check_kw(target_kw)} kW)")
+
+    # Ueberwiegend nicht geladen? Schon vor Ende sicher, sobald die Zeit ohne Ladeleistung mehr als die Haelfte des
+    # geplanten Zeitfensters ausmacht.
+    if not state.get("error") and window_start_ms is not None and window_end_ms is not None:
+        planned_s = max(1.0, (window_end_ms - window_start_ms) / 1000.0)
+        if state.get("off_s", 0.0) > 0.5 * planned_s:
+            state["error"] = True
+            result["error"] = (f"Wallbox hat überwiegend nicht geladen ({round(state['off_s'] / 60)} von {round(planned_s / 60)} min "
+                               f"ohne Ladeleistung)")
+    return result
+
+
+def ev_charge_check_finalize(state):
+    "Abschluss nach dem Ende der Aktion (einmalig): Fehlertext, wenn ueber die beobachtete Zeit ueberwiegend nicht geladen wurde (und das nicht schon waehrend des Laufs festgestellt wurde), sonst None."
+    if state.get("final"):
+        return None
+    state["final"] = True
+    observed = state.get("ok_s", 0.0) + state.get("dev_s", 0.0) + state.get("off_s", 0.0)
+    if state.get("error") or observed < EV_CHARGE_CHECK_MIN_OBSERVED_SECONDS:
+        return None
+    if state.get("off_s", 0.0) > 0.5 * observed:
+        state["error"] = True
+        return f"Wallbox hat überwiegend nicht geladen ({round(state['off_s'] / 60)} von {round(observed / 60)} min ohne Ladeleistung)"
+    return None
+
+
+def _ev_check_paused_reason(config):
+    "Grund, warum die Ladekontrolle gerade nicht pruefen soll (kein Fehler des Add-ons), sonst None."
+    if not is_car_ready_to_charge(config):
+        return "Auto nicht ladebereit"
+    ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
+    if ev_soc is not None and ev_soc >= EV_CHARGE_CHECK_EV_FULL_SOC:
+        return f"Auto ist voll geladen ({ev_soc:.0f} %)"
+    return None
+
+
+def _append_action_log(action, text):
+    note = f"{_local_now().strftime('%H:%M Uhr')}: {text}"
+    action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+
+
+def _ev_check_computed_action(action, config, live_kw, paused_reason, now_ms):
+    "Prueftakt fuer eine laufende Optimierer-'Auto laden'-Aktion; speichert die Aktion bei Aenderungen."
+    state = action.setdefault("_evCheck", {})
+    target_kw = action.get("Target Value")
+    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, action.get("Date Start"), action.get("Date End"))
+    for message in result["messages"]:
+        _append_action_log(action, message)
+    if result["retry"]:
+        try:
+            execute_car_charge_start(target_kw)
+        except Exception as e:
+            print(f"[Shyft] Ladekontrolle: Wiederholung des Startbefehls fehlgeschlagen: {e!r}")
+            _append_action_log(action, f"Wiederholung fehlgeschlagen: {e}")
+    if result["error"]:
+        action["Had Error"] = True
+        _append_action_log(action, f"Fehler - {result['error']}")
+        notify_action_event(config, action, "Fehler (Wallbox lädt überwiegend nicht)", is_error=True)
+    _update_computed_action(action)
+
+
+def _ev_check_pv_session(session, config, live_kw, paused_reason, now_ms):
+    "Prueftakt fuer eine aktive PV-Ueberschuss-Fallback-Session; der Aufrufer speichert die Sessions."
+    state = session.setdefault("ev_check", {})
+    target_kw = session.get("target_kw")
+    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, session.get("start_ms"), session.get("planned_end_ms"))
+    for message in result["messages"]:
+        _append_pv_surplus_log(session, target_kw or 0, note=message)
+    if result["retry"]:
+        try:
+            execute_car_charge_start(target_kw)
+        except Exception as e:
+            print(f"[Shyft] Ladekontrolle: Wiederholung des Startbefehls fehlgeschlagen: {e!r}")
+            _append_pv_surplus_log(session, target_kw or 0, note=f"Wiederholung fehlgeschlagen: {e}")
+    if result["error"]:
+        session["had_error"] = True
+        _append_pv_surplus_log(session, target_kw or 0, note=f"Fehler - {result['error']}")
+        notify_action_event(config, _pv_surplus_session_to_action(session, config), "Fehler (Wallbox lädt überwiegend nicht)", is_error=True)
+
+
+def _monitor_ev_charging_locked(config):
+    now_ms = time.time() * 1000
+    live_kw = _read_mapped_numeric(config, "wallbox_current_charging_power")
+    paused_reason = _ev_check_paused_reason(config)
+
+    for action in _read_computed_actions():
+        if action.get("Action Name") != EV_CHARGE_ACTION_NAME:
+            continue
+        is_running = ((action.get("Status") or "").lower() == "aktiv" and action.get("Execution Status") == "yes, started"
+                      and not action.get("_convertedToPvSurplusFallback"))
+        if is_running:
+            if live_kw is not None or paused_reason:
+                _ev_check_computed_action(action, config, live_kw, paused_reason, now_ms)
+        elif "_evCheck" in action and not action["_evCheck"].get("final"):
+            error = ev_charge_check_finalize(action["_evCheck"])
+            if error:
+                action["Had Error"] = True
+                _append_action_log(action, f"Fehler - {error}")
+                notify_action_event(config, action, "Fehler (Wallbox lädt überwiegend nicht)", is_error=True)
+            _update_computed_action(action)
+
+    sessions = _read_pv_surplus_actions()
+    changed = False
+    for session in sessions:
+        if session.get("active"):
+            if live_kw is not None or paused_reason:
+                _ev_check_pv_session(session, config, live_kw, paused_reason, now_ms)
+                changed = True
+        elif "ev_check" in session and not session["ev_check"].get("final"):
+            error = ev_charge_check_finalize(session["ev_check"])
+            if error:
+                session["had_error"] = True
+                _append_pv_surplus_log(session, session.get("target_kw") or 0, note=f"Fehler - {error}")
+                notify_action_event(config, _pv_surplus_session_to_action(session, config), "Fehler (Wallbox lädt überwiegend nicht)", is_error=True)
+            changed = True
+    if changed:
+        _write_pv_surplus_actions(sessions)
+
+
+def monitor_ev_charging():
+    "Minuetlicher Job (siehe Modulkommentar oben): Ladekontrolle fuer 'Auto laden'. Laeuft nur, wenn weder der Aktions-Poll noch der PV-Ueberschuss-Tick gerade arbeiten (sonst naechste Minute)."
+    if is_demo_mode():
+        return
+    config = _read_current_config()
+    if not (_is_ev_wallbox_configured(config) and is_action_type_enabled(config, EV_CHARGE_ACTION_NAME)):
+        return
+    if not (config.get("sensorMappings", {}) or {}).get("wallbox_current_charging_power"):
+        return  # ohne Ladeleistungs-Sensor laesst sich nichts pruefen
+    if not _action_processing_lock.acquire(blocking=False):
+        return
+    try:
+        if not _pv_surplus_lock.acquire(blocking=False):
+            return
+        try:
+            _monitor_ev_charging_locked(config)
+        finally:
+            _pv_surplus_lock.release()
+    finally:
+        _action_processing_lock.release()
+
+
+def monitor_ev_charging_periodically():
+    with app.app_context():
+        try:
+            monitor_ev_charging()
+        except Exception as e:
+            print("[Shyft] Ladekontrolle fehlgeschlagen:", repr(e))
+
+
 def _active_optimizer_ev_charge_action():
     """Die aktuell aktive, wirklich gestartete Optimierer-'Auto laden'-Aktion (COMPUTED_ACTIONS_PATH),
     falls vorhanden - AUSSER sie ist selbst schon als PV-Ueberschuss markiert (PV Surplus=True): die
@@ -10843,6 +11103,7 @@ scheduler.add_job(process_shyft_actions_periodically, 'cron', minute="0,15,30,45
 # Allgemeiner Beenden/Starten/Verlaengern-Mechanismus zur vollen Stunde, siehe run_hourly_action_transition
 scheduler.add_job(run_hourly_action_transition_periodically, 'cron', minute="0")
 scheduler.add_job(retry_failed_battery_actions_periodically, 'interval', seconds=BATTERY_ACTION_RETRY_INTERVAL_SECONDS, max_instances=1, coalesce=True)
+scheduler.add_job(monitor_ev_charging_periodically, 'interval', seconds=EV_CHARGE_CHECK_INTERVAL_SECONDS, max_instances=1, coalesce=True)
 # Energie-Archiv (Analyse-Tab): 3 Minuten nach der Stunde, damit der frische Optimierungslauf von
 # sync_dashboard_chart_data_periodically (Minute 0) den letzten Plan-Beitrag der GERADE
 # abgelaufenen Stunde schon abgegeben hat, bevor sie hier abgeschlossen wird (siehe
