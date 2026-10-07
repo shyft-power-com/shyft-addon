@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.0.45.263
+## 0.0.45.265
 
 * **Fix: Steuerungs-Schalter blitzten beim Öffnen der Gerätesteuerung nur kurz auf.** Die Leiste mit den Schaltern wurde bei jedem Scrollen nach unten ausgeblendet – auch beim automatischen Sprung zur aktuellen Aktion und bei Layout-Änderungen während des Ladens. Jetzt blendet sie sich nur noch aus, wenn der Nutzer selbst nach unten scrollt (Mausrad, Touch, Tastatur, Scrollbalken); beim Öffnen der Seite startet sie immer eingeblendet, beim Hinaufscrollen kommt sie wie bisher wieder.
 
-## 0.0.45.262
+## 0.0.45.264
 
 * **Prognose-vs.-Ist-Charts: durchgehende Prognose aus den Optimierungsläufen.** Der Ist-Wert wird nicht mehr an der „Jetzt“-Stunde in die Prognose-Linie eingesetzt (0.0.45.260 zurückgenommen). Stattdessen setzt das Add-on die Prognose Stunde für Stunde aus den Läufen zusammen: Jede Stunde zeigt den Wert des jüngsten Optimierungslaufs, der **vor** Beginn dieser Stunde lief. Zeile 1 eines Laufs (seine Startstunde, basiert auf Ist-Werten) zählt nicht als Prognose. Beispiel: Der Lauf von 8:33 liefert 9:00 und alle folgenden Stunden; kommt um 9:10 ein neuer Lauf, werden 10:00 ff. neu geschrieben, 9:00 bleibt aus dem 8:33-Lauf, 8:00 aus dem Lauf davor. Kommt kein neuer Lauf, stammen 9:00, 10:00 usw. weiter aus dem 8:33-Lauf. Die Prognose ist immer gestrichelt, Ist-Werte immer durchgezogen; beide Linien laufen unabhängig nebeneinander (auch über vergangene Stunden). Gilt für Ladestand Heimspeicher, Warmwasser, Raumtemperatur (Innenraum), Ladestand Auto und – ab der laufenden Stunde – Sonstiger Verbraucher. Technisch: neue Datei `forecast_stitched.json` (nur heutige Stunden), für Stunden vor dem Update bleibt der bisherige Planungsstand-Snapshot als Rückfall. Die PV-Prognose bleibt unverändert (Wetterprognose je Stunde, hier gab es keine Lücke).
 
