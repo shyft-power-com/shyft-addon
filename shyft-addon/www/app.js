@@ -7193,12 +7193,27 @@ function setupControlTogglesAutoHide() {
     const bar = document.getElementById('shyftControlToggles');
     if (!bar) return;
     let lastY = window.scrollY;
+    // Ausgeblendet wird NUR, wenn der Nutzer selbst scrollt (Mausrad, Touch, Tastatur, Scrollbalken ziehen). Programmatisches
+    // Scrollen - z.B. der automatische Sprung zur aktuellen Aktion beim Oeffnen der Seite (maybeAutoScrollToActiveShyftActions)
+    // oder Layout-Aenderungen beim Laden - liess die Leiste sonst kurz aufblitzen und sofort wieder verschwinden.
+    let lastUserInputAt = 0;
+    const markUserInput = () => { lastUserInputAt = Date.now(); };
+    for (const type of ['wheel', 'touchmove', 'keydown', 'mousedown']) {
+        window.addEventListener(type, markUserInput, {passive: true});
+    }
     window.addEventListener('scroll', () => {
         const y = window.scrollY;
+        const byUser = Date.now() - lastUserInputAt < 1000;
         if (y <= 24 || y < lastY - 4) bar.classList.remove('is-hidden');
-        else if (y > lastY + 4) bar.classList.add('is-hidden');
+        else if (byUser && y > lastY + 4) bar.classList.add('is-hidden');
         lastY = y;
     }, {passive: true});
+    // Beim Oeffnen der Gerätesteuerung-Seite immer eingeblendet starten (siehe setupTabs/loadShyftActions).
+    window.showControlToggles = () => {
+        bar.classList.remove('is-hidden');
+        lastY = window.scrollY;
+        lastUserInputAt = 0;
+    };
 }
 
 async function loadShyftActions() {
@@ -10590,6 +10605,7 @@ function setupTabs() {
             }
             document.getElementById('tab-' + button.dataset.tab).classList.add('active');
             if (button.dataset.tab === 'geraetesteuerung') {
+                if (window.showControlToggles) window.showControlToggles();
                 requestShyftActionsAutoScroll();
             }
             if (button.dataset.tab === 'analyse') {
