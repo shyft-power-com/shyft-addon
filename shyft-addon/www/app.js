@@ -7138,7 +7138,7 @@ const CONTROL_TOGGLE_CARDS = [
     {key: 'battery_grid_charge', sectionKey: 'batterie', label: 'Batterie netzladen', icon: 'battery'},
     {key: 'battery_charge_shift_pv_surplus', sectionKey: 'batterie', label: 'Batterie schonen (PV-Überschuss)', icon: 'battery'},
     {key: 'battery_discharge_shift', sectionKey: 'batterie', label: 'Batterie-Entladen verschieben', icon: 'battery'},
-    {key: 'car_charge_start', sectionKey: 'wallbox', label: 'Wallbox steuern', icon: 'car'},
+    {key: 'car_charge_start', sectionKey: 'wallbox', label: 'Auto laden', icon: 'car'},
     {key: 'consumer_on', sectionKey: 'sonstiger_verbraucher', label: 'Verbraucher steuern', icon: 'plug'},
 ];
 

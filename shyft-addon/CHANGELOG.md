@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.266
+
+* **Steuerungs-Schalter: „Wallbox steuern“ heißt jetzt „Auto laden“.** Nur die Beschriftung der Karte auf der Gerätesteuerung-Seite, keine Änderung am Verhalten.
+
 ## 0.0.45.265
 
 * **Fix: Steuerungs-Schalter blitzten beim Öffnen der Gerätesteuerung nur kurz auf.** Die Leiste mit den Schaltern wurde bei jedem Scrollen nach unten ausgeblendet – auch beim automatischen Sprung zur aktuellen Aktion und bei Layout-Änderungen während des Ladens. Jetzt blendet sie sich nur noch aus, wenn der Nutzer selbst nach unten scrollt (Mausrad, Touch, Tastatur, Scrollbalken); beim Öffnen der Seite startet sie immer eingeblendet, beim Hinaufscrollen kommt sie wie bisher wieder.
