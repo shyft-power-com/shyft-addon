@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.262
+
+* **Prognose-vs.-Ist-Charts: durchgehende Prognose aus den Optimierungsläufen.** Der Ist-Wert wird nicht mehr an der „Jetzt“-Stunde in die Prognose-Linie eingesetzt (0.0.45.260 zurückgenommen). Stattdessen setzt das Add-on die Prognose Stunde für Stunde aus den Läufen zusammen: Jede Stunde zeigt den Wert des jüngsten Optimierungslaufs, der **vor** Beginn dieser Stunde lief. Zeile 1 eines Laufs (seine Startstunde, basiert auf Ist-Werten) zählt nicht als Prognose. Beispiel: Der Lauf von 8:33 liefert 9:00 und alle folgenden Stunden; kommt um 9:10 ein neuer Lauf, werden 10:00 ff. neu geschrieben, 9:00 bleibt aus dem 8:33-Lauf, 8:00 aus dem Lauf davor. Kommt kein neuer Lauf, stammen 9:00, 10:00 usw. weiter aus dem 8:33-Lauf. Die Prognose ist immer gestrichelt, Ist-Werte immer durchgezogen; beide Linien laufen unabhängig nebeneinander (auch über vergangene Stunden). Gilt für Ladestand Heimspeicher, Warmwasser, Raumtemperatur (Innenraum), Ladestand Auto und – ab der laufenden Stunde – Sonstiger Verbraucher. Technisch: neue Datei `forecast_stitched.json` (nur heutige Stunden), für Stunden vor dem Update bleibt der bisherige Planungsstand-Snapshot als Rückfall. Die PV-Prognose bleibt unverändert (Wetterprognose je Stunde, hier gab es keine Lücke).
+
 ## 0.0.45.263
 
 * **„Auto laden“-Ladekontrolle: Abweichung vom Sollwert nur bei Auto-Ladestand unter 90 %.** Ab 90 % drosselt das Auto die Ladeleistung selbst, eine niedrigere Leistung als vorgegeben ist dann normal. Ab 90 % wird deshalb nur noch geprüft, ob überhaupt geladen wird (Ladeleistung > 0) – Log-Eintrag „Ladeleistung weicht ab“, Wiederholung und Fehler-Bewertung gelten dann nur noch für „lädt gar nicht“. Ohne zugeordneten Sensor für den Auto-Ladestand wird wie bisher immer gegen den Sollwert geprüft.

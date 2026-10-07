@@ -7443,7 +7443,7 @@ function computeNiceTicks(min, max, targetCount = 4) {
 }
 
 function buildLineChart(title, unit, labels, values, options = {}) {
-    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, usageToggle = null} = options;
+    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, usageToggle = null, overlayForecast = null} = options;
     const width = 600, height = 220;
     // presenceForecast reserves an extra strip just above the x-axis labels for the
     // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
@@ -7596,6 +7596,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         merged2 = secondSeries.actual ? labels.map((_, i) => (secondSeries.actual[i] ?? secondSeries.forecast[i])) : secondSeries.values;
         const defined2 = merged2.filter(v => v !== null && v !== undefined);
         if (secondSeries.fine) defined2.push(...secondSeries.fine.map(p => p[1]));
+        if (secondSeries.actual && secondSeries.forecast) defined2.push(...secondSeries.forecast.filter(v => v !== null && v !== undefined));
         const rawMin2 = secondSeries.zeroBased ? 0 : Math.min(...defined2);
         const rawMax2 = Math.max(...defined2);
         const valueRange2 = (rawMax2 - rawMin2) || 1;
@@ -7639,18 +7640,28 @@ function buildLineChart(title, unit, labels, values, options = {}) {
             if (dash.length >= 2) parts.push(`<path d="${dash.join(' ')}" fill="none" stroke="${color2}" stroke-width="2" stroke-dasharray="5,4" />`);
             secondLineMarkup = parts.join('');
         } else if (secondSeries.actual) {
+            // Ist (durchgezogen) und Prognose (gestrichelt) sind zwei voneinander unabhaengige Linien -
+            // die Prognose laeuft auch ueber bereits vergangene Stunden (Werte aus dem jeweils letzten
+            // Optimierungslauf vor der Stunde, siehe Backend) und wird nicht vom Ist verdraengt.
             const parts = [];
-            for (let i = 0; i < points2.length - 1; i++) {
-                if (!points2[i] || !points2[i + 1]) continue;
-                let segColor = color2;
-                if (secondSeries.slopeColors) {
-                    const delta = merged2[i + 1] - merged2[i];
-                    segColor = delta > 0 ? secondSeries.slopeColors.riseColor
-                        : delta <= -(secondSeries.slopeColors.bigDropThreshold ?? 1) ? secondSeries.slopeColors.dropColor
-                        : secondSeries.slopeColors.flatColor;
+            const pt = (series, i) => {
+                const v = series ? series[i] : null;
+                if (v === null || v === undefined) return null;
+                return [paddingLeft + (i / lastIndex) * plotWidth, paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight, v];
+            };
+            for (const [series, dashed] of [[secondSeries.forecast, true], [secondSeries.actual, false]]) {
+                for (let i = 0; i < labels.length - 1; i++) {
+                    const a = pt(series, i), b = pt(series, i + 1);
+                    if (!a || !b) continue;
+                    let segColor = color2;
+                    if (secondSeries.slopeColors) {
+                        const delta = b[2] - a[2];
+                        segColor = delta > 0 ? secondSeries.slopeColors.riseColor
+                            : delta <= -(secondSeries.slopeColors.bigDropThreshold ?? 1) ? secondSeries.slopeColors.dropColor
+                            : secondSeries.slopeColors.flatColor;
+                    }
+                    parts.push(`<path d="M${a[0].toFixed(1)},${a[1].toFixed(1)} L${b[0].toFixed(1)},${b[1].toFixed(1)}" fill="none" stroke="${segColor}" stroke-width="2" ${dashed ? 'stroke-dasharray="5,4"' : ''} />`);
                 }
-                const dashed = secondSeries.actual[i] === null || secondSeries.actual[i] === undefined;
-                parts.push(`<path d="M${points2[i][0].toFixed(1)},${points2[i][1].toFixed(1)} L${points2[i + 1][0].toFixed(1)},${points2[i + 1][1].toFixed(1)}" fill="none" stroke="${segColor}" stroke-width="2" ${dashed ? 'stroke-dasharray="5,4"' : ''} />`);
             }
             secondLineMarkup = parts.join('');
         } else {
@@ -7744,6 +7755,23 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         const areaPath = `${linePath} L${points[points.length - 1][0].toFixed(1)},${baseline.toFixed(1)} L${points[0][0].toFixed(1)},${baseline.toFixed(1)} Z`;
         areaMarkup = `<path d="${areaPath}" fill="${color}" opacity="0.15" stroke="none" />`;
         lineMarkup = `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2" />`;
+    }
+
+    // overlayForecast (Ladestand Auto): die Prognose-Linie (gestrichelt) laeuft zusaetzlich ueber die
+    // Stunden, fuer die es schon einen Ist-Wert gibt (die Hauptlinie zeigt dort das Ist) - Werte aus
+    // dem jeweils letzten Optimierungslauf vor der Stunde. Ab dashedFromIndex uebernimmt die Hauptlinie.
+    let overlayMarkup = '';
+    if (overlayForecast && dashedFromIndex !== null) {
+        const parts = [];
+        const ov = overlayForecast.map(v => (v === null || v === undefined ? null : v * valueScale));
+        for (let i = 0; i < Math.min(dashedFromIndex, ov.length - 1, points.length - 1); i++) {
+            if (ov[i] === null || ov[i + 1] === null) continue;
+            const x0 = paddingLeft + (i / lastIndex) * plotWidth, x1 = paddingLeft + ((i + 1) / lastIndex) * plotWidth;
+            const y0 = paddingTop + plotHeight - ((ov[i] - yMin) / yRange) * plotHeight;
+            const y1 = paddingTop + plotHeight - ((ov[i + 1] - yMin) / yRange) * plotHeight;
+            parts.push(`<path d="M${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)}" fill="none" stroke="${colorForSlope(ov[i], ov[i + 1])}" stroke-width="2" stroke-dasharray="5,4" />`);
+        }
+        overlayMarkup = parts.join('');
     }
 
     const tickCount = Math.min(6, labels.length);
@@ -7848,6 +7876,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
             ${actionBandsMarkup}
             ${areaMarkup}
             ${lineMarkup}
+            ${overlayMarkup}
             ${secondLineMarkup}
             ${presenceMarkup}
             ${nowMarkup}
@@ -8166,16 +8195,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
 
     const actualPath = buildSegmentedPath(actual, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-text)'), dashed: false}));
     // "Prognose" (siehe prognose-Merge oben): immer gestrichelt, auch der plannedHistory-Abschnitt.
-    // Die Prognose-Linie wird an der "Jetzt"-Stunde nicht unterbrochen (Nutzer-Vorgabe, gilt fuer alle
-    // Prognose-vs-Ist-Charts): die laufende Stunde hat bewusst keinen eigenen Prognosewert (siehe
-    // Backend), deshalb wird dort - NUR fuer die gezeichnete Linie, nicht fuer Tooltip/Skala - der
-    // Ist-Wert (= Position des "Jetzt"-Punkts) eingesetzt: Prognose der Vorstunde -> jetzt -> Prognose der Folgestunde.
-    const nowIdxForPath = actual.reduce((last, v, i) => (v !== null && v !== undefined ? i : last), -1);
-    const prognosePathValues = prognose.slice();
-    if (nowIdxForPath >= 0 && (prognosePathValues[nowIdxForPath] === null || prognosePathValues[nowIdxForPath] === undefined)) {
-        prognosePathValues[nowIdxForPath] = actual[nowIdxForPath];
-    }
-    const forecastPath = buildSegmentedPath(prognosePathValues, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-accent)'), dashed: true}));
+    const forecastPath = buildSegmentedPath(prognose, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-accent)'), dashed: true}));
 
     const tickCount = Math.min(6, labels.length);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
@@ -10266,7 +10286,7 @@ async function loadDashboard() {
         // Bleibt bei buildLineChart (nicht buildForecastActualChart) wegen der Anwesenheitsprognose-
         // Leiste/Verbrauchsprognose-Details darunter, die dort nicht existieren.
         let ladestandAutoLabels = data.output_labels, ladestandAutoValues = data.soc_ev, ladestandAutoValueScale = 100;
-        let ladestandAutoDashedFromIndex = null, ladestandAutoActionHours = null;
+        let ladestandAutoDashedFromIndex = null, ladestandAutoActionHours = null, ladestandAutoOverlayForecast = null;
         try {
             const ladestandAutoComparison = await getJson(insideHomeAssistant + '/dashboard/ladestand-auto-forecast-vs-actual');
             if (ladestandAutoComparison.status === 'success' && ladestandAutoComparison.labels.length > 0) {
@@ -10275,6 +10295,7 @@ async function loadDashboard() {
                 ladestandAutoValueScale = 1;
                 ladestandAutoDashedFromIndex = ladestandAutoComparison.actual.filter(v => v !== null && v !== undefined).length;
                 ladestandAutoActionHours = ladestandAutoComparison.actionHours;
+                ladestandAutoOverlayForecast = ladestandAutoComparison.forecast;
             }
         } catch (err) {
             console.log(err);
@@ -10314,6 +10335,7 @@ async function loadDashboard() {
             dashedFromIndex: ladestandAutoDashedFromIndex,
             actionHours: ladestandAutoActionHours,
             presenceForecast,
+            overlayForecast: ladestandAutoOverlayForecast,
         });
         if (presenceForecast) {
             ladestandAutoChart.appendChild(buildPresenceForecastHeading());

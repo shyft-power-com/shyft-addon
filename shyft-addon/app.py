@@ -129,6 +129,12 @@ PV_FORECAST_SNAPSHOT_PATH = "/data/pv_forecast_snapshot.json"
 # kein Snapshot noetig), sondern nur dem Sichtbarmachen, wie stark sich der Batterie-Plan im
 # Tagesverlauf durch Neuplanungen aendert (Nutzer-Vermutung: viele Spruenge, anders als bei PV).
 BATTERY_SOC_FORECAST_SNAPSHOT_PATH = "/data/battery_soc_forecast_snapshot.json"
+# "Zusammengesetzte" Optimierer-Prognose fuer die Prognose-vs-Ist-Charts (Nutzer-Vorgabe): je Stunde der
+# Wert aus dem JUENGSTEN Optimierungslauf, der vor Beginn dieser Stunde lief (siehe
+# _record_stitched_forecast_run). Haelt je Stunde heute (ab 0 Uhr lokal) die Spalten aus
+# STITCHED_FORECAST_COLUMNS.
+STITCHED_FORECAST_PATH = "/data/forecast_stitched.json"
+STITCHED_FORECAST_COLUMNS = ("SOC_B", "T_i", "T_HW", "SOC_EV")
 CAR_PRESENCE_LOG_PATH = "/data/car_presence_log.json"
 CAR_PRESENCE_LOG_MAX_DAYS = 180
 # "Fahrt planen"-Feature (Dashboard, siehe planCarTrip): einmalige, vom Nutzer angekuendigte
@@ -2108,29 +2114,85 @@ def readPvForecastVsActual():
     return jsonify({"status": "success", "labels": labels, "forecast": forecast, "actual": actual})
 
 
+_stitched_forecast_lock = threading.Lock()
+
+
+def _read_stitched_forecast():
+    try:
+        with open(STITCHED_FORECAST_PATH, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data.get("hours"), dict) else {"hours": {}}
+    except Exception:
+        return {"hours": {}}
+
+
+def _record_stitched_forecast_run(output_csv, creation_date_ms):
+    """Schreibt die Prognose eines neuen Optimierungslaufs in STITCHED_FORECAST_PATH: Zeile 0 des Laufs
+    (seine Startstunde, basiert auf Ist-Werten) ist KEINE Prognose und wird nicht geschrieben; die Zeilen
+    1.. ueberschreiben ihre Stunden (neuer Lauf = neueste Prognose fuer alles ab der Folgestunde). Aeltere
+    Stunden bleiben dadurch auf dem Wert des letzten Laufs vor ihrem Beginn stehen - z.B. Lauf 8:33 setzt
+    9:00 ff.; kommt um 9:10 ein Lauf, werden 10:00 ff. neu geschrieben und 9:00 bleibt aus dem 8:33-Lauf.
+    Aufgerufen aus _write_dashboard_cache. Behaelt nur Stunden ab heute 0 Uhr (lokal)."""
+    if not output_csv or creation_date_ms is None:
+        return
+    try:
+        rows = list(csv.DictReader(io.StringIO(output_csv)))
+    except Exception as e:
+        print("[Shyft] Prognose-Zusammensetzung: output_csv konnte nicht gelesen werden:", repr(e))
+        return
+    with _stitched_forecast_lock:
+        data = _read_stitched_forecast()
+        if data.get("latestRunMs") is not None and creation_date_ms < data["latestRunMs"]:
+            return  # aelterer Lauf als der schon eingearbeitete - nicht rueckwirkend ueberschreiben
+        hours = data["hours"]
+        start_utc = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+        for i, row in enumerate(rows):
+            if i == 0:
+                continue
+            hours[(start_utc + timedelta(hours=i)).isoformat()] = {c: _safe_float(row.get(c)) for c in STITCHED_FORECAST_COLUMNS}
+        midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
+        hours = {k: v for k, v in hours.items() if datetime.fromisoformat(k) >= midnight_utc}
+        try:
+            tmp_path = STITCHED_FORECAST_PATH + ".tmp"
+            with open(tmp_path, "w") as f:
+                json.dump({"latestRunMs": creation_date_ms, "hours": hours}, f)
+            os.replace(tmp_path, STITCHED_FORECAST_PATH)
+        except Exception as e:
+            print("[Shyft] Prognose-Zusammensetzung konnte nicht gespeichert werden:", repr(e))
+
+
 def _read_future_output_column_by_hour(column, scale=1.0):
-    """Wie _read_future_pv_forecast_by_hour, aber fuer eine beliebige output_csv-Spalte (SOC_B, T_i,
-    T_HW, SOC_EV, ...) - die Prognose fuer die jeweilige '<Kachel>: Prognose vs. Ist'-Karte. scale
-    multipliziert den Rohwert (z.B. 100 fuer SOC_EV, das im CSV als 0..1-Anteil steht, nicht als %)."""
+    """Prognose einer output_csv-Spalte (SOC_B, T_i, T_HW, SOC_EV, ...) als {Stunde (lokal): Wert} fuer die
+    '<Kachel>: Prognose vs. Ist'-Karten - zusammengesetzt (Nutzer-Vorgabe): je Stunde der Wert aus dem
+    juengsten Optimierungslauf, der vor Beginn dieser Stunde lief (siehe _record_stitched_forecast_run),
+    ueberlagert vom aktuell gecachten Lauf fuer alle Stunden NACH seiner Startstunde (Zeile 0 des Laufs
+    basiert auf Ist-Werten und zaehlt nicht als Prognose). scale multipliziert den Rohwert (z.B. 100 fuer
+    SOC_EV, das im CSV als 0..1-Anteil steht, nicht als %)."""
+    tz = get_ha_timezone()
+    result = {}
+
+    def put(hour_local, value):
+        result[hour_local] = value * scale if value is not None else None
+
+    for iso, values in _read_stitched_forecast()["hours"].items():
+        if column in values:
+            try:
+                put(_hour_floor(datetime.fromisoformat(iso).astimezone(tz)), values[column])
+            except ValueError:
+                continue
     try:
         with open(DASHBOARD_CACHE_PATH, "r") as f:
             cache = json.load(f)
+        output_csv = cache.get("output_csv")
+        creation_date_ms = cache.get("creation_date")
+        if output_csv and creation_date_ms is not None:
+            start_utc = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+            for i, row in enumerate(csv.DictReader(io.StringIO(output_csv))):
+                if i == 0:
+                    continue
+                put(_hour_floor((start_utc + timedelta(hours=i)).astimezone(tz)), _safe_float(row.get(column)))
     except Exception:
-        return {}
-    output_csv = cache.get("output_csv")
-    creation_date_ms = cache.get("creation_date")
-    if not output_csv or creation_date_ms is None:
-        return {}
-    start_utc = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
-    try:
-        rows = list(csv.DictReader(io.StringIO(output_csv)))
-    except Exception:
-        return {}
-    result = {}
-    for i, row in enumerate(rows):
-        hour_local = _hour_floor((start_utc + timedelta(hours=i)).astimezone(get_ha_timezone()))
-        value = _safe_float(row.get(column))
-        result[hour_local] = value * scale if value is not None else None
+        pass
     return result
 
 
@@ -2164,15 +2226,14 @@ def _hourly_state_actual(entity_id, midnight_local, current_hour_local, scale=1.
     return result
 
 
-def _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=None):
+def _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=None, forecast_from_hour=None):
     """Gemeinsamer Response-Aufbau fuer die '<Kachel>: Prognose vs. Ist'-Endpunkte (siehe
     readBatterySocForecastVsActual, die die einzige mit zusaetzlichem plannedHistory bleibt und
-    deshalb nicht hierueber laeuft): gemeinsame Stundenachse ab 0 Uhr lokal, 'forecast' erst NACH der
-    ECHTEN aktuellen Stunde (nicht ab einschliesslich - die laufende Stunde hat hier immer schon einen
-    echten 'actual'-Wert, siehe _hourly_state_actual; ein zusaetzlicher, evtl. laengst veralteter
-    Prognosewert fuer dieselbe Stunde fuehrte sonst zu einem sichtbaren Sprung zwischen Ist und
-    Prognose GENAU an der 'Jetzt'-Stunde, Nutzer-Beobachtung am Warmwasser-Chart), 'actual'
-    unveraendert je Stunde. action_names (optional): Aktions-Indikator (siehe _action_hours_for)
+    deshalb nicht hierueber laeuft): gemeinsame Stundenachse ab 0 Uhr lokal. 'forecast' ist die
+    durchgehende, zusammengesetzte Prognose (siehe _read_future_output_column_by_hour) - auch fuer
+    vergangene und die laufende Stunde (Wert des letzten Optimierungslaufs vor der Stunde), gezeichnet
+    gestrichelt neben der durchgezogenen 'actual'-Linie; forecast_from_hour schneidet optional alles davor
+    ab (nur fuer Reihen ohne Optimierungslauf-Historie, z.B. Sonstiger Verbraucher). action_names (optional): Aktions-Indikator (siehe _action_hours_for)
     unter demselben Schluessel wie bei Ladestand Heimspeicher ('actionHours')."""
     candidate_hours = set(forecast_by_hour) | set(actual_by_hour)
     all_hours = {h for h in candidate_hours if h >= midnight_local}
@@ -2186,7 +2247,7 @@ def _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local
     for i in range(hour_count):
         hour = midnight_local + timedelta(hours=i)
         labels.append(hour.isoformat())
-        forecast.append(forecast_by_hour.get(hour) if hour > current_hour_local else None)
+        forecast.append(forecast_by_hour.get(hour) if forecast_from_hour is None or hour >= forecast_from_hour else None)
         actual.append(actual_by_hour.get(hour))
     payload = {"status": "success", "labels": labels, "forecast": forecast, "actual": actual}
     if action_names is not None:
@@ -2279,7 +2340,7 @@ def readSonstigesGeraetForecastVsActual():
     # Nur "active" zaehlt als eingeschaltet - ein "deactivated" (Aktionstyp per Toggle aus) wird vom
     # Optimierer zwar weiter eingeplant, aber nie wirklich geschaltet (siehe _action_hours_for).
     forecast_by_hour = {midnight_local + timedelta(hours=i): (100.0 if category == "active" else 0.0) for i, category in enumerate(action_hours)}
-    return jsonify(_forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=CONSUMER_ACTION_NAMES))
+    return jsonify(_forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=CONSUMER_ACTION_NAMES, forecast_from_hour=current_hour_local))
 
 
 def _hourly_switch_on_by_hour(entity_id, midnight_local, current_hour_local):
@@ -2416,19 +2477,13 @@ def readBatterySocForecastVsActual():
     for i in range(hour_count):
         hour = midnight_local + timedelta(hours=i)
         labels.append(hour.isoformat())
-        # forecast_by_hour kommt aus dem zuletzt GECACHTEN Optimierungslauf und ist an dessen eigene
-        # Erstellzeit verankert (siehe _read_future_battery_soc_forecast_by_hour) - ist dieser Lauf
-        # veraltet (der naechste laesst z.B. eine Stunde auf sich warten), kann seine erste Zeile
-        # inzwischen schon in der echten Vergangenheit liegen. Ohne dieses Abschneiden wuerde so eine
-        # Stunde gleichzeitig in Prognose UND plannedHistory auftauchen (Nutzer-Beobachtung) - Prognose
-        # zeigt bewusst nur NACH der ECHTEN aktuellen Stunde (nicht ab einschliesslich - die laufende
-        # Stunde hat immer schon einen echten 'actual'-Wert; ein zusaetzlicher, evtl. veralteter
-        # Prognosewert fuer dieselbe Stunde ergibt sonst einen sichtbaren Sprung zwischen Ist und
-        # Prognose GENAU an der 'Jetzt'-Stunde, Nutzer-Beobachtung am Warmwasser-Chart), plannedHistory
-        # deckt die Vergangenheit ab.
-        forecast.append(forecast_by_hour.get(hour) if hour > current_hour_local else None)
+        # forecast_by_hour ist die zusammengesetzte Prognose (siehe _read_future_output_column_by_hour): je Stunde
+        # der Wert des juengsten Optimierungslaufs vor dieser Stunde - auch fuer vergangene/laufende Stunden.
+        forecast.append(forecast_by_hour.get(hour))
         actual.append(actual_by_hour.get(hour))
-        planned_history.append(planned_history_by_hour.get(hour) if hour < current_hour_local else None)
+        # Altbestand: Stunden von heute vor Einfuehrung der zusammengesetzten Prognose haben dort keinen Wert -
+        # dann der eingefrorene Planungsstand aus dem Snapshot (nur wenn 'forecast' leer ist, sonst doppelt).
+        planned_history.append(planned_history_by_hour.get(hour) if hour < current_hour_local and forecast[-1] is None else None)
 
     # Aktions-Indikator (siehe _battery_action_hours) - dieselbe Stundenachse wie labels/forecast/actual.
     action_hours = _battery_action_hours(midnight_local, hour_count)
@@ -10502,6 +10557,7 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
         print("[Shyft] Dashboard-Chart-Daten konnten nicht zwischengespeichert werden:", repr(e))
     _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms)
     _maybe_freeze_battery_soc_forecast_snapshot(output_csv, creation_date_ms)
+    _record_stitched_forecast_run(output_csv, creation_date_ms)
     recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id, base)
     _record_energy_archive_plan_contribution(input_csv, output_csv, creation_date_ms, base)
     _record_household_savings_snapshot()
