@@ -5840,6 +5840,15 @@ def _records_action_test(ready_key=None, record_success=True):
     return deco
 
 
+def _note_retry_success(action):
+    "Nach einem Erfolg, dem Fehlversuche vorausgingen: Log-Zeile 'Versuch N: erfolgreich' und Zaehler zuruecksetzen (ohne vorherige Fehler gibt es bewusst keinen Eintrag)."
+    attempts = action.pop("Failed Attempts", 0)
+    action.pop("_lastErrorText", None)
+    action.pop("_lastErrorVerb", None)
+    if attempts:
+        _append_action_log(action, f"Versuch {attempts + 1}: erfolgreich")
+
+
 def _fail_action(action, config, exec_status, msg, prev_exec, verb):
     """Markiert eine Aktion als fehlgeschlagen: Execution Status + Error Message setzen, Grund ans
     'Log' anhaengen (rendert aufklappbar wie beim PV-Ueberschussladen), persistieren. Benachrichtigt
@@ -5853,11 +5862,22 @@ def _fail_action(action, config, exec_status, msg, prev_exec, verb):
     # Wiederholungen der Batterie-Aktionen (siehe retry_failed_battery_actions) und fuer das Unterdruecken
     # wiederholter Push-Benachrichtigungen/Log-Zeilen bei jedem weiteren Versuch.
     action.setdefault("Error First At", int(time.time() * 1000))
+    # Jeder (Wiederholungs-)Versuch kommt ins Log: der erste mit voller Fehlermeldung, weitere mit derselben Ursache kurz
+    # ("Versuch 3: weiterhin fehlgeschlagen"), eine andere Ursache wieder mit voller Meldung. Zaehler gelten je Start/Ende.
+    if action.get("_lastErrorVerb") != verb:
+        action["Failed Attempts"] = 0
+        action.pop("_lastErrorText", None)
+    action["_lastErrorVerb"] = verb
+    attempt = action.get("Failed Attempts", 0) + 1
+    action["Failed Attempts"] = attempt
     text = f"Fehler beim {verb} - {msg}"
-    note = f"{_local_now().strftime('%H:%M Uhr')}: {text}"
-    last_line = (action.get("Log") or "").rsplit("\n", 1)[-1]
-    if not last_line.endswith(text):  # bei Wiederholungen mit derselben Ursache keine Log-Zeile je Versuch
-        action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+    timestamp = _local_now().strftime("%H:%M Uhr")
+    if attempt > 1 and action.get("_lastErrorText") == text:
+        note = f"{timestamp}: Versuch {attempt}: weiterhin fehlgeschlagen"
+    else:
+        note = f"{timestamp}: {text}" + (f" (Versuch {attempt})" if attempt > 1 else "")
+    action["_lastErrorText"] = text
+    action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
     _update_computed_action(action)
     if prev_exec != exec_status:
         notify_action_event(config, action, f"Fehler beim {verb}", is_error=True)
@@ -6797,6 +6817,9 @@ BATTERY_RETRY_TIMEOUT_SECONDS = 120
 # Nutzer ausdruecklich als "nicht verfuegbar" gemeldet. Die Frist gilt GEMEINSAM fuer alle Entitaeten
 # einer Aktion (beginnt bei der ersten nicht verfuegbaren), nicht je Entitaet.
 BATTERY_UNAVAILABLE_STATES = ("unavailable", "unknown")
+# Anzeigename der "Command Timeout"-Entitaet (Watchdog-Wert, siehe BATTERY_COMMAND_TIMEOUT_SECONDS) in Fehlermeldungen - ein blosses "Timeout"
+# las sich wie eine Fehlerursache ("Zeitueberschreitung"), gemeint ist aber die Entitaet, die nicht gesetzt werden konnte.
+BATTERY_TIMEOUT_LABEL = "Command-Timeout (Watchdog)"
 BATTERY_UNAVAILABLE_GRACE_SECONDS = 30
 # Watchdog-Wert (Sekunden) fuer die "Command Timeout"-Entitaet, je Aktionstyp verschieden:
 # beim Netzladen reicht 1 h, beim Entlade-Stopp soll der Befehl bis zu 10 h stehen bleiben.
@@ -6818,27 +6841,55 @@ def _battery_value_matches(current_state, target_value):
         return str(current_state) == str(target_value)
 
 
-def _write_and_verify_battery_entity(entity_id, domain, service, data_key, target_value, retry_timeout_seconds=BATTERY_RETRY_TIMEOUT_SECONDS):
+def _battery_write_failure_reason(entity_id, target_value, detail, unit=""):
+    "Klartext, WARUM eine Batterie-Entitaet den Wert nicht uebernommen hat (aus dem detail-dict von _write_and_verify_battery_entity), inkl. Anzahl der Schreibversuche und der dafuer aufgewendeten Zeit."
+    if not entity_id:
+        return "keine Entität zugeordnet"
+    last_state, last_error = detail.get("last_state"), detail.get("last_error")
+    if last_state in BATTERY_UNAVAILABLE_STATES:
+        core = f"{entity_id} ist in Home Assistant nicht verfügbar ({last_state})"
+    elif last_error and detail.get("last_write_failed"):
+        core = f"Home Assistant meldet beim Schreiben auf {entity_id}: {last_error}"
+    elif last_state is not None:
+        core = f"{entity_id} hat den Wert {target_value}{unit} nicht übernommen und steht weiterhin auf {last_state}"
+    else:
+        core = f"der Zustand von {entity_id} war nicht lesbar"
+    attempts = detail.get("attempts")
+    if attempts:
+        core += f"; {attempts} {'Schreibversuch' if attempts == 1 else 'Schreibversuche'} in {detail.get('seconds', 0)} s"
+    return core
+
+
+def _write_and_verify_battery_entity(entity_id, domain, service, data_key, target_value, retry_timeout_seconds=BATTERY_RETRY_TIMEOUT_SECONDS, detail=None):
     """Schreibt target_value auf entity_id und prueft per Live-Status, ob die Entitaet ihn wirklich
     uebernommen hat - mit Retry alle BATTERY_RETRY_DELAY_SECONDS, bis zu retry_timeout_seconds (Default
     BATTERY_RETRY_TIMEOUT_SECONDS fuer echte Aktionen; der manuelle "Testen"-Button in der
     Konfiguration nutzt eine kuerzere Frist, siehe testBatteryDirectControl, damit der Klick nicht bis
     zu zwei Minuten blockiert). True bei Erfolg, False wenn nach Ablauf der Frist immer noch keine
-    Uebereinstimmung besteht (oder keine Entitaet zugeordnet ist)."""
+    Uebereinstimmung besteht (oder keine Entitaet zugeordnet ist). detail (optional, dict): bekommt die
+    Versuchsdaten (attempts, seconds, last_error, last_write_failed, last_state) fuer die Fehlermeldung
+    (siehe _battery_write_failure_reason)."""
+    if detail is None:
+        detail = {}
     if not entity_id:
         test_log("Keine Entität zugeordnet.", "error")
         return False
-    deadline = time.time() + retry_timeout_seconds
+    started_at = time.time()
+    deadline = started_at + retry_timeout_seconds
     attempt = 0
     state_log = _TestStateLog(f"Zustand von {entity_id}", target_value)
     while True:
         attempt += 1
         test_log(f"Schreibe {target_value} auf {entity_id} (Versuch {attempt}) …")
+        detail["attempts"] = attempt
         try:
             homeassistant_adapter.call_service(domain, service, {"entity_id": entity_id, data_key: target_value})
+            detail["last_write_failed"] = False
         except Exception as e:
             print(f"[Shyft] Batterie-Steuerung: {domain}.{service} auf '{entity_id}' fehlgeschlagen (Versuch {attempt}):", repr(e))
             test_log(f"Home Assistant meldet beim Schreiben einen Fehler: {e}", "error")
+            detail["last_error"] = str(e)
+            detail["last_write_failed"] = True
         # Schreibzugriffe werden immer seltener wiederholt (Nutzer-Vorgabe: sofort, dann nach 10 s, dann
         # nach weiteren 20 s, 30 s, ...) - ein langsamer oder fragiler Wechselrichter (z.B. Modbus mit
         # wenigen Verbindungen) soll nicht mit Schreibbefehlen ueberrollt werden. Dazwischen wird nur der
@@ -6849,6 +6900,7 @@ def _write_and_verify_battery_entity(entity_id, domain, service, data_key, targe
         while True:
             try:
                 current_state = homeassistant_adapter.load_entity_state(entity_id)
+                detail["last_state"] = current_state.state
                 state_log(current_state.state)
                 if _battery_value_matches(current_state.state, target_value):
                     test_log(f"{entity_id} hat den Wert {target_value} übernommen.", "ok")
@@ -6858,6 +6910,7 @@ def _write_and_verify_battery_entity(entity_id, domain, service, data_key, targe
                 state_log("nicht lesbar")
             now = time.time()
             if now >= deadline:
+                detail["seconds"] = int(now - started_at)
                 test_log(f"{entity_id} hat den Wert {target_value} innerhalb von {int(retry_timeout_seconds)} s nicht übernommen.", "error")
                 return False
             if now >= next_write_at:
@@ -6962,6 +7015,7 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
     max_charge_watts = round((config.get("batteryMaxChargeKw") or 0) * 1000) or None
 
     failed = []
+    failed_reasons = {}  # Anzeigename -> Klartext-Grund (siehe _battery_write_failure_reason)
     # Gemeinsames Zeitfenster fuer alle Schreibvorgaenge dieser Aktion (statt je Entitaet das volle
     # Fenster - bei vier Entitaeten sonst bis zum Vierfachen). Mindestens ein Wiederholungsabstand
     # bleibt jedem Schreibvorgang, damit spaetere Entitaeten trotzdem einen echten Versuch bekommen.
@@ -7027,6 +7081,7 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         test_log(f"{label}: setze auf {watts} W …")
         if not is_available(entity_id):
             failed.append(label)
+            failed_reasons[label] = f"{entity_id} ist in Home Assistant nicht verfügbar" if entity_id else "keine Entität zugeordnet"
             test_log(f"{label}: Entität nicht verfügbar – übersprungen.", "error")
             return
         # Auf den Wertebereich der Entitaet begrenzen: "kein Limit" (batteryMaxChargeKw, z.B. 8,8 kW) liegt
@@ -7035,8 +7090,10 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         if clamped != watts:
             test_log(f"{label}: Wert auf den Bereich der Entität begrenzt ({watts} → {clamped} W).")
         watts = clamped
-        if not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", watts, remaining_seconds()):
+        detail = {}
+        if not _write_and_verify_battery_entity(entity_id, "number", "set_value", "value", watts, remaining_seconds(), detail):
             failed.append(label)
+            failed_reasons[label] = _battery_write_failure_reason(entity_id, watts, detail, " W")
             test_log(f"{label}: fehlgeschlagen.", "error")
             note_unavailable_after_failure(entity_id)
         else:
@@ -7048,9 +7105,13 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         test_log(f"{label}: setze auf „{mode_value}“ …")
         if not is_available(mode_entity):
             failed.append(label)
+            failed_reasons[label] = f"{mode_entity} ist in Home Assistant nicht verfügbar" if mode_entity else "keine Entität zugeordnet"
             test_log(f"{label}: Entität nicht verfügbar – übersprungen.", "error")
-        elif not _write_and_verify_battery_entity(mode_entity, "select", "select_option", "option", mode_value, remaining_seconds()):
+            return
+        detail = {}
+        if not _write_and_verify_battery_entity(mode_entity, "select", "select_option", "option", mode_value, remaining_seconds(), detail):
             failed.append(label)
+            failed_reasons[label] = _battery_write_failure_reason(mode_entity, f"„{mode_value}“", detail)
             test_log(f"{label}: fehlgeschlagen.", "error")
             note_unavailable_after_failure(mode_entity)
         else:
@@ -7077,7 +7138,7 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
             write_rest_if_needed(discharge_limit_entity, "Entladeleistung")
             write_rest_if_needed(pv_surplus_charge_limit_entity, "Limit Ladeleistung (PV-Überschuss)")
         if timeout_entity:
-            write_number(timeout_entity, BATTERY_COMMAND_TIMEOUT_SECONDS["battery_grid_charge"], "Timeout")
+            write_number(timeout_entity, BATTERY_COMMAND_TIMEOUT_SECONDS["battery_grid_charge"], BATTERY_TIMEOUT_LABEL)
         write_number(charge_limit_entity, round((target_kw or 0) * 1000), "Limit Ladeleistung")
         write_mode(netzladen_mode_value, "Modus")
     elif action_key == "battery_discharge_shift":
@@ -7086,7 +7147,7 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
             write_rest_if_needed(charge_limit_entity, "Limit Ladeleistung (Netzladen)")
             write_rest_if_needed(pv_surplus_charge_limit_entity, "Limit Ladeleistung (PV-Überschuss)")
         if timeout_entity:
-            write_number(timeout_entity, BATTERY_COMMAND_TIMEOUT_SECONDS["battery_discharge_shift"], "Timeout")
+            write_number(timeout_entity, BATTERY_COMMAND_TIMEOUT_SECONDS["battery_discharge_shift"], BATTERY_TIMEOUT_LABEL)
         write_number(discharge_limit_entity, 0, "Entladeleistung")
     elif action_key == "battery_charge_shift_pv_surplus":
         if normalize_others:
@@ -7108,7 +7169,8 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
     if failed:
         if notify_on_failure:
             _notify_battery_control_failure(action_key, phase, failed, config, unavailable_labels)
-        message = f"Batterie-Steuerung unvollständig: {', '.join(failed)}."
+        parts = [f"{label} ({failed_reasons[label]})" if failed_reasons.get(label) else label for label in failed]
+        message = f"nicht gesetzt: {'; '.join(parts)}."
         hint = _battery_unavailable_hint(unavailable_labels)
         raise Exception(f"{message} {hint}" if hint else message[:-1])
 
@@ -7830,6 +7892,7 @@ def handle_shyft_action_start(action, actions_enabled, config):
         _fail_action(action, config, "no, error", start_error, prev_exec, "Starten")
         return
 
+    _note_retry_success(action)
     action["Execution Status"] = "yes, started"
     action.pop("Error Message", None)
     action.pop("Error First At", None)
@@ -7904,6 +7967,7 @@ def handle_shyft_action_end(action, actions_enabled, config):
         _fail_action(action, config, "yes, not finished", end_error, prev_exec, "Beenden")
         return
 
+    _note_retry_success(action)
     action["Execution Status"] = "yes, finished"
     action.pop("Error Message", None)
     action.pop("Error First At", None)

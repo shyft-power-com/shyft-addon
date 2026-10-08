@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.270
+
+* **Verständlichere Fehlermeldung der Batterie-Steuerung.** Statt „Batterie-Steuerung unvollständig: Timeout, Entladeleistung“ steht jetzt, was nicht gesetzt werden konnte und warum, z. B. „Fehler beim Starten - nicht gesetzt: Entladeleistung (number.xyz hat den Wert 0 W nicht übernommen und steht weiterhin auf 5000; 4 Schreibversuche in 120 s); Command-Timeout (Watchdog) (…)“. Gründe: Entität nicht verfügbar, Fehler von Home Assistant beim Schreiben (mit dessen Text) oder Wert nicht übernommen. Die Entität „Timeout“ heißt in Meldungen jetzt „Command-Timeout (Watchdog)“ – sie war nie eine Zeitüberschreitung, sondern ein Wert, der nicht gesetzt werden konnte.
+* **Wiederholungsversuche stehen im Log der Aktion.** Schlägt ein Start oder Ende fehl, wird weiterhin automatisch wiederholt (zuerst alle 30 Sekunden für 15 Minuten, danach mit dem 15-Minuten-Takt; je Versuch zusätzlich mehrere Schreibversuche über bis zu 2 Minuten). Jeder Versuch steht jetzt im Log: der erste mit voller Fehlermeldung, weitere mit gleicher Ursache kurz („Versuch 3: weiterhin fehlgeschlagen“), bei neuer Ursache wieder mit voller Meldung. Klappt es danach, steht „Versuch N: erfolgreich“ im Log. Ohne vorherigen Fehler gibt es weiterhin keinen Eintrag.
+
 ## 0.0.45.269
 
 * **Kein Log-Eintrag mehr beim Ablösen von Aktionen.** Wenn eine Batterie- oder Heizungs-Aktion eine andere ablöst, standen bisher „löst die laufende Aktion ab (neuer Optimierungslauf)“ bzw. „abgelöst durch …“ im Log. Ein Ablösen ohne Fehler ist der Normalfall und braucht keinen Eintrag – der Status „abgelöst“ zeigt es bereits. Schlägt etwas fehl, steht der Fehler wie bisher im Log der Aktion.
