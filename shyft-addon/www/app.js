@@ -10148,28 +10148,38 @@ async function loadDashboard() {
         } catch (err) {
             console.log(err);
         }
+        // Netzbezug (nur Bezug, keine Einspeisung) fuer die optionale Linie im Strompreis-Chart
+        let gridFinePoints = [];
+        try {
+            const gridFine = await getJson(insideHomeAssistant + '/dashboard/usage-fine?source=grid');
+            if (gridFine.status === 'success') {
+                gridFinePoints = gridFine.points.map(([t, v]) => [new Date(t).getTime(), v]);
+            }
+        } catch (err) {
+            console.log(err);
+        }
         const buildStrompreisChart = () => {
             const showUsage = getStrompreisShowUsage();
             let secondSeries = null;
-            if (showUsage && strompreisLabels.length > 0 && (usageFinePoints.length > 0 || (data.comparison_opt_usage || []).length > 0)) {
+            if (showUsage && strompreisLabels.length > 0 && (gridFinePoints.length > 0 || (data.comparison_opt_grid_import || []).length > 0)) {
                 const labelMs = strompreisLabels.map(l => new Date(l).getTime());
-                const lastFineMs = usageFinePoints.length ? usageFinePoints[usageFinePoints.length - 1][0] : -Infinity;
-                const optByMs = new Map((data.comparison_labels || []).map((l, k) => [new Date(l).getTime(), (data.comparison_opt_usage || [])[k]]));
+                const lastFineMs = gridFinePoints.length ? gridFinePoints[gridFinePoints.length - 1][0] : -Infinity;
+                const optByMs = new Map((data.comparison_labels || []).map((l, k) => [new Date(l).getTime(), (data.comparison_opt_grid_import || [])[k]]));
                 // Stundenwerte fuer Tooltip/Skalierung: Ist = Mittel der 5-Minuten-Schritte der Stunde (fuer die
                 // laufende und vergangene Stunden), Prognose = Shyft-Plan fuer die Stunden danach.
                 const actual = labelMs.map(ms => {
-                    const bins = usageFinePoints.filter(p => p[0] >= ms && p[0] < ms + 3600000);
+                    const bins = gridFinePoints.filter(p => p[0] >= ms && p[0] < ms + 3600000);
                     return bins.length ? bins.reduce((a, p) => a + p[1], 0) / bins.length : null;
                 });
                 const forecast = labelMs.map((ms, k) => (actual[k] === null && ms > lastFineMs && Number.isFinite(optByMs.get(ms)) ? optByMs.get(ms) : null));
                 secondSeries = {
-                    label: 'Stromverbrauch', unit: 'kW', decimals: 1, color: 'var(--color-text-secondary)',
-                    actual, forecast, fine: usageFinePoints.length >= 2 ? usageFinePoints : null, binMs: usageFineBinMs, zeroBased: true,
+                    label: 'Netzbezug', unit: 'kW', decimals: 1, color: 'var(--color-text-secondary)',
+                    actual, forecast, fine: gridFinePoints.length >= 2 ? gridFinePoints : null, binMs: usageFineBinMs, zeroBased: true,
                 };
             }
             return buildLineChart('Strompreis', 'Cent/kWh', strompreisLabels, strompreisValues, {
                 usageToggle: {
-                    label: 'Stromverbrauch',
+                    label: 'Netzbezug',
                     active: showUsage,
                     onToggle: () => {
                         setStrompreisShowUsage(!getStrompreisShowUsage());
@@ -10405,7 +10415,7 @@ async function loadDashboard() {
     }
 }
 
-// Strompreis-Chart: Stromverbrauch-Linie ein/aus (Legenden-Klick) - nur eine Anzeige-Vorliebe pro Browser,
+// Strompreis-Chart: Netzbezug-Linie ein/aus (Legenden-Klick) - nur eine Anzeige-Vorliebe pro Browser,
 // daher localStorage (kann fehlen/werfen, dann gilt der Standard "aus").
 function getStrompreisShowUsage() {
     try { return localStorage.getItem('shyftStrompreisShowUsage') === '1'; } catch (e) { return false; }

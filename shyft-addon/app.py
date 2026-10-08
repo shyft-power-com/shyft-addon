@@ -1655,7 +1655,7 @@ def readDashboardChartData():
     # output_csv isn't necessarily the same length as input_csv (the optimizer's own horizon can
     # be shorter) - it's assumed to start at the same creation_date regardless, just with fewer rows
     output_labels, t_i_target, t_i, t_hw, soc_b, soc_ev = [], [], [], [], [], []
-    opt_cost, opt_usage = [], []
+    opt_cost, opt_usage, opt_grid_import = [], [], []
     output_rows = []
     if output_csv:
         try:
@@ -1675,6 +1675,8 @@ def readDashboardChartData():
                 # Batterieladung (B_sum_in_45), gleiche Definition wie PowerUsageBaseList.
                 opt_cost.append(_safe_float(row.get("profits_net_opt")))
                 opt_usage.append(_safe_float(row.get("X_sum")) + _safe_float(row.get("B_sum_in_45")))
+                # Netzbezug (nur positiver GR_sum, Einspeisung zaehlt nicht) - optionale Linie im Strompreis-Chart
+                opt_grid_import.append(max(0.0, _safe_float(row.get("GR_sum"))))
         except Exception as e:
             print("[Shyft] output_csv konnte nicht gelesen werden:", repr(e))
             output_rows = []
@@ -1720,7 +1722,7 @@ def readDashboardChartData():
         output_labels[skip:], t_i_target[skip:], t_i[skip:], t_hw[skip:], soc_b[skip:], soc_ev[skip:])
     base_cost, base_usage = base_cost[skip:], base_usage[skip:]
     base_t_i, base_t_hw, base_soc_b, base_soc_ev = base_t_i[skip:], base_t_hw[skip:], base_soc_b[skip:], base_soc_ev[skip:]
-    opt_cost, opt_usage = opt_cost[skip:], opt_usage[skip:]
+    opt_cost, opt_usage, opt_grid_import = opt_cost[skip:], opt_usage[skip:], opt_grid_import[skip:]
 
     # Ist-Werte fuer die Stromkosten-/Stromverbrauch-Vergleichscharts (Nutzer-Vorgabe): fuer heute
     # bereits abgelaufene Stunden eine einzelne durchgezogene "Ist"-Linie statt der beiden
@@ -1748,6 +1750,7 @@ def readDashboardChartData():
     comparison_labels = [h.isoformat() for h in history_hours] + output_labels
     comparison_opt_cost = [None] * history_hour_count + opt_cost
     comparison_opt_usage = [None] * history_hour_count + opt_usage
+    comparison_opt_grid_import = [None] * history_hour_count + opt_grid_import
     comparison_base_cost = [None] * history_hour_count + base_cost
     comparison_base_usage = [None] * history_hour_count + base_usage
 
@@ -1778,6 +1781,7 @@ def readDashboardChartData():
         "comparison_labels": comparison_labels,
         "comparison_opt_cost": comparison_opt_cost,
         "comparison_opt_usage": comparison_opt_usage,
+        "comparison_opt_grid_import": comparison_opt_grid_import,
         "comparison_base_cost": comparison_base_cost,
         "comparison_base_usage": comparison_base_usage,
         "actual_cost": actual_cost,
@@ -10352,24 +10356,26 @@ def _household_usage_kwh(start, end, config=None):
 
 USAGE_FINE_BIN_MINUTES = 5
 USAGE_FINE_CACHE_SECONDS = 60
-_usage_fine_cache = {"key": None, "at": 0.0, "points": []}
+_usage_fine_cache = {}
 
 
-def _household_usage_fine_points(config=None):
+def _household_usage_fine_points(config=None, sensor_key="photovoltaic_powerflow_load", import_only=False):
     """Ist-Verbrauch des Haushalts von heute 0 Uhr (lokal) bis jetzt in USAGE_FINE_BIN_MINUTES-Minuten-
     Schritten, aus der HA-Historie des Sensors 'Haushalt: Aktuelle Leistung' (photovoltaic_powerflow_load).
     Je Schritt der zeitgewichtete Mittelwert der Leistung (Treppenfunktion wie in _sensor_history_kwh) -
     in kW, was zugleich "kWh pro Stunde" ist und damit auf derselben Achse liegt wie die stuendlichen
-    kWh-Werte der Verbrauchs-Charts. Liste von [Schritt-Beginn (ISO, UTC), kW]; leer ohne Sensor/Historie.
+    kWh-Werte der Verbrauchs-Charts. sensor_key/import_only: mit 'photovoltaic_powerflow_grid' und import_only=True
+    der NETZBEZUG (nur positive Leistung, Einspeisung zaehlt als 0). Liste von [Schritt-Beginn (ISO, UTC), kW]; leer ohne Sensor/Historie.
     Kurz zwischengespeichert, da der Dashboard-Refresh alle 30 s fragt."""
     now = datetime.now(timezone.utc)
     midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
-    key = midnight_utc.isoformat()
-    if _usage_fine_cache["key"] == key and time.time() - _usage_fine_cache["at"] < USAGE_FINE_CACHE_SECONDS:
-        return _usage_fine_cache["points"]
+    key = (midnight_utc.isoformat(), sensor_key, import_only)
+    cached = _usage_fine_cache.get(key)
+    if cached and time.time() - cached[0] < USAGE_FINE_CACHE_SECONDS:
+        return cached[1]
     points = []
     try:
-        raw = _history_raw_converted_kw("photovoltaic_powerflow_load", midnight_utc, now, config or _read_current_config())
+        raw = _history_raw_converted_kw(sensor_key, midnight_utc, now, config or _read_current_config())
     except Exception as e:
         print("[Shyft] Ist-Verbrauch (feine Auflösung) konnte nicht geladen werden:", repr(e))
         raw = None
@@ -10377,7 +10383,7 @@ def _household_usage_fine_points(config=None):
         parsed = []
         for t, state in raw:
             try:
-                parsed.append((t, float(state)))
+                parsed.append((t, max(0.0, float(state)) if import_only else float(state)))
             except (TypeError, ValueError):
                 continue  # "unknown"/"unavailable"
         bin_delta = timedelta(minutes=USAGE_FINE_BIN_MINUTES)
@@ -10401,16 +10407,22 @@ def _household_usage_fine_points(config=None):
             if covered > 0:
                 points.append([bin_start.isoformat(), round(weighted / covered, 3)])
             bin_start += bin_delta
-    _usage_fine_cache.update({"key": key, "at": time.time(), "points": points})
+    for old_key in [k for k in _usage_fine_cache if k[0] != key[0]]:
+        del _usage_fine_cache[old_key]  # Eintraege von gestern verwerfen
+    _usage_fine_cache[key] = (time.time(), points)
     return points
 
 
 @app.route("/dashboard/usage-fine", methods=["GET"])
 def readUsageFine():
-    "Ist-Stromverbrauch heute in 5-Minuten-Schritten (kW), siehe _household_usage_fine_points - fuer 'Dein Stromverbrauch' und die optionale Verbrauchslinie im Strompreis-Chart."
+    "Ist-Stromverbrauch heute in 5-Minuten-Schritten (kW), siehe _household_usage_fine_points - fuer 'Dein Stromverbrauch'. Mit ?source=grid stattdessen der NETZBEZUG (optionale Linie im Strompreis-Chart)."
     if is_demo_mode():
         return jsonify({"status": "success", "binMinutes": USAGE_FINE_BIN_MINUTES, "points": []})
-    return jsonify({"status": "success", "binMinutes": USAGE_FINE_BIN_MINUTES, "points": _household_usage_fine_points()})
+    if request.args.get("source") == "grid":
+        points = _household_usage_fine_points(sensor_key="photovoltaic_powerflow_grid", import_only=True)
+    else:
+        points = _household_usage_fine_points()
+    return jsonify({"status": "success", "binMinutes": USAGE_FINE_BIN_MINUTES, "points": points})
 
 
 HOUSEHOLD_USAGE_BACKFILL_DAYS = 9 # etwa so weit reicht die HA-Historie (Recorder-Standard 10 Tage)

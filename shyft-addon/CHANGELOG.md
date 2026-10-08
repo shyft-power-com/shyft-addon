@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.268
+
+* **Strompreis-Chart: optionale Linie zeigt jetzt den Netzbezug statt des Gesamtverbrauchs.** Der Legenden-Eintrag heißt „Netzbezug“. Ist (durchgezogen, 5-Minuten-Auflösung) kommt aus dem Netz-Sensor (nur positive Leistung, Einspeisung zählt als 0), die Prognose (gestrichelt) aus dem Netzbezug des Optimierungslaufs (GR_sum, nur positive Werte). „Dein Stromverbrauch“ bleibt beim Gesamtverbrauch des Haushalts. `/dashboard/usage-fine` liefert mit `?source=grid` den Netzbezug.
+
 ## 0.0.45.267
 
 * **Steuerungs-Schalter kompakter.** Die Leiste auf der Gerätesteuerung-Seite ist deutlich kleiner: kleinere Schrift, Schalter und Symbole, weniger Abstand, linksbündige Beschriftung und bis zu 4 Karten pro Zeile (bei schmaleren Fenstern 3 bzw. 2/1). Nur Optik.
