@@ -9409,9 +9409,8 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
             if was_really_started and is_action_type_enabled(config, action_name):
                 # Die neu berechnete Aktion loest die laufende AB: kein Beenden (das wuerde Modus/Limits zuruecksetzen, um
                 # sie sofort wieder zu setzen), der Start der neuen Aktion ueberschreibt die Werte direkt.
+                # Kein Log-Eintrag: ein reibungsloses Abloesen ist der Normalfall, der Status "abgeloest" der alten Aktion zeigt es schon.
                 replacement["_supersedes"] = action_name
-                note = f"{_local_now().strftime('%H:%M Uhr')}: löst die laufende Aktion ab (neuer Optimierungslauf)"
-                replacement["Log"] = (replacement.get("Log") + "\n" + note) if replacement.get("Log") else note
             else:
                 try:
                     handle_shyft_action_end(hour0_existing, was_really_started, config)
@@ -9763,8 +9762,8 @@ def _mark_superseded(action, other):
     action["Status"] = SUPERSEDED_STATUS
     if action.get("Execution Status") == "yes, started":
         action["Execution Status"] = "yes, finished"
-    note = f"{_local_now().strftime('%H:%M Uhr')}: abgelöst durch \"{other.get('Action Name')}\""
-    action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+    # Kein Log-Eintrag (siehe _reconcile_computed_actions): der Status "abgeloest" genuegt. Fehler beim Abloesen werden
+    # weiterhin beim Start der neuen Aktion protokolliert.
     other["_supersedes"] = action.get("Action Name")
 
 

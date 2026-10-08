@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.269
+
+* **Kein Log-Eintrag mehr beim Ablösen von Aktionen.** Wenn eine Batterie- oder Heizungs-Aktion eine andere ablöst, standen bisher „löst die laufende Aktion ab (neuer Optimierungslauf)“ bzw. „abgelöst durch …“ im Log. Ein Ablösen ohne Fehler ist der Normalfall und braucht keinen Eintrag – der Status „abgelöst“ zeigt es bereits. Schlägt etwas fehl, steht der Fehler wie bisher im Log der Aktion.
+
 ## 0.0.45.268
 
 * **Strompreis-Chart: optionale Linie zeigt jetzt den Netzbezug statt des Gesamtverbrauchs.** Der Legenden-Eintrag heißt „Netzbezug“. Ist (durchgezogen, 5-Minuten-Auflösung) kommt aus dem Netz-Sensor (nur positive Leistung, Einspeisung zählt als 0), die Prognose (gestrichelt) aus dem Netzbezug des Optimierungslaufs (GR_sum, nur positive Werte). „Dein Stromverbrauch“ bleibt beim Gesamtverbrauch des Haushalts. `/dashboard/usage-fine` liefert mit `?source=grid` den Netzbezug.
