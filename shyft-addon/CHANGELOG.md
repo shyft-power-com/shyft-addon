@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.45.275
+
+* **Kurven in allen Dashboard-Charts per Antippen der Legende aus-/einblendbar.** Ein Tipp auf einen Legenden-Eintrag blendet die Kurve aus, ein weiterer wieder ein (ausgeblendete Einträge sind abgeblendet und durchgestrichen). Der Zustand wird je Chart und Kurve im Browser gespeichert und bleibt beim Verlassen/Neuladen der Seite erhalten; beim ersten Öffnen ist alles eingeblendet (auch die Netzbezug-Linie im Strompreis-Chart, die bisher standardmäßig aus war). Ausnahme: Außentemperatur (nur eine Kurve, Legende ohne Schaltfunktion). Auch die Aktions-Flächen (z. B. „Aktion“, „Aktion: Netzladen“) lassen sich über ihren Legenden-Eintrag ausblenden.
+* **Einheitliche Legenden.** Statt runder Punkte zeigen die Legenden jetzt Linien – durchgezogen für „Ist-Wert“, gestrichelt für „Prognose“ (zuerst Ist-Wert, dann Prognose; „Historisch“ und „Ist-Werte“ heißen überall „Ist-Wert“). Charts mit zwei Kurven (Raumtemperatur: „Heizung-Soll“/„Innenraum“, Strompreis: „Strompreis“/„Netzbezug“) zeigen je Kurve einen Eintrag mit durchgezogenem und gestricheltem Abschnitt; Flächen (Aktion, Anwesenheit) erscheinen als kleine Rechtecke.
+* **Kürzere Überschriften:** „PV-Leistung (kW)“, „Warmwasser (°C)“, „Ladestand Heimspeicher (%)“ ohne den Zusatz „Prognose vs. Ist“.
+* **Raumtemperatur-Chart: Kurven versetzt.** „Heizung-Soll“ (Verlauf bis jetzt durchgezogen, danach gestrichelt) liegt jetzt im unteren, „Innenraum“ im oberen Teil des Charts, sodass die Kurven übereinander statt aufeinander verlaufen. Die Achsen bleiben in vollen Grad beschriftet.
+
 ## 0.0.45.274
 
 * **Dashboard-Charts um 25 % höher.** Die Liniendiagramme (Strompreis, PV, Raumtemperatur, Ladestand, Warmwasser, …) sind jetzt 275 statt 220 Einheiten hoch – auf dem Handy, wo sie auf die Bildschirmbreite skaliert werden, wirkten sie zu flach.

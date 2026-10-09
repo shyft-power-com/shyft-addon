@@ -7443,6 +7443,11 @@ function computePvEnergySummary(labels, values) {
 // Handy (wo das SVG auf die Bildschirmbreite skaliert wird) nicht so flach wirken.
 const CHART_SVG_HEIGHT = 275;
 
+// Anteil der Diagrammhoehe, den eine Kurve mit "Versatz" (bandPrimary/secondSeries.band, z.B. Raumtemperatur) einnimmt:
+// die Hauptkurve (linke Achse) im unteren, die zweite Kurve (rechte Achse) im oberen Teil - so liegen beide eher
+// uebereinander statt aufeinander.
+const CHART_BAND_FRACTION = 0.6;
+
 // Haelt den Tooltip innerhalb des Chart-Containers: er ist per translate(-50%) um die Maus-/Touch-Stelle zentriert und
 // wuerde am linken/rechten Rand sonst abgeschnitten (bzw. dort umbrechen, siehe .dashboardChartTooltip in index.html).
 function clampChartTooltip(tooltip) {
@@ -7452,6 +7457,90 @@ function clampChartTooltip(tooltip) {
     const left = parseFloat(tooltip.style.left);
     if (isNaN(left)) return;
     tooltip.style.left = Math.min(Math.max(left, half), Math.max(half, container.clientWidth - half)).toFixed(1) + 'px';
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Legende der Dashboard-Charts: Linienmuster statt Punkten (durchgezogen = Ist-Wert, gestrichelt = Prognose) und
+// Antippen/Anklicken eines Legenden-Eintrags blendet die zugehoerige Kurve aus bzw. wieder ein. Der Zustand wird je
+// Chart und Kurve im Browser gespeichert (localStorage, ueberlebt Neuladen/Verlassen der Seite); Standard beim ersten
+// Oeffnen: alles eingeblendet. Charts ohne chartKey (Aussentemperatur - nur eine Kurve) bekommen eine Legende ohne
+// Schaltfunktion.
+// ---------------------------------------------------------------------------------------------------------------
+const CHART_HIDDEN_SERIES_STORAGE_KEY = 'shyftChartHiddenSeries';
+const chartHiddenSeriesMemory = {};  // Rueckfall (und Cache), falls der Browser-Speicher nicht verfuegbar ist
+
+function loadHiddenChartSeries(chartKey) {
+    if (chartKey in chartHiddenSeriesMemory) return new Set(chartHiddenSeriesMemory[chartKey]);
+    let list = [];
+    try {
+        const all = JSON.parse(localStorage.getItem(CHART_HIDDEN_SERIES_STORAGE_KEY) || '{}');
+        if (Array.isArray(all[chartKey])) list = all[chartKey];
+    } catch (err) { /* Browser-Speicher nicht verfuegbar oder kaputt: alles eingeblendet */ }
+    chartHiddenSeriesMemory[chartKey] = list;
+    return new Set(list);
+}
+
+function saveHiddenChartSeries(chartKey, hiddenSet) {
+    chartHiddenSeriesMemory[chartKey] = [...hiddenSet];
+    try {
+        const all = JSON.parse(localStorage.getItem(CHART_HIDDEN_SERIES_STORAGE_KEY) || '{}');
+        if (hiddenSet.size) all[chartKey] = [...hiddenSet]; else delete all[chartKey];
+        localStorage.setItem(CHART_HIDDEN_SERIES_STORAGE_KEY, JSON.stringify(all));
+    } catch (err) { /* egal - der Zustand gilt dann nur bis zum Neuladen */ }
+}
+
+// Baut einen Chart ueber build(ctx) (ctx = {hidden: Set ausgeblendeter Kurven, toggle: Funktion(seriesId) | null}) und
+// baut ihn beim Umschalten einer Kurve an Ort und Stelle neu - nur die von build() erzeugten Knoten werden getauscht, vom
+// Aufrufer spaeter angehaengte Elemente (z.B. Prognose-Details unter "Ladestand Auto") bleiben erhalten.
+function makeToggleableChart(chartKey, build) {
+    if (!chartKey) return build({hidden: new Set(), toggle: null});
+    let wrapper = null;
+    let ownNodes = [];
+    const makeCtx = () => ({hidden: loadHiddenChartSeries(chartKey), toggle});
+    function toggle(seriesId) {
+        const hidden = loadHiddenChartSeries(chartKey);
+        if (hidden.has(seriesId)) hidden.delete(seriesId); else hidden.add(seriesId);
+        saveHiddenChartSeries(chartKey, hidden);
+        const next = build(makeCtx());
+        const nextNodes = [...next.childNodes];
+        const anchor = ownNodes[0] || null;
+        for (const node of nextNodes) wrapper.insertBefore(node, anchor);
+        for (const node of ownNodes) node.remove();
+        ownNodes = nextNodes;
+    }
+    wrapper = build(makeCtx());
+    ownNodes = [...wrapper.childNodes];
+    return wrapper;
+}
+
+// Ein Legenden-Eintrag. style: 'solid' (Ist-Wert), 'dashed' (Prognose), 'both' (Kurve mit Ist-Wert und Prognose) oder
+// 'square' (Flaeche, z.B. Aktion). id=null oder ctx.toggle=null: reine Beschriftung ohne Schaltfunktion.
+function chartLegendEntry(ctx, {id = null, label, color = 'var(--color-text-secondary)', style = 'solid', opacity = null}) {
+    const hidden = !!id && ctx.hidden.has(id);
+    const interactive = !!id && !!ctx.toggle;
+    const item = document.createElement(interactive ? 'button' : 'span');
+    item.className = 'dashboardChartLegendItem' + (interactive ? ' dashboardChartLegendToggle' : '') + (hidden ? ' is-hidden' : '');
+    if (interactive) {
+        item.type = 'button';
+        item.setAttribute('aria-pressed', hidden ? 'false' : 'true');
+        item.title = hidden ? 'Zum Einblenden antippen' : 'Zum Ausblenden antippen';
+        item.addEventListener('click', () => ctx.toggle(id));
+    }
+    const line = (x1, x2, dashed) => `<line x1="${x1}" y1="5" x2="${x2}" y2="5" stroke="${color}" stroke-width="2" ${dashed ? 'stroke-dasharray="4,3"' : ''} />`;
+    let svg;
+    if (style === 'square') {
+        svg = `<svg width="12" height="10" viewBox="0 0 12 10"><rect x="0" y="0" width="12" height="10" fill="${color}" ${opacity ? `opacity="${opacity}"` : ''} /></svg>`;
+    } else if (style === 'both') {
+        svg = `<svg width="28" height="10" viewBox="0 0 28 10">${line(0, 11, false)}${line(15, 28, true)}</svg>`;
+    } else {
+        svg = `<svg width="20" height="10" viewBox="0 0 20 10">${line(0, 20, style === 'dashed')}</svg>`;
+    }
+    const icon = document.createElement('span');
+    icon.style.display = 'inline-flex';
+    icon.innerHTML = svg;
+    item.appendChild(icon);
+    item.appendChild(document.createTextNode(label));
+    return item;
 }
 
 function computeNiceTicks(min, max, targetCount = 4) {
@@ -7473,7 +7562,11 @@ function computeNiceTicks(min, max, targetCount = 4) {
 }
 
 function buildLineChart(title, unit, labels, values, options = {}) {
-    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, usageToggle = null, overlayForecast = null} = options;
+    return makeToggleableChart(options.chartKey, ctx => buildLineChartImpl(title, unit, labels, values, options, ctx));
+}
+
+function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hidden: new Set(), toggle: null}) {
+    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, overlayForecast = null, curveLegend = false, bandPrimary = null} = options;
     const width = 600, height = CHART_SVG_HEIGHT;
     // presenceForecast reserves an extra strip just above the x-axis labels for the
     // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
@@ -7496,96 +7589,43 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     titleEl.textContent = title + (parenthetical ? ` (${parenthetical})` : '');
     wrapper.appendChild(titleEl);
 
-    if (presenceForecast) {
-        // Die "Anwesenheitsprognose"-Ueberschrift + Erklaerung sitzt jetzt unter dem Chart als
-        // Ueberschrift der "Verbrauchsprognose (48h)"-Details (siehe buildPresenceForecastHeading
-        // am Aufrufort) - hier oben bleibt nur die Legende zur farbigen Anwesenheits-Leiste im Chart.
-        const legend = document.createElement('div');
-        legend.className = 'dashboardChartLegend';
-        for (const [color, label] of [
-            ['var(--color-accent)', 'eingesteckt'],
-            ['var(--color-text-secondary)', 'steht'],
-            ['var(--color-error)', 'fährt'],
-        ]) {
-            const item = document.createElement('span');
-            item.className = 'dashboardChartLegendItem';
-            const dot = document.createElement('span');
-            dot.className = 'dashboardChartLegendDot';
-            dot.style.background = color;
-            item.appendChild(dot);
-            item.appendChild(document.createTextNode(label));
-            legend.appendChild(item);
-        }
-        wrapper.appendChild(legend);
+    // Legende (siehe chartLegendEntry): 'curves' = je Kurve ein Eintrag (Hauptkurve + optionale zweite Kurve, z.B.
+    // Raumtemperatur "Heizung-Soll"/"Innenraum", Strompreis/Netzbezug); 'actualForecast' = "Ist-Wert" (durchgezogen) und
+    // "Prognose" (gestrichelt) bei einer Kurve, deren Ist-Teil bis dashedFromIndex reicht (z.B. Ladestand Auto).
+    const hid = ctx.hidden;
+    const legendMode = (secondSeries || curveLegend) ? 'curves' : (dashedFromIndex !== null ? 'actualForecast' : null);
+    const legendEntries = [];
+    if (legendMode === 'curves') {
+        legendEntries.push(chartLegendEntry(ctx, {id: 'primary', label: primaryLabel || subtitle || title, color: 'var(--color-accent)', style: 'both'}));
+        if (secondSeries) legendEntries.push(chartLegendEntry(ctx, {id: 'second', label: secondSeries.label, color: secondSeries.color || 'var(--color-text-secondary)', style: 'both'}));
+    } else if (legendMode === 'actualForecast') {
+        legendEntries.push(chartLegendEntry(ctx, {id: 'actual', label: 'Ist-Wert', color: 'var(--color-text-secondary)', style: 'solid'}));
+        legendEntries.push(chartLegendEntry(ctx, {id: 'forecast', label: 'Prognose', color: 'var(--color-text-secondary)', style: 'dashed'}));
     }
-
-    // Aktions-Indikator-Legende (siehe actionBandsMarkup unten) - eigener Eintrag nur, wenn der
-    // Aufrufer ueberhaupt Aktionsstunden mitgibt. "Aktion (deaktiviert)" (Nutzer-Feedback) nur, wenn
-    // tatsaechlich eine deaktivierte Stunde vorkommt - der Aktionstyp ist dann per Toggle aus, der
-    // Optimierer plant trotzdem weiter damit, das Geraet wird aber nie wirklich angesteuert.
+    // Aktions-Indikator-Legende - eigener Eintrag nur, wenn der Aufrufer ueberhaupt Aktionsstunden mitgibt. "Aktion
+    // (deaktiviert)" nur, wenn tatsaechlich eine deaktivierte Stunde vorkommt (Aktionstyp per Toggle aus - der Optimierer
+    // plant trotzdem weiter damit, das Geraet wird aber nie wirklich angesteuert).
     if (actionHours) {
-        const legend = document.createElement('div');
-        legend.className = 'dashboardChartLegend';
-        function addActionLegendItem(color, label) {
-            const item = document.createElement('span');
-            item.className = 'dashboardChartLegendItem';
-            const dot = document.createElement('span');
-            dot.className = 'dashboardChartLegendDot';
-            dot.style.background = color;
-            dot.style.opacity = ACTION_BAND_OPACITY;
-            item.appendChild(dot);
-            item.appendChild(document.createTextNode(label));
-            legend.appendChild(item);
+        legendEntries.push(chartLegendEntry(ctx, {id: 'action', label: 'Aktion', color: 'var(--color-accent)', style: 'square', opacity: ACTION_BAND_OPACITY}));
+        if (actionHours.includes('deactivated')) legendEntries.push(chartLegendEntry(ctx, {id: 'action:deactivated', label: 'Aktion (deaktiviert)', color: 'var(--color-border)', style: 'square', opacity: ACTION_BAND_OPACITY}));
+    }
+    // Legende zur farbigen Anwesenheits-Leiste im Chart (die Ueberschrift + Erklaerung "Anwesenheitsprognose" sitzt unter
+    // dem Chart, siehe buildPresenceForecastHeading am Aufrufort) - reine Beschriftung, nicht ausblendbar.
+    if (presenceForecast) {
+        for (const [color, label] of [['var(--color-accent)', 'eingesteckt'], ['var(--color-text-secondary)', 'steht'], ['var(--color-error)', 'fährt']]) {
+            legendEntries.push(chartLegendEntry(ctx, {label, color, style: 'square'}));
         }
-        addActionLegendItem('var(--color-accent)', 'Aktion');
-        if (actionHours.includes('deactivated')) addActionLegendItem('var(--color-border)', 'Aktion (deaktiviert)');
-        wrapper.appendChild(legend);
     }
-
-    // Kleine Legende, damit die Hauptkurve (linke Skala) von der zweiten (rechte Skala, siehe
-    // secondSeries) unterscheidbar bleibt - beide Skalen sind unabhaengig voneinander, die Farben
-    // allein wuerden das nicht selbsterklaerend machen. primaryLabel (statt subtitle/title) laesst
-    // sich unabhaengig vom Chart-Titel beschriften (Nutzer-Vorgabe: Titel bleibt "Raumtemperatur
-    // (°C)", die Legende darunter zeigt trotzdem "Heizung-Soll").
-    // usageToggle (Strompreis-Chart, Nutzer-Vorgabe): anklickbarer Legenden-Eintrag "Stromverbrauch" -
-    // standardmaessig ausgegraut (Linie aus), ein Klick blendet die graue Verbrauchslinie (Ist
-    // durchgezogen + Prognose gestrichelt) ein bzw. wieder aus. Der Aufrufer baut den Chart bei
-    // onToggle neu (secondSeries nur bei aktivem Zustand), der Zustand liegt dort.
-    if (usageToggle) {
+    if (legendEntries.length > 0) {
         const legend = document.createElement('div');
         legend.className = 'dashboardChartLegend';
-        const item = document.createElement('button');
-        item.type = 'button';
-        item.className = 'dashboardChartLegendItem dashboardChartLegendToggle' + (usageToggle.active ? ' active' : '');
-        item.setAttribute('aria-pressed', usageToggle.active ? 'true' : 'false');
-        item.style.cssText = 'background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;' + (usageToggle.active ? '' : 'opacity:0.45;');
-        const dot = document.createElement('span');
-        dot.className = 'dashboardChartLegendDot';
-        dot.style.background = 'var(--color-text-secondary)';
-        item.appendChild(dot);
-        item.appendChild(document.createTextNode(usageToggle.label));
-        item.addEventListener('click', () => usageToggle.onToggle());
-        legend.appendChild(item);
+        legendEntries.forEach(entry => legend.appendChild(entry));
         wrapper.appendChild(legend);
     }
-    if (secondSeries && !usageToggle) {
-        const legend = document.createElement('div');
-        legend.className = 'dashboardChartLegend';
-        for (const [color, label] of [
-            ['var(--color-accent)', primaryLabel || subtitle || title],
-            [secondSeries.color || 'var(--color-text-secondary)', secondSeries.label],
-        ]) {
-            const item = document.createElement('span');
-            item.className = 'dashboardChartLegendItem';
-            const dot = document.createElement('span');
-            dot.className = 'dashboardChartLegendDot';
-            dot.style.background = color;
-            item.appendChild(dot);
-            item.appendChild(document.createTextNode(label));
-            legend.appendChild(item);
-        }
-        wrapper.appendChild(legend);
-    }
+    const hidePrimarySeg = i => (legendMode === 'curves' ? hid.has('primary')
+        : legendMode === 'actualForecast' ? (i >= dashedFromIndex ? hid.has('forecast') : hid.has('actual'))
+        : false);
+    const hideSecond = !!secondSeries && hid.has('second');
 
     if (!values || values.length === 0) {
         const empty = document.createElement('p');
@@ -7605,6 +7645,11 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     if (minY !== null) yMin = Math.max(yMin, minY);
     if (fixedMin !== null) yMin = fixedMin;
     if (fixedMax !== null) yMax = fixedMax;
+    if (bandPrimary) {
+        // Versatz (siehe CHART_BAND_FRACTION): den Wertebereich auf den Bruchteil der Hoehe stauchen und nach unten/oben schieben.
+        const totalRange = ((yMax - yMin) || 1) / CHART_BAND_FRACTION;
+        if (bandPrimary === 'upper') yMin = yMax - totalRange; else yMax = yMin + totalRange;
+    }
     const yRange = (yMax - yMin) || 1;
     const lastIndex = scaledValues.length - 1 || 1;
 
@@ -7636,6 +7681,10 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         const pad2 = secondSeries.absolutePadding ?? valueRange2 * 0.1;
         yMin2 = secondSeries.zeroBased ? 0 : rawMin2 - pad2;
         yMax2 = rawMax2 + pad2;
+        if (secondSeries.band) {
+            const totalRange2 = (yMax2 - yMin2) / CHART_BAND_FRACTION;
+            if (secondSeries.band === 'upper') yMin2 = yMax2 - totalRange2; else yMax2 = yMin2 + totalRange2;
+        }
         if (secondSeries.integerTicks && Math.floor(yMax2) - Math.ceil(yMin2) < 1) {
             // integerTicks (z.B. Innenraum in vollen Grad): liegen weniger als zwei ganze Zahlen im Bereich, wird der
             // Bereich auf die naechsten ganzen Zahlen erweitert, damit mindestens zwei Beschriftungen entstehen.
@@ -7754,6 +7803,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         // splitJumpByBands), or otherwise takes the color of the value it's leaving
         const lineParts = [], areaParts = [];
         for (let i = 0; i < points.length - 1; i++) {
+            if (hidePrimarySeg(i)) continue;
             const color = colorBands ? colorForValue(scaledValues[i]) : colorForSlope(scaledValues[i], scaledValues[i + 1]);
             // Nutzer-Vorgabe (Strompreis): ab dashedFromIndex (jenseits des bekannten Awattar-Fensters)
             // gestrichelt statt durchgezogen - reine Prognose statt bekanntem/veroeffentlichtem Preis.
@@ -7777,6 +7827,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         // one straight sub-path per segment, colored by that segment's own rise/fall
         const lineParts = [], areaParts = [];
         for (let i = 0; i < points.length - 1; i++) {
+            if (hidePrimarySeg(i)) continue;
             const color = colorForSlope(scaledValues[i], scaledValues[i + 1]);
             const dashAttr = (dashedFromIndex !== null && i >= dashedFromIndex) ? 'stroke-dasharray="5,4"' : '';
             const [x0, y0] = points[i];
@@ -7790,15 +7841,15 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         const color = colorForValue(scaledValues[0]);
         const linePath = points.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
         const areaPath = `${linePath} L${points[points.length - 1][0].toFixed(1)},${baseline.toFixed(1)} L${points[0][0].toFixed(1)},${baseline.toFixed(1)} Z`;
-        areaMarkup = `<path d="${areaPath}" fill="${color}" opacity="0.15" stroke="none" />`;
-        lineMarkup = `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2" />`;
+        areaMarkup = hidePrimarySeg(0) ? '' : `<path d="${areaPath}" fill="${color}" opacity="0.15" stroke="none" />`;
+        lineMarkup = hidePrimarySeg(0) ? '' : `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2" />`;
     }
 
     // overlayForecast (Ladestand Auto): die Prognose-Linie (gestrichelt) laeuft zusaetzlich ueber die
     // Stunden, fuer die es schon einen Ist-Wert gibt (die Hauptlinie zeigt dort das Ist) - Werte aus
     // dem jeweils letzten Optimierungslauf vor der Stunde. Ab dashedFromIndex uebernimmt die Hauptlinie.
     let overlayMarkup = '';
-    if (overlayForecast && dashedFromIndex !== null) {
+    if (overlayForecast && dashedFromIndex !== null && !(legendMode === 'actualForecast' && hid.has('forecast'))) {
         const parts = [];
         const ov = overlayForecast.map(v => (v === null || v === undefined ? null : v * valueScale));
         for (let i = 0; i < Math.min(dashedFromIndex, ov.length - 1, points.length - 1); i++) {
@@ -7872,7 +7923,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         // Zusaetzlich ein dauerhaft sichtbarer Punkt auf der Linie (der Strich allein ist zu unauffaellig) - gleiches
         // Aussehen wie der Punkt beim Mouse-over (dashboardChartMarker), aber eigene Klasse, damit er nicht mit dem
         // verschiebbaren Hover-Punkt verwechselt wird (der per querySelector gesucht wird).
-        for (const p of [points[nowIndex], points2 && points2[nowIndex]]) {
+        for (const p of [hidePrimarySeg(nowIndex) ? null : points[nowIndex], hideSecond ? null : (points2 && points2[nowIndex])]) {
             if (p) nowMarkup += `<circle class="dashboardChartNowDot" r="4.5" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" />`;
         }
     }
@@ -7904,6 +7955,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         for (let i = 0; i < labels.length; i++) {
             const category = actionHours[i];
             if (!category) continue;
+            if (hid.has(category === 'deactivated' ? 'action:deactivated' : 'action')) continue;
             const xStart = paddingLeft + (i / lastIndex) * plotWidth;
             const xEnd = i < lastIndex ? paddingLeft + ((i + 1) / lastIndex) * plotWidth : (width - paddingRight);
             const color = category === 'deactivated' ? 'var(--color-border)' : 'var(--color-accent)';
@@ -7921,15 +7973,15 @@ function buildLineChart(title, unit, labels, values, options = {}) {
             ${areaMarkup}
             ${lineMarkup}
             ${overlayMarkup}
-            ${secondLineMarkup}
+            ${hideSecond ? '' : secondLineMarkup}
             ${presenceMarkup}
             ${nowMarkup}
             ${dayBoundaryMarkup}
             ${yLabels}
-            ${yLabels2}
+            ${hideSecond ? '' : yLabels2}
             ${xLabels}
             <circle class="dashboardChartMarker" r="4.5" cx="0" cy="0" visibility="hidden" />
-            ${secondSeries ? '<circle class="dashboardChartMarker dashboardChartMarkerSecond" r="4.5" cx="0" cy="0" visibility="hidden" />' : ''}
+            ${secondSeries && !hideSecond ? '<circle class="dashboardChartMarker dashboardChartMarkerSecond" r="4.5" cx="0" cy="0" visibility="hidden" />' : ''}
         </svg>`;
     wrapper.appendChild(chartContainer);
 
@@ -7962,18 +8014,19 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         const idx = Math.max(0, Math.min(lastIndex, Math.round((svgX - paddingLeft) / plotWidth * lastIndex)));
         const d = new Date(labels[idx]);
         const dateText = d.toLocaleString('de-DE', {weekday: 'short', hour: '2-digit', minute: '2-digit'}).replace('.', '');
+        const primaryHiddenHere = hidePrimarySeg(idx);
         let text;
         if (secondSeries) {
             // Dreizeilig (Nutzer-Vorgabe): Zeitpunkt, dann je eine Zeile pro Kurve, jeweils mit
             // ihrer eigenen Beschriftung (primaryLabel fuer die Hauptreihe, secondSeries.label fuer
-            // die zweite) statt einer einzelnen, mit "·" zusammengequetschten Zeile.
+            // die zweite) statt einer einzelnen, mit "·" zusammengequetschten Zeile. Ausgeblendete Kurven fehlen.
             const v2 = merged2[idx];
             const unit2 = secondSeries.unit !== undefined ? secondSeries.unit : unit;
             const primaryText = `${primaryLabel || subtitle || title}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
             const secondaryText = (v2 === null || v2 === undefined) ? `${secondSeries.label}: –` : `${secondSeries.label}: ${v2.toFixed(secondSeries.decimals ?? 1)}${unit2 ? ' ' + unit2 : ''}`;
-            text = `${dateText}\n${primaryText}\n${secondaryText}`;
+            text = [dateText, primaryHiddenHere ? null : primaryText, hideSecond ? null : secondaryText].filter(Boolean).join('\n');
         } else {
-            text = `${dateText}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
+            text = primaryHiddenHere ? dateText : `${dateText}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
         }
         tooltip.textContent = text;
         tooltip.style.left = (points[idx][0] * scale).toFixed(1) + 'px';
@@ -7982,7 +8035,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         clampChartTooltip(tooltip);
         marker.setAttribute('cx', points[idx][0].toFixed(1));
         marker.setAttribute('cy', points[idx][1].toFixed(1));
-        marker.setAttribute('visibility', 'visible');
+        marker.setAttribute('visibility', primaryHiddenHere ? 'hidden' : 'visible');
         if (marker2 && points2 && points2[idx]) {
             marker2.setAttribute('cx', points2[idx][0].toFixed(1));
             marker2.setAttribute('cy', points2[idx][1].toFixed(1));
@@ -8023,7 +8076,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 // Touch-Marker, Tagesgrenzen) bleiben fuer alle gleich, nur Titel/Einheit/Skalierung/Nachkommastellen
 // und die PV-spezifische Ertragssumme sind parametrisiert.
 function buildPvForecastActualChart(labels, forecast, actual) {
-    return buildForecastActualChart('PV-Leistung: Prognose vs. Ist', 'kW', labels, forecast, actual, {decimals: 1, energySummary: true});
+    return buildForecastActualChart('PV-Leistung', 'kW', labels, forecast, actual, {decimals: 1, energySummary: true, chartKey: 'pvLeistung'});
 }
 
 // "Ladestand Heimspeicher": Ist-Werte kommen direkt aus der echten Sensorhistorie (siehe
@@ -8055,17 +8108,17 @@ const BATTERY_ACTION_COLORS = {
 };
 
 function buildBatterySocForecastActualChart(labels, forecast, actual, actionHours, plannedHistory) {
-    return buildForecastActualChart('Ladestand Heimspeicher: Prognose vs. Ist', '%', labels, forecast, actual, {
-        decimals: 0, yBounds: {min: 0, max: 100}, actionHours, actionColors: BATTERY_ACTION_COLORS, plannedHistory, slopeColors: PERCENT_SLOPE_COLORS,
+    return buildForecastActualChart('Ladestand Heimspeicher', '%', labels, forecast, actual, {
+        decimals: 0, yBounds: {min: 0, max: 100}, actionHours, actionColors: BATTERY_ACTION_COLORS, plannedHistory, slopeColors: PERCENT_SLOPE_COLORS, chartKey: 'ladestandHeimspeicher',
     });
 }
 
 function buildWarmwasserForecastActualChart(labels, forecast, actual, actionHours) {
-    return buildForecastActualChart('Warmwasser: Prognose vs. Ist', '°C', labels, forecast, actual, {decimals: 1, actionHours, slopeColors: WARMWASSER_SLOPE_COLORS});
+    return buildForecastActualChart('Warmwasser', '°C', labels, forecast, actual, {decimals: 1, actionHours, slopeColors: WARMWASSER_SLOPE_COLORS, chartKey: 'warmwasser'});
 }
 
 function buildLadestandAutoForecastActualChart(labels, forecast, actual, actionHours) {
-    return buildForecastActualChart('Ladestand Auto: Prognose vs. Ist', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}, actionHours, slopeColors: PERCENT_SLOPE_COLORS});
+    return buildForecastActualChart('Ladestand Auto', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}, actionHours, slopeColors: PERCENT_SLOPE_COLORS, chartKey: 'ladestandAutoFA'});
 }
 
 // Neu (Nutzer-Vorgabe): bisher gab es fuer "Sonstiger Verbraucher" im Dashboard nur ein Icon im
@@ -8073,7 +8126,7 @@ function buildLadestandAutoForecastActualChart(labels, forecast, actual, actionH
 // forecast-vs-actual (Ist aus der echten Schalter-Historie, Prognose aus den geplanten/ausgefuehrten
 // "Verbraucher an"-Aktionsfenstern statt einer output_csv-Spalte).
 function buildSonstigesGeraetForecastActualChart(labels, forecast, actual, actionHours) {
-    return buildForecastActualChart('Sonstiger Verbraucher: Prognose vs. Ist', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}, actionHours, slopeColors: ON_OFF_SLOPE_COLORS});
+    return buildForecastActualChart('Sonstiger Verbraucher', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}, actionHours, slopeColors: ON_OFF_SLOPE_COLORS, chartKey: 'sonstigesGeraet'});
 }
 
 // Aussentemperatur bleibt bewusst durchgehend gruen (Nutzer-Vorgabe, kein grau/rot/gruen wie bei den
@@ -8092,7 +8145,11 @@ function buildAussentemperaturForecastActualChart(labels, temperature) {
 // Nutzers kaum erkennbar (siehe Nutzer-Feedback), deutlich angehoben.
 const ACTION_BAND_OPACITY = 0.32;
 
-function buildForecastActualChart(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null} = {}) {
+function buildForecastActualChart(title, unit, labels, forecast, actual, options = {}) {
+    return makeToggleableChart(options.chartKey, ctx => buildForecastActualChartImpl(title, unit, labels, forecast, actual, options, ctx));
+}
+
+function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
     // "Prognose" ist visuell EINE Linie ueber den ganzen Tag: fuer bereits vergangene Stunden der zu
     // ihrer Zeit juengste Planungsstand (plannedHistory), fuer die Zukunft die aktuelle Prognose
     // (forecast) - ersetzt die fruehere separate dritte Linie/Legende "Letzter Planungsstand".
@@ -8123,63 +8180,29 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
 
     const legend = document.createElement('div');
     legend.className = 'dashboardChartLegend';
-    function legendDotItem(color, label, opacity) {
-        const item = document.createElement('span');
-        item.className = 'dashboardChartLegendItem';
-        const dot = document.createElement('span');
-        dot.className = 'dashboardChartLegendDot';
-        dot.style.background = color;
-        if (opacity) dot.style.opacity = opacity;
-        item.appendChild(dot);
-        item.appendChild(document.createTextNode(label));
-        legend.appendChild(item);
-    }
-    // Kleines Linien-Icon (statt eines Punkts) fuer die Legende, wenn Farbe schon per slopeColors die
-    // Wertrichtung bedeutet (siehe unten) - hier zaehlt nur noch die Linienart (durchgezogen/gestrichelt).
-    function legendLineItem(dashed, label, color) {
-        const item = document.createElement('span');
-        item.className = 'dashboardChartLegendItem';
-        const svg = `<svg width="16" height="10" viewBox="0 0 16 10"><line x1="0" y1="5" x2="16" y2="5" stroke="${color || 'var(--color-text-secondary)'}" stroke-width="2" ${dashed ? 'stroke-dasharray="4,3"' : ''} /></svg>`;
-        const icon = document.createElement('span');
-        icon.style.display = 'inline-flex';
-        icon.innerHTML = svg;
-        item.appendChild(icon);
-        item.appendChild(document.createTextNode(label));
-        legend.appendChild(item);
-    }
-    if (slopeColors) {
-        // Nutzer-Vorgabe: Farbe zeigt die Wertrichtung (grau/rot/gruen, selbsterklaerend - keine
-        // eigene Legende dafuer noetig), Linienart unterscheidet Historisch/Prognose - durchgehend,
-        // auch fuer den plannedHistory-Abschnitt der Prognose-Linie (sonst optisch nicht von der
-        // Ist-Linie zu unterscheiden, Nutzer-Feedback).
-        legendLineItem(false, 'Historisch');
-        legendLineItem(true, 'Prognose');
-    } else if (flatColor) {
-        // Nutzer-Vorgabe (Aussentemperatur): durchgehend eine Farbe, nur Historisch/Prognose per
-        // Linienart unterscheiden - kein grau/rot/gruen, kein separates Ist/Prognose-Farbpaar.
-        legendLineItem(false, 'Historisch', flatColor);
-        legendLineItem(true, 'Prognose', flatColor);
-    } else {
-        legendDotItem('var(--color-accent)', 'Prognose');
-        legendDotItem('var(--color-text)', 'Ist-Werte');
-    }
+    // Linienmuster statt Punkten (Nutzer-Vorgabe): zuerst "Ist-Wert" (durchgezogen), dann "Prognose" (gestrichelt). Bei
+    // slopeColors zeigt die Farbe der Kurve die Wertrichtung (grau/rot/gruen) - das Legenden-Muster bleibt dann neutral.
+    const actualLegendColor = slopeColors ? 'var(--color-text-secondary)' : (flatColor || 'var(--color-text)');
+    const forecastLegendColor = slopeColors ? 'var(--color-text-secondary)' : (flatColor || 'var(--color-accent)');
+    legend.appendChild(chartLegendEntry(ctx, {id: 'actual', label: 'Ist-Wert', color: actualLegendColor, style: 'solid'}));
+    legend.appendChild(chartLegendEntry(ctx, {id: 'forecast', label: 'Prognose', color: forecastLegendColor, style: 'dashed'}));
     // Aktions-Indikator (siehe actionHours/actionBandsMarkup unten) - eigener Legenden-Eintrag nur,
-    // wenn der Aufrufer ueberhaupt Aktionsstunden mitgibt. Deutlich kraeftigere Opacity als zuvor
-    // (0.12 -> ACTION_BAND_OPACITY) - Nutzer-Feedback: bisher auf dem eigenen Bildschirm kaum zu
-    // erkennen. actionColors (nur Ladestand Heimspeicher, Nutzer-Vorgabe): je Aktions-Kategorie
-    // (siehe BATTERY_ACTION_CATEGORY_BY_NAME in app.py) eine eigene Farbe/Legenden-Zeile statt
-    // einer einzigen "Aktion"-Farbe fuer alle.
+    // wenn der Aufrufer ueberhaupt Aktionsstunden mitgibt. actionColors (nur Ladestand Heimspeicher,
+    // Nutzer-Vorgabe): je Aktions-Kategorie (siehe BATTERY_ACTION_CATEGORY_BY_NAME in app.py) eine eigene
+    // Farbe/Legenden-Zeile statt einer einzigen "Aktion"-Farbe fuer alle.
     if (actionColors) {
         for (const [category, {color, label}] of Object.entries(actionColors)) {
-            if (actionHours.includes(category)) legendDotItem(color, label, ACTION_BAND_OPACITY);
+            if (actionHours.includes(category)) legend.appendChild(chartLegendEntry(ctx, {id: `action:${category}`, label, color, style: 'square', opacity: ACTION_BAND_OPACITY}));
         }
     } else if (actionHours) {
-        legendDotItem('var(--color-accent)', 'Aktion', ACTION_BAND_OPACITY);
+        legend.appendChild(chartLegendEntry(ctx, {id: 'action', label: 'Aktion', color: 'var(--color-accent)', style: 'square', opacity: ACTION_BAND_OPACITY}));
         // Aktionstyp per Toggle aus (Nutzer-Feedback) - der Optimierer plant trotzdem weiter damit,
         // das Geraet wird aber nie wirklich angesteuert, siehe _action_hours_for in app.py.
-        if (actionHours.includes('deactivated')) legendDotItem('var(--color-border)', 'Aktion (deaktiviert)', ACTION_BAND_OPACITY);
+        if (actionHours.includes('deactivated')) legend.appendChild(chartLegendEntry(ctx, {id: 'action:deactivated', label: 'Aktion (deaktiviert)', color: 'var(--color-border)', style: 'square', opacity: ACTION_BAND_OPACITY}));
     }
     wrapper.appendChild(legend);
+    const showActual = !ctx.hidden.has('actual');
+    const showForecast = !ctx.hidden.has('forecast');
 
     const definedValues = [...prognose, ...actual].filter(v => v !== null && v !== undefined);
     if (labels.length === 0 || definedValues.length === 0) {
@@ -8238,9 +8261,9 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
         return slopeColors.flatColor;
     }
 
-    const actualPath = buildSegmentedPath(actual, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-text)'), dashed: false}));
+    const actualPath = showActual ? buildSegmentedPath(actual, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-text)'), dashed: false})) : '';
     // "Prognose" (siehe prognose-Merge oben): immer gestrichelt, auch der plannedHistory-Abschnitt.
-    const forecastPath = buildSegmentedPath(prognose, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-accent)'), dashed: true}));
+    const forecastPath = showForecast ? buildSegmentedPath(prognose, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-accent)'), dashed: true})) : '';
 
     const tickCount = Math.min(6, labels.length);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
@@ -8267,7 +8290,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     // Dauerhaft sichtbarer Punkt auf der Linie bei "jetzt" (der Strich allein ist zu unauffaellig) - wird UEBER den
     // Linien gezeichnet (siehe nowDotMarkup im SVG unten), nicht wie der Strich darunter.
     let nowDotMarkup = '';
-    if (lastActualIndex >= 0) {
+    if (lastActualIndex >= 0 && showActual) {
         const nowDotValue = actual[lastActualIndex] ?? prognose[lastActualIndex];
         if (nowDotValue !== null && nowDotValue !== undefined) {
             nowDotMarkup = `<circle class="dashboardChartNowDot" r="4.5" cx="${xFor(lastActualIndex).toFixed(1)}" cy="${yFor(nowDotValue).toFixed(1)}" />`;
@@ -8283,6 +8306,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     if (actionHours) {
         for (let i = 0; i < labels.length; i++) {
             if (!actionHours[i]) continue;
+            if (ctx.hidden.has(actionColors ? `action:${actionHours[i]}` : (actionHours[i] === 'deactivated' ? 'action:deactivated' : 'action'))) continue;
             // actionColors (nur Ladestand Heimspeicher): actionHours[i] ist dann die Kategorie
             // (z.B. "charging"/"passive"/"deactivated") statt "active" - eigene Farbe je Kategorie.
             // Ohne actionColors gibt es nur "active" (gruen) und "deactivated" (hellgrau, Nutzer-
@@ -8362,10 +8386,10 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
         const d = new Date(labels[idx]);
         const dateText = d.toLocaleString('de-DE', {weekday: 'short', hour: '2-digit', minute: '2-digit'}).replace('.', '');
         const parts = [];
-        if (prognose[idx] !== null && prognose[idx] !== undefined) parts.push(`Prognose ${prognose[idx].toFixed(decimals)} ${unit}`);
-        if (actual[idx] !== null && actual[idx] !== undefined) parts.push(`Ist ${actual[idx].toFixed(decimals)} ${unit}`);
+        if (showForecast && prognose[idx] !== null && prognose[idx] !== undefined) parts.push(`Prognose ${prognose[idx].toFixed(decimals)} ${unit}`);
+        if (showActual && actual[idx] !== null && actual[idx] !== undefined) parts.push(`Ist-Wert ${actual[idx].toFixed(decimals)} ${unit}`);
         tooltip.textContent = `${dateText}: ${parts.join(' / ') || '–'}`;
-        const markerY = yFor(prognose[idx] ?? actual[idx] ?? yMin);
+        const markerY = yFor((showForecast ? prognose[idx] : null) ?? (showActual ? actual[idx] : null) ?? yMin);
         tooltip.style.left = xFor(idx).toFixed(1) * scale + 'px';
         tooltip.style.top = markerY.toFixed(1) * scale + 'px';
         tooltip.hidden = false;
@@ -8393,7 +8417,11 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
 // base_case.py / /dashboard/chart-data: opt_cost/opt_usage vs. base_cost/base_usage) auf
 // gemeinsamer Stundenachse. Bewusst eigene Funktion (wie buildPvForecastActualChart): zwei Reihen
 // ohne Luecken, Summen in der Legende, "(Beta)" im Titel.
-function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false, actualValues = null, actualFine = null} = {}) {
+function buildComparisonChart(title, unit, labels, optValues, baseValues, options = {}) {
+    return makeToggleableChart(options.chartKey, ctx => buildComparisonChartImpl(title, unit, labels, optValues, baseValues, options, ctx));
+}
+
+function buildComparisonChartImpl(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false, actualValues = null, actualFine = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
     const width = 600, height = CHART_SVG_HEIGHT;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -8441,25 +8469,19 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
     // reales Gegenstueck, nur "optimiert" (das ist ja tatsaechlich passiert).
     const legend = document.createElement('div');
     legend.className = 'dashboardChartLegend';
+    // [Farbe, Linienart, Beschriftung, Schluessel (Summen/Sichtbarkeit), Werte] - zuerst "Ist-Wert", dann die Prognosen.
     const legendRows = actualValues
         ? [
-            ['var(--color-accent)', false, 'Ist', 'actual', actualValues],
-            ['var(--color-accent)', true, 'Shyft-Plan', 'opt', optValues],
-            ['var(--color-text-secondary)', true, 'Ohne Steuerung', 'base', baseValues],
+            ['var(--color-accent)', 'solid', 'Ist-Wert', 'actual', actualValues],
+            ['var(--color-accent)', 'dashed', 'Shyft-Plan', 'opt', optValues],
+            ['var(--color-text-secondary)', 'dashed', 'Ohne Steuerung', 'base', baseValues],
         ]
         : [
-            ['var(--color-accent)', false, 'Shyft-Plan', 'opt', optValues],
-            ['var(--color-text-secondary)', true, 'Ohne Steuerung', 'base', baseValues],
+            ['var(--color-accent)', 'solid', 'Shyft-Plan', 'opt', optValues],
+            ['var(--color-text-secondary)', 'dashed', 'Ohne Steuerung', 'base', baseValues],
         ];
-    for (const [color, dashed, label, key, values] of legendRows) {
-        const item = document.createElement('span');
-        item.className = 'dashboardChartLegendItem';
-        const dot = document.createElement('span');
-        dot.className = 'dashboardChartLegendDot' + (dashed ? ' dashboardChartLegendDotDashed' : '');
-        dot.style.background = color;
-        item.appendChild(dot);
-        item.appendChild(document.createTextNode(`${label} (${fmt(seriesTotal(key, values))} ${unit})${dayPart(key)}`));
-        legend.appendChild(item);
+    for (const [color, lineStyle, label, key, values] of legendRows) {
+        legend.appendChild(chartLegendEntry(ctx, {id: key, label: `${label} (${fmt(seriesTotal(key, values))} ${unit})${dayPart(key)}`, color, style: lineStyle}));
     }
     wrapper.appendChild(legend);
 
@@ -8504,11 +8526,12 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
     // noetig, damit das gruene "Ist"/"Shyft-Plan"-Gesamtband je Segment durchgezogen oder gestrichelt
     // sein kann (siehe dashedAt), was ein einzelnes <path>-Element mit EINEM stroke-dasharray nicht
     // koennte.
-    function segmentedPath(values, dashedAt, color) {
+    function segmentedPath(values, dashedAt, color, skipAt = null) {
         const parts = [];
         for (let i = 0; i < n - 1; i++) {
             const v0 = values[i], v1 = values[i + 1];
             if (!Number.isFinite(v0) || !Number.isFinite(v1)) continue;
+            if (skipAt && skipAt(i)) continue;
             const dashAttr = dashedAt(i) ? ' stroke-dasharray="6,4"' : '';
             parts.push(`<path d="M${xFor(i).toFixed(1)},${yFor(v0).toFixed(1)} L${xFor(i + 1).toFixed(1)},${yFor(v1).toFixed(1)}" fill="none" stroke="${color}" stroke-width="2"${dashAttr} />`);
         }
@@ -8520,7 +8543,7 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
     // sind EIN visuelles Band: Ist (durchgezogen) fuer bereits vergangene Stunden, nahtlos uebergehend
     // in Shyft-Plan (gestrichelt) fuer die Zukunft - Nutzer-Vorgabe, analog zur Historisch/Prognose-
     // Linie im Ladestand-Heimspeicher-Chart.
-    const basePathMarkup = seriesPath(baseValues, 'var(--color-text-secondary)', true);
+    const basePathMarkup = ctx.hidden.has('base') ? '' : seriesPath(baseValues, 'var(--color-text-secondary)', true);
     const isHistorical = i => !!(actualValues && Number.isFinite(actualValues[i]));
     const firstMs = new Date(labels[0]).getTime();
     const xForMs = ms => paddingLeft + ((ms - firstMs) / 3600000 / lastIndex) * plotWidth;
@@ -8539,6 +8562,8 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
             prevMs = ms;
         }
         flush();
+        const fineSolidMarkup = parts.join('');  // Ist-Wert (durchgezogen)
+        parts.length = 0;
         const last = fine[fine.length - 1];
         const lastX = xForMs(last[0] + binMs / 2), lastY = yFor(last[1]);
         let curIdx = -1;
@@ -8549,14 +8574,15 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
             dash.push(`L${xFor(i).toFixed(1)},${yFor(optValues[i]).toFixed(1)}`);
         }
         if (dash.length >= 2) parts.push(`<path d="${dash.join(' ')}" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-dasharray="6,4" />`);
-        finePathMarkup = parts.join('');
+        finePathMarkup = (ctx.hidden.has('actual') ? '' : fineSolidMarkup) + (ctx.hidden.has('opt') ? '' : parts.join(''));
     }
     const optPathMarkup = useFine ? finePathMarkup : actualValues
         ? segmentedPath(
             Array.from({length: n}, (_, i) => (isHistorical(i) ? actualValues[i] : optValues[i])),
             i => !isHistorical(i),
-            'var(--color-accent)')
-        : seriesPath(optValues, 'var(--color-accent)');
+            'var(--color-accent)',
+            i => (isHistorical(i) ? ctx.hidden.has('actual') : ctx.hidden.has('opt')))
+        : (ctx.hidden.has('opt') ? '' : seriesPath(optValues, 'var(--color-accent)'));
 
     const tickCount = Math.min(6, n);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
@@ -8622,10 +8648,10 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
             const cursorMs = firstMs + (((clientX - rect.left) / scale - paddingLeft) / plotWidth * lastIndex) * 3600000;
             const binMs = fine.length > 1 ? fine[1][0] - fine[0][0] : 300000;
             for (const p of fine) if (Math.abs(p[0] + binMs / 2 - cursorMs) <= binMs / 2 + 1) { fineHit = p; break; }
-            if (fineHit) parts.push(`Ist ${fmt(fineHit[1])} ${unit === 'kWh' ? 'kW' : unit}`);
+            if (fineHit && !ctx.hidden.has('actual')) parts.push(`Ist-Wert ${fmt(fineHit[1])} ${unit === 'kWh' ? 'kW' : unit}`);
         }
-        if (Number.isFinite(o)) parts.push(`Shyft ${fmt(o)} ${unit}`);
-        if (Number.isFinite(b)) parts.push(`ohne ${fmt(b)} ${unit}`);
+        if (Number.isFinite(o) && !ctx.hidden.has('opt')) parts.push(`Shyft ${fmt(o)} ${unit}`);
+        if (Number.isFinite(b) && !ctx.hidden.has('base')) parts.push(`ohne ${fmt(b)} ${unit}`);
         tooltip.textContent = `${dateText}: ${parts.join(' / ') || '–'}`;
         const my = yFor(fineHit ? fineHit[1] : Number.isFinite(o) ? o : (Number.isFinite(b) ? b : yMin));
         tooltip.style.left = (xFor(idx) * scale).toFixed(1) + 'px';
@@ -10195,7 +10221,7 @@ async function loadDashboard() {
             console.log(err);
         }
         const buildStrompreisChart = () => {
-            const showUsage = getStrompreisShowUsage();
+            const showUsage = true;  // ob die Netzbezug-Kurve sichtbar ist, steuert die Legende (chartKey 'strompreis')
             let secondSeries = null;
             if (showUsage && strompreisLabels.length > 0 && (gridFinePoints.length > 0 || (data.comparison_opt_grid_import || []).length > 0)) {
                 const labelMs = strompreisLabels.map(l => new Date(l).getTime());
@@ -10214,14 +10240,9 @@ async function loadDashboard() {
                 };
             }
             return buildLineChart('Strompreis', 'Cent/kWh', strompreisLabels, strompreisValues, {
-                usageToggle: {
-                    label: 'Netzbezug',
-                    active: showUsage,
-                    onToggle: () => {
-                        setStrompreisShowUsage(!getStrompreisShowUsage());
-                        updateOrAppendDashboardWidget(container, 'strompreis', buildStrompreisChart());
-                    },
-                },
+                chartKey: 'strompreis',
+                curveLegend: true,
+                primaryLabel: 'Strompreis',
                 secondSeries,
             subtitle: 'Bezug',
             stepped: true,
@@ -10279,7 +10300,7 @@ async function loadDashboard() {
         // vom Optimierer nur SIMULIERTEN Innentemperatur (Nutzer-Vorgabe) - best-effort wie bei den
         // anderen Prognose-vs-Ist-Charts, faellt bei einem Fehler auf die reine Simulationskurve zurueck.
         let raumtemperaturLabels = data.output_labels, raumtemperaturValues = data.t_i_target, raumtemperaturDashedFromIndex = null;
-        let raumtemperaturSecondSeries = {values: data.t_i, label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2, integerTicks: true};
+        let raumtemperaturSecondSeries = {values: data.t_i, label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2, integerTicks: true, band: 'upper'};
         try {
             const raumtemperaturComparison = await getJson(insideHomeAssistant + '/dashboard/raumtemperatur-forecast-vs-actual');
             if (raumtemperaturComparison.status === 'success' && raumtemperaturComparison.labels.length > 0) {
@@ -10300,7 +10321,7 @@ async function loadDashboard() {
                     raumtemperaturSecondSeries = {
                         actual: raumtemperaturComparison.actual, forecast: raumtemperaturComparison.forecast,
                         label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2,
-                        slopeColors: TEMPERATURE_SLOPE_COLORS, integerTicks: true,
+                        slopeColors: TEMPERATURE_SLOPE_COLORS, integerTicks: true, band: 'upper',
                     };
                 }
             }
@@ -10311,6 +10332,8 @@ async function loadDashboard() {
             // Kein subtitle mehr (Nutzer-Vorgabe: Titel bleibt schlicht "Raumtemperatur (°C)"),
             // primaryLabel beschriftet stattdessen nur die Legende darunter.
             primaryLabel: 'Heizung-Soll',
+            chartKey: 'raumtemperatur',
+            bandPrimary: 'lower',
             stepped: true,
             round: true,
             decimals: 0,
@@ -10414,6 +10437,7 @@ async function loadDashboard() {
             actionHours: ladestandAutoActionHours,
             presenceForecast,
             overlayForecast: ladestandAutoOverlayForecast,
+            chartKey: 'ladestandAuto',
         });
         if (presenceForecast) {
             ladestandAutoChart.appendChild(buildPresenceForecastHeading());
@@ -10456,25 +10480,16 @@ async function loadDashboard() {
         if ((data.comparison_base_cost && data.comparison_base_cost.length) || (data.comparison_opt_cost && data.comparison_opt_cost.length)) {
             updateOrAppendDashboardWidget(container, 'kostenVergleich', buildComparisonChart(
                 'Deine Stromkosten / -erträge', '€', data.comparison_labels, data.comparison_opt_cost || [], data.comparison_base_cost || [],
-                {decimals: 2, summary: data.cost_summary, badgeLabel: 'Ersparnis', highlightPositive: true, actualValues: data.actual_cost || []}));
+                {decimals: 2, summary: data.cost_summary, badgeLabel: 'Ersparnis', highlightPositive: true, actualValues: data.actual_cost || [], chartKey: 'kostenVergleich'}));
             updateOrAppendDashboardWidget(container, 'verbrauchVergleich', buildComparisonChart(
                 'Dein Stromverbrauch', 'kWh', data.comparison_labels, data.comparison_opt_usage || [], data.comparison_base_usage || [],
-                {decimals: 1, summary: data.usage_summary, badgeLabel: 'Differenz', actualValues: data.actual_usage || [],
+                {decimals: 1, summary: data.usage_summary, badgeLabel: 'Differenz', actualValues: data.actual_usage || [], chartKey: 'verbrauchVergleich',
                  actualFine: usageFinePoints.map(([ms, v]) => [new Date(ms).toISOString(), v])}));
         }
     } catch (err) {
         console.log(err);
         showDashboardChartLoadError(container, 'Diagrammdaten konnten nicht geladen werden.');
     }
-}
-
-// Strompreis-Chart: Netzbezug-Linie ein/aus (Legenden-Klick) - nur eine Anzeige-Vorliebe pro Browser,
-// daher localStorage (kann fehlen/werfen, dann gilt der Standard "aus").
-function getStrompreisShowUsage() {
-    try { return localStorage.getItem('shyftStrompreisShowUsage') === '1'; } catch (e) { return false; }
-}
-function setStrompreisShowUsage(on) {
-    try { localStorage.setItem('shyftStrompreisShowUsage', on ? '1' : '0'); } catch (e) { /* egal */ }
 }
 
 // Gemeinsames Intervall fuer alle periodischen Hintergrund-Refreshs (Dashboard, Gerätesteuerung, ...).
