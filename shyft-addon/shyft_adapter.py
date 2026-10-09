@@ -37,7 +37,7 @@ class ShyftAdapter:
         payload = self._map_to_json(pv_history)
         return self._call_workflow("addon_pv_history", payload)
 
-    def send_site_data(self, addon_sensor_data_json: str, weather_fields: dict = None):
+    def send_site_data(self, addon_sensor_data_json: str, weather_fields: dict = None, addon_version: str = None):
         """Sends the consolidated staticConfig+liveValues+EV-forecast JSON to shyft-power
         (update_site_addon workflow) - replaces the old per-sensor addon_sensor_data workflow.
 
@@ -46,6 +46,9 @@ class ShyftAdapter:
         "PV Prediction" Bubble object: comma-separated "Temperature"/"PV Prediction" strings and
         the "Datetime Weather" list of Bubble timestamps (Unix ms)."""
         body = {"addon_sensor_data_JSON": addon_sensor_data_json}
+        if addon_version:
+            # Landet in Bubbles toBeOptimized-Eintrag, damit veraltete Add-ons dort geblockt werden koennen.
+            body["Addon Version"] = addon_version
         if weather_fields:
             body["Temperature"] = weather_fields["temperature"]
             body["PV Prediction"] = weather_fields["pvPrediction"]

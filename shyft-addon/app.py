@@ -1184,6 +1184,39 @@ def _optimizer_result_pending(cached_creation_date_ms):
     return True
 
 
+PRICE_HEALTH_PROBLEM_ID = "price_missing"
+
+
+def describe_missing_buy_price(config):
+    "Klartext, warum compute_price_buy_array keinen Einkaufspreis liefern konnte - je nach electricityTariffMode."
+    mode = config.get("electricityTariffMode") or "fixed"
+    where = "auf der Konfigurationsseite unter „Strom“"
+    if mode == "fixed":
+        return f"Der Strompreis fehlt: beim Tarif „Fester Preis“ ist kein Arbeitspreis eingetragen. Trage ihn {where} ein."
+    if mode == "ht_nt":
+        return f"Der Strompreis fehlt: beim Tarif „Hoch-/Niedertarif“ fehlt der Hoch- oder der Niedertarif-Preis. Trage beide {where} ein."
+    if mode == "dynamic":
+        if config.get("electricityDynamicSurchargeCent") in (None, ""):
+            return f"Der Strompreis fehlt: beim dynamischen Tarif ist kein Aufschlag eingetragen. Trage ihn {where} ein."
+        return "Der Strompreis fehlt: die Börsenpreise von Awattar konnten nicht geladen werden. Das Add-on versucht es mit dem nächsten Sync erneut."
+    if mode == "dynamic_variable":
+        if any(config.get(k) in (None, "") for k in ("electricityNetzentgeltHtCent", "electricityNetzentgeltNtCent", "electricityNetzentgeltStandardCent")):
+            return f"Der Strompreis fehlt: beim dynamischen Tarif mit variablen Netzentgelten fehlt mindestens ein Netzentgelt (HT, NT oder Standard). Trage sie {where} ein."
+        return "Der Strompreis fehlt: die Börsenpreise von Awattar konnten nicht geladen werden. Das Add-on versucht es mit dem nächsten Sync erneut."
+    return f"Der Strompreis fehlt: der Tarifmodus „{mode}“ ist unbekannt. Wähle {where} einen Tarif."
+
+
+def _update_price_health(missing_required):
+    "Pflegt das Problem 'price_missing' (Strompreis/Einspeisevergütung unvollständig) - solange es aktiv ist, wird keine Optimierung angestoßen (siehe sync_site_data)."
+    if missing_required:
+        problem_registry.register(
+            PRICE_HEALTH_PROBLEM_ID,
+            "Es wird keine Optimierung gestartet. " + " ".join(missing_required),
+        )
+    else:
+        problem_registry.clear(PRICE_HEALTH_PROBLEM_ID)
+
+
 def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
     """Hourly addon->Bubble sync (also the manual 'Verbindung testen' trigger): builds the
     consolidated staticConfig+liveValues+EV-forecast JSON and sends it via update_site_addon -
@@ -1211,19 +1244,30 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
     # Stuendlicher Einkaufspreis aus dem Stromtarif (siehe compute_price_buy_array) - NEUES Feld
     # p_buy_addon, damit der Server es getrennt vom bisherigen "Electricity Price Buy" uebernehmen
     # kann. optimizer_period + 24 wie beim Wetter, damit der Horizont ab der aktuellen Stunde voll ist.
+    missing_required = []
     try:
         price_base = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
         price_arr = compute_price_buy_array(config, price_base, optimizer_period + 24)
         if price_arr:
             live_values["p_buy_addon"] = ";".join(f"{v:.5f}" for v in price_arr)
             live_values.setdefault("baseTime", price_base.isoformat())
+        else:
+            missing_required.append(describe_missing_buy_price(config))
         # Einspeiseverguetung als Skalar (EUR/kWh) - ebenfalls neues Feld, damit der Server vom
         # bisherigen "Electricity Price Sell"-Dropdown darauf umstellen kann.
         sell_cent = config.get("electricitySellCent")
         if sell_cent not in (None, ""):
             live_values["p_sell_addon"] = round(float(sell_cent) / 100.0, 5)
+        elif _pv_sensor_configured(config):
+            # Ohne PV-Anlage gibt es nichts einzuspeisen - dort ist ein leerer Wert (= 0) in Ordnung.
+            missing_required.append(
+                "Die Einspeisevergütung ist nicht eingetragen. Trage sie auf der Konfigurationsseite "
+                "unter „Strom“ ein."
+            )
     except Exception as e:
         print("[Shyft] p_buy_addon/p_sell_addon konnte nicht berechnet werden:", repr(e))
+        missing_required.append(f"Der Strompreis konnte nicht berechnet werden ({type(e).__name__}: {e}).")
+    _update_price_health(missing_required)
     # Stuendliche Grundlast (electkwh): NACH allen anderen Reihen, damit sie auf derselben
     # "baseTime" aufsetzt, die der Server am Ende sieht (EV/Warmwasser/Preis setzen sie teils selbst).
     try:
@@ -1256,8 +1300,13 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         weather_fields = pv_forecast.compute_site_weather_fields(optimizer_period + 24, _pv_sensor_configured(config))
     except Exception as e:
         print("[Shyft] Wetter-/PV-Prognosefelder konnten nicht gebaut werden:", repr(e))
+    if missing_required:
+        # Pflichtfeld fehlt: update_site_addon legt die Site in Bubbles toBeOptimized-Queue - ein Lauf
+        # ohne Preise rechnet mit 0 EUR/kWh und liefert Unsinn, also gar nicht erst senden.
+        print("[Shyft] Optimierung nicht angestoßen, Pflichtangaben fehlen:", " | ".join(missing_required))
+        return json.dumps({"status": "skipped", "message": "Pflichtangaben fehlen: " + " ".join(missing_required)})
     submitted_at = datetime.now(timezone.utc)
-    result = shyft_adapter.send_site_data(payload, weather_fields)
+    result = shyft_adapter.send_site_data(payload, weather_fields, addon_version=VERSION)
     _last_site_data_submit["at"] = submitted_at
     try:
         schedule_optimizer_result_wait(submitted_at, optimizer_period, attempt=_wait_attempt)

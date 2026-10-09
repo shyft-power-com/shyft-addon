@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.280
+
+* **Ohne Strompreis keine Optimierung mehr, dafür eine Problemmeldung.** Fehlt der Einkaufspreis (je nach Tarif z. B. kein Arbeitspreis, kein Aufschlag, kein Netzentgelt oder keine Awattar-Börsenpreise) oder – bei zugeordneter PV-Anlage – die Einspeisevergütung, sendet der stündliche Sync nichts mehr an shyft-power (`update_site_addon` legt die Site in die Optimierungs-Queue). Bisher rechnete der Server dann mit 0 €/kWh und lieferte unbrauchbare Läufe, ohne dass irgendwo ein Fehler zu sehen war. Stattdessen erscheint in der Statuskarte das Problem `price_missing` mit der konkreten Ursache und dem Hinweis, wo der Wert einzutragen ist; es verschwindet von selbst, sobald die Preise wieder berechnet werden können.
+* **Add-on-Version wird mitgeschickt.** `update_site_addon` bekommt den neuen Parameter `Addon Version` (die `version` aus der config.yaml), damit shyft-power Aufrufe veralteter Add-ons erkennen und blocken kann. Der Parameter muss im Bubble-Workflow angelegt sein.
+
 ## 0.0.45.279
 
 * **Charts auf dem Handy: Werte auch im gezoomten Zustand ablesen.** Die Touch-Bedienung der Charts ist neu geregelt: **Antippen** setzt den Tooltip an dieser Stelle fest (er bleibt stehen, auch nach dem automatischen Aktualisieren; dieselbe Stelle noch einmal antippen blendet ihn aus, eine andere versetzt ihn). **Kurz halten und ziehen** schiebt den Tooltip über die Kurven (leichtes Vibrieren zeigt den Start). **Sofort wischen** verschiebt das Zeitfenster (nur wenn gezoomt, sonst scrollt die Seite wie gewohnt). **Zwei Finger** zoomen wie bisher. **Doppeltippen** setzt das Zeitfenster auf den Standard (heute plus halber Tag) zurück. Der bisherige Ein-Finger-Wisch zum Ablesen entfällt zugunsten von „Halten + Ziehen“; am Desktop bleibt der Tooltip beim Darüberfahren mit der Maus. Außerdem zeigen die Charts auf dem Handy nur noch vier statt sechs Zeitbeschriftungen unter der Achse, damit sie sich nicht überlappen.
