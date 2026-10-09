@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.281
+
+* **Fix: Add-on-Version heißt in Bubble `addon_version`.** Seit 0.0.45.280 ging der Parameter versehentlich als `Addon Version` an `update_site_addon`; der Parameter im Bubble-Workflow heißt aber `addon_version`. Der Name ist jetzt korrigiert, die Version kommt damit im `toBeOptimized`-Eintrag an.
+
 ## 0.0.45.280
 
 * **Ohne Strompreis keine Optimierung mehr, dafür eine Problemmeldung.** Fehlt der Einkaufspreis (je nach Tarif z. B. kein Arbeitspreis, kein Aufschlag, kein Netzentgelt oder keine Awattar-Börsenpreise) oder – bei zugeordneter PV-Anlage – die Einspeisevergütung, sendet der stündliche Sync nichts mehr an shyft-power (`update_site_addon` legt die Site in die Optimierungs-Queue). Bisher rechnete der Server dann mit 0 €/kWh und lieferte unbrauchbare Läufe, ohne dass irgendwo ein Fehler zu sehen war. Stattdessen erscheint in der Statuskarte das Problem `price_missing` mit der konkreten Ursache und dem Hinweis, wo der Wert einzutragen ist; es verschwindet von selbst, sobald die Preise wieder berechnet werden können.

@@ -48,7 +48,7 @@ class ShyftAdapter:
         body = {"addon_sensor_data_JSON": addon_sensor_data_json}
         if addon_version:
             # Landet in Bubbles toBeOptimized-Eintrag, damit veraltete Add-ons dort geblockt werden koennen.
-            body["Addon Version"] = addon_version
+            body["addon_version"] = addon_version
         if weather_fields:
             body["Temperature"] = weather_fields["temperature"]
             body["PV Prediction"] = weather_fields["pvPrediction"]
