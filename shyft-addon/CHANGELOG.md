@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.273
+
+* **Raumtemperatur-Chart zeigt die Historie des heutigen Tages.** Der Chart beginnt jetzt – wie Ladestand Auto und Warmwasser – um 0 Uhr: „Heizung-Soll“ zeigt den tatsächlichen Verlauf der Solltemperatur-Entität bis jetzt, danach gestrichelt den Plan der Optimierung; „Innenraum“ zeigt die Sensorhistorie plus Prognose. Zuvor begann der Chart bei der aktuellen Stunde, und die Innenraum-Historie wurde dabei an die falschen Stunden gezeichnet (die Werte ab 0 Uhr lagen auf der Achse ab „jetzt“). Ohne Historie der Solltemperatur (Entität nicht zugeordnet) bleibt der Chart wie bisher ab „jetzt“.
+* **Rechte Achse (Innenraum) in vollen Grad beschriftet.** Es erscheinen nur ganze Gradzahlen (höchstens etwa fünf); liegt weniger als eine volle Gradzahl im Wertebereich, wird der Bereich auf die nächsten ganzen Zahlen erweitert.
+
 ## 0.0.45.272
 
 * **Auto-Prognose: simulierte Fahrt am Ende des Zeitraums nicht mehr überzogen.** Sieht das Modell an einem Tag im Optimierungszeitraum keine Fahrstunde, legt es dessen Tagesverbrauch („Notnagel“) in die letzte Stunde des Zeitraums. Bei einem nur angeschnittenen Tag (z. B. Sonntag nur 0–4 Uhr im Zeitraum, oder der heutige Rest-Tag) war das der KOMPLETTE Tagesdurchschnitt – im Ladestand-Auto-Chart zeigte sich das als unplausible Fahrt in einer Stunde (z. B. 82,9 % → 20 %). Jetzt wird der Verbrauch solcher Tage anteilig (Stunden im Zeitraum / 24) angesetzt.

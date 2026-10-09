@@ -2165,13 +2165,14 @@ def _record_stitched_forecast_run(output_csv, creation_date_ms):
             print("[Shyft] Prognose-Zusammensetzung konnte nicht gespeichert werden:", repr(e))
 
 
-def _read_future_output_column_by_hour(column, scale=1.0):
+def _read_future_output_column_by_hour(column, scale=1.0, include_first=False):
     """Prognose einer output_csv-Spalte (SOC_B, T_i, T_HW, SOC_EV, ...) als {Stunde (lokal): Wert} fuer die
     '<Kachel>: Prognose vs. Ist'-Karten - zusammengesetzt (Nutzer-Vorgabe): je Stunde der Wert aus dem
     juengsten Optimierungslauf, der vor Beginn dieser Stunde lief (siehe _record_stitched_forecast_run),
     ueberlagert vom aktuell gecachten Lauf fuer alle Stunden NACH seiner Startstunde (Zeile 0 des Laufs
     basiert auf Ist-Werten und zaehlt nicht als Prognose). scale multipliziert den Rohwert (z.B. 100 fuer
-    SOC_EV, das im CSV als 0..1-Anteil steht, nicht als %)."""
+    SOC_EV, das im CSV als 0..1-Anteil steht, nicht als %). include_first=True nimmt auch Zeile 0 (laufende Stunde)
+    des aktuell gecachten Laufs mit - nur sinnvoll fuer PLAN-Werte (z.B. T_i_Target), nicht fuer simulierte Zustaende."""
     tz = get_ha_timezone()
     result = {}
 
@@ -2192,7 +2193,7 @@ def _read_future_output_column_by_hour(column, scale=1.0):
         if output_csv and creation_date_ms is not None:
             start_utc = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
             for i, row in enumerate(csv.DictReader(io.StringIO(output_csv))):
-                if i == 0:
+                if i == 0 and not include_first:
                     continue
                 put(_hour_floor((start_utc + timedelta(hours=i)).astimezone(tz)), _safe_float(row.get(column)))
     except Exception:
@@ -2261,18 +2262,26 @@ def _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local
 
 @app.route("/dashboard/raumtemperatur-forecast-vs-actual", methods=["GET"])
 def readRaumtemperaturForecastVsActual():
-    """'Innenraum'-Zweitkurve im Raumtemperatur-Chart (Nutzer-Vorgabe): 'actual' aus der echten
-    Sensorhistorie (heatpump_temp_indoor_measured) statt der bisher dafuer gezeigten, vom Optimierer
-    nur SIMULIERTEN Innentemperatur (T_i aus output_csv) - die bleibt als 'forecast' fuer die Zukunft.
-    'Heizung-Soll' (T_i_Target, Hauptkurve) ist davon unberuehrt: reiner Plan ohne Ist-Gegenstueck,
-    bleibt wie bisher."""
+    """Daten fuer den Raumtemperatur-Chart, beide Kurven ab 0 Uhr heute (Historie des Tages + Prognose):
+    'Innenraum' (Zweitkurve, Nutzer-Vorgabe): 'actual' aus der echten Sensorhistorie (heatpump_temp_indoor_measured)
+    statt der vom Optimierer nur SIMULIERTEN Innentemperatur (T_i aus output_csv) - die bleibt als 'forecast' fuer die
+    Zukunft. 'Heizung-Soll' (Hauptkurve): 'targetActual' aus der Historie der Solltemperatur-Entitaet
+    (heatpump_heating_target_temp_normal), 'targetForecast' = der Plan T_i_Target des Optimierers."""
     config = _read_current_config()
-    entity_id = config.get("sensorMappings", {}).get("heatpump_temp_indoor_measured", "")
+    sensor_mappings = config.get("sensorMappings", {})
+    entity_id = sensor_mappings.get("heatpump_temp_indoor_measured", "")
+    target_entity_id = sensor_mappings.get("heatpump_heating_target_temp_normal", "")
     midnight_local = _hour_floor(_local_now().replace(hour=0))
     current_hour_local = _hour_floor(_local_now())
     forecast_by_hour = _read_future_output_column_by_hour("T_i")
     actual_by_hour = _hourly_state_actual(entity_id, midnight_local, current_hour_local)
-    return jsonify(_forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=HEIZUNG_ACTION_NAMES))
+    target_actual_by_hour = _hourly_state_actual(target_entity_id, midnight_local, current_hour_local)
+    target_forecast_by_hour = _read_future_output_column_by_hour("T_i_Target", include_first=True)
+    payload = _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=HEIZUNG_ACTION_NAMES)
+    hours = [midnight_local + timedelta(hours=i) for i in range(len(payload["labels"]))]
+    payload["targetActual"] = [target_actual_by_hour.get(h) for h in hours]
+    payload["targetForecast"] = [target_forecast_by_hour.get(h) if h >= current_hour_local else None for h in hours]
+    return jsonify(payload)
 
 
 @app.route("/dashboard/warmwasser-forecast-vs-actual", methods=["GET"])

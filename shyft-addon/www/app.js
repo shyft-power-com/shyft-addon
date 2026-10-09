@@ -7621,6 +7621,13 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         const pad2 = secondSeries.absolutePadding ?? valueRange2 * 0.1;
         yMin2 = secondSeries.zeroBased ? 0 : rawMin2 - pad2;
         yMax2 = rawMax2 + pad2;
+        if (secondSeries.integerTicks && Math.floor(yMax2) - Math.ceil(yMin2) < 1) {
+            // integerTicks (z.B. Innenraum in vollen Grad): liegen weniger als zwei ganze Zahlen im Bereich, wird der
+            // Bereich auf die naechsten ganzen Zahlen erweitert, damit mindestens zwei Beschriftungen entstehen.
+            yMin2 = Math.floor(yMin2);
+            yMax2 = Math.ceil(yMax2);
+            if (yMax2 === yMin2) yMax2 = yMin2 + 1;
+        }
         yRange2 = yMax2 - yMin2;
         points2 = merged2.map((v, i) => (v === null || v === undefined ? null : [
             paddingLeft + (i / lastIndex) * plotWidth,
@@ -7807,10 +7814,17 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     // wie yLabels links), am rechten Rand nach aussen ausgerichtet.
     let yLabels2 = '';
     if (secondSeries) {
-        const yTicks2 = [yMax2, (yMin2 + yMax2) / 2, yMin2];
+        let yTicks2 = [yMax2, (yMin2 + yMax2) / 2, yMin2];
+        if (secondSeries.integerTicks) {
+            // Nur volle Zahlen als Achsenbeschriftung (hoechstens ~5 Stueck, bei grossem Bereich in groeberen Schritten)
+            const lowTick = Math.ceil(yMin2 - 1e-9), highTick = Math.floor(yMax2 + 1e-9);
+            const tickStep = Math.max(1, Math.ceil((highTick - lowTick) / 4));
+            yTicks2 = [];
+            for (let v = lowTick; v <= highTick + 1e-9; v += tickStep) yTicks2.push(v);
+        }
         yLabels2 = yTicks2.map(v => {
             const y = (paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight).toFixed(1);
-            return `<text x="${(width - paddingRight + 6).toFixed(1)}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="start">${v.toFixed(secondSeries.decimals ?? 1)}</text>`;
+            return `<text x="${(width - paddingRight + 6).toFixed(1)}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="start">${v.toFixed(secondSeries.integerTicks ? 0 : (secondSeries.decimals ?? 1))}</text>`;
         }).join('');
     }
 
@@ -10246,20 +10260,36 @@ async function loadDashboard() {
         // "Innenraum" (Zweitkurve): Ist aus der echten Sensorhistorie statt der bisher gezeigten,
         // vom Optimierer nur SIMULIERTEN Innentemperatur (Nutzer-Vorgabe) - best-effort wie bei den
         // anderen Prognose-vs-Ist-Charts, faellt bei einem Fehler auf die reine Simulationskurve zurueck.
-        let raumtemperaturSecondSeries = {values: data.t_i, label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2};
+        let raumtemperaturLabels = data.output_labels, raumtemperaturValues = data.t_i_target, raumtemperaturDashedFromIndex = null;
+        let raumtemperaturSecondSeries = {values: data.t_i, label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2, integerTicks: true};
         try {
             const raumtemperaturComparison = await getJson(insideHomeAssistant + '/dashboard/raumtemperatur-forecast-vs-actual');
             if (raumtemperaturComparison.status === 'success' && raumtemperaturComparison.labels.length > 0) {
-                raumtemperaturSecondSeries = {
-                    actual: raumtemperaturComparison.actual, forecast: raumtemperaturComparison.forecast,
-                    label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2,
-                    slopeColors: TEMPERATURE_SLOPE_COLORS,
-                };
+                // Beide Kurven laufen ab 0 Uhr (Historie des heutigen Tages + Prognose, wie bei Ladestand Auto):
+                // "Heizung-Soll" = Verlauf der Solltemperatur-Entitaet bis jetzt, danach (gestrichelt) der Plan des
+                // Optimierers; "Innenraum" = Sensorhistorie + Prognose. Luecken der Hauptkurve (Hauptreihe kann keine
+                // Luecken zeichnen) werden mit dem jeweils letzten bekannten Wert (am Anfang dem ersten) gefuellt.
+                const targetActual = raumtemperaturComparison.targetActual || [];
+                const targetForecast = raumtemperaturComparison.targetForecast || [];
+                const target = raumtemperaturComparison.labels.map((_, i) => (targetActual[i] ?? targetForecast[i] ?? null));
+                const firstKnownTarget = target.find(v => v !== null && v !== undefined);
+                if (firstKnownTarget !== undefined) {
+                    let lastKnownTarget = firstKnownTarget;
+                    raumtemperaturLabels = raumtemperaturComparison.labels;
+                    raumtemperaturValues = target.map(v => { if (v !== null && v !== undefined) lastKnownTarget = v; return lastKnownTarget; });
+                    const actualCount = targetActual.filter(v => v !== null && v !== undefined).length;
+                    raumtemperaturDashedFromIndex = actualCount > 0 ? actualCount : null;
+                    raumtemperaturSecondSeries = {
+                        actual: raumtemperaturComparison.actual, forecast: raumtemperaturComparison.forecast,
+                        label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2,
+                        slopeColors: TEMPERATURE_SLOPE_COLORS, integerTicks: true,
+                    };
+                }
             }
         } catch (err) {
             console.log(err);
         }
-        updateOrAppendDashboardWidget(container, 'raumtemperatur', buildLineChart('Raumtemperatur', '°C', data.output_labels, data.t_i_target, {
+        updateOrAppendDashboardWidget(container, 'raumtemperatur', buildLineChart('Raumtemperatur', '°C', raumtemperaturLabels, raumtemperaturValues, {
             // Kein subtitle mehr (Nutzer-Vorgabe: Titel bleibt schlicht "Raumtemperatur (°C)"),
             // primaryLabel beschriftet stattdessen nur die Legende darunter.
             primaryLabel: 'Heizung-Soll',
@@ -10267,6 +10297,7 @@ async function loadDashboard() {
             round: true,
             decimals: 0,
             secondSeries: raumtemperaturSecondSeries,
+            dashedFromIndex: raumtemperaturDashedFromIndex,
             // Solange "Heizung aktiviert?" (heatpump_heating_activated) explizit auf Aus steht,
             // berechnet das Addon keine Heizungs-Aktionen mehr (siehe compute_heizung_actions in
             // app.py) - der Chart bleibt technisch bestehen, wird aber bewusst als "gerade nicht
