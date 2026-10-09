@@ -1,9 +1,8 @@
 # Changelog
 
-## 0.0.45.270
+## 0.0.45.271
 
-* **Verständlichere Fehlermeldung der Batterie-Steuerung.** Statt „Batterie-Steuerung unvollständig: Timeout, Entladeleistung“ steht jetzt, was nicht gesetzt werden konnte und warum, z. B. „Fehler beim Starten - nicht gesetzt: Entladeleistung (number.xyz hat den Wert 0 W nicht übernommen und steht weiterhin auf 5000; 4 Schreibversuche in 120 s); Command-Timeout (Watchdog) (…)“. Gründe: Entität nicht verfügbar, Fehler von Home Assistant beim Schreiben (mit dessen Text) oder Wert nicht übernommen. Die Entität „Timeout“ heißt in Meldungen jetzt „Command-Timeout (Watchdog)“ – sie war nie eine Zeitüberschreitung, sondern ein Wert, der nicht gesetzt werden konnte.
-* **Wiederholungsversuche stehen im Log der Aktion.** Schlägt ein Start oder Ende fehl, wird weiterhin automatisch wiederholt (zuerst alle 30 Sekunden für 15 Minuten, danach mit dem 15-Minuten-Takt; je Versuch zusätzlich mehrere Schreibversuche über bis zu 2 Minuten). Jeder Versuch steht jetzt im Log: der erste mit voller Fehlermeldung, weitere mit gleicher Ursache kurz („Versuch 3: weiterhin fehlgeschlagen“), bei neuer Ursache wieder mit voller Meldung. Klappt es danach, steht „Versuch N: erfolgreich“ im Log. Ohne vorherigen Fehler gibt es weiterhin keinen Eintrag.
+* **Verständlichere, sparsame Fehler-Einträge im Log von Aktionen.** Ein Fehler beim Starten oder Beenden wird erst ins Log geschrieben, wenn er nach 2 Minuten noch besteht – gelingt der Start vorher (das Add-on wiederholt automatisch), steht gar nichts im Log. Danach gibt es höchstens alle 15 Minuten einen weiteren Eintrag, bei Erfolg einen kurzen Abschluss („Start jetzt gelungen.“). Der Eintrag ist kurz und sagt, was in Home Assistant nicht geklappt hat, z. B. „Fehler beim Starten. Grund: Home Assistant meldet „500 Internal Server Error“ für die Entität number.xyz.“, „… Die Entität number.xyz übernimmt den Wert nicht (steht weiterhin auf 5000).“ oder „… ist in Home Assistant nicht verfügbar.“ Statt „Batterie-Steuerung unvollständig: Timeout, Entladeleistung“. Die Wiederholungen selbst (alle 30 Sekunden in den ersten 15 Minuten, danach im 15-Minuten-Takt) laufen unverändert weiter. In Meldungen heißt die Entität „Timeout“ jetzt „Command-Timeout (Watchdog)“ (der Watchdog-Wert, den das Add-on setzt).
 
 ## 0.0.45.269
 

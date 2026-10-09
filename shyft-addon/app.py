@@ -5840,13 +5840,26 @@ def _records_action_test(ready_key=None, record_success=True):
     return deco
 
 
-def _note_retry_success(action):
-    "Nach einem Erfolg, dem Fehlversuche vorausgingen: Log-Zeile 'Versuch N: erfolgreich' und Zaehler zuruecksetzen (ohne vorherige Fehler gibt es bewusst keinen Eintrag)."
-    attempts = action.pop("Failed Attempts", 0)
-    action.pop("_lastErrorText", None)
-    action.pop("_lastErrorVerb", None)
-    if attempts:
-        _append_action_log(action, f"Versuch {attempts + 1}: erfolgreich")
+ACTION_FAILURE_LOG_FIRST_DELAY_SECONDS = 120
+ACTION_FAILURE_LOG_REPEAT_INTERVAL_SECONDS = 15 * 60
+_ATTEMPT_SUCCESS_WORDS = {"Starten": "Start", "Beenden": "Ende"}
+
+
+def _begin_attempt(action, verb):
+    "Beginn der Ausfuehrungsversuche fuer Start ('Starten') bzw. Ende ('Beenden') einer Aktion - Zeitanker fuer das verzoegerte Fehler-Log in _fail_action. Bleibt ueber Wiederholungen hinweg stehen, bis es klappt."
+    if action.get("_attemptVerb") != verb:
+        action["_attemptVerb"] = verb
+        action["_attemptsSince"] = int(time.time() * 1000)
+        action.pop("_lastErrorLogAt", None)
+
+
+def _note_attempt_success(action, verb):
+    "Erfolg: Zeitanker zuruecksetzen; stand wegen eines anhaltenden Fehlers schon ein Fehler-Eintrag im Log, folgt ein kurzer Abschluss ('Start jetzt gelungen.') - sonst bewusst kein Eintrag."
+    logged = action.get("_lastErrorLogAt") is not None
+    for key in ("_attemptsSince", "_attemptVerb", "_lastErrorLogAt"):
+        action.pop(key, None)
+    if logged:
+        _append_action_log(action, f"{_ATTEMPT_SUCCESS_WORDS.get(verb, verb)} jetzt gelungen.")
 
 
 def _fail_action(action, config, exec_status, msg, prev_exec, verb):
@@ -5862,22 +5875,20 @@ def _fail_action(action, config, exec_status, msg, prev_exec, verb):
     # Wiederholungen der Batterie-Aktionen (siehe retry_failed_battery_actions) und fuer das Unterdruecken
     # wiederholter Push-Benachrichtigungen/Log-Zeilen bei jedem weiteren Versuch.
     action.setdefault("Error First At", int(time.time() * 1000))
-    # Jeder (Wiederholungs-)Versuch kommt ins Log: der erste mit voller Fehlermeldung, weitere mit derselben Ursache kurz
-    # ("Versuch 3: weiterhin fehlgeschlagen"), eine andere Ursache wieder mit voller Meldung. Zaehler gelten je Start/Ende.
-    if action.get("_lastErrorVerb") != verb:
-        action["Failed Attempts"] = 0
-        action.pop("_lastErrorText", None)
-    action["_lastErrorVerb"] = verb
-    attempt = action.get("Failed Attempts", 0) + 1
-    action["Failed Attempts"] = attempt
-    text = f"Fehler beim {verb} - {msg}"
-    timestamp = _local_now().strftime("%H:%M Uhr")
-    if attempt > 1 and action.get("_lastErrorText") == text:
-        note = f"{timestamp}: Versuch {attempt}: weiterhin fehlgeschlagen"
+    # Log-Eintrag nur, wenn der Fehler nach ACTION_FAILURE_LOG_FIRST_DELAY_SECONDS (seit Beginn der Versuche, siehe
+    # _begin_attempt) noch besteht: ein Start/Ende, das innerhalb dieser Zeit (auch durch Wiederholungen) gelingt,
+    # hinterlaesst keinen Eintrag. Danach hoechstens alle ACTION_FAILURE_LOG_REPEAT_INTERVAL_SECONDS ein weiterer.
+    now_ms = int(time.time() * 1000)
+    since = action.setdefault("_attemptsSince", now_ms)
+    last_log = action.get("_lastErrorLogAt")
+    if last_log is None:
+        due = now_ms - since >= ACTION_FAILURE_LOG_FIRST_DELAY_SECONDS * 1000
     else:
-        note = f"{timestamp}: {text}" + (f" (Versuch {attempt})" if attempt > 1 else "")
-    action["_lastErrorText"] = text
-    action["Log"] = (action.get("Log") + "\n" + note) if action.get("Log") else note
+        due = now_ms - last_log >= ACTION_FAILURE_LOG_REPEAT_INTERVAL_SECONDS * 1000
+    if due:
+        reason = (msg or "unbekannt").strip().rstrip(".") + "."
+        _append_action_log(action, f"Fehler beim {verb}. Grund: {reason}")
+        action["_lastErrorLogAt"] = now_ms
     _update_computed_action(action)
     if prev_exec != exec_status:
         notify_action_event(config, action, f"Fehler beim {verb}", is_error=True)
@@ -6842,22 +6853,17 @@ def _battery_value_matches(current_state, target_value):
 
 
 def _battery_write_failure_reason(entity_id, target_value, detail, unit=""):
-    "Klartext, WARUM eine Batterie-Entitaet den Wert nicht uebernommen hat (aus dem detail-dict von _write_and_verify_battery_entity), inkl. Anzahl der Schreibversuche und der dafuer aufgewendeten Zeit."
+    "Kurzer, fuer Endkunden verstaendlicher Satz, WARUM eine Batterie-Entitaet den Wert nicht uebernommen hat (aus dem detail-dict von _write_and_verify_battery_entity)."
     if not entity_id:
-        return "keine Entität zugeordnet"
+        return "Es ist keine Entität zugeordnet."
     last_state, last_error = detail.get("last_state"), detail.get("last_error")
     if last_state in BATTERY_UNAVAILABLE_STATES:
-        core = f"{entity_id} ist in Home Assistant nicht verfügbar ({last_state})"
-    elif last_error and detail.get("last_write_failed"):
-        core = f"Home Assistant meldet beim Schreiben auf {entity_id}: {last_error}"
-    elif last_state is not None:
-        core = f"{entity_id} hat den Wert {target_value}{unit} nicht übernommen und steht weiterhin auf {last_state}"
-    else:
-        core = f"der Zustand von {entity_id} war nicht lesbar"
-    attempts = detail.get("attempts")
-    if attempts:
-        core += f"; {attempts} {'Schreibversuch' if attempts == 1 else 'Schreibversuche'} in {detail.get('seconds', 0)} s"
-    return core
+        return f"Die Entität {entity_id} ist in Home Assistant nicht verfügbar."
+    if last_error and detail.get("last_write_failed"):
+        return f"Home Assistant meldet „{last_error}“ für die Entität {entity_id}."
+    if last_state is not None:
+        return f"Die Entität {entity_id} übernimmt den Wert nicht (steht weiterhin auf {last_state})."
+    return f"Der Zustand der Entität {entity_id} ist nicht lesbar."
 
 
 def _write_and_verify_battery_entity(entity_id, domain, service, data_key, target_value, retry_timeout_seconds=BATTERY_RETRY_TIMEOUT_SECONDS, detail=None):
@@ -7081,7 +7087,7 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         test_log(f"{label}: setze auf {watts} W …")
         if not is_available(entity_id):
             failed.append(label)
-            failed_reasons[label] = f"{entity_id} ist in Home Assistant nicht verfügbar" if entity_id else "keine Entität zugeordnet"
+            failed_reasons[label] = None if entity_id else "Es ist keine Entität zugeordnet."  # nicht verfuegbar: siehe _battery_unavailable_hint
             test_log(f"{label}: Entität nicht verfügbar – übersprungen.", "error")
             return
         # Auf den Wertebereich der Entitaet begrenzen: "kein Limit" (batteryMaxChargeKw, z.B. 8,8 kW) liegt
@@ -7096,6 +7102,8 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
             failed_reasons[label] = _battery_write_failure_reason(entity_id, watts, detail, " W")
             test_log(f"{label}: fehlgeschlagen.", "error")
             note_unavailable_after_failure(entity_id)
+            if entity_id in unavailable_ids:
+                failed_reasons[label] = None  # wird als "nicht verfuegbar" gemeldet (siehe _battery_unavailable_hint)
         else:
             test_log(f"{label}: gesetzt ({watts} W).", "ok")
 
@@ -7105,7 +7113,7 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
         test_log(f"{label}: setze auf „{mode_value}“ …")
         if not is_available(mode_entity):
             failed.append(label)
-            failed_reasons[label] = f"{mode_entity} ist in Home Assistant nicht verfügbar" if mode_entity else "keine Entität zugeordnet"
+            failed_reasons[label] = None if mode_entity else "Es ist keine Entität zugeordnet."
             test_log(f"{label}: Entität nicht verfügbar – übersprungen.", "error")
             return
         detail = {}
@@ -7114,6 +7122,8 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
             failed_reasons[label] = _battery_write_failure_reason(mode_entity, f"„{mode_value}“", detail)
             test_log(f"{label}: fehlgeschlagen.", "error")
             note_unavailable_after_failure(mode_entity)
+            if mode_entity in unavailable_ids:
+                failed_reasons[label] = None
         else:
             test_log(f"{label}: gesetzt („{mode_value}“).", "ok")
 
@@ -7169,10 +7179,21 @@ def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_s
     if failed:
         if notify_on_failure:
             _notify_battery_control_failure(action_key, phase, failed, config, unavailable_labels)
-        parts = [f"{label} ({failed_reasons[label]})" if failed_reasons.get(label) else label for label in failed]
-        message = f"nicht gesetzt: {'; '.join(parts)}."
+        # Kurze Klartext-Saetze (je Entitaet einer; gleiche zusammengefasst, hoechstens 2) - die Meldung wird dem Endkunden im Log der
+        # Aktion gezeigt ("Fehler beim Starten. Grund: ..."), siehe _fail_action.
+        sentences = []
+        for label in failed:
+            sentence = failed_reasons.get(label)
+            if sentence and sentence not in sentences:
+                sentences.append(sentence)
+        shown = sentences[:2] + ([f"Außerdem {len(sentences) - 2} weitere Fehler."] if len(sentences) > 2 else [])
         hint = _battery_unavailable_hint(unavailable_labels)
-        raise Exception(f"{message} {hint}" if hint else message[:-1])
+        if hint:
+            shown.append(hint + ".")
+        if not shown:
+            shown = ["Die Werte wurden nicht übernommen."]
+        final_message = " ".join(shown)
+        raise Exception(final_message[:-1] if final_message.endswith(".") else final_message)
 
 
 def _battery_control_variant(config, action_key):
@@ -7817,6 +7838,7 @@ def handle_shyft_action_start(action, actions_enabled, config):
         _update_computed_action(action)
         notify_action_event(config, action, "gestartet (nur simuliert)")
         return
+    _begin_attempt(action, "Starten")
 
     # Ein Geraet, das noch nicht vollstaendig eingerichtet ODER nicht zuletzt erfolgreich getestet
     # ist, wird gar nicht erst ausgefuehrt - der garantierte Fehlschlag wird dem Nutzer stattdessen
@@ -7892,7 +7914,7 @@ def handle_shyft_action_start(action, actions_enabled, config):
         _fail_action(action, config, "no, error", start_error, prev_exec, "Starten")
         return
 
-    _note_retry_success(action)
+    _note_attempt_success(action, "Starten")
     action["Execution Status"] = "yes, started"
     action.pop("Error Message", None)
     action.pop("Error First At", None)
@@ -7916,6 +7938,7 @@ def handle_shyft_action_end(action, actions_enabled, config):
         _note_action_outcome(label, "beendet")  # kein Ausfuehrungsfehler, evtl. alten Eintrag freigeben
         notify_action_event(config, action, "beendet (nur simuliert)")
         return
+    _begin_attempt(action, "Beenden")
 
     end_error = None
     if label == "Auto laden":
@@ -7967,7 +7990,7 @@ def handle_shyft_action_end(action, actions_enabled, config):
         _fail_action(action, config, "yes, not finished", end_error, prev_exec, "Beenden")
         return
 
-    _note_retry_success(action)
+    _note_attempt_success(action, "Beenden")
     action["Execution Status"] = "yes, finished"
     action.pop("Error Message", None)
     action.pop("Error First At", None)
