@@ -3210,7 +3210,7 @@ def _recency_weighted_mean(samples, now):
     return (acc / total_w) if total_w > 0 else None
 
 
-def compute_car_presence_forecast(hours=48, buffer_hours=0):
+def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
     """hours-ahead (default 48h) stuendliche Anwesenheits- und EV-Verbrauchsprognose aus
     CAR_PRESENCE_LOG_PATH, in zwei getrennten Stufen. buffer_hours: wie viele der letzten
     Horizontstunden nur Puffer sind (siehe build_ev_optimizer_fields) und deshalb NICHT als
@@ -3228,8 +3228,8 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
        Zustand "fährt" ist
        (groesster der drei exklusiven Zustaende eingesteckt/steht/fährt), gewichtet nach
        P(fährt). eingesteckt/steht-Stunden bekommen immer 0. Damit gilt per Konstruktion:
-       Summe(consumption_kwh_forecast ueber den Tag) == E_day, und ein Wert > 0 steht genau in den
-       Fahrstunden. ev_usage_h (siehe build_ev_optimizer_fields) ist eine Obermenge davon - es
+       Summe(consumption_kwh_forecast ueber den Tag) == E_day (fuer VOLLE Tage mit Fahrstunde), und ein
+       Wert > 0 steht genau in den Fahrstunden. ev_usage_h (siehe build_ev_optimizer_fields) ist eine Obermenge davon - es
        umfasst zusaetzlich "steht"-Stunden (abwesend, aber nicht fahrend), da das Auto auch dann
        nicht an der Wallbox laden kann. Sieht das
        Modell fuer einen Tag keine Fahrstunde, wandert dessen E_day auf die letzte Stunde des
@@ -3239,6 +3239,9 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
     Rueckgabe zusaetzlich consumption_basis: "default" (kein Fahrtag -> Default-Profil), "learning"
     (1..CAR_PRESENCE_MIN_SAMPLES-1 Fahrtage) oder "ok" (>= CAR_PRESENCE_MIN_SAMPLES Fahrtage) -
     steuert Hinweistext und ~-Markierung im Dashboard.
+
+    return_meta=True haengt der Rueckgabe ein dict an: {"simulatedHours": [Indizes der Stunden, deren Verbrauch der
+    "Notnagel" (siehe oben) simuliert hat]} - fuer die Kennzeichnung in "Prognose im Detail".
     """
     try:
         with open(CAR_PRESENCE_LOG_PATH, "r") as f:
@@ -3408,6 +3411,7 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
     # E_day je Kalendertag VOLLSTAENDIG auf dessen als "fährt" prognostizierte Stunden verteilen
     # (bzw. im Cold-Start auf die festen Default-Bloecke der Gruppe - die SIND die simulierte Fahrt).
     consumption_kwh_forecast = [0.0] * hours
+    simulated_hours = set()
     day_indices = {}
     for i in range(hours):
         day_indices.setdefault((start + timedelta(hours=i)).astimezone(get_ha_timezone()).date(), []).append(i)
@@ -3416,6 +3420,7 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
         e_day = e_day_for_weekday(local_date.weekday())
         if e_day <= 0:
             continue
+        scale = 1.0
         if coldstart:
             block_hours = EV_DEFAULT_WEEKEND_BLOCK_HOURS if local_date.weekday() >= 5 else EV_DEFAULT_WEEKDAY_BLOCK_HOURS
             target_idxs = [i for i in idxs if (start + timedelta(hours=i)).astimezone(get_ha_timezone()).hour in block_hours]
@@ -3430,11 +3435,16 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
             # Vorlauf, und die Stunde wird laengst durch frische Daten ersetzt, bevor sie eintritt),
             # statt eine plausibel aussehende naheliegende Stunde zu treffen. Mehrere solche Tage
             # summieren sich dort auf (deshalb +=).
+            # Ein nur ANGESCHNITTENER Tag (heute, wenn schon Stunden vorbei sind, bzw. der letzte Tag am Rand des
+            # Zeitraums, z.B. nur 0-4 Uhr) bekommt dabei nur den anteiligen Tagesverbrauch (Stunden im Zeitraum / 24) -
+            # sonst landete z.B. ein kompletter Sonntags-Durchschnitt wegen 4 Stunden im Zeitraum in EINER Stunde.
             target_idxs = [max(0, hours - 1 - buffer_hours)]
             weights = [1.0]
+            scale = min(1.0, len(idxs) / 24.0)
+            simulated_hours.add(target_idxs[0])
         wsum = sum(weights) or 1.0
         for i, w in zip(target_idxs, weights):
-            consumption_kwh_forecast[i] += e_day * w / wsum
+            consumption_kwh_forecast[i] += e_day * scale * w / wsum
 
     # Geplante Zusatzfahrten (siehe planCarTrip) ERSETZEN die gelernte Prognose fuer ihr
     # Abwesenheitsfenster - danach erst low_data_basis/Rueckgabe, damit ev_usage_h/d_ev_kwh
@@ -3446,7 +3456,10 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0):
 
     low_data_basis = [consumption_basis != "ok"] * hours
 
-    return labels, probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, low_data_basis, consumption_basis
+    result = (labels, probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, low_data_basis, consumption_basis)
+    if return_meta:
+        return result + ({"simulatedHours": sorted(i for i in simulated_hours if consumption_kwh_forecast[i] > 0)},)
+    return result
 
 
 def build_ev_optimizer_fields(config, optimizer_period=48):
@@ -3577,7 +3590,19 @@ def build_hot_water_optimizer_fields(config, optimizer_period=48):
 
 @app.route("/dashboard/car-presence-forecast", methods=["GET"])
 def carPresenceForecast():
-    labels, probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, low_data_basis, consumption_basis = compute_car_presence_forecast()
+    config = _read_current_config()
+    try:
+        optimizer_period = int(config.get("optimizationPeriodsSite") or 48)
+    except (TypeError, ValueError):
+        optimizer_period = 48
+    # Exakt dieselbe Berechnung wie fuer die an den Optimierer gehenden Felder (build_ev_optimizer_fields: Zeitraum + 1
+    # Pufferstunde) - die Anzeige zeigt dann genau das, was der Optimierer bekommt, auch die vom "Notnagel" simulierte
+    # Fahrt am Ende des Zeitraums. Die Pufferstunde selbst wird nicht mit angezeigt.
+    (labels, probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, low_data_basis,
+     consumption_basis, meta) = compute_car_presence_forecast(hours=optimizer_period + 1, buffer_hours=1, return_meta=True)
+    labels, probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, low_data_basis = (
+        series[:optimizer_period] for series in (labels, probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, low_data_basis))
+    simulated = set(meta.get("simulatedHours", []))
 
     def _state(i):
         c, s, d = probabilities[i], standing_probabilities[i], driving_probabilities[i]
@@ -3586,11 +3611,10 @@ def carPresenceForecast():
         return "eingesteckt" if c >= s else "steht"
 
     # Die an den Optimierer gehenden Felder (build_ev_optimizer_fields) MIT ausgeben, damit die
-    # Prognose 1:1 gegen die tatsaechliche input.csv geprueft werden kann. Anderer Horizont
-    # (optimizer_period+1 statt 48), deshalb separat.
+    # Prognose 1:1 gegen die tatsaechliche input.csv geprueft werden kann.
     optimizer_input = {}
     try:
-        optimizer_input = build_ev_optimizer_fields(_read_current_config())
+        optimizer_input = build_ev_optimizer_fields(config, optimizer_period=optimizer_period)
     except Exception as e:
         print("[Shyft] car-presence-forecast: build_ev_optimizer_fields fehlgeschlagen:", repr(e))
 
@@ -3602,6 +3626,7 @@ def carPresenceForecast():
         "drivingProbabilities": [round(p, 3) for p in driving_probabilities],
         "state": [_state(i) for i in range(len(labels))],
         "consumptionKwh": [round(v, 3) for v in consumption_kwh_forecast],
+        "simulatedHours": [i in simulated for i in range(len(labels))],
         "consumptionBasis": consumption_basis,
         "lowDataBasis": low_data_basis,
         "dEvKwh": optimizer_input.get("d_ev_kwh"),

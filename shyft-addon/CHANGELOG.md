@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.272
+
+* **Auto-Prognose: simulierte Fahrt am Ende des Zeitraums nicht mehr überzogen.** Sieht das Modell an einem Tag im Optimierungszeitraum keine Fahrstunde, legt es dessen Tagesverbrauch („Notnagel“) in die letzte Stunde des Zeitraums. Bei einem nur angeschnittenen Tag (z. B. Sonntag nur 0–4 Uhr im Zeitraum, oder der heutige Rest-Tag) war das der KOMPLETTE Tagesdurchschnitt – im Ladestand-Auto-Chart zeigte sich das als unplausible Fahrt in einer Stunde (z. B. 82,9 % → 20 %). Jetzt wird der Verbrauch solcher Tage anteilig (Stunden im Zeitraum / 24) angesetzt.
+* **„Prognose im Detail“ zeigt jetzt dasselbe wie der Optimierer.** Sie rechnete bisher mit anderem Zeitraum und ohne Pufferstunde als die an den Optimierer gesendeten Werte, deshalb fehlte dort die simulierte Fahrt. Jetzt gilt derselbe Zeitraum (Einstellung „Optimierungszeitraum“, Titel zeigt die tatsächliche Stundenzahl), und simulierte Stunden sind mit „– simuliert“ gekennzeichnet (Tooltip erklärt den Hintergrund).
+
 ## 0.0.45.271
 
 * **Verständlichere, sparsame Fehler-Einträge im Log von Aktionen.** Ein Fehler beim Starten oder Beenden wird erst ins Log geschrieben, wenn er nach 2 Minuten noch besteht – gelingt der Start vorher (das Add-on wiederholt automatisch), steht gar nichts im Log. Danach gibt es höchstens alle 15 Minuten einen weiteren Eintrag, bei Erfolg einen kurzen Abschluss („Start jetzt gelungen.“). Der Eintrag ist kurz und sagt, was in Home Assistant nicht geklappt hat, z. B. „Fehler beim Starten. Grund: Home Assistant meldet „500 Internal Server Error“ für die Entität number.xyz.“, „… Die Entität number.xyz übernimmt den Wert nicht (steht weiterhin auf 5000).“ oder „… ist in Home Assistant nicht verfügbar.“ Statt „Batterie-Steuerung unvollständig: Timeout, Entladeleistung“. Die Wiederholungen selbst (alle 30 Sekunden in den ersten 15 Minuten, danach im 15-Minuten-Takt) laufen unverändert weiter. In Meldungen heißt die Entität „Timeout“ jetzt „Command-Timeout (Watchdog)“ (der Watchdog-Wert, den das Add-on setzt).

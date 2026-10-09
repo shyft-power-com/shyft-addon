@@ -8677,11 +8677,11 @@ function scheduleConsumptionForecastOptimizerTrigger() {
     }, CONSUMPTION_FORECAST_DELETE_TRIGGER_DELAY_MS);
 }
 
-function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionBasis, presenceForecast) {
+function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionBasis, presenceForecast, simulatedHours = []) {
     const details = document.createElement('details');
     details.className = 'dashboardConsumptionForecast';
     const summary = document.createElement('summary');
-    summary.textContent = 'Prognose im Detail (48h) anzeigen';
+    summary.textContent = `Prognose im Detail (${labels.length}h) anzeigen`;
     details.appendChild(summary);
     const uncertain = consumptionBasis && consumptionBasis !== 'ok';
     if (uncertain) {
@@ -8709,7 +8709,11 @@ function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionB
         }
         const text = document.createElement('span');
         text.className = 'dashboardConsumptionForecastRowText';
-        text.textContent = `${marker}${timeText}: ${consumptionKwh[i].toFixed(3)} kWh` + (state ? ` (${state.label})` : '');
+        text.textContent = `${marker}${timeText}: ${consumptionKwh[i].toFixed(3)} kWh` + (state ? ` (${state.label})` : '') + (simulatedHours[i] ? ' – simuliert' : '');
+        if (simulatedHours[i]) {
+            // Siehe "Notnagel" in compute_car_presence_forecast (app.py): Platzhalter, keine vorhergesagte Fahrt.
+            row.title = 'Simulierte Fahrt: Für einen Tag im Zeitraum ist keine Fahrstunde vorhergesagt. Damit der Optimierer den üblichen Tagesverbrauch nicht ignoriert, wird er (bei angeschnittenen Tagen anteilig) in die letzte Stunde des Zeitraums gelegt.';
+        }
         row.appendChild(text);
         // Muelleimer-Icon: nagelt diese Stunde dauerhaft auf "abwesend, keine Fahrt" fest (siehe
         // deleteConsumptionForecast/_apply_manual_absence_overrides in app.py) - fuer eine einzelne
@@ -10342,7 +10346,7 @@ async function loadDashboard() {
                     };
                 });
                 presenceForecast = {byLabel};
-                consumptionForecast = {labels: presenceData.labels, consumptionKwh: presenceData.consumptionKwh, consumptionBasis: presenceData.consumptionBasis};
+                consumptionForecast = {labels: presenceData.labels, consumptionKwh: presenceData.consumptionKwh, consumptionBasis: presenceData.consumptionBasis, simulatedHours: presenceData.simulatedHours || []};
             }
         } catch (err) {
             console.log(err);
@@ -10367,7 +10371,7 @@ async function loadDashboard() {
         }
         if (consumptionForecast) {
             const consumptionDetails = buildCarConsumptionForecastDetails(
-                consumptionForecast.labels, consumptionForecast.consumptionKwh, consumptionForecast.consumptionBasis, presenceForecast);
+                consumptionForecast.labels, consumptionForecast.consumptionKwh, consumptionForecast.consumptionBasis, presenceForecast, consumptionForecast.simulatedHours);
             // updateOrAppendDashboardWidget ERSETZT das komplette 'ladestandAuto'-Widget bei jedem
             // periodischen Refresh (alle 30s, siehe refreshDashboard) - ein frisches <details>-
             // Element ist dabei immer zu (Nutzer-Feedback: ein manuell aufgeklapptes Element fiel
