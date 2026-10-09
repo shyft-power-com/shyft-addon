@@ -134,7 +134,7 @@ BATTERY_SOC_FORECAST_SNAPSHOT_PATH = "/data/battery_soc_forecast_snapshot.json"
 # _record_stitched_forecast_run). Haelt je Stunde heute (ab 0 Uhr lokal) die Spalten aus
 # STITCHED_FORECAST_COLUMNS.
 STITCHED_FORECAST_PATH = "/data/forecast_stitched.json"
-STITCHED_FORECAST_COLUMNS = ("SOC_B", "T_i", "T_HW", "SOC_EV")
+STITCHED_FORECAST_COLUMNS = ("SOC_B", "T_i", "T_HW", "SOC_EV", "T_i_Target")
 CAR_PRESENCE_LOG_PATH = "/data/car_presence_log.json"
 CAR_PRESENCE_LOG_MAX_DAYS = 180
 # "Fahrt planen"-Feature (Dashboard, siehe planCarTrip): einmalige, vom Nutzer angekuendigte
@@ -2266,7 +2266,9 @@ def readRaumtemperaturForecastVsActual():
     'Innenraum' (Zweitkurve, Nutzer-Vorgabe): 'actual' aus der echten Sensorhistorie (heatpump_temp_indoor_measured)
     statt der vom Optimierer nur SIMULIERTEN Innentemperatur (T_i aus output_csv) - die bleibt als 'forecast' fuer die
     Zukunft. 'Heizung-Soll' (Hauptkurve): 'targetActual' aus der Historie der Solltemperatur-Entitaet
-    (heatpump_heating_target_temp_normal), 'targetForecast' = der Plan T_i_Target des Optimierers."""
+    (heatpump_heating_target_temp_normal), 'targetForecast' = der Plan T_i_Target des Optimierers - wie bei den anderen
+    Charts auch fuer vergangene Stunden (der zu ihrem Beginn juengste Planungsstand, siehe STITCHED_FORECAST_COLUMNS;
+    erst ab Stunden, die nach Einfuehrung dieser Spalte geplant wurden)."""
     config = _read_current_config()
     sensor_mappings = config.get("sensorMappings", {})
     entity_id = sensor_mappings.get("heatpump_temp_indoor_measured", "")
@@ -2280,7 +2282,7 @@ def readRaumtemperaturForecastVsActual():
     payload = _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=HEIZUNG_ACTION_NAMES)
     hours = [midnight_local + timedelta(hours=i) for i in range(len(payload["labels"]))]
     payload["targetActual"] = [target_actual_by_hour.get(h) for h in hours]
-    payload["targetForecast"] = [target_forecast_by_hour.get(h) if h >= current_hour_local else None for h in hours]
+    payload["targetForecast"] = [target_forecast_by_hour.get(h) for h in hours]
     return jsonify(payload)
 
 

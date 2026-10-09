@@ -7823,8 +7823,14 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
 
     let scaledValues = values.map(v => v * valueScale);
     if (round) scaledValues = scaledValues.map(Math.round);
-    const rawMin = Math.min(...scaledValues);
-    const rawMax = Math.max(...scaledValues);
+    // overlayForecast (gestrichelte Prognose ueber den Ist-Stunden, z.B. Ladestand Auto, Heizung-Soll): ihre Werte zaehlen
+    // fuer den Wertebereich mit, damit sie nicht ueber den Rand laufen.
+    const overlayValues = overlayForecast
+        ? overlayForecast.map(v => (v === null || v === undefined ? null : (round ? Math.round(v * valueScale) : v * valueScale)))
+        : null;
+    const overlayDefined = overlayValues ? overlayValues.filter(v => v !== null) : [];
+    const rawMin = Math.min(...scaledValues, ...overlayDefined);
+    const rawMax = Math.max(...scaledValues, ...overlayDefined);
     const valueRange = (rawMax - rawMin) || 1;
     let yMin = rawMin - valueRange * 0.1;
     let yMax = rawMax + valueRange * 0.1;
@@ -8035,15 +8041,23 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     // Stunden, fuer die es schon einen Ist-Wert gibt (die Hauptlinie zeigt dort das Ist) - Werte aus
     // dem jeweils letzten Optimierungslauf vor der Stunde. Ab dashedFromIndex uebernimmt die Hauptlinie.
     let overlayMarkup = '';
-    if (overlayForecast && dashedFromIndex !== null && !(legendMode === 'actualForecast' && hid.has('forecast'))) {
+    if (overlayForecast && dashedFromIndex !== null && !(legendMode === 'actualForecast' && hid.has('forecast')) && !(legendMode === 'curves' && hid.has('primary'))) {
         const parts = [];
-        const ov = overlayForecast.map(v => (v === null || v === undefined ? null : v * valueScale));
-        for (let i = 0; i < Math.min(dashedFromIndex, ov.length - 1, points.length - 1); i++) {
-            if (ov[i] === null || ov[i + 1] === null) continue;
-            const x0 = paddingLeft + (i / lastIndex) * plotWidth, x1 = paddingLeft + ((i + 1) / lastIndex) * plotWidth;
-            const y0 = paddingTop + plotHeight - ((ov[i] - yMin) / yRange) * plotHeight;
-            const y1 = paddingTop + plotHeight - ((ov[i + 1] - yMin) / yRange) * plotHeight;
-            parts.push(`<path d="M${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)}" fill="none" stroke="${colorForSlope(ov[i], ov[i + 1])}" stroke-width="2" stroke-dasharray="5,4" />`);
+        const ov = overlayValues;
+        const xOf = i => paddingLeft + (i / lastIndex) * plotWidth;
+        const yOf = v => paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight;
+        for (let i = 0; i < Math.min(dashedFromIndex, ov.length, points.length - 1); i++) {
+            if (ov[i] === null) continue;
+            const next = i + 1 < ov.length ? ov[i + 1] : null;
+            if (stepped) {
+                // Treppenkurve (Heizung-Soll): waagerecht ueber die Stunde, senkrecht zum naechsten Wert
+                parts.push(`<path d="M${xOf(i).toFixed(1)},${yOf(ov[i]).toFixed(1)} L${xOf(i + 1).toFixed(1)},${yOf(ov[i]).toFixed(1)}" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-dasharray="5,4" />`);
+                if (next !== null && i + 1 < dashedFromIndex) {
+                    parts.push(`<path d="M${xOf(i + 1).toFixed(1)},${yOf(ov[i]).toFixed(1)} L${xOf(i + 1).toFixed(1)},${yOf(next).toFixed(1)}" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-dasharray="5,4" />`);
+                }
+            } else if (next !== null) {
+                parts.push(`<path d="M${xOf(i).toFixed(1)},${yOf(ov[i]).toFixed(1)} L${xOf(i + 1).toFixed(1)},${yOf(next).toFixed(1)}" fill="none" stroke="${colorForSlope(ov[i], next)}" stroke-width="2" stroke-dasharray="5,4" />`);
+            }
         }
         overlayMarkup = parts.join('');
     }
@@ -10504,7 +10518,7 @@ async function loadDashboard() {
         // "Innenraum" (Zweitkurve): Ist aus der echten Sensorhistorie statt der bisher gezeigten,
         // vom Optimierer nur SIMULIERTEN Innentemperatur (Nutzer-Vorgabe) - best-effort wie bei den
         // anderen Prognose-vs-Ist-Charts, faellt bei einem Fehler auf die reine Simulationskurve zurueck.
-        let raumtemperaturLabels = data.output_labels, raumtemperaturValues = data.t_i_target, raumtemperaturDashedFromIndex = null;
+        let raumtemperaturLabels = data.output_labels, raumtemperaturValues = data.t_i_target, raumtemperaturDashedFromIndex = null, raumtemperaturOverlay = null;
         let raumtemperaturSecondSeries = {values: data.t_i, label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2, integerTicks: true, band: 'upper'};
         try {
             const raumtemperaturComparison = await getJson(insideHomeAssistant + '/dashboard/raumtemperatur-forecast-vs-actual');
@@ -10523,6 +10537,8 @@ async function loadDashboard() {
                     raumtemperaturValues = target.map(v => { if (v !== null && v !== undefined) lastKnownTarget = v; return lastKnownTarget; });
                     const actualCount = targetActual.filter(v => v !== null && v !== undefined).length;
                     raumtemperaturDashedFromIndex = actualCount > 0 ? actualCount : null;
+                    // Plan der vergangenen Stunden (gestrichelt ueber dem Ist-Verlauf, wie bei den anderen Charts) - nur wo gespeichert
+                    raumtemperaturOverlay = raumtemperaturDashedFromIndex !== null && targetForecast.some(v => v !== null && v !== undefined) ? targetForecast : null;
                     raumtemperaturSecondSeries = {
                         actual: raumtemperaturComparison.actual, forecast: raumtemperaturComparison.forecast,
                         label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2,
@@ -10544,6 +10560,7 @@ async function loadDashboard() {
             decimals: 0,
             secondSeries: raumtemperaturSecondSeries,
             dashedFromIndex: raumtemperaturDashedFromIndex,
+            overlayForecast: raumtemperaturOverlay,
             // Solange "Heizung aktiviert?" (heatpump_heating_activated) explizit auf Aus steht,
             // berechnet das Addon keine Heizungs-Aktionen mehr (siehe compute_heizung_actions in
             // app.py) - der Chart bleibt technisch bestehen, wird aber bewusst als "gerade nicht

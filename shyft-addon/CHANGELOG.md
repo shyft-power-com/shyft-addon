@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.277
+
+* **Raumtemperatur-Chart: „Heizung-Soll“ mit zwei Linien.** Wie beim Ladestand Heimspeicher zeigt „Heizung-Soll“ jetzt für vergangene Stunden zusätzlich zum tatsächlichen Verlauf (durchgezogen) den damals geplanten Wert (gestrichelt, der zum Beginn der Stunde jüngste Planungsstand). Beide Linien lassen sich über den Legenden-Eintrag „Heizung-Soll“ gemeinsam aus- und einblenden. Der geplante Verlauf wird erst ab dieser Version gespeichert – für frühere Stunden gibt es nur die durchgezogene Linie.
+
 ## 0.0.45.276
 
 * **Dashboard-Charts auf dem Handy: Zeitfenster mit Wischen und Zwei-Finger-Zoom.** Beim Öffnen der Seite zeigen die Charts auf dem Handy (Bildschirmbreite bis 700 px) nur „heute plus einen halben Tag“ (0 Uhr heute bis 12 Uhr morgen), damit die Kurven größer sind. Mit einem Finger nach links wischen zeigt die späteren Stunden, zurück nach rechts die früheren. Mit zwei Fingern lässt sich stufenlos auf den gesamten Zeitraum heraus- und wieder hineinzoomen (mindestens 8 Stunden sichtbar). Das Fenster gilt für alle Charts gemeinsam; ein Chart reagiert sofort, die übrigen nach dem Loslassen. Ist der gesamte Zeitraum sichtbar, zeigt der Ein-Finger-Wisch wie bisher den Tooltip. Nach dem Neuladen gilt wieder der Standard. Am Desktop bleibt der gesamte Zeitraum sichtbar. Die PV-Ertragssumme („Heute | Morgen“) und die Summen der Vergleichs-Charts beziehen sich weiterhin auf den vollen Zeitraum.
