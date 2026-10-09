@@ -7986,6 +7986,15 @@ def handle_shyft_action_end(action, actions_enabled, config):
             print(f"[Shyft] Ende fuer '{label}' fehlgeschlagen: {e!r}")
             _note_action_outcome(label, "beendet", e)
             end_error = str(e)
+    elif label == HEIZUNG_ACTION_NAME:
+        try:
+            _end_heizung_restore_default(action, config)
+            print(f"[Shyft] Ende ausgefuehrt fuer '{label}'.")
+            _note_action_outcome(label, "beendet")
+        except Exception as e:
+            print(f"[Shyft] Ende fuer '{label}' fehlgeschlagen: {e!r}")
+            _note_action_outcome(label, "beendet", e)
+            end_error = str(e)
     elif label == "Warmwasser":
         try:
             _end_dhw_target_temp_restore(action, config)
@@ -8833,6 +8842,27 @@ HEIZUNG_TARGET_MIN_OFFSET_C = 4
 HEIZUNG_TARGET_MAX_C = 25
 
 
+def _heizung_default_temp(config):
+    "Standard-Temperatur der Heizung (°C, ganzzahlig): die gewuenschte Raumtemperatur (hpHeatingTargetTempMin) - darauf wird nach einer Heizungs-Aktion zurueckgestellt, Aktionen mit genau diesem Sollwert gibt es nicht."
+    return round(_safe_float(config.get("hpHeatingTargetTempMin"), HEIZUNG_T_I_MIN_DEFAULT_C))
+
+
+def _end_heizung_restore_default(action, config):
+    """Ende einer Heizungs-Aktion: Sollwert zurueck auf die Standard-Temperatur (_heizung_default_temp) -
+    ausser die unmittelbar folgende Stunde hat eine geplante, aktivierte Heizungs-Aktion (anderer Sollwert,
+    gleiche wuerden schon als Verlaengerung zusammengefasst): die setzt ihren Wert direkt danach selbst,
+    ein Zwischenschritt ueber die Standard-Temperatur waere nur ein unnoetiger Sollwert-Sprung."""
+    end_ms = action.get("Date End")
+    if end_ms is not None:
+        for other in _read_computed_actions():
+            if (other.get("Action Name") == HEIZUNG_ACTION_NAME and other.get("_id") != action.get("_id")
+                    and other.get("Date Start") is not None and abs(other["Date Start"] - end_ms) < 60000
+                    and (other.get("Status") or "").lower().startswith("geplant")
+                    and other.get("Execution Status") == "yes, planned"):
+                return
+    execute_auto_managed_action("heating_target_temp", "start", _heizung_default_temp(config))
+
+
 def _heizung_action_id(hour_start):
     return f"{HEIZUNG_ID_PREFIX}_{int(hour_start.timestamp() * 1000)}"
 
@@ -8840,10 +8870,11 @@ def _heizung_action_id(hour_start):
 def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base=None, net_profit_opt=None, x_sum_total=None):
     """Berechnet fuer alle Stunden des aktuellsten Optimierungslaufs, ob
     eine "Heizung Soll-Temperatur"-Aktion existieren soll - analog zu compute_dhw_actions. Trigger:
-    T_i_Target (auf 0 Stellen gerundet) weicht vom aktuell aktiven Sollwert ab (Live-Wert des
-    Controls "heatpump_heating_target_temp_normal", das die Aktion bei Ausfuehrung selbst setzt -
-    derselbe Bezugswert fuer alle Stunden dieses Laufs, nicht rollierend von Stunde zu Stunde). Ohne
-    lesbaren aktuellen Sollwert wird nichts erzeugt (keine sinnvolle Abweichung feststellbar).
+    T_i_Target (auf 0 Stellen gerundet, auf den plausiblen Bereich begrenzt) weicht von der Standard-
+    Temperatur ab (= "Gewuenschte Raumtemperatur (mindestens)", hpHeatingTargetTempMin, siehe
+    _heizung_default_temp). Will der Optimierer die Standard-Temperatur einstellen, wird KEINE Aktion
+    erzeugt (Nutzer-Vorgabe): eine vorherige Aktion mit anderem Sollwert stellt bei ihrem Ende selbst auf
+    die Standard-Temperatur zurueck (siehe _end_heizung_restore_default).
     Steht "heatpump_heating_activated" explizit auf Aus, werden gar keine Heizungs-Aktionen erzeugt
     (Warmwasser/compute_dhw_actions ist davon unberuehrt) - nicht zugeordnet/nicht lesbar (None)
     blockiert nichts, um bestehende Installationen ohne diesen Sensor nicht stillzulegen. Wie bei
@@ -8855,12 +8886,9 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
     if _read_mapped_bool_on(config, "heatpump_heating_activated", anything_but_off=True) is False:
         return result
 
-    current_target = _read_mapped_numeric(config, "heatpump_heating_target_temp_normal")
-    if current_target is None:
-        return result
-
     t_i_min = _safe_float(config.get("hpHeatingTargetTempMin"), HEIZUNG_T_I_MIN_DEFAULT_C)
     target_min = round(t_i_min - HEIZUNG_TARGET_MIN_OFFSET_C)
+    default_temp = _heizung_default_temp(config)
 
     row_count = len(output_rows)
     for i in range(row_count):
@@ -8869,8 +8897,8 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
 
         t_i_target = _safe_float(output_row.get("T_i_Target"))
         target_value = max(target_min, min(HEIZUNG_TARGET_MAX_C, round(t_i_target)))
-        if target_value == round(current_target):
-            continue
+        if target_value == default_temp:
+            continue  # Standard-Temperatur: keine Aktion noetig (siehe Docstring)
 
         hour_start = start + timedelta(hours=i)
         t_i = _safe_float(output_row.get("T_i"))

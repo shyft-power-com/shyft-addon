@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.269
+
+* **Heizung: keine Aktionen mehr für die Standard-Temperatur, Rückstellung am Ende jeder Aktion.** Will die Optimierung genau die gewünschte Raumtemperatur („Gewünschte Raumtemperatur (mindestens)“, z. B. 20 °C) einstellen, wird keine „Heizung Soll-Temperatur“-Aktion mehr erzeugt (bisher entstand eine, sobald der Sollwert vom aktuellen Wert der Wärmepumpe abwich, z. B. nach einer 19-°C-Aktion). Dafür stellt jede Heizungs-Aktion beim Beenden den Sollwert selbst auf die Standard-Temperatur zurück – das war bisher **nicht** umgesetzt (das Ende einer Heizungs-Aktion tat nichts, der Sollwert blieb stehen, bis eine neue Aktion kam). Folgt in der nächsten Stunde eine Heizungs-Aktion mit anderem Sollwert, entfällt die Zwischen-Rückstellung; gleiche Sollwerte hintereinander werden wie bisher verlängert. Gilt für die direkte Steuerung und für die eigene Home-Assistant-Automation (die bekommt die Standard-Temperatur als Zielwert).
+
 ## 0.0.45.277
 
 * **Raumtemperatur-Chart: „Heizung-Soll“ mit zwei Linien.** Wie beim Ladestand Heimspeicher zeigt „Heizung-Soll“ jetzt für vergangene Stunden zusätzlich zum tatsächlichen Verlauf (durchgezogen) den damals geplanten Wert (gestrichelt, der zum Beginn der Stunde jüngste Planungsstand). Beide Linien lassen sich über den Legenden-Eintrag „Heizung-Soll“ gemeinsam aus- und einblenden. Der geplante Verlauf wird erst ab dieser Version gespeichert – für frühere Stunden gibt es nur die durchgezogene Linie.
