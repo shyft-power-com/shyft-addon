@@ -7439,6 +7439,21 @@ function computePvEnergySummary(labels, values) {
 // "nice numbers" (1/2/2.5/5/10 je Zehnerpotenz) gerundet, statt den Bereich stur in (targetCount-1)
 // gleiche Teile zu zerlegen. Gemeinsam genutzt von buildLineChart/buildForecastActualChart/
 // buildComparisonChart statt je Chart eine eigene (bisher: feste 3 Ticks top/mitte/unten).
+// Hoehe der Liniendiagramm-SVGs (viewBox 600 x CHART_SVG_HEIGHT) - 275 statt frueher 220 (+25 %), damit die Charts auf dem
+// Handy (wo das SVG auf die Bildschirmbreite skaliert wird) nicht so flach wirken.
+const CHART_SVG_HEIGHT = 275;
+
+// Haelt den Tooltip innerhalb des Chart-Containers: er ist per translate(-50%) um die Maus-/Touch-Stelle zentriert und
+// wuerde am linken/rechten Rand sonst abgeschnitten (bzw. dort umbrechen, siehe .dashboardChartTooltip in index.html).
+function clampChartTooltip(tooltip) {
+    const container = tooltip.parentElement;
+    if (!container) return;
+    const half = tooltip.offsetWidth / 2;
+    const left = parseFloat(tooltip.style.left);
+    if (isNaN(left)) return;
+    tooltip.style.left = Math.min(Math.max(left, half), Math.max(half, container.clientWidth - half)).toFixed(1) + 'px';
+}
+
 function computeNiceTicks(min, max, targetCount = 4) {
     const range = max - min;
     if (!isFinite(range) || range <= 0) return [min];
@@ -7459,7 +7474,7 @@ function computeNiceTicks(min, max, targetCount = 4) {
 
 function buildLineChart(title, unit, labels, values, options = {}) {
     const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, usageToggle = null, overlayForecast = null} = options;
-    const width = 600, height = 220;
+    const width = 600, height = CHART_SVG_HEIGHT;
     // presenceForecast reserves an extra strip just above the x-axis labels for the
     // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
     // eigener rechter Skala, siehe unten) braucht zusaetzlichen Platz rechts fuer ihre eigene
@@ -7964,6 +7979,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         tooltip.style.left = (points[idx][0] * scale).toFixed(1) + 'px';
         tooltip.style.top = (points[idx][1] * scale).toFixed(1) + 'px';
         tooltip.hidden = false;
+        clampChartTooltip(tooltip);
         marker.setAttribute('cx', points[idx][0].toFixed(1));
         marker.setAttribute('cy', points[idx][1].toFixed(1));
         marker.setAttribute('visibility', 'visible');
@@ -8088,7 +8104,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     // erkannt, ob 'actual' dort einen Wert hat (bei jedem Aufrufer nur fuer bereits vergangene/
     // laufende Stunden befuellt).
     const prognose = plannedHistory ? labels.map((_, i) => (plannedHistory[i] ?? forecast[i])) : forecast;
-    const width = 600, height = 220;
+    const width = 600, height = CHART_SVG_HEIGHT;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     const plotWidth = width - paddingLeft - paddingRight;
     const plotHeight = height - paddingTop - paddingBottom;
@@ -8353,6 +8369,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
         tooltip.style.left = xFor(idx).toFixed(1) * scale + 'px';
         tooltip.style.top = markerY.toFixed(1) * scale + 'px';
         tooltip.hidden = false;
+        clampChartTooltip(tooltip);
         marker.setAttribute('cx', xFor(idx).toFixed(1));
         marker.setAttribute('cy', markerY.toFixed(1));
         marker.setAttribute('visibility', 'visible');
@@ -8377,7 +8394,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
 // gemeinsamer Stundenachse. Bewusst eigene Funktion (wie buildPvForecastActualChart): zwei Reihen
 // ohne Luecken, Summen in der Legende, "(Beta)" im Titel.
 function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false, actualValues = null, actualFine = null} = {}) {
-    const width = 600, height = 220;
+    const width = 600, height = CHART_SVG_HEIGHT;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     const plotWidth = width - paddingLeft - paddingRight;
     const plotHeight = height - paddingTop - paddingBottom;
@@ -8614,6 +8631,7 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
         tooltip.style.left = (xFor(idx) * scale).toFixed(1) + 'px';
         tooltip.style.top = (my * scale).toFixed(1) + 'px';
         tooltip.hidden = false;
+        clampChartTooltip(tooltip);
         marker.setAttribute('cx', xFor(idx).toFixed(1));
         marker.setAttribute('cy', my.toFixed(1));
         marker.setAttribute('visibility', 'visible');

@@ -2227,6 +2227,10 @@
                in buildLineChart, dreizeiliger Tooltip), ein einzeiliger Tooltip ohne "\n" bleibt
                unveraendert einzeilig. */
             white-space: pre-line;
+            /* max-content: der Tooltip ist absolut positioniert, seine Breite wurde sonst am Rand des Charts auf den
+               Restplatz begrenzt - die Beschriftung (z.B. "Heizung-Soll: 21 °C") brach dort um. */
+            width: max-content;
+            max-width: calc(100vw - 32px);
             text-align: center;
             pointer-events: none;
             z-index: 5;

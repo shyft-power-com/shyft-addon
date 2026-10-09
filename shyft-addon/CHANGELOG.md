@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.274
+
+* **Dashboard-Charts um 25 % höher.** Die Liniendiagramme (Strompreis, PV, Raumtemperatur, Ladestand, Warmwasser, …) sind jetzt 275 statt 220 Einheiten hoch – auf dem Handy, wo sie auf die Bildschirmbreite skaliert werden, wirkten sie zu flach.
+* **Tooltip beim Darüberfahren/Antippen bricht nicht mehr um.** Der Tooltip (z. B. „Heizung-Soll: 21 °C“ beim Raumtemperatur-Chart) ist so breit wie seine Beschriftung und wird am linken/rechten Rand des Charts nach innen geschoben, statt dort umzubrechen oder abgeschnitten zu werden.
+
 ## 0.0.45.273
 
 * **Raumtemperatur-Chart zeigt die Historie des heutigen Tages.** Der Chart beginnt jetzt – wie Ladestand Auto und Warmwasser – um 0 Uhr: „Heizung-Soll“ zeigt den tatsächlichen Verlauf der Solltemperatur-Entität bis jetzt, danach gestrichelt den Plan der Optimierung; „Innenraum“ zeigt die Sensorhistorie plus Prognose. Zuvor begann der Chart bei der aktuellen Stunde, und die Innenraum-Historie wurde dabei an die falschen Stunden gezeichnet (die Werte ab 0 Uhr lagen auf der Achse ab „jetzt“). Ohne Historie der Solltemperatur (Entität nicht zugeordnet) bleibt der Chart wie bisher ab „jetzt“.
