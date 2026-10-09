@@ -7489,27 +7489,194 @@ function saveHiddenChartSeries(chartKey, hiddenSet) {
     } catch (err) { /* egal - der Zustand gilt dann nur bis zum Neuladen */ }
 }
 
-// Baut einen Chart ueber build(ctx) (ctx = {hidden: Set ausgeblendeter Kurven, toggle: Funktion(seriesId) | null}) und
-// baut ihn beim Umschalten einer Kurve an Ort und Stelle neu - nur die von build() erzeugten Knoten werden getauscht, vom
-// Aufrufer spaeter angehaengte Elemente (z.B. Prognose-Details unter "Ladestand Auto") bleiben erhalten.
-function makeToggleableChart(chartKey, build) {
-    if (!chartKey) return build({hidden: new Set(), toggle: null});
+// Zeitfenster der Dashboard-Charts (Handy): beim Oeffnen "heute plus ein halber Tag" (ab 0 Uhr heute 36 Stunden), per
+// Wischen (ein Finger) verschiebbar, per Zwei-Finger-Zoom (Pinch) bis auf den gesamten Zeitraum aus- und wieder
+// einzoomen. Das Fenster gilt fuer alle Charts gemeinsam (chartGlobalView, nur im Speicher - nach dem Neuladen gilt wieder
+// der Standard); null = gesamter Zeitraum (Standard am Desktop). Ein Chart passt sich beim Zoomen/Wischen sofort an, die
+// uebrigen nach dem Loslassen.
+const CHART_MOBILE_MAX_WIDTH_PX = 700;
+const CHART_DEFAULT_VIEW_HOURS = 36;
+const CHART_MIN_VIEW_SPAN_MS = 8 * 3600000;
+
+function defaultChartView() {
+    try {
+        if (!window.matchMedia || !window.matchMedia(`(max-width: ${CHART_MOBILE_MAX_WIDTH_PX}px)`).matches) return null;
+    } catch (err) { return null; }
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    return {startMs: midnight.getTime(), endMs: midnight.getTime() + CHART_DEFAULT_VIEW_HOURS * 3600000};
+}
+
+let chartGlobalView = defaultChartView();
+const chartRefreshers = new Set();
+
+function applyGlobalChartView(view, exceptEntry) {
+    chartGlobalView = view;
+    for (const entry of [...chartRefreshers]) {
+        if (!entry.wrapper.isConnected) { chartRefreshers.delete(entry); continue; }
+        if (entry !== exceptEntry) entry.refresh();
+    }
+}
+
+// Indizes [i0, i1] der (stuendlichen) labels, die im Zeitfenster view liegen; full=true, wenn das Fenster den ganzen
+// Zeitraum dieses Charts abdeckt (oder keins gesetzt ist). Das Fenster wird auf den Zeitraum des Charts geklemmt
+// (Breite bleibt erhalten).
+function chartWindowIndices(labels, view) {
+    const n = labels.length;
+    const full = {i0: 0, i1: n - 1, full: true};
+    if (!view || n < 3) return full;
+    const times = labels.map(l => new Date(l).getTime());
+    const fullStart = times[0], fullEnd = times[n - 1];
+    const span = view.endMs - view.startMs;
+    if (!(span > 0) || span >= fullEnd - fullStart) return full;
+    const start = Math.min(Math.max(view.startMs, fullStart), fullEnd - span);
+    const end = start + span;
+    let i0 = times.findIndex(t => t >= start - 1);
+    let i1 = -1;
+    for (let k = n - 1; k >= 0; k--) { if (times[k] <= end + 1) { i1 = k; break; } }
+    if (i0 < 0 || i1 - i0 < 2) return full;
+    return {i0, i1, full: false};
+}
+
+const sliceChartSeries = (series, w) => (Array.isArray(series) ? series.slice(w.i0, w.i1 + 1) : series);
+
+// Pinch (zwei Finger) und Wischen (ein Finger, nur bei gezoomtem Chart) auf dem SVG eines Charts - der Chart wird dabei
+// ueber entry.refresh() neu gezeichnet. Die Touch-Listener haengen direkt an den Touch-Zielen: beim Neuzeichnen verschwindet
+// das urspruengliche SVG aus dem DOM, ein Touch liefert seine Folge-Events aber weiter an das urspruengliche Ziel.
+// Ohne Zoom (gesamter Zeitraum) bleibt der Ein-Finger-Fingerzeig der Tooltip-Wisch wie bisher.
+function attachChartViewGestures(entry) {
+    const wrapper = entry.wrapper;
+    let g = null;
+    let rafPending = false;
+    const clamp01 = v => Math.min(1, Math.max(0, v));
+
+    function metrics() {
+        const svg = wrapper.querySelector('svg.dashboardChartSvg');
+        if (!svg) return null;
+        const rect = svg.getBoundingClientRect();
+        if (rect.width === 0) return null;
+        const k = rect.width / 600;
+        const plotLeft = entry.ctx && entry.ctx.plotLeft !== undefined ? entry.ctx.plotLeft : 52;
+        const plotRight = entry.ctx && entry.ctx.plotRight !== undefined ? entry.ctx.plotRight : 15;
+        return {left: rect.left + plotLeft * k, width: (600 - plotLeft - plotRight) * k};
+    }
+    function effectiveView() {
+        const full = entry.fullRange();
+        const fullSpan = full.endMs - full.startMs;
+        const v = chartGlobalView;
+        if (!v || v.endMs - v.startMs >= fullSpan) return {startMs: full.startMs, endMs: full.endMs, zoomed: false};
+        const span = v.endMs - v.startMs;
+        const start = Math.min(Math.max(v.startMs, full.startMs), full.endMs - span);
+        return {startMs: start, endMs: start + span, zoomed: true};
+    }
+    function toView(startMs, spanMs) {
+        const full = entry.fullRange();
+        if (spanMs >= (full.endMs - full.startMs) * 0.98) return null;
+        const start = Math.round(Math.min(Math.max(startMs, full.startMs), full.endMs - spanMs) / 3600000) * 3600000;
+        return {startMs: start, endMs: start + spanMs};
+    }
+    function scheduleLive(view) {
+        chartGlobalView = view;
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(() => { rafPending = false; entry.refresh(); });
+    }
+
+    function onMove(e) {
+        if (!g) return;
+        const m = metrics();
+        if (!m) return;
+        if (g.mode === 'pinch' && e.touches.length >= 2) {
+            const a = e.touches[0], b = e.touches[1];
+            const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+            const mid = (a.clientX + b.clientX) / 2;
+            const startSpan = g.start.endMs - g.start.startMs;
+            const full = entry.fullRange();
+            const newSpan = Math.min(full.endMs - full.startMs, Math.max(CHART_MIN_VIEW_SPAN_MS, startSpan * g.dist0 / dist));
+            const anchorMs = g.start.startMs + clamp01((g.mid0 - m.left) / m.width) * startSpan;
+            scheduleLive(toView(anchorMs - clamp01((mid - m.left) / m.width) * newSpan, newSpan));
+            e.stopPropagation();
+        } else if (g.mode === 'pending' && e.touches.length === 1) {
+            const dx = e.touches[0].clientX - g.x0, dy = e.touches[0].clientY - g.y0;
+            if (g.start.zoomed && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) g.mode = 'pan';
+        }
+        if (g.mode === 'pan' && e.touches.length === 1) {
+            const span = g.start.endMs - g.start.startMs;
+            scheduleLive(toView(g.start.startMs - (e.touches[0].clientX - g.x0) / m.width * span, span));
+            e.stopPropagation();
+        }
+    }
+    function onEnd(e) {
+        if (e.touches.length > 0) {
+            if (g && g.mode === 'pinch') g.mode = 'ended';
+            return;
+        }
+        const wasGesture = g && (g.mode === 'pan' || g.mode === 'pinch' || g.mode === 'ended');
+        g = null;
+        if (wasGesture) applyGlobalChartView(chartGlobalView, entry);
+    }
+    function bind(el) {
+        if (!el || el.__shyftChartGesture) return;
+        el.__shyftChartGesture = true;
+        el.addEventListener('touchmove', onMove, {passive: true});
+        el.addEventListener('touchend', onEnd);
+        el.addEventListener('touchcancel', onEnd);
+    }
+
+    wrapper.addEventListener('touchstart', e => {
+        if (!e.target.closest || !e.target.closest('svg.dashboardChartSvg')) return;
+        for (const t of e.changedTouches) bind(t.target);
+        const eff = effectiveView();
+        if (e.touches.length >= 2) {
+            const a = e.touches[0], b = e.touches[1];
+            g = {mode: 'pinch', dist0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1, mid0: (a.clientX + b.clientX) / 2, start: eff};
+            e.stopPropagation();  // Tooltip des SVG soll bei der Zwei-Finger-Geste nicht reagieren
+        } else if (e.touches.length === 1) {
+            g = {mode: 'pending', x0: e.touches[0].clientX, y0: e.touches[0].clientY, start: eff};
+        }
+    }, {capture: true, passive: true});
+}
+
+// Baut einen Chart ueber build(ctx) und baut ihn bei Aenderungen an Ort und Stelle neu (Kurve ein-/ausblenden per Legende,
+// Zeitfenster per Zoom/Wischen). ctx = {hidden: Set ausgeblendeter Kurven, toggle: Funktion(seriesId) | null (ohne chartKey),
+// view: Zeitfenster | null}. Nur die von build() erzeugten Knoten werden getauscht, vom Aufrufer spaeter angehaengte
+// Elemente (z.B. Prognose-Details unter "Ladestand Auto") bleiben erhalten. info.labels (stuendliche ISO-Zeitpunkte des
+// vollen Zeitraums) schaltet das Zoom-/Wisch-Verhalten ein.
+function makeToggleableChart(chartKey, build, info = {}) {
     let wrapper = null;
     let ownNodes = [];
-    const makeCtx = () => ({hidden: loadHiddenChartSeries(chartKey), toggle});
-    function toggle(seriesId) {
-        const hidden = loadHiddenChartSeries(chartKey);
-        if (hidden.has(seriesId)) hidden.delete(seriesId); else hidden.add(seriesId);
-        saveHiddenChartSeries(chartKey, hidden);
-        const next = build(makeCtx());
+    let lastCtx = null;
+    const labelTimes = (info.labels || []).map(l => new Date(l).getTime());
+    const entry = {
+        wrapper: null,
+        fullRange: () => ({startMs: labelTimes[0], endMs: labelTimes[labelTimes.length - 1]}),
+        refresh: () => rebuild(),
+        get ctx() { return lastCtx; },
+    };
+    const makeCtx = () => ({hidden: chartKey ? loadHiddenChartSeries(chartKey) : new Set(), toggle: chartKey ? toggle : null, view: chartGlobalView});
+    function rebuild() {
+        lastCtx = makeCtx();
+        const next = build(lastCtx);
         const nextNodes = [...next.childNodes];
         const anchor = ownNodes[0] || null;
         for (const node of nextNodes) wrapper.insertBefore(node, anchor);
         for (const node of ownNodes) node.remove();
         ownNodes = nextNodes;
     }
-    wrapper = build(makeCtx());
+    function toggle(seriesId) {
+        const hidden = loadHiddenChartSeries(chartKey);
+        if (hidden.has(seriesId)) hidden.delete(seriesId); else hidden.add(seriesId);
+        saveHiddenChartSeries(chartKey, hidden);
+        rebuild();
+    }
+    lastCtx = makeCtx();
+    wrapper = build(lastCtx);
     ownNodes = [...wrapper.childNodes];
+    entry.wrapper = wrapper;
+    if (labelTimes.length > 2) {
+        chartRefreshers.add(entry);
+        attachChartViewGestures(entry);
+    }
     return wrapper;
 }
 
@@ -7562,7 +7729,24 @@ function computeNiceTicks(min, max, targetCount = 4) {
 }
 
 function buildLineChart(title, unit, labels, values, options = {}) {
-    return makeToggleableChart(options.chartKey, ctx => buildLineChartImpl(title, unit, labels, values, options, ctx));
+    return makeToggleableChart(options.chartKey, ctx => {
+        const w = chartWindowIndices(labels, ctx.view);
+        if (w.full) return buildLineChartImpl(title, unit, labels, values, options, ctx);
+        const sliced = {...options};
+        if (options.dashedFromIndex !== null && options.dashedFromIndex !== undefined) sliced.dashedFromIndex = Math.max(0, options.dashedFromIndex - w.i0);
+        if (options.overlayForecast) sliced.overlayForecast = sliceChartSeries(options.overlayForecast, w);
+        if (options.actionHours) sliced.actionHours = sliceChartSeries(options.actionHours, w);
+        const windowLabels = sliceChartSeries(labels, w);
+        if (options.secondSeries) {
+            const s = options.secondSeries;
+            const fromMs = new Date(windowLabels[0]).getTime() - 3600000, toMs = new Date(windowLabels[windowLabels.length - 1]).getTime() + 3600000;
+            sliced.secondSeries = {
+                ...s, actual: sliceChartSeries(s.actual, w), forecast: sliceChartSeries(s.forecast, w), values: sliceChartSeries(s.values, w),
+                fine: s.fine ? s.fine.filter(p => p[0] >= fromMs && p[0] <= toMs) : s.fine,
+            };
+        }
+        return buildLineChartImpl(title, unit, windowLabels, sliceChartSeries(values, w), sliced, ctx);
+    }, {labels});
 }
 
 function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hidden: new Set(), toggle: null}) {
@@ -7573,6 +7757,8 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     // eigener rechter Skala, siehe unten) braucht zusaetzlichen Platz rechts fuer ihre eigene
     // Achsenbeschriftung.
     const paddingLeft = 52, paddingRight = secondSeries ? 42 : 15, paddingTop = 20, paddingBottom = presenceForecast ? 38 : 26;
+    ctx.plotLeft = paddingLeft;
+    ctx.plotRight = paddingRight;
     const plotWidth = width - paddingLeft - paddingRight;
     const plotHeight = height - paddingTop - paddingBottom;
 
@@ -8146,10 +8332,17 @@ function buildAussentemperaturForecastActualChart(labels, temperature) {
 const ACTION_BAND_OPACITY = 0.32;
 
 function buildForecastActualChart(title, unit, labels, forecast, actual, options = {}) {
-    return makeToggleableChart(options.chartKey, ctx => buildForecastActualChartImpl(title, unit, labels, forecast, actual, options, ctx));
+    return makeToggleableChart(options.chartKey, ctx => {
+        const w = chartWindowIndices(labels, ctx.view);
+        if (w.full) return buildForecastActualChartImpl(title, unit, labels, forecast, actual, options, ctx);
+        // summaryLabels/summaryForecast: die PV-Ertragssumme (Heute | Morgen) bezieht sich immer auf den vollen Zeitraum
+        const sliced = {...options, plannedHistory: sliceChartSeries(options.plannedHistory, w), actionHours: sliceChartSeries(options.actionHours, w),
+            summaryLabels: labels, summaryForecast: forecast};
+        return buildForecastActualChartImpl(title, unit, sliceChartSeries(labels, w), sliceChartSeries(forecast, w), sliceChartSeries(actual, w), sliced, ctx);
+    }, {labels});
 }
 
-function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
+function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
     // "Prognose" ist visuell EINE Linie ueber den ganzen Tag: fuer bereits vergangene Stunden der zu
     // ihrer Zeit juengste Planungsstand (plannedHistory), fuer die Zukunft die aktuelle Prognose
     // (forecast) - ersetzt die fruehere separate dritte Linie/Legende "Letzter Planungsstand".
@@ -8163,6 +8356,8 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     const prognose = plannedHistory ? labels.map((_, i) => (plannedHistory[i] ?? forecast[i])) : forecast;
     const width = 600, height = CHART_SVG_HEIGHT;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
+    ctx.plotLeft = paddingLeft;
+    ctx.plotRight = paddingRight;
     const plotWidth = width - paddingLeft - paddingRight;
     const plotHeight = height - paddingTop - paddingBottom;
 
@@ -8357,7 +8552,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     // Nur bei PV (energySummary): eine kWh-Ertragssumme ergibt fuer andere Prognose/Ist-Charts (z.B.
     // Ladestand Heimspeicher in %) keinen Sinn.
     if (energySummary) {
-        const pvSummaryParts = computePvEnergySummary(labels, forecast).map(({label, kwh}) => `${label}: ${kwh} kWh`);
+        const pvSummaryParts = computePvEnergySummary(summaryLabels || labels, summaryForecast || forecast).map(({label, kwh}) => `${label}: ${kwh} kWh`);
         if (pvSummaryParts.length > 0) {
             const pvSummary = document.createElement('div');
             pvSummary.className = 'dashboardPvEnergySummary';
@@ -8418,12 +8613,22 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
 // gemeinsamer Stundenachse. Bewusst eigene Funktion (wie buildPvForecastActualChart): zwei Reihen
 // ohne Luecken, Summen in der Legende, "(Beta)" im Titel.
 function buildComparisonChart(title, unit, labels, optValues, baseValues, options = {}) {
-    return makeToggleableChart(options.chartKey, ctx => buildComparisonChartImpl(title, unit, labels, optValues, baseValues, options, ctx));
+    return makeToggleableChart(options.chartKey, ctx => {
+        const w = chartWindowIndices(labels, ctx.view);
+        if (w.full) return buildComparisonChartImpl(title, unit, labels, optValues, baseValues, options, ctx);
+        const windowLabels = sliceChartSeries(labels, w);
+        const fromMs = new Date(windowLabels[0]).getTime() - 3600000, toMs = new Date(windowLabels[windowLabels.length - 1]).getTime() + 3600000;
+        const sliced = {...options, actualValues: sliceChartSeries(options.actualValues, w),
+            actualFine: options.actualFine ? options.actualFine.filter(([t]) => { const ms = new Date(t).getTime(); return ms >= fromMs && ms <= toMs; }) : options.actualFine};
+        return buildComparisonChartImpl(title, unit, windowLabels, sliceChartSeries(optValues, w), sliceChartSeries(baseValues, w), sliced, ctx);
+    }, {labels});
 }
 
 function buildComparisonChartImpl(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false, actualValues = null, actualFine = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
     const width = 600, height = CHART_SVG_HEIGHT;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
+    ctx.plotLeft = paddingLeft;
+    ctx.plotRight = paddingRight;
     const plotWidth = width - paddingLeft - paddingRight;
     const plotHeight = height - paddingTop - paddingBottom;
 
