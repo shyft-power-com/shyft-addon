@@ -7448,6 +7448,11 @@ const CHART_SVG_HEIGHT = 275;
 // uebereinander statt aufeinander.
 const CHART_BAND_FRACTION = 0.6;
 
+// Anzahl der Zeitbeschriftungen auf der x-Achse: auf dem Handy weniger, damit sie sich nicht ueberlappen ("Sa, 05 UhrSa, 12 Uhr").
+function chartXTickCount(n) {
+    return Math.min(window.innerWidth <= 700 ? 4 : 6, n);
+}
+
 // Haelt den Tooltip innerhalb des Chart-Containers: er ist per translate(-50%) um die Maus-/Touch-Stelle zentriert und
 // wuerde am linken/rechten Rand sonst abgeschnitten (bzw. dort umbrechen, siehe .dashboardChartTooltip in index.html).
 function clampChartTooltip(tooltip) {
@@ -7540,15 +7545,58 @@ function chartWindowIndices(labels, view) {
 
 const sliceChartSeries = (series, w) => (Array.isArray(series) ? series.slice(w.i0, w.i1 + 1) : series);
 
-// Pinch (zwei Finger) und Wischen (ein Finger, nur bei gezoomtem Chart) auf dem SVG eines Charts - der Chart wird dabei
-// ueber entry.refresh() neu gezeichnet. Die Touch-Listener haengen direkt an den Touch-Zielen: beim Neuzeichnen verschwindet
-// das urspruengliche SVG aus dem DOM, ein Touch liefert seine Folge-Events aber weiter an das urspruengliche Ziel.
-// Ohne Zoom (gesamter Zeitraum) bleibt der Ein-Finger-Fingerzeig der Tooltip-Wisch wie bisher.
+// Touch-Bedienung der Charts (Handy), zentral statt je Chart:
+//   Antippen             - Tooltip an dieser Stelle FESTSETZEN (bleibt stehen, auch nach Neuzeichnen/30-s-Refresh); erneut dieselbe
+//                          Stelle antippen blendet ihn aus, eine andere Stelle (auch in einem anderen Chart) versetzt ihn
+//   Kurz halten + ziehen - Tooltip ueber die Kurven schieben (Ablesen ohne dass der Finger die Stelle verdeckt, auch gezoomt)
+//   Sofort wischen       - Zeitfenster verschieben (nur wenn gezoomt; sonst scrollt die Seite wie gewohnt)
+//   Zwei Finger          - stufenlos zoomen (Pinch)
+//   Doppeltippen         - Zeitfenster auf den Standard zuruecksetzen
+// Das Neuzeichnen (entry.refresh) ersetzt das SVG waehrend der Geste: die Touch-Listener haengen deshalb direkt an den
+// Touch-Zielen - ein Touch liefert seine Folge-Events weiter an sein urspruengliches Ziel, auch wenn es aus dem DOM verschwindet.
+const CHART_LONG_PRESS_MS = 300;
+const CHART_TAP_MAX_MOVE_PX = 8;
+const CHART_DOUBLE_TAP_MS = 350;
+let chartSticky = null;   // {key, ms}: festgesetzter Tooltip (Chart-Schluessel + Zeitpunkt), hoechstens einer
+let chartLastTap = null;  // {time, x, y} fuer das Doppeltippen
+
+function setChartSticky(entry, ms) {
+    chartSticky = (entry && ms !== null && ms !== undefined) ? {key: entry.stickyKey, ms} : null;
+    for (const other of chartRefreshers) {
+        if (other !== entry && other.ctx && other.ctx.tooltipApi) other.ctx.tooltipApi.hide();
+    }
+}
+
+// Schnittstelle eines gebauten Charts zum Touch-Controller (siehe ctx.tooltipApi in den Chart-Funktionen).
+function makeChartTooltipApi({svgEl, labels, lastIndex, paddingLeft, plotWidth, width, showTooltip, hideTooltip}) {
+    const indexAtClientX = clientX => {
+        const rect = svgEl.getBoundingClientRect();
+        if (rect.width === 0) return null;
+        const scale = rect.width / width;
+        return Math.max(0, Math.min(lastIndex, Math.round(((clientX - rect.left) / scale - paddingLeft) / plotWidth * lastIndex)));
+    };
+    return {
+        showAtClientX: showTooltip,
+        hide: hideTooltip,
+        labelMsAtClientX: clientX => {
+            const idx = indexAtClientX(clientX);
+            return idx === null ? null : new Date(labels[idx]).getTime();
+        },
+        showAtLabelMs: ms => {
+            const idx = labels.findIndex(l => new Date(l).getTime() === ms);
+            const rect = svgEl.getBoundingClientRect();
+            if (idx < 0 || idx > lastIndex || rect.width === 0) { hideTooltip(); return; }
+            showTooltip(rect.left + (paddingLeft + idx / lastIndex * plotWidth) * rect.width / width);
+        },
+    };
+}
+
 function attachChartViewGestures(entry) {
     const wrapper = entry.wrapper;
     let g = null;
     let rafPending = false;
     const clamp01 = v => Math.min(1, Math.max(0, v));
+    const tooltipApi = () => (entry.ctx && entry.ctx.tooltipApi) || null;
 
     function metrics() {
         const svg = wrapper.querySelector('svg.dashboardChartSvg');
@@ -7581,6 +7629,7 @@ function attachChartViewGestures(entry) {
         rafPending = true;
         requestAnimationFrame(() => { rafPending = false; entry.refresh(); });
     }
+    const cancelDefault = e => { if (e.cancelable) e.preventDefault(); };
 
     function onMove(e) {
         if (!g) return;
@@ -7595,14 +7644,30 @@ function attachChartViewGestures(entry) {
             const newSpan = Math.min(full.endMs - full.startMs, Math.max(CHART_MIN_VIEW_SPAN_MS, startSpan * g.dist0 / dist));
             const anchorMs = g.start.startMs + clamp01((g.mid0 - m.left) / m.width) * startSpan;
             scheduleLive(toView(anchorMs - clamp01((mid - m.left) / m.width) * newSpan, newSpan));
+            cancelDefault(e);
             e.stopPropagation();
-        } else if (g.mode === 'pending' && e.touches.length === 1) {
-            const dx = e.touches[0].clientX - g.x0, dy = e.touches[0].clientY - g.y0;
-            if (g.start.zoomed && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) g.mode = 'pan';
+            return;
         }
-        if (g.mode === 'pan' && e.touches.length === 1) {
+        if (e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        g.lastX = touch.clientX;
+        if (g.mode === 'pending') {
+            const dx = touch.clientX - g.x0, dy = touch.clientY - g.y0;
+            if (Math.hypot(dx, dy) > CHART_TAP_MAX_MOVE_PX) {
+                clearTimeout(g.timer);
+                // nur horizontal und nur gezoomt: Zeitfenster verschieben; sonst ignorieren (die Seite scrollt senkrecht)
+                g.mode = (g.start.zoomed && Math.abs(dx) > Math.abs(dy)) ? 'pan' : 'none';
+            }
+        }
+        if (g.mode === 'pan') {
             const span = g.start.endMs - g.start.startMs;
-            scheduleLive(toView(g.start.startMs - (e.touches[0].clientX - g.x0) / m.width * span, span));
+            scheduleLive(toView(g.start.startMs - (touch.clientX - g.x0) / m.width * span, span));
+            cancelDefault(e);
+            e.stopPropagation();
+        } else if (g.mode === 'scrub') {
+            const api = tooltipApi();
+            if (api) api.showAtClientX(touch.clientX);
+            cancelDefault(e);
             e.stopPropagation();
         }
     }
@@ -7611,14 +7676,47 @@ function attachChartViewGestures(entry) {
             if (g && g.mode === 'pinch') g.mode = 'ended';
             return;
         }
-        const wasGesture = g && (g.mode === 'pan' || g.mode === 'pinch' || g.mode === 'ended');
+        const done = g;
         g = null;
-        if (wasGesture) applyGlobalChartView(chartGlobalView, entry);
+        if (!done) return;
+        clearTimeout(done.timer);
+        if (e.type === 'touchcancel') {
+            if (done.mode === 'pan' || done.mode === 'pinch' || done.mode === 'ended') applyGlobalChartView(chartGlobalView, entry);
+            return;
+        }
+        if (done.mode === 'pan' || done.mode === 'pinch' || done.mode === 'ended') {
+            applyGlobalChartView(chartGlobalView, entry);
+            cancelDefault(e);
+        } else if (done.mode === 'scrub') {
+            const api = tooltipApi();
+            setChartSticky(entry, api ? api.labelMsAtClientX(done.lastX) : null);
+            cancelDefault(e);
+        } else if (done.mode === 'pending') {
+            // Antippen. cancelDefault unterdrueckt die vom Browser nachgeschobenen Maus-Events (mousemove/-leave), die den Tooltip sonst wieder aendern.
+            cancelDefault(e);
+            const now = Date.now();
+            if (chartLastTap && now - chartLastTap.time < CHART_DOUBLE_TAP_MS && Math.hypot(done.x0 - chartLastTap.x, done.y0 - chartLastTap.y) < 40) {
+                chartLastTap = null;
+                applyGlobalChartView(defaultChartView(), null);  // Doppeltippen: Standard-Zeitfenster
+                return;
+            }
+            chartLastTap = {time: now, x: done.x0, y: done.y0};
+            const api = tooltipApi();
+            if (!api) return;
+            const ms = api.labelMsAtClientX(done.x0);
+            if (chartSticky && chartSticky.key === entry.stickyKey && chartSticky.ms === ms) {
+                api.hide();
+                chartSticky = null;
+            } else {
+                api.showAtClientX(done.x0);
+                setChartSticky(entry, ms);
+            }
+        }
     }
     function bind(el) {
         if (!el || el.__shyftChartGesture) return;
         el.__shyftChartGesture = true;
-        el.addEventListener('touchmove', onMove, {passive: true});
+        el.addEventListener('touchmove', onMove, {passive: false});
         el.addEventListener('touchend', onEnd);
         el.addEventListener('touchcancel', onEnd);
     }
@@ -7626,13 +7724,22 @@ function attachChartViewGestures(entry) {
     wrapper.addEventListener('touchstart', e => {
         if (!e.target.closest || !e.target.closest('svg.dashboardChartSvg')) return;
         for (const t of e.changedTouches) bind(t.target);
+        if (g) clearTimeout(g.timer);
         const eff = effectiveView();
         if (e.touches.length >= 2) {
             const a = e.touches[0], b = e.touches[1];
             g = {mode: 'pinch', dist0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1, mid0: (a.clientX + b.clientX) / 2, start: eff};
-            e.stopPropagation();  // Tooltip des SVG soll bei der Zwei-Finger-Geste nicht reagieren
         } else if (e.touches.length === 1) {
-            g = {mode: 'pending', x0: e.touches[0].clientX, y0: e.touches[0].clientY, start: eff};
+            const touch = e.touches[0];
+            g = {mode: 'pending', x0: touch.clientX, y0: touch.clientY, lastX: touch.clientX, start: eff, timer: null};
+            const current = g;
+            current.timer = setTimeout(() => {
+                if (g !== current || current.mode !== 'pending') return;
+                current.mode = 'scrub';  // langes Halten ohne Bewegung: ab jetzt schiebt der Finger den Tooltip
+                if (navigator.vibrate) { try { navigator.vibrate(8); } catch (err) { /* egal */ } }
+                const api = tooltipApi();
+                if (api) api.showAtClientX(current.lastX);
+            }, CHART_LONG_PRESS_MS);
         }
     }, {capture: true, passive: true});
 }
@@ -7649,6 +7756,7 @@ function makeToggleableChart(chartKey, build, info = {}) {
     const labelTimes = (info.labels || []).map(l => new Date(l).getTime());
     const entry = {
         wrapper: null,
+        stickyKey: info.stickyKey || chartKey || null,
         fullRange: () => ({startMs: labelTimes[0], endMs: labelTimes[labelTimes.length - 1]}),
         refresh: () => rebuild(),
         get ctx() { return lastCtx; },
@@ -7662,6 +7770,15 @@ function makeToggleableChart(chartKey, build, info = {}) {
         for (const node of nextNodes) wrapper.insertBefore(node, anchor);
         for (const node of ownNodes) node.remove();
         ownNodes = nextNodes;
+        restoreSticky();
+    }
+    // Festgesetzten Tooltip (siehe chartSticky) nach dem (Neu-)Bau wieder anzeigen - erst im naechsten Frame, wenn das SVG im DOM steht.
+    function restoreSticky() {
+        if (!chartSticky || !entry.stickyKey || chartSticky.key !== entry.stickyKey) return;
+        const ms = chartSticky.ms;
+        requestAnimationFrame(() => {
+            if (wrapper.isConnected && lastCtx && lastCtx.tooltipApi) lastCtx.tooltipApi.showAtLabelMs(ms);
+        });
     }
     function toggle(seriesId) {
         const hidden = loadHiddenChartSeries(chartKey);
@@ -7673,6 +7790,7 @@ function makeToggleableChart(chartKey, build, info = {}) {
     wrapper = build(lastCtx);
     ownNodes = [...wrapper.childNodes];
     entry.wrapper = wrapper;
+    restoreSticky();
     if (labelTimes.length > 2) {
         chartRefreshers.add(entry);
         attachChartViewGestures(entry);
@@ -7746,7 +7864,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
             };
         }
         return buildLineChartImpl(title, unit, windowLabels, sliceChartSeries(values, w), sliced, ctx);
-    }, {labels});
+    }, {labels, stickyKey: options.chartKey || title});
 }
 
 function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hidden: new Set(), toggle: null}) {
@@ -8062,7 +8180,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         overlayMarkup = parts.join('');
     }
 
-    const tickCount = Math.min(6, labels.length);
+    const tickCount = chartXTickCount(labels.length);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
     const xLabels = tickIndices.map(i => {
         const x = (paddingLeft + (i / lastIndex) * plotWidth).toFixed(1);
@@ -8253,9 +8371,8 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
 
     svgEl.addEventListener('mousemove', e => showTooltip(e.clientX));
     svgEl.addEventListener('mouseleave', hideTooltip);
-    svgEl.addEventListener('touchstart', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
-    svgEl.addEventListener('touchmove', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
-    svgEl.addEventListener('touchend', hideTooltip);
+    // Touch-Bedienung (Antippen, Halten + Ziehen, Wischen, Zoom) laeuft zentral ueber attachChartViewGestures.
+    ctx.tooltipApi = makeChartTooltipApi({svgEl, labels, lastIndex, paddingLeft, plotWidth, width, showTooltip, hideTooltip});
 
     return wrapper;
 }
@@ -8353,7 +8470,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, options
         const sliced = {...options, plannedHistory: sliceChartSeries(options.plannedHistory, w), actionHours: sliceChartSeries(options.actionHours, w),
             summaryLabels: labels, summaryForecast: forecast};
         return buildForecastActualChartImpl(title, unit, sliceChartSeries(labels, w), sliceChartSeries(forecast, w), sliceChartSeries(actual, w), sliced, ctx);
-    }, {labels});
+    }, {labels, stickyKey: options.chartKey || title});
 }
 
 function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
@@ -8474,7 +8591,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     // "Prognose" (siehe prognose-Merge oben): immer gestrichelt, auch der plannedHistory-Abschnitt.
     const forecastPath = showForecast ? buildSegmentedPath(prognose, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-accent)'), dashed: true})) : '';
 
-    const tickCount = Math.min(6, labels.length);
+    const tickCount = chartXTickCount(labels.length);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
     const xLabels = tickIndices.map(i => {
         const x = xFor(i).toFixed(1);
@@ -8615,9 +8732,8 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
 
     svgEl.addEventListener('mousemove', e => showTooltip(e.clientX));
     svgEl.addEventListener('mouseleave', hideTooltip);
-    svgEl.addEventListener('touchstart', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
-    svgEl.addEventListener('touchmove', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
-    svgEl.addEventListener('touchend', hideTooltip);
+    // Touch-Bedienung (Antippen, Halten + Ziehen, Wischen, Zoom) laeuft zentral ueber attachChartViewGestures.
+    ctx.tooltipApi = makeChartTooltipApi({svgEl, labels, lastIndex, paddingLeft, plotWidth, width, showTooltip, hideTooltip});
 
     return wrapper;
 }
@@ -8635,7 +8751,7 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, option
         const sliced = {...options, actualValues: sliceChartSeries(options.actualValues, w),
             actualFine: options.actualFine ? options.actualFine.filter(([t]) => { const ms = new Date(t).getTime(); return ms >= fromMs && ms <= toMs; }) : options.actualFine};
         return buildComparisonChartImpl(title, unit, windowLabels, sliceChartSeries(optValues, w), sliceChartSeries(baseValues, w), sliced, ctx);
-    }, {labels});
+    }, {labels, stickyKey: options.chartKey || title});
 }
 
 function buildComparisonChartImpl(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false, actualValues = null, actualFine = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
@@ -8803,7 +8919,7 @@ function buildComparisonChartImpl(title, unit, labels, optValues, baseValues, {d
             i => (isHistorical(i) ? ctx.hidden.has('actual') : ctx.hidden.has('opt')))
         : (ctx.hidden.has('opt') ? '' : seriesPath(optValues, 'var(--color-accent)'));
 
-    const tickCount = Math.min(6, n);
+    const tickCount = chartXTickCount(n);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
     const xLabels = tickIndices.map(i => {
         const text = new Date(labels[i]).toLocaleString('de-DE', {weekday: 'short', hour: '2-digit'}).replace('.', '');
@@ -8884,9 +9000,8 @@ function buildComparisonChartImpl(title, unit, labels, optValues, baseValues, {d
     function hideTooltip() { tooltip.hidden = true; marker.setAttribute('visibility', 'hidden'); }
     svgEl.addEventListener('mousemove', e => showTooltip(e.clientX));
     svgEl.addEventListener('mouseleave', hideTooltip);
-    svgEl.addEventListener('touchstart', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
-    svgEl.addEventListener('touchmove', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
-    svgEl.addEventListener('touchend', hideTooltip);
+    // Touch-Bedienung (Antippen, Halten + Ziehen, Wischen, Zoom) laeuft zentral ueber attachChartViewGestures.
+    ctx.tooltipApi = makeChartTooltipApi({svgEl, labels, lastIndex, paddingLeft, plotWidth, width, showTooltip, hideTooltip});
 
     return wrapper;
 }

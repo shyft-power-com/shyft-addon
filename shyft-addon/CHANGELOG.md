@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.279
+
+* **Charts auf dem Handy: Werte auch im gezoomten Zustand ablesen.** Die Touch-Bedienung der Charts ist neu geregelt: **Antippen** setzt den Tooltip an dieser Stelle fest (er bleibt stehen, auch nach dem automatischen Aktualisieren; dieselbe Stelle noch einmal antippen blendet ihn aus, eine andere versetzt ihn). **Kurz halten und ziehen** schiebt den Tooltip über die Kurven (leichtes Vibrieren zeigt den Start). **Sofort wischen** verschiebt das Zeitfenster (nur wenn gezoomt, sonst scrollt die Seite wie gewohnt). **Zwei Finger** zoomen wie bisher. **Doppeltippen** setzt das Zeitfenster auf den Standard (heute plus halber Tag) zurück. Der bisherige Ein-Finger-Wisch zum Ablesen entfällt zugunsten von „Halten + Ziehen“; am Desktop bleibt der Tooltip beim Darüberfahren mit der Maus. Außerdem zeigen die Charts auf dem Handy nur noch vier statt sechs Zeitbeschriftungen unter der Achse, damit sie sich nicht überlappen.
+
 ## 0.0.45.278
 
 * **Heizung: keine Aktionen mehr für die Standard-Temperatur, Rückstellung am Ende jeder Aktion.** Will die Optimierung genau die gewünschte Raumtemperatur („Gewünschte Raumtemperatur (mindestens)“, z. B. 20 °C) einstellen, wird keine „Heizung Soll-Temperatur“-Aktion mehr erzeugt (bisher entstand eine, sobald der Sollwert vom aktuellen Wert der Wärmepumpe abwich, z. B. nach einer 19-°C-Aktion). Dafür stellt jede Heizungs-Aktion beim Beenden den Sollwert selbst auf die Standard-Temperatur zurück – das war bisher **nicht** umgesetzt (das Ende einer Heizungs-Aktion tat nichts, der Sollwert blieb stehen, bis eine neue Aktion kam). Folgt in der nächsten Stunde eine Heizungs-Aktion mit anderem Sollwert, entfällt die Zwischen-Rückstellung; gleiche Sollwerte hintereinander werden wie bisher verlängert. Gilt für die direkte Steuerung und für die eigene Home-Assistant-Automation (die bekommt die Standard-Temperatur als Zielwert).
