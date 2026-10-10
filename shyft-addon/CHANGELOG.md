@@ -1,10 +1,14 @@
 # Changelog
 
+## 0.0.45.284
+
+* **Raumtemperatur: simulierte Prognose richtig umgerechnet.** Nur die simulierte Innentemperatur-Prognose (auch für vergangene Stunden) wird umgerechnet, die gemessene Temperatur bleibt unverändert: gewünschte Raumtemperatur + 10 × (simulierte Temperatur − gewünschte Raumtemperatur). „Gewünschte Raumtemperatur“ ist der Wert „Gewünschte Raumtemperatur (mindestens)“ aus der Wärmepumpen-Konfiguration – derselbe, den die Optimierung als Untergrenze verwendet, die simulierte Temperatur liegt also nie darunter und das Ergebnis wird nie niedriger als dieser Wert. Zuvor wurde gegen die Heizkurven-Solltemperatur gerechnet, die bis zu 4 Grad unter der Raumtemperatur liegen kann (das ergab z. B. −23,5 °C).
+
 ## 0.0.45.283
 
 * **Neu: „Einspeisung drosseln“ (Wechselrichter, Solarspitzengesetz §9 EEG).** In der Wechselrichter-Kachel gibt es einen Toggle „Einspeisung drosseln“ mit dem Feld „Einspeiseleistung drosseln auf [ ] kW“. Ist er aktiv und ein Wert eingetragen, sendet das Add-on diesen als `LPP` (kW, maximal bezahlte Einspeiseleistung) in der `staticConfig` an shyft-power; die Optimierung verschiebt Lasten dann so, dass die Grenze möglichst eingehalten wird (die physische Drosselung der Anlage stellt Shyft nicht sicher). Ist der Toggle aus oder das Feld leer, wird nichts gesendet. Ist der Toggle an, aber das Feld leer, ist es ein Pflichtfeld: es wird rot umrandet, eine Fehlermeldung erscheint, und es wird keine Optimierung angestoßen.
 * **Wechselrichter: Bereich „Steuerung“ ausgeblendet.** „PV: Einspeisung begrenzen“ und „Verbrauch begrenzen (§14a)“ erscheinen vorerst nicht mehr (kommen später wieder); ihre Toggles bleiben deaktiviert.
-* **Raumtemperatur: Umrechnung der simulierten Innentemperatur korrigiert.** Die Umrechnung lautet jetzt Soll + (simuliert − Soll) / 10 (Beispiel: Soll 20 °C, simuliert 19 °C → 19,9 °C). In 0.0.45.282 wurde fälschlich mit 10 multipliziert, was unsinnige Werte (z. B. −23 °C) ergab.
+* **Raumtemperatur: Umrechnung der simulierten Innentemperatur geändert** (siehe 0.0.45.284 für die endgültige Fassung).
 
 ## 0.0.45.282
 

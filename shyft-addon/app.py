@@ -2295,9 +2295,13 @@ def _hourly_state_actual(entity_id, midnight_local, current_hour_local, scale=1.
 FINE_ACTUAL_BIN_MINUTES = 5
 FINE_ACTUAL_CACHE_SECONDS = 60
 _state_fine_cache = {}
-# Der Optimierer simuliert T_i auf einer anderen Skala als die gemessene Raumluft (Beispiel Nutzer: Soll 20 °C, simuliert 19 °C ->
-# 20 - (20 - 19) / 10 = 19,9 °C). Fuer den Vergleich im Raumtemperatur-Chart wird T_i deshalb umgerechnet: Soll + Faktor * (T_i - Soll).
-INDOOR_TEMP_SIM_CORRECTION_FACTOR = 0.1
+# Die vom Optimierer SIMULIERTE Innentemperatur T_i ist die (traege) Gebaeudetemperatur - die gemessene Raumluft schwankt deutlich staerker
+# um den Sollwert. Fuer den Vergleich im Raumtemperatur-Chart wird nur die simulierte Prognose umgerechnet (die gemessene Temperatur
+# bleibt unveraendert): Soll + Faktor * (T_i - Soll). Soll ist die gewuenschte Raumtemperatur (hpHeatingTargetTempMin = T_i_min im Optimierer,
+# T_i liegt dort nie darunter, die Differenz ist also nie negativ) - NICHT die Heizkurven-Solltemperatur T_i_Target, die bis zu 4 K
+# darunter bzw. 5 K darueber liegen kann.
+INDOOR_TEMP_SIM_CORRECTION_FACTOR = 10
+INDOOR_TEMP_MIN_DEFAULT_C = 21.0
 
 
 def _bin_mean_points(parsed, start, end, bin_minutes):
@@ -2408,14 +2412,15 @@ def readRaumtemperaturForecastVsActual():
     actual_by_hour = _hourly_state_actual(entity_id, midnight_local, current_hour_local)
     target_actual_by_hour = _hourly_state_actual(target_entity_id, midnight_local, current_hour_local)
     target_forecast_by_hour = _read_future_output_column_by_hour("T_i_Target", include_first=True)
-    # Simulierte Innentemperatur (T_i = traege Gebaeudetemperatur) auf die gemessene Raumluft zurueckrechnen:
-    # Soll + INDOOR_TEMP_SIM_CORRECTION_FACTOR * (T_i - Soll), mit dem Plan-Soll der Stunde (sonst dem tatsaechlichen Soll).
+    # Simulierte Innentemperatur (T_i = traege Gebaeudetemperatur) auf die Raumluft hochrechnen (nur die Prognose, nicht die Messung):
+    # Soll + INDOOR_TEMP_SIM_CORRECTION_FACTOR * (T_i - Soll) mit Soll = gewuenschte Raumtemperatur (mindestens), siehe oben.
+    try:
+        comfort_min = float(config.get("hpHeatingTargetTempMin") or INDOOR_TEMP_MIN_DEFAULT_C)
+    except (TypeError, ValueError):
+        comfort_min = INDOOR_TEMP_MIN_DEFAULT_C
     for hour, simulated in list(forecast_by_hour.items()):
-        target = target_forecast_by_hour.get(hour)
-        if target is None:
-            target = target_actual_by_hour.get(hour)
-        if simulated is not None and target is not None:
-            forecast_by_hour[hour] = target + INDOOR_TEMP_SIM_CORRECTION_FACTOR * (simulated - target)
+        if simulated is not None:
+            forecast_by_hour[hour] = comfort_min + INDOOR_TEMP_SIM_CORRECTION_FACTOR * (simulated - comfort_min)
     payload = _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=HEIZUNG_ACTION_NAMES)
     hours = [midnight_local + timedelta(hours=i) for i in range(len(payload["labels"]))]
     payload["targetActual"] = [target_actual_by_hour.get(h) for h in hours]
