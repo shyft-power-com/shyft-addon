@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.289
+
+* **Batterie-Steuerung: Testergebnis statt Werte neben „Testen“.** Neben den Testen-Buttons stehen keine Werte aus dem letzten Test mehr (z. B. „Entladeleistung: 5 kW“). Stattdessen zeigt die Zeile das letzte Ergebnis dauerhaft an: grünes Häkchen und „Erfolgreich getestet am TT.MM.JJJJ, HH:MM Uhr“ bzw. rotes „!“ und „Test fehlgeschlagen (TT.MM.JJJJ, HH:MM Uhr)“. Der grüne Haken steht jetzt neben dem Button statt an der Überschrift der Steuerung. Die Anzeige bleibt nach einem Neuladen erhalten, bis sich etwas an der Steuerung ändert.
+* **„Einspeisung drosseln“: Hinweistext am Feld angepasst** – „Bitte die maximale Einspeiseleistung in kW eintragen oder die Funktion deaktivieren.“
+* **Test-Popup: Seite springt beim Schließen nicht mehr.** Beim Öffnen und Schließen des Testprotokolls bleibt die Scrollposition der Konfigurationsseite unverändert (der Fokus kehrt ohne Scrollen zum Testen-Button zurück).
+
 ## 0.0.45.288
 
 * **Test-Popup: Zurücksetzen der Werte klar bestätigt.** Nach dem Test prüft das Protokoll bis zu 30 Sekunden lang alle 3 Sekunden, ob die Entitäten wieder auf ihren Ausgangswerten stehen (manche Integrationen melden geschriebene Werte erst verzögert). Jede Entität wird gemeldet, sobald sie wieder passt, und zum Schluss steht „Alle Werte stehen wieder auf ihren Ausgangswerten.“ – nur wenn nach 30 Sekunden noch etwas abweicht, erscheint stattdessen die Warnung zu dieser Entität.

@@ -14,6 +14,7 @@ const notificationTargetsUri = insideHomeAssistant + "/notification-targets";
 const servicesUri = insideHomeAssistant + "/services";
 const systemHealthUri = insideHomeAssistant + "/system-health";
 const actionTestStatusUri = insideHomeAssistant + "/actions/test-status";
+const actionTestResultsUri = insideHomeAssistant + "/actions/test-results";
 let configData = {}
 let integrationsData = {integrations: [], entityMap: {}};
 let integrationDomainHints = {};
@@ -24,6 +25,8 @@ let notificationTargetOptions = [];
 // dieses Aktionstyps noch zur aktuellen Konfiguration passt (Fingerprint-Vergleich serverseitig,
 // siehe _action_type_fingerprint) - Grundlage fuer den dauerhaften gruenen Haken der Testen-Zeilen.
 let actionTestStatusMap = {};
+// ready_key -> {ok, at, label}: Ergebnis + Zeitpunkt des letzten Tests (siehe /actions/test-results)
+let actionTestResultsMap = {};
 
 const helpinformation = {
     'electricity_grid_power_sensors': {
@@ -412,7 +415,10 @@ function openTestPopup(title, options = {}) {
     box.appendChild(footer);
     overlay.appendChild(box);
     document.body.appendChild(overlay);
-    cancelButton.focus();
+    // Fokus ohne Scrollen setzen und merken, wohin er beim Schliessen zurueckkehrt (Testen-Button): das Popup darf die Seite
+    // dahinter weder beim Oeffnen noch beim Schliessen verschieben.
+    const previouslyFocused = document.activeElement;
+    cancelButton.focus({preventScroll: true});
 
     let nextIndex = 0;
     let finished = false;
@@ -468,7 +474,15 @@ function openTestPopup(title, options = {}) {
     function close() {
         clearInterval(timer);
         document.removeEventListener('keydown', onKeyDown);
+        // Scrollposition der Seite merken und nach dem Entfernen des Popups wiederherstellen (Entfernen des fokussierten
+        // Schliessen-Buttons bzw. Layout-Aenderungen waehrend des Tests duerfen die Seite nicht springen lassen).
+        const scrollX = window.scrollX, scrollY = window.scrollY;
         overlay.remove();
+        if (previouslyFocused && previouslyFocused.isConnected && typeof previouslyFocused.focus === 'function') {
+            previouslyFocused.focus({preventScroll: true});
+        }
+        window.scrollTo(scrollX, scrollY);
+        requestAnimationFrame(() => window.scrollTo(scrollX, scrollY));
         resolveClosed();
     }
     function onKeyDown(event) {
@@ -511,7 +525,7 @@ function openTestPopup(title, options = {}) {
         }
         cancelButton.hidden = true;
         closeButton.hidden = false;
-        closeButton.focus();
+        closeButton.focus({preventScroll: true});
         if (outcome.cancelled) {
             statusEl.textContent = 'Test abgebrochen';
             statusEl.className = 'testPopupStatus status-warn';
@@ -1672,6 +1686,12 @@ const loadConfiguration = async (event) => {
         } catch (err) {
             console.log(err);
             actionTestStatusMap = {};
+        }
+        try {
+            actionTestResultsMap = await getJson(actionTestResultsUri);
+        } catch (err) {
+            console.log(err);
+            actionTestResultsMap = {};
         }
 
         const allEntityOptionsElement = document.getElementById('allEntityOptions');
@@ -6008,10 +6028,6 @@ const BATTERY_TEST_TITLES = {
     battery_charge_shift_pv_surplus: 'Batterie-Laden verschieben (PV-Überschuss)',
     battery_action_stop: 'Batterie-Aktion beenden',
 };
-// So lange (ms) nach dem Schliessen des Test-Popups bleibt das gruene Ergebnis ("Entladeleistung: ... | Limit ...")
-// einer erfolgreichen Testzeile stehen, bevor es verschwindet (die Werte wurden ohnehin schon zurueckgesetzt).
-const BATTERY_TEST_RESULT_VISIBLE_MS = 10000;
-
 function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
     const wrapper = document.createElement('div');
     wrapper.className = 'autoActionControl';
@@ -6021,89 +6037,83 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
     button.textContent = 'Testen';
     if (blockedReason) button.disabled = true;
 
-    const valuesDisplay = document.createElement('span');
-    valuesDisplay.className = 'autoActionValue';
-    valuesDisplay.textContent = blockedReason || 'Lade Werte...';
-
     const statusIcon = document.createElement('span');
     statusIcon.className = 'batteryTestStatusIcon';
     statusIcon.hidden = true;
 
-    function renderValues(values) {
-        // unit kommt jetzt vom Server (siehe _battery_direct_field_values in app.py) statt hier
-        // fest "kW" anzunehmen - bei "Batterie netzladen" steht seit Nutzer-Feedback zusaetzlich
-        // der Modus (Rohzustand, keine Einheit) neben dem Ladeleistungslimit.
-        valuesDisplay.textContent = (values || [])
-            .map(v => `${v.label}: ${(v.value === null || v.value === undefined) ? '–' : v.value + (v.unit ? ' ' + v.unit : '')}`)
-            .join(' | ');
-    }
+    const statusText = document.createElement('span');
+    statusText.className = 'autoActionValue';
 
-    async function refreshValues() {
-        valuesDisplay.className = 'autoActionValue';
-        try {
-            const result = await getJson(insideHomeAssistant + '/actions/battery/' + actionKey + '/status');
-            renderValues(result.values);
-        } catch (err) {
-            console.log(err);
-            valuesDisplay.textContent = 'Werte konnten nicht geladen werden.';
+    // Ergebnis des letzten Tests (vom Server, bleibt ueber Seiten-Reloads bestehen, bis sich die Steuerung aendert):
+    // gruenes Haekchen + "Erfolgreich getestet am ..." bzw. rotes "!" + "Test fehlgeschlagen (...)". Statt der frueheren
+    // Live-Werte ("Entladeleistung: 5 kW"), die nach einem Test ewig stehen blieben.
+    function renderLastResult() {
+        statusIcon.hidden = true;
+        statusIcon.title = '';
+        statusText.className = 'autoActionValue';
+        statusText.textContent = '';
+        if (blockedReason) {
+            statusText.textContent = blockedReason;
+            return;
+        }
+        const entry = actionTestResultsMap[actionKey];
+        const passedWithoutDate = !entry && actionTestStatusMap[actionKey] === true;  // vor diesem Update bestanden, kein Zeitpunkt bekannt
+        if (entry && !entry.ok) {
+            statusIcon.textContent = '!';
+            statusIcon.className = 'batteryTestStatusIcon status-error';
+            statusIcon.hidden = false;
+            statusText.textContent = `Test fehlgeschlagen (${entry.label})`;
+            statusText.className = 'autoActionValue testFailed';
+        } else if (entry || passedWithoutDate) {
+            statusIcon.textContent = '✓';
+            statusIcon.className = 'batteryTestStatusIcon status-ok';
+            statusIcon.hidden = false;
+            statusText.textContent = entry ? `Erfolgreich getestet am ${entry.label}` : 'Erfolgreich getestet';
+            statusText.className = 'autoActionValue testSuccess';
         }
     }
 
-    let resultClearTimer = null;
     button.addEventListener('click', async () => {
-        clearTimeout(resultClearTimer);
         const popup = openTestPopup('Test: ' + (BATTERY_TEST_TITLES[actionKey] || actionKey));
         let outcome = null;
+        let requestFailed = false;
         button.disabled = true;
         statusIcon.hidden = true;
-        valuesDisplay.textContent = 'Teste...';
-        valuesDisplay.className = 'autoActionValue testing';
+        statusText.textContent = 'Teste...';
+        statusText.className = 'autoActionValue testing';
         if (hint) hint.hidden = true;
         try {
             const response = await fetch(insideHomeAssistant + '/actions/battery/' + actionKey + '/test', {method: 'POST', headers: popup.headers});
-            const result = await response.json();
-            outcome = result;
-            renderValues(result.values);
-            if (result.cancelled) {
+            outcome = await response.json();
+            if (!outcome.cancelled && checkmark) {
                 // Abgebrochen: weder bestanden noch fehlgeschlagen - Bereitschafts-Haken bleibt unveraendert.
-                valuesDisplay.textContent = 'Test abgebrochen';
-                valuesDisplay.className = 'autoActionValue';
-            } else {
-                statusIcon.textContent = result.success ? '✓' : '!';
-                statusIcon.className = 'batteryTestStatusIcon ' + (result.success ? 'status-ok' : 'status-error');
-                statusIcon.title = result.success ? '' : (result.message || 'Test fehlgeschlagen');
-                statusIcon.hidden = false;
-                valuesDisplay.className = 'autoActionValue' + (result.success ? ' testSuccess' : '');
-                if (checkmark) {
-                    markActionTested(actionKey, !!result.success);
-                    applyTestGate(actionKey, checkmark, hint, true);
-                }
+                markActionTested(actionKey, !!outcome.success);
+                applyTestGate(actionKey, checkmark, hint, true);
             }
         } catch (err) {
             console.log(err);
-            statusIcon.textContent = '!';
-            statusIcon.className = 'batteryTestStatusIcon status-error';
-            statusIcon.title = 'Test fehlgeschlagen';
-            statusIcon.hidden = false;
-            valuesDisplay.textContent = 'Fehler beim Testen';
-            valuesDisplay.className = 'autoActionValue';
+            requestFailed = true;
         } finally {
             button.disabled = false;
-            // Der Testausgang ist serverseitig in actionTestFailed/actionTestPassed hinterlegt -
+            // Der Server hat Ergebnis und Zeitpunkt synchron im selben Request festgehalten (siehe _record_action_test_result).
+            try {
+                actionTestResultsMap = await getJson(actionTestResultsUri);
+            } catch (err) {
+                console.log(err);
+            }
+            renderLastResult();
+            if (requestFailed) {
+                statusIcon.textContent = '!';
+                statusIcon.className = 'batteryTestStatusIcon status-error';
+                statusIcon.title = 'Test fehlgeschlagen';
+                statusIcon.hidden = false;
+                statusText.textContent = 'Fehler beim Testen';
+                statusText.className = 'autoActionValue testFailed';
+            } else if (outcome && !outcome.success && !outcome.cancelled) {
+                statusIcon.title = outcome.message || 'Test fehlgeschlagen';
+            }
             // Fehlerkarte + Geraete-Navigation ("!" statt grünem Haken) sofort neu bewerten.
             renderSystemHealth();
-            // Das Ergebnis steht im Popup; die gruene Werte-Zeile verschwindet nach einer Weile wieder (nur bei Erfolg -
-            // ein Fehler bleibt stehen, bis neu getestet wird).
-            popup.closed.then(() => {
-                if (outcome && outcome.success) {
-                    resultClearTimer = setTimeout(() => {
-                        valuesDisplay.textContent = '';
-                        valuesDisplay.className = 'autoActionValue';
-                    }, BATTERY_TEST_RESULT_VISIBLE_MS);
-                } else if (outcome && outcome.cancelled) {
-                    refreshValues();
-                }
-            });
             await popup.finish(outcome);
         }
     });
@@ -6111,11 +6121,11 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
     const controls = document.createElement('div');
     controls.className = 'autoActionButtons';
     controls.appendChild(button);
-    controls.appendChild(valuesDisplay);
     controls.appendChild(statusIcon);
+    controls.appendChild(statusText);
     wrapper.appendChild(controls);
 
-    if (!blockedReason) refreshValues();
+    renderLastResult();
     return wrapper;
 }
 
@@ -6154,7 +6164,8 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     checkmark.className = 'autoActionCheckmark';
     checkmark.textContent = ' ✓';
     checkmark.hidden = true;
-    if (gated) headingRow.appendChild(checkmark);
+    // Der gruene Haken steht neben dem Testen-Button (siehe buildBatteryDirectTestRow), nicht an der Ueberschrift - das Element
+    // bleibt nur fuer applyTestGate (Hinweis "Bitte Gerätesteuerung testen") bestehen und wird nicht eingefuegt.
     // Der Steuerungs-Schalter dieses Batterie-Aktionstyps steht auf der Gerätesteuerung-Seite (siehe
     // renderControlToggles), nicht mehr hier.
     wrapper.appendChild(headingRow);

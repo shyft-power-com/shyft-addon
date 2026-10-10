@@ -2901,7 +2901,7 @@ def _feed_in_limit_warning(config):
         "key": "feed_in_limit_missing",
         "sectionKey": "wechselrichter",
         "fieldId": "feed_in_limit_kw",
-        "fieldHint": "Pflichtfeld: Bitte die maximale Einspeiseleistung in kW eintragen.",
+        "fieldHint": "Bitte die maximale Einspeiseleistung in kW eintragen oder die Funktion deaktivieren.",
         "message": message + " Solange sie fehlt, wird keine Optimierung gestartet.",
     }
 
@@ -6034,6 +6034,10 @@ def _record_action_test_result(ready_key, ok):
         else:
             passed.pop(ready_key, None)
             failed[ready_key] = _action_type_fingerprint(cfg, ready_key)
+        # Zeitpunkt + Ergebnis des letzten Tests (Anzeige "Erfolgreich getestet am ..." neben dem Testen-Button, siehe
+        # /actions/test-results); der Fingerprint haelt die Anzeige nur so lange gueltig, wie sich die Steuerung nicht aendert.
+        cfg.setdefault("actionTestTimes", {})[ready_key] = {
+            "at": _local_now().isoformat(timespec="seconds"), "ok": bool(ok), "fp": _action_type_fingerprint(cfg, ready_key)}
         _write_current_config(cfg)
         if ok:
             _clear_not_ready_problem(ready_key)
@@ -6644,6 +6648,24 @@ def actionTestStatusOverview():
         ready_key: passed.get(ready_key) == _action_type_fingerprint(config, ready_key)
         for ready_key in _READY_KEY_TO_LABEL_SECTION
     })
+
+
+@app.route("/actions/test-results", methods=["GET"])
+def actionTestResultsOverview():
+    """Je Aktionstyp das Ergebnis und der Zeitpunkt des letzten Tests ({ok, at, label}) - Grundlage fuer die Zeile
+    "Erfolgreich getestet am ..." / "Test fehlgeschlagen (...)" neben den Testen-Buttons. Ein Eintrag gilt nur, solange sich
+    die Steuerung/Zuordnung dieses Aktionstyps seit dem Test nicht geaendert hat (Fingerprint, siehe _action_type_fingerprint)."""
+    config = _read_current_config()
+    results = {}
+    for ready_key, entry in (config.get("actionTestTimes", {}) or {}).items():
+        try:
+            if entry.get("fp") != _action_type_fingerprint(config, ready_key):
+                continue
+            tested_at = datetime.fromisoformat(entry["at"])
+        except Exception:
+            continue
+        results[ready_key] = {"ok": bool(entry.get("ok")), "at": entry["at"], "label": tested_at.strftime("%d.%m.%Y, %H:%M Uhr")}
+    return jsonify(results)
 
 
 @app.route("/actions/<control_key>/status", methods=["GET"])
