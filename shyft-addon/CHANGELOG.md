@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.282
+
+* **Reale Werte fortlaufend statt stündlich.** Die Ist-Kurven der Charts (PV-Leistung, Ladestand Heimspeicher, Warmwasser, Ladestand Auto, Heizung-Soll und gemessene Innenraumtemperatur) werden jetzt in 5-Minuten-Schritten aus der Sensor-Historie gezeichnet (gemittelt je Schritt), nicht mehr nur als ein Wert je Stunde. Die Farbe der Kurve (steigend/fallend/gleichbleibend) richtet sich nach der Entwicklung über eine Stunde. Der „Jetzt“-Punkt sitzt auf dem letzten Messpunkt.
+* **Raumtemperatur: simulierte Innentemperatur zurückgerechnet.** Die vom Optimierer simulierte Innentemperatur ist die träge Gebäudetemperatur und reagiert viel schwächer als die gemessene Raumluft. Für den Vergleich wird sie deshalb umgerechnet: Soll + 10 × (simulierte Temperatur − Soll), mit dem geplanten Soll der jeweiligen Stunde (sonst dem tatsächlichen Soll).
+* **Raumtemperatur-Tooltip mit vier Einträgen.** Für Stunden mit Historie zeigt der Tooltip „Heizung-Soll Ist-Wert“, „Heizung-Soll Prognose“, „Innenraum Ist-Wert“ und „Innenraum Prognose“; für die Zukunft nur die beiden Prognosen. Entsprechend zeigt der Strompreis-Chart „Netzbezug Ist-Wert/Prognose“.
+
 ## 0.0.45.281
 
 * **Fix: Add-on-Version heißt in Bubble `addon_version`.** Seit 0.0.45.280 ging der Parameter versehentlich als `Addon Version` an `update_site_addon`; der Parameter im Bubble-Workflow heißt aber `addon_version`. Der Name ist jetzt korrigiert, die Version kommt damit im `toBeOptimized`-Eintrag an.

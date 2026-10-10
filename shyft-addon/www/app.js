@@ -7798,6 +7798,45 @@ function makeToggleableChart(chartKey, build, info = {}) {
     return wrapper;
 }
 
+// Reale Werte fortlaufend (Backend: actualFine = [[ISO-Zeitpunkt, Wert], ...] in 5-Minuten-Schritten) statt nur einmal je Stunde.
+function parseFinePoints(points) {
+    return (points || []).map(([t, v]) => [new Date(t).getTime(), v]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v));
+}
+
+// Nur die feinen Punkte, die im Zeitraum der (ggf. auf ein Zeitfenster zugeschnittenen) Stunden-Labels liegen.
+function filterFineByLabels(points, labels, binMs = 300000) {
+    if (!points || labels.length === 0) return points;
+    const fromMs = new Date(labels[0]).getTime() - binMs, toMs = new Date(labels[labels.length - 1]).getTime();
+    return points.filter(([t]) => { const ms = new Date(t).getTime(); return ms >= fromMs && ms <= toMs; });
+}
+
+// Zeichnet feine Ist-Punkte [[ms, Wert], ...] als Linie (stepped: Treppe) und fasst gleichfarbige Abschnitte zu einem Pfad
+// zusammen. colorFor(Wert vor einer Stunde, Wert) legt die Farbe fest (Richtung ueber eine Stunde statt je 5-Minuten-Schritt).
+function fineSeriesMarkup(points, {xOfMs, yOf, stepped = false, colorFor, binMs = 300000}) {
+    const lookback = Math.max(1, Math.round(3600000 / binMs));
+    const parts = [];
+    let runColor = null, d = '';
+    const flush = () => { if (d) parts.push(`<path d="${d}" fill="none" stroke="${runColor}" stroke-width="2" />`); d = ''; runColor = null; };
+    for (let k = 0; k < points.length - 1; k++) {
+        const [t0, v0] = points[k], [t1, v1] = points[k + 1];
+        if (t1 - t0 > binMs * 2.5) { flush(); continue; }  // Luecke (z.B. Sensor ohne Daten)
+        const color = colorFor(points[Math.max(0, k + 1 - lookback)][1], v1);
+        const x0 = xOfMs(t0 + binMs / 2), x1 = xOfMs(t1 + binMs / 2);
+        const seg = stepped
+            ? `L${x1.toFixed(1)},${yOf(v0).toFixed(1)} L${x1.toFixed(1)},${yOf(v1).toFixed(1)}`
+            : `L${x1.toFixed(1)},${yOf(v1).toFixed(1)}`;
+        if (color !== runColor || !d) {
+            flush();
+            runColor = color;
+            d = `M${x0.toFixed(1)},${yOf(v0).toFixed(1)} ${seg}`;
+        } else {
+            d += ` ${seg}`;
+        }
+    }
+    flush();
+    return parts.join('');
+}
+
 // Ein Legenden-Eintrag. style: 'solid' (Ist-Wert), 'dashed' (Prognose), 'both' (Kurve mit Ist-Wert und Prognose) oder
 // 'square' (Flaeche, z.B. Aktion). id=null oder ctx.toggle=null: reine Beschriftung ohne Schaltfunktion.
 function chartLegendEntry(ctx, {id = null, label, color = 'var(--color-text-secondary)', style = 'solid', opacity = null}) {
@@ -7855,12 +7894,14 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         if (options.overlayForecast) sliced.overlayForecast = sliceChartSeries(options.overlayForecast, w);
         if (options.actionHours) sliced.actionHours = sliceChartSeries(options.actionHours, w);
         const windowLabels = sliceChartSeries(labels, w);
+        if (options.primaryFine) sliced.primaryFine = filterFineByLabels(options.primaryFine, windowLabels);
         if (options.secondSeries) {
             const s = options.secondSeries;
             const fromMs = new Date(windowLabels[0]).getTime() - 3600000, toMs = new Date(windowLabels[windowLabels.length - 1]).getTime() + 3600000;
             sliced.secondSeries = {
                 ...s, actual: sliceChartSeries(s.actual, w), forecast: sliceChartSeries(s.forecast, w), values: sliceChartSeries(s.values, w),
                 fine: s.fine ? s.fine.filter(p => p[0] >= fromMs && p[0] <= toMs) : s.fine,
+                actualFine: s.actualFine ? filterFineByLabels(s.actualFine, windowLabels) : s.actualFine,
             };
         }
         return buildLineChartImpl(title, unit, windowLabels, sliceChartSeries(values, w), sliced, ctx);
@@ -7868,7 +7909,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 }
 
 function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hidden: new Set(), toggle: null}) {
-    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, overlayForecast = null, curveLegend = false, bandPrimary = null} = options;
+    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, overlayForecast = null, curveLegend = false, bandPrimary = null, primaryFine = null} = options;
     const width = 600, height = CHART_SVG_HEIGHT;
     // presenceForecast reserves an extra strip just above the x-axis labels for the
     // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
@@ -7947,8 +7988,10 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         ? overlayForecast.map(v => (v === null || v === undefined ? null : (round ? Math.round(v * valueScale) : v * valueScale)))
         : null;
     const overlayDefined = overlayValues ? overlayValues.filter(v => v !== null) : [];
-    const rawMin = Math.min(...scaledValues, ...overlayDefined);
-    const rawMax = Math.max(...scaledValues, ...overlayDefined);
+    // primaryFine: reale Werte der Hauptkurve fortlaufend (siehe parseFinePoints) - ersetzt deren Ist-Teil (Index < dashedFromIndex)
+    const fineP = dashedFromIndex !== null ? parseFinePoints(primaryFine).map(([t, v]) => [t, round ? Math.round(v * valueScale) : v * valueScale]) : [];
+    const rawMin = Math.min(...scaledValues, ...overlayDefined, ...fineP.map(p => p[1]));
+    const rawMax = Math.max(...scaledValues, ...overlayDefined, ...fineP.map(p => p[1]));
     const valueRange = (rawMax - rawMin) || 1;
     let yMin = rawMin - valueRange * 0.1;
     let yMax = rawMax + valueRange * 0.1;
@@ -7982,6 +8025,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         const defined2 = merged2.filter(v => v !== null && v !== undefined);
         if (secondSeries.fine) defined2.push(...secondSeries.fine.map(p => p[1]));
         if (secondSeries.actual && secondSeries.forecast) defined2.push(...secondSeries.forecast.filter(v => v !== null && v !== undefined));
+        if (secondSeries.actualFine) defined2.push(...parseFinePoints(secondSeries.actualFine).map(p => p[1]));
         const rawMin2 = secondSeries.zeroBased ? 0 : Math.min(...defined2);
         const rawMax2 = Math.max(...defined2);
         const valueRange2 = (rawMax2 - rawMin2) || 1;
@@ -8045,7 +8089,24 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
                 if (v === null || v === undefined) return null;
                 return [paddingLeft + (i / lastIndex) * plotWidth, paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight, v];
             };
-            for (const [series, dashed] of [[secondSeries.forecast, true], [secondSeries.actual, false]]) {
+            const fine2 = parseFinePoints(secondSeries.actualFine);
+            const useFine2 = fine2.length >= 2;
+            if (useFine2) {
+                // reale Werte fortlaufend (5-Minuten-Schritte) statt je Stunde; Farbe nach Richtung ueber eine Stunde
+                const firstMs2 = new Date(labels[0]).getTime();
+                parts.push(fineSeriesMarkup(fine2, {
+                    xOfMs: ms => paddingLeft + ((ms - firstMs2) / 3600000 / lastIndex) * plotWidth,
+                    yOf: v => paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight,
+                    colorFor: (vPrev, v) => {
+                        if (!secondSeries.slopeColors) return color2;
+                        const delta = v - vPrev;
+                        return delta > 0 ? secondSeries.slopeColors.riseColor
+                            : delta <= -(secondSeries.slopeColors.bigDropThreshold ?? 1) ? secondSeries.slopeColors.dropColor
+                            : secondSeries.slopeColors.flatColor;
+                    },
+                }));
+            }
+            for (const [series, dashed] of (useFine2 ? [[secondSeries.forecast, true]] : [[secondSeries.forecast, true], [secondSeries.actual, false]])) {
                 for (let i = 0; i < labels.length - 1; i++) {
                     const a = pt(series, i), b = pt(series, i + 1);
                     if (!a || !b) continue;
@@ -8114,6 +8175,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         const lineParts = [], areaParts = [];
         for (let i = 0; i < points.length - 1; i++) {
             if (hidePrimarySeg(i)) continue;
+            if (fineP.length >= 2 && i < dashedFromIndex) continue;  // Ist-Teil kommt aus den feinen Punkten (fineMarkup)
             const color = colorBands ? colorForValue(scaledValues[i]) : colorForSlope(scaledValues[i], scaledValues[i + 1]);
             // Nutzer-Vorgabe (Strompreis): ab dashedFromIndex (jenseits des bekannten Awattar-Fensters)
             // gestrichelt statt durchgezogen - reine Prognose statt bekanntem/veroeffentlichtem Preis.
@@ -8138,6 +8200,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         const lineParts = [], areaParts = [];
         for (let i = 0; i < points.length - 1; i++) {
             if (hidePrimarySeg(i)) continue;
+            if (fineP.length >= 2 && i < dashedFromIndex) continue;  // Ist-Teil kommt aus den feinen Punkten (fineMarkup)
             const color = colorForSlope(scaledValues[i], scaledValues[i + 1]);
             const dashAttr = (dashedFromIndex !== null && i >= dashedFromIndex) ? 'stroke-dasharray="5,4"' : '';
             const [x0, y0] = points[i];
@@ -8153,6 +8216,19 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         const areaPath = `${linePath} L${points[points.length - 1][0].toFixed(1)},${baseline.toFixed(1)} L${points[0][0].toFixed(1)},${baseline.toFixed(1)} Z`;
         areaMarkup = hidePrimarySeg(0) ? '' : `<path d="${areaPath}" fill="${color}" opacity="0.15" stroke="none" />`;
         lineMarkup = hidePrimarySeg(0) ? '' : `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2" />`;
+    }
+
+    if (fineP.length >= 2 && (stepped || slopeBands)) {
+        const firstMs = new Date(labels[0]).getTime();
+        const hideFine = (legendMode === 'curves' && hid.has('primary')) || (legendMode === 'actualForecast' && hid.has('actual'));
+        if (!hideFine) {
+            lineMarkup += fineSeriesMarkup(fineP, {
+                xOfMs: ms => paddingLeft + ((ms - firstMs) / 3600000 / lastIndex) * plotWidth,
+                yOf: v => paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight,
+                stepped,
+                colorFor: (vPrev, v) => (stepped ? 'var(--color-accent)' : colorForSlope(vPrev, v)),
+            });
+        }
     }
 
     // overlayForecast (Ladestand Auto): die Prognose-Linie (gestrichelt) laeuft zusaetzlich ueber die
@@ -8335,14 +8411,38 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         const primaryHiddenHere = hidePrimarySeg(idx);
         let text;
         if (secondSeries) {
-            // Dreizeilig (Nutzer-Vorgabe): Zeitpunkt, dann je eine Zeile pro Kurve, jeweils mit
-            // ihrer eigenen Beschriftung (primaryLabel fuer die Hauptreihe, secondSeries.label fuer
-            // die zweite) statt einer einzelnen, mit "·" zusammengequetschten Zeile. Ausgeblendete Kurven fehlen.
-            const v2 = merged2[idx];
-            const unit2 = secondSeries.unit !== undefined ? secondSeries.unit : unit;
-            const primaryText = `${primaryLabel || subtitle || title}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
-            const secondaryText = (v2 === null || v2 === undefined) ? `${secondSeries.label}: –` : `${secondSeries.label}: ${v2.toFixed(secondSeries.decimals ?? 1)}${unit2 ? ' ' + unit2 : ''}`;
-            text = [dateText, primaryHiddenHere ? null : primaryText, hideSecond ? null : secondaryText].filter(Boolean).join('\n');
+            // Zeitpunkt, dann je Kurve eine Zeile - bei Kurven mit Ist- UND Prognose-Teil je eine Zeile fuer "Ist-Wert" und
+            // "Prognose" (Raumtemperatur: Heizung-Soll Ist-Wert/Prognose, Innenraum Ist-Wert/Prognose). Ausgeblendete Kurven fehlen.
+            const lines = [dateText];
+            const fmtPrimary = v => `${v.toFixed(decimals)}${unit ? ' ' + unit : ''}`;
+            const primaryName = primaryLabel || subtitle || title;
+            if (!primaryHiddenHere) {
+                if (overlayValues) {
+                    if (dashedFromIndex !== null && idx < dashedFromIndex) {
+                        lines.push(`${primaryName} Ist-Wert: ${fmtPrimary(scaledValues[idx])}`);
+                        if (overlayValues[idx] !== null && overlayValues[idx] !== undefined) lines.push(`${primaryName} Prognose: ${fmtPrimary(overlayValues[idx])}`);
+                    } else {
+                        lines.push(`${primaryName} Prognose: ${fmtPrimary(scaledValues[idx])}`);
+                    }
+                } else {
+                    lines.push(`${primaryName}: ${fmtPrimary(scaledValues[idx])}`);
+                }
+            }
+            if (!hideSecond) {
+                const unit2 = secondSeries.unit !== undefined ? secondSeries.unit : unit;
+                const fmtSecond = v => `${v.toFixed(secondSeries.decimals ?? 1)}${unit2 ? ' ' + unit2 : ''}`;
+                const present = v => v !== null && v !== undefined;
+                if (secondSeries.actual && secondSeries.forecast) {
+                    const a = secondSeries.actual[idx], f = secondSeries.forecast[idx];
+                    if (present(a)) lines.push(`${secondSeries.label} Ist-Wert: ${fmtSecond(a)}`);
+                    if (present(f)) lines.push(`${secondSeries.label} Prognose: ${fmtSecond(f)}`);
+                    if (!present(a) && !present(f)) lines.push(`${secondSeries.label}: –`);
+                } else {
+                    const v2 = merged2[idx];
+                    lines.push(present(v2) ? `${secondSeries.label}: ${fmtSecond(v2)}` : `${secondSeries.label}: –`);
+                }
+            }
+            text = lines.join('\n');
         } else {
             text = primaryHiddenHere ? dateText : `${dateText}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
         }
@@ -8392,8 +8492,8 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
 // "Ladestand Heimspeicher", siehe buildBatterySocForecastActualChart) - Optik/Interaktion (Tooltip,
 // Touch-Marker, Tagesgrenzen) bleiben fuer alle gleich, nur Titel/Einheit/Skalierung/Nachkommastellen
 // und die PV-spezifische Ertragssumme sind parametrisiert.
-function buildPvForecastActualChart(labels, forecast, actual) {
-    return buildForecastActualChart('PV-Leistung', 'kW', labels, forecast, actual, {decimals: 1, energySummary: true, chartKey: 'pvLeistung'});
+function buildPvForecastActualChart(labels, forecast, actual, actualFine = null) {
+    return buildForecastActualChart('PV-Leistung', 'kW', labels, forecast, actual, {decimals: 1, energySummary: true, chartKey: 'pvLeistung', actualFine});
 }
 
 // "Ladestand Heimspeicher": Ist-Werte kommen direkt aus der echten Sensorhistorie (siehe
@@ -8424,14 +8524,14 @@ const BATTERY_ACTION_COLORS = {
     deactivated: {color: 'var(--color-border)', label: 'Aktion (deaktiviert)'},
 };
 
-function buildBatterySocForecastActualChart(labels, forecast, actual, actionHours, plannedHistory) {
+function buildBatterySocForecastActualChart(labels, forecast, actual, actionHours, plannedHistory, actualFine = null) {
     return buildForecastActualChart('Ladestand Heimspeicher', '%', labels, forecast, actual, {
-        decimals: 0, yBounds: {min: 0, max: 100}, actionHours, actionColors: BATTERY_ACTION_COLORS, plannedHistory, slopeColors: PERCENT_SLOPE_COLORS, chartKey: 'ladestandHeimspeicher',
+        decimals: 0, yBounds: {min: 0, max: 100}, actionHours, actionColors: BATTERY_ACTION_COLORS, plannedHistory, slopeColors: PERCENT_SLOPE_COLORS, chartKey: 'ladestandHeimspeicher', actualFine,
     });
 }
 
-function buildWarmwasserForecastActualChart(labels, forecast, actual, actionHours) {
-    return buildForecastActualChart('Warmwasser', '°C', labels, forecast, actual, {decimals: 1, actionHours, slopeColors: WARMWASSER_SLOPE_COLORS, chartKey: 'warmwasser'});
+function buildWarmwasserForecastActualChart(labels, forecast, actual, actionHours, actualFine = null) {
+    return buildForecastActualChart('Warmwasser', '°C', labels, forecast, actual, {decimals: 1, actionHours, slopeColors: WARMWASSER_SLOPE_COLORS, chartKey: 'warmwasser', actualFine});
 }
 
 function buildLadestandAutoForecastActualChart(labels, forecast, actual, actionHours) {
@@ -8467,13 +8567,14 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, options
         const w = chartWindowIndices(labels, ctx.view);
         if (w.full) return buildForecastActualChartImpl(title, unit, labels, forecast, actual, options, ctx);
         // summaryLabels/summaryForecast: die PV-Ertragssumme (Heute | Morgen) bezieht sich immer auf den vollen Zeitraum
+        const windowLabels = sliceChartSeries(labels, w);
         const sliced = {...options, plannedHistory: sliceChartSeries(options.plannedHistory, w), actionHours: sliceChartSeries(options.actionHours, w),
-            summaryLabels: labels, summaryForecast: forecast};
-        return buildForecastActualChartImpl(title, unit, sliceChartSeries(labels, w), sliceChartSeries(forecast, w), sliceChartSeries(actual, w), sliced, ctx);
+            summaryLabels: labels, summaryForecast: forecast, actualFine: filterFineByLabels(options.actualFine, windowLabels)};
+        return buildForecastActualChartImpl(title, unit, windowLabels, sliceChartSeries(forecast, w), sliceChartSeries(actual, w), sliced, ctx);
     }, {labels, stickyKey: options.chartKey || title});
 }
 
-function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
+function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null, actualFine = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
     // "Prognose" ist visuell EINE Linie ueber den ganzen Tag: fuer bereits vergangene Stunden der zu
     // ihrer Zeit juengste Planungsstand (plannedHistory), fuer die Zukunft die aktuelle Prognose
     // (forecast) - ersetzt die fruehere separate dritte Linie/Legende "Letzter Planungsstand".
@@ -8530,7 +8631,8 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     const showActual = !ctx.hidden.has('actual');
     const showForecast = !ctx.hidden.has('forecast');
 
-    const definedValues = [...prognose, ...actual].filter(v => v !== null && v !== undefined);
+    const fineActual = parseFinePoints(actualFine);
+    const definedValues = [...prognose, ...actual, ...fineActual.map(p => p[1])].filter(v => v !== null && v !== undefined);
     if (labels.length === 0 || definedValues.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'shyftActionsEmpty';
@@ -8587,7 +8689,14 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
         return slopeColors.flatColor;
     }
 
-    const actualPath = showActual ? buildSegmentedPath(actual, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-text)'), dashed: false})) : '';
+    // Ist-Wert: fortlaufend (feine Punkte), sonst je Stunde
+    const firstLabelMs = new Date(labels[0]).getTime();
+    const xOfMs = ms => paddingLeft + ((ms - firstLabelMs) / 3600000 / lastIndex) * plotWidth;
+    const useFineActual = showActual && fineActual.length >= 2;
+    const actualPath = !showActual ? ''
+        : useFineActual
+            ? fineSeriesMarkup(fineActual, {xOfMs, yOf: yFor, colorFor: (vPrev, v) => colorForSlope(vPrev, v, flatColor || 'var(--color-text)')})
+            : buildSegmentedPath(actual, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-text)'), dashed: false}));
     // "Prognose" (siehe prognose-Merge oben): immer gestrichelt, auch der plannedHistory-Abschnitt.
     const forecastPath = showForecast ? buildSegmentedPath(prognose, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-accent)'), dashed: true})) : '';
 
@@ -8620,6 +8729,17 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
         const nowDotValue = actual[lastActualIndex] ?? prognose[lastActualIndex];
         if (nowDotValue !== null && nowDotValue !== undefined) {
             nowDotMarkup = `<circle class="dashboardChartNowDot" r="4.5" cx="${xFor(lastActualIndex).toFixed(1)}" cy="${yFor(nowDotValue).toFixed(1)}" />`;
+        }
+    }
+    if (useFineActual) {
+        // "Jetzt" = letzter feiner Ist-Punkt (statt der Stundengrenze)
+        const [lastMs, lastValue] = fineActual[fineActual.length - 1];
+        const nowX = xOfMs(lastMs + 150000);
+        if (nowX >= paddingLeft && nowX <= width - paddingRight) {
+            nowDotMarkup = `<circle class="dashboardChartNowDot" r="4.5" cx="${nowX.toFixed(1)}" cy="${yFor(lastValue).toFixed(1)}" />`;
+            if (lastActualIndex < labels.length - 1) {
+                nowMarkup = `<line x1="${nowX.toFixed(1)}" y1="${paddingTop}" x2="${nowX.toFixed(1)}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
+            }
         }
     }
 
@@ -10618,7 +10738,7 @@ async function loadDashboard() {
         try {
             const pvComparison = await getJson(insideHomeAssistant + '/dashboard/pv-forecast-vs-actual');
             if (pvComparison.status === 'success' && pvComparison.labels.length > 0) {
-                updateOrAppendDashboardWidget(container, 'pvLeistung', buildPvForecastActualChart(pvComparison.labels, pvComparison.forecast, pvComparison.actual));
+                updateOrAppendDashboardWidget(container, 'pvLeistung', buildPvForecastActualChart(pvComparison.labels, pvComparison.forecast, pvComparison.actual, pvComparison.actualFine));
                 pvChartRendered = true;
             }
         } catch (err) {
@@ -10633,7 +10753,7 @@ async function loadDashboard() {
         // "Innenraum" (Zweitkurve): Ist aus der echten Sensorhistorie statt der bisher gezeigten,
         // vom Optimierer nur SIMULIERTEN Innentemperatur (Nutzer-Vorgabe) - best-effort wie bei den
         // anderen Prognose-vs-Ist-Charts, faellt bei einem Fehler auf die reine Simulationskurve zurueck.
-        let raumtemperaturLabels = data.output_labels, raumtemperaturValues = data.t_i_target, raumtemperaturDashedFromIndex = null, raumtemperaturOverlay = null;
+        let raumtemperaturLabels = data.output_labels, raumtemperaturValues = data.t_i_target, raumtemperaturDashedFromIndex = null, raumtemperaturOverlay = null, raumtemperaturFine = null;
         let raumtemperaturSecondSeries = {values: data.t_i, label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2, integerTicks: true, band: 'upper'};
         try {
             const raumtemperaturComparison = await getJson(insideHomeAssistant + '/dashboard/raumtemperatur-forecast-vs-actual');
@@ -10653,11 +10773,13 @@ async function loadDashboard() {
                     const actualCount = targetActual.filter(v => v !== null && v !== undefined).length;
                     raumtemperaturDashedFromIndex = actualCount > 0 ? actualCount : null;
                     // Plan der vergangenen Stunden (gestrichelt ueber dem Ist-Verlauf, wie bei den anderen Charts) - nur wo gespeichert
+                    raumtemperaturFine = raumtemperaturComparison.targetActualFine || null;
                     raumtemperaturOverlay = raumtemperaturDashedFromIndex !== null && targetForecast.some(v => v !== null && v !== undefined) ? targetForecast : null;
                     raumtemperaturSecondSeries = {
                         actual: raumtemperaturComparison.actual, forecast: raumtemperaturComparison.forecast,
                         label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2,
                         slopeColors: TEMPERATURE_SLOPE_COLORS, integerTicks: true, band: 'upper',
+                        actualFine: raumtemperaturComparison.actualFine || null,
                     };
                 }
             }
@@ -10676,6 +10798,7 @@ async function loadDashboard() {
             secondSeries: raumtemperaturSecondSeries,
             dashedFromIndex: raumtemperaturDashedFromIndex,
             overlayForecast: raumtemperaturOverlay,
+            primaryFine: raumtemperaturFine,
             // Solange "Heizung aktiviert?" (heatpump_heating_activated) explizit auf Aus steht,
             // berechnet das Addon keine Heizungs-Aktionen mehr (siehe compute_heizung_actions in
             // app.py) - der Chart bleibt technisch bestehen, wird aber bewusst als "gerade nicht
@@ -10688,7 +10811,7 @@ async function loadDashboard() {
         try {
             const warmwasserComparison = await getJson(insideHomeAssistant + '/dashboard/warmwasser-forecast-vs-actual');
             if (warmwasserComparison.status === 'success' && warmwasserComparison.labels.length > 0) {
-                updateOrAppendDashboardWidget(container, 'warmwasser', buildWarmwasserForecastActualChart(warmwasserComparison.labels, warmwasserComparison.forecast, warmwasserComparison.actual, warmwasserComparison.actionHours));
+                updateOrAppendDashboardWidget(container, 'warmwasser', buildWarmwasserForecastActualChart(warmwasserComparison.labels, warmwasserComparison.forecast, warmwasserComparison.actual, warmwasserComparison.actionHours, warmwasserComparison.actualFine));
                 warmwasserChartRendered = true;
             }
         } catch (err) {
@@ -10706,7 +10829,7 @@ async function loadDashboard() {
         try {
             const batterySocComparison = await getJson(insideHomeAssistant + '/dashboard/battery-soc-forecast-vs-actual');
             if (batterySocComparison.status === 'success' && batterySocComparison.labels.length > 0) {
-                updateOrAppendDashboardWidget(container, 'ladestandHeimspeicher', buildBatterySocForecastActualChart(batterySocComparison.labels, batterySocComparison.forecast, batterySocComparison.actual, batterySocComparison.actionHours, batterySocComparison.plannedHistory));
+                updateOrAppendDashboardWidget(container, 'ladestandHeimspeicher', buildBatterySocForecastActualChart(batterySocComparison.labels, batterySocComparison.forecast, batterySocComparison.actual, batterySocComparison.actionHours, batterySocComparison.plannedHistory, batterySocComparison.actualFine));
                 batterySocChartRendered = true;
             }
         } catch (err) {
@@ -10724,7 +10847,7 @@ async function loadDashboard() {
         // Bleibt bei buildLineChart (nicht buildForecastActualChart) wegen der Anwesenheitsprognose-
         // Leiste/Verbrauchsprognose-Details darunter, die dort nicht existieren.
         let ladestandAutoLabels = data.output_labels, ladestandAutoValues = data.soc_ev, ladestandAutoValueScale = 100;
-        let ladestandAutoDashedFromIndex = null, ladestandAutoActionHours = null, ladestandAutoOverlayForecast = null;
+        let ladestandAutoDashedFromIndex = null, ladestandAutoActionHours = null, ladestandAutoOverlayForecast = null, ladestandAutoFine = null;
         try {
             const ladestandAutoComparison = await getJson(insideHomeAssistant + '/dashboard/ladestand-auto-forecast-vs-actual');
             if (ladestandAutoComparison.status === 'success' && ladestandAutoComparison.labels.length > 0) {
@@ -10734,6 +10857,7 @@ async function loadDashboard() {
                 ladestandAutoDashedFromIndex = ladestandAutoComparison.actual.filter(v => v !== null && v !== undefined).length;
                 ladestandAutoActionHours = ladestandAutoComparison.actionHours;
                 ladestandAutoOverlayForecast = ladestandAutoComparison.forecast;
+                ladestandAutoFine = ladestandAutoComparison.actualFine || null;
             }
         } catch (err) {
             console.log(err);
@@ -10774,6 +10898,7 @@ async function loadDashboard() {
             actionHours: ladestandAutoActionHours,
             presenceForecast,
             overlayForecast: ladestandAutoOverlayForecast,
+            primaryFine: ladestandAutoFine,
             chartKey: 'ladestandAuto',
         });
         if (presenceForecast) {

@@ -2164,7 +2164,10 @@ def readPvForecastVsActual():
         except Exception as e:
             print("[Shyft] PV-Prognose (rueckwirkend aus Wetterdaten) konnte nicht rekonstruiert werden:", repr(e))
 
-    return jsonify({"status": "success", "labels": labels, "forecast": forecast, "actual": actual})
+    # Ist-Leistung fortlaufend (5-Minuten-Schritte, kW) zusaetzlich zu den Stundenmittelwerten in 'actual'
+    actual_fine = _household_usage_fine_points(config, sensor_key="photovoltaic_powerflow_pv") if entity_id else []
+    return jsonify({"status": "success", "labels": labels, "forecast": forecast, "actual": actual,
+                    "actualFine": actual_fine, "binMinutes": USAGE_FINE_BIN_MINUTES})
 
 
 _stitched_forecast_lock = threading.Lock()
@@ -2202,7 +2205,8 @@ def _record_stitched_forecast_run(output_csv, creation_date_ms):
         for i, row in enumerate(rows):
             if i == 0:
                 continue
-            hours[(start_utc + timedelta(hours=i)).isoformat()] = {c: _safe_float(row.get(c)) for c in STITCHED_FORECAST_COLUMNS}
+            hours[(start_utc + timedelta(hours=i)).isoformat()] = {
+                c: (_safe_float(row.get(c)) if row.get(c) not in (None, "") else None) for c in STITCHED_FORECAST_COLUMNS}
         midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
         hours = {k: v for k, v in hours.items() if datetime.fromisoformat(k) >= midnight_utc}
         try:
@@ -2244,6 +2248,8 @@ def _read_future_output_column_by_hour(column, scale=1.0, include_first=False):
             for i, row in enumerate(csv.DictReader(io.StringIO(output_csv))):
                 if i == 0 and not include_first:
                     continue
+                if row.get(column) in (None, ""):
+                    continue  # Spalte fehlt/leer im Lauf (z.B. keine Heizung): kein Wert statt einer erfundenen 0
                 put(_hour_floor((start_utc + timedelta(hours=i)).astimezone(tz)), _safe_float(row.get(column)))
     except Exception:
         pass
@@ -2278,6 +2284,74 @@ def _hourly_state_actual(entity_id, midnight_local, current_hour_local, scale=1.
     except Exception as e:
         print(f"[Shyft] Ist-Werte fuer {entity_id} konnten nicht geladen werden:", repr(e))
     return result
+
+
+FINE_ACTUAL_BIN_MINUTES = 5
+FINE_ACTUAL_CACHE_SECONDS = 60
+_state_fine_cache = {}
+# Der Optimierer simuliert die (traege) Gebaeudetemperatur T_i, die gemessene Raumlufttemperatur weicht staerker vom Soll ab.
+# Fuer den Vergleich im Raumtemperatur-Chart wird T_i deshalb zurueckgerechnet: Soll + Faktor * (T_i - Soll).
+INDOOR_TEMP_SIM_CORRECTION_FACTOR = 10
+
+
+def _bin_mean_points(parsed, start, end, bin_minutes):
+    """parsed: chronologisch [(datetime, Wert)] (Zustandsaenderungen eines Sensors). Liefert [[Schritt-Beginn (ISO, UTC), zeitgewichteter
+    Mittelwert des Schritts], ...] von start bis end in bin_minutes-Minuten-Schritten (Treppenfunktion: ein Zustand gilt bis zum naechsten
+    Ereignis). Schritte ohne bekannten Zustand (vor dem ersten Ereignis) fehlen."""
+    points = []
+    if not parsed:
+        return points
+    bin_delta = timedelta(minutes=bin_minutes)
+    bin_start = start
+    idx = 0
+    while bin_start < end:
+        bin_end = min(bin_start + bin_delta, end)
+        while idx + 1 < len(parsed) and parsed[idx + 1][0] <= bin_start:
+            idx += 1
+        weighted = covered = 0.0
+        j = idx
+        while j < len(parsed) and parsed[j][0] < bin_end:
+            seg_start = max(parsed[j][0], bin_start)
+            seg_end = min(parsed[j + 1][0] if j + 1 < len(parsed) else bin_end, bin_end)
+            seconds = (seg_end - seg_start).total_seconds()
+            if seconds > 0:
+                weighted += parsed[j][1] * seconds
+                covered += seconds
+            j += 1
+        if covered > 0:
+            points.append([bin_start.isoformat(), round(weighted / covered, 3)])
+        bin_start += bin_delta
+    return points
+
+
+def _state_fine_points(entity_id, scale=1.0):
+    """Ist-Verlauf eines Zustandssensors (Ladestand, Temperatur, Solltemperatur) von heute 0 Uhr (lokal) bis jetzt in
+    FINE_ACTUAL_BIN_MINUTES-Minuten-Schritten statt stuendlich (siehe _hourly_state_actual) - die Charts zeichnen reale Werte
+    fortlaufend. Kurz zwischengespeichert (der Dashboard-Refresh fragt alle 30 s). Leer ohne Sensor/Historie."""
+    if not entity_id:
+        return []
+    now = datetime.now(timezone.utc)
+    midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
+    key = (entity_id, scale, midnight_utc.isoformat())
+    cached = _state_fine_cache.get(key)
+    if cached and time.time() - cached[0] < FINE_ACTUAL_CACHE_SECONDS:
+        return cached[1]
+    points = []
+    try:
+        events = homeassistant_adapter.load_entity_history_raw(entity_id, midnight_utc, now)
+        parsed = []
+        for t, state in events:
+            try:
+                parsed.append((t.astimezone(timezone.utc), float(state) * scale))
+            except (TypeError, ValueError):
+                continue  # "unknown"/"unavailable"
+        points = _bin_mean_points(parsed, midnight_utc, now, FINE_ACTUAL_BIN_MINUTES)
+    except Exception as e:
+        print(f"[Shyft] Ist-Verlauf (feine Aufloesung) fuer {entity_id} konnte nicht geladen werden:", repr(e))
+    for old_key in [k for k in _state_fine_cache if k[2] != key[2]]:
+        del _state_fine_cache[old_key]  # Eintraege von gestern verwerfen
+    _state_fine_cache[key] = (time.time(), points)
+    return points
 
 
 def _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=None, forecast_from_hour=None):
@@ -2328,10 +2402,21 @@ def readRaumtemperaturForecastVsActual():
     actual_by_hour = _hourly_state_actual(entity_id, midnight_local, current_hour_local)
     target_actual_by_hour = _hourly_state_actual(target_entity_id, midnight_local, current_hour_local)
     target_forecast_by_hour = _read_future_output_column_by_hour("T_i_Target", include_first=True)
+    # Simulierte Innentemperatur (T_i = traege Gebaeudetemperatur) auf die gemessene Raumluft zurueckrechnen:
+    # Soll + INDOOR_TEMP_SIM_CORRECTION_FACTOR * (T_i - Soll), mit dem Plan-Soll der Stunde (sonst dem tatsaechlichen Soll).
+    for hour, simulated in list(forecast_by_hour.items()):
+        target = target_forecast_by_hour.get(hour)
+        if target is None:
+            target = target_actual_by_hour.get(hour)
+        if simulated is not None and target is not None:
+            forecast_by_hour[hour] = target + INDOOR_TEMP_SIM_CORRECTION_FACTOR * (simulated - target)
     payload = _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=HEIZUNG_ACTION_NAMES)
     hours = [midnight_local + timedelta(hours=i) for i in range(len(payload["labels"]))]
     payload["targetActual"] = [target_actual_by_hour.get(h) for h in hours]
     payload["targetForecast"] = [target_forecast_by_hour.get(h) for h in hours]
+    payload["actualFine"] = _state_fine_points(entity_id)
+    payload["targetActualFine"] = _state_fine_points(target_entity_id)
+    payload["binMinutes"] = FINE_ACTUAL_BIN_MINUTES
     return jsonify(payload)
 
 
@@ -2345,7 +2430,10 @@ def readWarmwasserForecastVsActual():
     current_hour_local = _hour_floor(_local_now())
     forecast_by_hour = _read_future_output_column_by_hour("T_HW")
     actual_by_hour = _hourly_state_actual(entity_id, midnight_local, current_hour_local)
-    return jsonify(_forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=DHW_ACTION_NAMES))
+    payload = _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=DHW_ACTION_NAMES)
+    payload["actualFine"] = _state_fine_points(entity_id)
+    payload["binMinutes"] = FINE_ACTUAL_BIN_MINUTES
+    return jsonify(payload)
 
 
 @app.route("/dashboard/ladestand-auto-forecast-vs-actual", methods=["GET"])
@@ -2360,7 +2448,10 @@ def readLadestandAutoForecastVsActual():
     current_hour_local = _hour_floor(_local_now())
     forecast_by_hour = _read_future_output_column_by_hour("SOC_EV", scale=100.0)
     actual_by_hour = _hourly_state_actual(entity_id, midnight_local, current_hour_local)
-    return jsonify(_forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=CAR_CHARGE_ACTION_NAMES))
+    payload = _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=CAR_CHARGE_ACTION_NAMES)
+    payload["actualFine"] = _state_fine_points(entity_id)
+    payload["binMinutes"] = FINE_ACTUAL_BIN_MINUTES
+    return jsonify(payload)
 
 
 SONSTIGER_VERBRAUCHER_FORECAST_HOURS = 48
@@ -2553,7 +2644,8 @@ def readBatterySocForecastVsActual():
     action_hours = _battery_action_hours(midnight_local, hour_count)
 
     return jsonify({"status": "success", "labels": labels, "forecast": forecast, "actual": actual,
-                     "plannedHistory": planned_history, "actionHours": action_hours})
+                     "plannedHistory": planned_history, "actionHours": action_hours,
+                     "actualFine": _state_fine_points(entity_id), "binMinutes": FINE_ACTUAL_BIN_MINUTES})
 
 
 def get_wallbox_connection_status_options():
