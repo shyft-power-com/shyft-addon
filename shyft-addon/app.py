@@ -1,4 +1,4 @@
-from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value
+from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw
 from homeassistant_adapter import HomeAssistantAdapter, EntityState
 from shyft_adapter import ShyftAdapter
 from live_entity_watcher import LiveEntityWatcher
@@ -1300,11 +1300,17 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         weather_fields = pv_forecast.compute_site_weather_fields(optimizer_period + 24, _pv_sensor_configured(config))
     except Exception as e:
         print("[Shyft] Wetter-/PV-Prognosefelder konnten nicht gebaut werden:", repr(e))
-    if missing_required:
+    # "Einspeisung drosseln" aktiv, aber ohne Einspeiseleistung: ein Lauf ohne die gewollte Grenze waere irrefuehrend - nichts senden
+    # (die Meldung erscheint als Konfigurations-Warnung am Feld, siehe _feed_in_limit_warning).
+    blocking = list(missing_required)
+    lpp_missing = describe_missing_feed_in_limit(config)
+    if lpp_missing:
+        blocking.append(lpp_missing)
+    if blocking:
         # Pflichtfeld fehlt: update_site_addon legt die Site in Bubbles toBeOptimized-Queue - ein Lauf
         # ohne Preise rechnet mit 0 EUR/kWh und liefert Unsinn, also gar nicht erst senden.
-        print("[Shyft] Optimierung nicht angestoßen, Pflichtangaben fehlen:", " | ".join(missing_required))
-        return json.dumps({"status": "skipped", "message": "Pflichtangaben fehlen: " + " ".join(missing_required)})
+        print("[Shyft] Optimierung nicht angestoßen, Pflichtangaben fehlen:", " | ".join(blocking))
+        return json.dumps({"status": "skipped", "message": "Pflichtangaben fehlen: " + " ".join(blocking)})
     submitted_at = datetime.now(timezone.utc)
     result = shyft_adapter.send_site_data(payload, weather_fields, addon_version=VERSION)
     _last_site_data_submit["at"] = submitted_at
@@ -2289,9 +2295,9 @@ def _hourly_state_actual(entity_id, midnight_local, current_hour_local, scale=1.
 FINE_ACTUAL_BIN_MINUTES = 5
 FINE_ACTUAL_CACHE_SECONDS = 60
 _state_fine_cache = {}
-# Der Optimierer simuliert die (traege) Gebaeudetemperatur T_i, die gemessene Raumlufttemperatur weicht staerker vom Soll ab.
-# Fuer den Vergleich im Raumtemperatur-Chart wird T_i deshalb zurueckgerechnet: Soll + Faktor * (T_i - Soll).
-INDOOR_TEMP_SIM_CORRECTION_FACTOR = 10
+# Der Optimierer simuliert T_i auf einer anderen Skala als die gemessene Raumluft (Beispiel Nutzer: Soll 20 °C, simuliert 19 °C ->
+# 20 - (20 - 19) / 10 = 19,9 °C). Fuer den Vergleich im Raumtemperatur-Chart wird T_i deshalb umgerechnet: Soll + Faktor * (T_i - Soll).
+INDOOR_TEMP_SIM_CORRECTION_FACTOR = 0.1
 
 
 def _bin_mean_points(parsed, start, end, bin_minutes):
@@ -2842,9 +2848,31 @@ def _max_supply_temp_above_entity_max_warning(config):
     }
 
 
+def describe_missing_feed_in_limit(config):
+    "Klartext, wenn 'Einspeisung drosseln' aktiviert, die Einspeiseleistung aber nicht (gueltig) eingetragen ist - dann wird keine Optimierung gestartet (siehe sync_site_data); sonst None."
+    if config.get("feedInLimitEnabled") and feed_in_limit_kw(config) is None:
+        return ("„Einspeisung drosseln“ ist aktiviert, aber die Einspeiseleistung (kW) fehlt. Trage sie auf der Konfigurationsseite unter "
+                "„Wechselrichter“ ein oder deaktiviere die Drosselung.")
+    return None
+
+
+def _feed_in_limit_warning(config):
+    "Pflichtfeld-Warnung (roter Rahmen am Feld + Meldung): 'Einspeisung drosseln' ist an, aber die Einspeiseleistung fehlt."
+    message = describe_missing_feed_in_limit(config)
+    if not message:
+        return None
+    return {
+        "key": "feed_in_limit_missing",
+        "sectionKey": "wechselrichter",
+        "fieldId": "feed_in_limit_kw",
+        "fieldHint": "Pflichtfeld: Bitte die maximale Einspeiseleistung in kW eintragen.",
+        "message": message + " Solange sie fehlt, wird keine Optimierung gestartet.",
+    }
+
+
 def compute_config_warnings():
     config = _read_current_config()
-    checks = [_wallbox_status_mapping_warning, _max_supply_temp_above_entity_max_warning]
+    checks = [_wallbox_status_mapping_warning, _max_supply_temp_above_entity_max_warning, _feed_in_limit_warning]
     warnings = []
     for check in checks:
         warning = check(config)

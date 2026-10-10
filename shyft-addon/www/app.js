@@ -936,6 +936,8 @@ async function saveConfigurationNow() {
         "electricityNetzentgeltWindows": configData["electricityNetzentgeltWindows"] ?? [],
         "electricityNetzentgeltQuarters": configData["electricityNetzentgeltQuarters"] ?? [],
         "electricitySellCent": configData["electricitySellCent"] ?? null,
+        "feedInLimitEnabled": configData["feedInLimitEnabled"] === true,
+        "feedInLimitKw": configData["feedInLimitKw"] ?? null,
         // Konfig-Keys, die der Nutzer bewusst geaendert/bestaetigt hat (siehe markConfigFieldTouched) -
         // steuert den roten Rahmen um unbestaetigte Default-Felder und das Aufklappen der Kachel.
         "touchedFields": configData["touchedFields"] || [],
@@ -3506,6 +3508,9 @@ function renderSectionBody(bodyDiv, section, entryIds) {
                     : section.sensors;
         bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, helpinformation, VALUE_POSTFIX, key => sensorDatalistIds[key], true));
 
+        if (section.key === 'wechselrichter') {
+            bodyDiv.appendChild(buildFeedInLimitSection());
+        }
         if (section.key === 'wallbox') {
             bodyDiv.appendChild(buildWallboxMaxPhasesField());
             bodyDiv.appendChild(buildWallboxMaxCurrentField());
@@ -3550,8 +3555,11 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         }
     }
 
-    const manualActions = section.actions.filter(key => !AUTO_MANAGED_ACTION_KEYS.has(key) && !CAR_CHARGE_ACTION_KEYS.has(key) && !HOT_WATER_ACTION_KEYS.has(key) && !BATTERY_DIRECT_ACTION_KEYS.has(key));
-    const sectionControls = AUTO_MANAGED_CONTROLS.filter(c => c.actionKeys.some(k => section.actions.includes(k)));
+    // Die "Steuerung" der Wechselrichter-Kachel (PV: Einspeisung begrenzen / Verbrauch begrenzen §14a) ist vorerst vollstaendig
+    // ausgeblendet (kommt spaeter) - an ihrer Stelle steht "Einspeisung drosseln" (buildFeedInLimitSection). Die Toggles bleiben deaktiviert.
+    const hideSteuerung = section.key === 'wechselrichter';
+    const manualActions = hideSteuerung ? [] : section.actions.filter(key => !AUTO_MANAGED_ACTION_KEYS.has(key) && !CAR_CHARGE_ACTION_KEYS.has(key) && !HOT_WATER_ACTION_KEYS.has(key) && !BATTERY_DIRECT_ACTION_KEYS.has(key));
+    const sectionControls = hideSteuerung ? [] : AUTO_MANAGED_CONTROLS.filter(c => c.actionKeys.some(k => section.actions.includes(k)));
     const hasCarCharge = section.actions.some(k => CAR_CHARGE_ACTION_KEYS.has(k));
     const hasHotWater = section.actions.some(k => HOT_WATER_ACTION_KEYS.has(k));
 
@@ -3629,6 +3637,47 @@ function renderSectionBody(bodyDiv, section, entryIds) {
     if (hasHotWater) {
         steuerungTarget.appendChild(buildHotWaterControl());
     }
+}
+
+// "Einspeisung drosseln" (Wechselrichter-Kachel, Solarspitzengesetz §9 EEG): Toggle + Eingabefeld "Einspeiseleistung drosseln auf
+// [ ] kW". Der Wert geht als "LPP" (kW) in die Optimierung (siehe collect_static_config in sync_service.py). Ist der Toggle an,
+// ist das Feld Pflicht - fehlt der Wert, wird nichts an die Optimierung gesendet und das Feld rot umrandet (Konfigurations-Warnung
+// feed_in_limit_missing in compute_config_warnings, fieldId feed_in_limit_kw).
+function buildFeedInLimitSection() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'feedInLimitSection';
+
+    const title = document.createElement('div');
+    title.className = 'autoActionTitle sectionSubHeading';
+    const titleText = document.createElement('span');
+    titleText.textContent = 'Einspeisung drosseln';
+    title.appendChild(titleText);
+    title.appendChild(buildTooltip('Wenn du nach dem Solarspitzengesetz (§9 EEG) verpflichtet bist, die Einspeiseleistung zu drosseln, kannst du dies in der Shyft-Optimierung berücksichtigen. Shyft verschiebt deine Lasten dann so, dass die Grenze möglichst eingehalten wird. Die physische Drosselung deiner Anlage musst du separat einstellen, dies stellt Shyft nicht sicher.'));
+    const toggle = buildBareToggleSwitch(configData['feedInLimitEnabled'] === true);
+    toggle.querySelector('input').id = 'feed_in_limit_enabled';
+    title.appendChild(toggle);
+    wrapper.appendChild(title);
+
+    const field = buildConfigNumberField({
+        label: 'Einspeiseleistung drosseln auf',
+        tooltip: 'Maximale Einspeiseleistung in kW, auf die deine Anlage nach dem Solarspitzengesetz begrenzt ist. Shyft berücksichtigt den Wert in der Optimierung.',
+        id: 'feed_in_limit_kw',
+        configKey: 'feedInLimitKw',
+        placeholder: 'z.B. 4,2',
+        step: '0.1',
+        min: '0',
+        unit: 'kW',
+    });
+    field.style.display = toggle.querySelector('input').checked ? '' : 'none';
+    wrapper.appendChild(field);
+
+    toggle.querySelector('input').addEventListener('change', () => {
+        const checked = toggle.querySelector('input').checked;
+        configData['feedInLimitEnabled'] = checked;
+        field.style.display = checked ? '' : 'none';
+        autoSave();
+    });
+    return wrapper;
 }
 
 // Lets the user classify each status value that has actually shown up on their "Wallbox: Auto

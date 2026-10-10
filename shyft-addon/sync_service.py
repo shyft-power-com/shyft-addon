@@ -189,6 +189,24 @@ WALLBOX_MAX_PHASES_DEFAULT = 3
 WALLBOX_MAX_CURRENT_AMPS_DEFAULT = 16
 
 
+def feed_in_limit_kw(config):
+    """Maximale Einspeiseleistung (kW) fuer "Einspeisung drosseln" (Solarspitzengesetz, §9 EEG) - der Server-Eingang "LPP"
+    (staticConfig, kW, optional). Nur bei aktiviertem Toggle (feedInLimitEnabled) UND gueltigem Wert (Zahl >= 0), sonst None -
+    dann wird nichts gesendet."""
+    if not config.get("feedInLimitEnabled"):
+        return None
+    value = config.get("feedInLimitKw")
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    try:
+        kw = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(kw) or math.isinf(kw) or kw < 0:
+        return None
+    return round(kw, 3)
+
+
 def compute_wallbox_max_kw(config):
     """Maximale Ladeleistung der Wallbox (kW), aus den vom Nutzer hinterlegten Wallbox-Eckdaten
     ("Max. Anzahl an Phasen", "Max. Stromstärke (pro Phase)"). Doppelt verwendet: (1) als Obergrenze
@@ -298,6 +316,12 @@ class SyncService:
         # haben sonst trotzdem einen (dann bedeutungslosen) Default-Wert.
         if data.get("integrationMappings", {}).get("wallbox"):
             static_config["WB - Max Charging Power"] = round(compute_wallbox_max_kw(data), 3)
+
+        # "Einspeisung drosseln" (Solarspitzengesetz): maximal bezahlte PV-Einspeiseleistung in kW -> Server-Eingang "LPP"
+        # (siehe RunTimeService/AddonSensorData im shyft-Server). Ohne aktivierten Toggle bzw. ohne gueltigen Wert wird nichts gesendet.
+        lpp = feed_in_limit_kw(data)
+        if lpp is not None:
+            static_config["LPP"] = lpp
 
         return static_config
 

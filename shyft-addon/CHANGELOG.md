@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.283
+
+* **Neu: „Einspeisung drosseln“ (Wechselrichter, Solarspitzengesetz §9 EEG).** In der Wechselrichter-Kachel gibt es einen Toggle „Einspeisung drosseln“ mit dem Feld „Einspeiseleistung drosseln auf [ ] kW“. Ist er aktiv und ein Wert eingetragen, sendet das Add-on diesen als `LPP` (kW, maximal bezahlte Einspeiseleistung) in der `staticConfig` an shyft-power; die Optimierung verschiebt Lasten dann so, dass die Grenze möglichst eingehalten wird (die physische Drosselung der Anlage stellt Shyft nicht sicher). Ist der Toggle aus oder das Feld leer, wird nichts gesendet. Ist der Toggle an, aber das Feld leer, ist es ein Pflichtfeld: es wird rot umrandet, eine Fehlermeldung erscheint, und es wird keine Optimierung angestoßen.
+* **Wechselrichter: Bereich „Steuerung“ ausgeblendet.** „PV: Einspeisung begrenzen“ und „Verbrauch begrenzen (§14a)“ erscheinen vorerst nicht mehr (kommen später wieder); ihre Toggles bleiben deaktiviert.
+* **Raumtemperatur: Umrechnung der simulierten Innentemperatur korrigiert.** Die Umrechnung lautet jetzt Soll + (simuliert − Soll) / 10 (Beispiel: Soll 20 °C, simuliert 19 °C → 19,9 °C). In 0.0.45.282 wurde fälschlich mit 10 multipliziert, was unsinnige Werte (z. B. −23 °C) ergab.
+
 ## 0.0.45.282
 
 * **Reale Werte fortlaufend statt stündlich.** Die Ist-Kurven der Charts (PV-Leistung, Ladestand Heimspeicher, Warmwasser, Ladestand Auto, Heizung-Soll und gemessene Innenraumtemperatur) werden jetzt in 5-Minuten-Schritten aus der Sensor-Historie gezeichnet (gemittelt je Schritt), nicht mehr nur als ein Wert je Stunde. Die Farbe der Kurve (steigend/fallend/gleichbleibend) richtet sich nach der Entwicklung über eine Stunde. Der „Jetzt“-Punkt sitzt auf dem letzten Messpunkt.
