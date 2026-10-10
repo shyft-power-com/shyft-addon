@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.287
+
+* **Raumtemperatur-Chart: Fläche durchgehend, mehr Abstand.** Die grüne Fläche unter „Heizung-Soll“ reicht jetzt auch durch die Vergangenheit (bisher nur bei der Prognose) und schließt nahtlos an die Prognose an – das gilt genauso für „Ladestand Auto“. Die Kurve „Innenraum“ bekommt weniger Höhe (engere Skala) und liegt dadurch höher, mit mehr Abstand zur Heizungs-Soll-Kurve.
+
 ## 0.0.45.286
 
 * **„Einspeisung drosseln (§9 EEG)“ überarbeitet.** Die Überschrift heißt jetzt „Einspeisung drosseln (§9 EEG)“ und hat mehr Abstand nach oben (wie „Sensoren“/„Steuerung“); die Erläuterung (Fragezeichen) erklärt, dass Shyft Verbräuche und Batterienutzung so verschiebt, dass möglichst wenig gedrosselt wird, und dass die tatsächliche Drosselung am Wechselrichter eingestellt werden muss. Das Feld „Einspeiseleistung drosseln auf“ springt mit den Pfeiltasten in 0,5-kW-Schritten (Beispiel „5,0“). Fehlermeldungen unter Eingabefeldern stehen jetzt in einer eigenen Zeile, sodass die Beschriftung links vertikal am Eingabefeld zentriert bleibt.

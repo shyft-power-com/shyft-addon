@@ -7514,6 +7514,9 @@ const CHART_SVG_HEIGHT = 275;
 // die Hauptkurve (linke Achse) im unteren, die zweite Kurve (rechte Achse) im oberen Teil - so liegen beide eher
 // uebereinander statt aufeinander.
 const CHART_BAND_FRACTION = 0.6;
+// Die zweite Kurve (z.B. Innenraum) bekommt weniger Hoehe (oberes Band): Wertebereich enger, die Kurve liegt hoeher und deutlich
+// ueber der Hauptkurve (Heizung-Soll im unteren Band) statt dicht daneben.
+const CHART_BAND_FRACTION_SECOND = 0.4;
 
 // Anzahl der Zeitbeschriftungen auf der x-Achse: auf dem Handy weniger, damit sie sich nicht ueberlappen ("Sa, 05 UhrSa, 12 Uhr").
 function chartXTickCount(n) {
@@ -7879,11 +7882,24 @@ function filterFineByLabels(points, labels, binMs = 300000) {
 
 // Zeichnet feine Ist-Punkte [[ms, Wert], ...] als Linie (stepped: Treppe) und fasst gleichfarbige Abschnitte zu einem Pfad
 // zusammen. colorFor(Wert vor einer Stunde, Wert) legt die Farbe fest (Richtung ueber eine Stunde statt je 5-Minuten-Schritt).
-function fineSeriesMarkup(points, {xOfMs, yOf, stepped = false, colorFor, binMs = 300000}) {
+// areaParts + baseline (optional): zusaetzlich die Flaeche unter der Linie (gleiche Farbe, wie bei der Prognose) in areaParts; areaEndX
+// verlaengert sie nach dem letzten Punkt waagerecht bis zu dieser x-Position (bis die Prognose-Flaeche beginnt).
+function fineSeriesMarkup(points, {xOfMs, yOf, stepped = false, colorFor, binMs = 300000, areaParts = null, baseline = 0, areaEndX = null}) {
     const lookback = Math.max(1, Math.round(3600000 / binMs));
     const parts = [];
-    let runColor = null, d = '';
-    const flush = () => { if (d) parts.push(`<path d="${d}" fill="none" stroke="${runColor}" stroke-width="2" />`); d = ''; runColor = null; };
+    let runColor = null, d = '', runStartX = 0, runEndX = 0, runEndY = 0;
+    const flush = (final = false) => {
+        if (d) {
+            parts.push(`<path d="${d}" fill="none" stroke="${runColor}" stroke-width="2" />`);
+            if (areaParts) {
+                let area = d;
+                let endX = runEndX;
+                if (final && areaEndX !== null && areaEndX > endX) { area += ` L${areaEndX.toFixed(1)},${runEndY.toFixed(1)}`; endX = areaEndX; }
+                areaParts.push(`<path d="${area} L${endX.toFixed(1)},${baseline.toFixed(1)} L${runStartX.toFixed(1)},${baseline.toFixed(1)} Z" fill="${runColor}" opacity="0.15" stroke="none" />`);
+            }
+        }
+        d = ''; runColor = null;
+    };
     for (let k = 0; k < points.length - 1; k++) {
         const [t0, v0] = points[k], [t1, v1] = points[k + 1];
         if (t1 - t0 > binMs * 2.5) { flush(); continue; }  // Luecke (z.B. Sensor ohne Daten)
@@ -7895,12 +7911,15 @@ function fineSeriesMarkup(points, {xOfMs, yOf, stepped = false, colorFor, binMs 
         if (color !== runColor || !d) {
             flush();
             runColor = color;
+            runStartX = x0;
             d = `M${x0.toFixed(1)},${yOf(v0).toFixed(1)} ${seg}`;
         } else {
             d += ` ${seg}`;
         }
+        runEndX = x1;
+        runEndY = yOf(v1);
     }
-    flush();
+    flush(true);
     return parts.join('');
 }
 
@@ -8103,7 +8122,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         yMin2 = secondSeries.zeroBased ? 0 : rawMin2 - pad2;
         yMax2 = rawMax2 + pad2;
         if (secondSeries.band) {
-            const totalRange2 = (yMax2 - yMin2) / CHART_BAND_FRACTION;
+            const totalRange2 = (yMax2 - yMin2) / CHART_BAND_FRACTION_SECOND;
             if (secondSeries.band === 'upper') yMin2 = yMax2 - totalRange2; else yMax2 = yMin2 + totalRange2;
         }
         if (secondSeries.integerTicks && Math.floor(yMax2) - Math.ceil(yMin2) < 1) {
@@ -8289,12 +8308,17 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         const firstMs = new Date(labels[0]).getTime();
         const hideFine = (legendMode === 'curves' && hid.has('primary')) || (legendMode === 'actualForecast' && hid.has('actual'));
         if (!hideFine) {
+            const fineAreaParts = [];
             lineMarkup += fineSeriesMarkup(fineP, {
                 xOfMs: ms => paddingLeft + ((ms - firstMs) / 3600000 / lastIndex) * plotWidth,
                 yOf: v => paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight,
                 stepped,
                 colorFor: (vPrev, v) => (stepped ? 'var(--color-accent)' : colorForSlope(vPrev, v)),
+                areaParts: fineAreaParts,
+                baseline,
+                areaEndX: paddingLeft + (dashedFromIndex / lastIndex) * plotWidth,
             });
+            areaMarkup += fineAreaParts.join('');
         }
     }
 
