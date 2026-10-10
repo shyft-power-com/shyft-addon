@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.286
+
+* **„Einspeisung drosseln (§9 EEG)“ überarbeitet.** Die Überschrift heißt jetzt „Einspeisung drosseln (§9 EEG)“ und hat mehr Abstand nach oben (wie „Sensoren“/„Steuerung“); die Erläuterung (Fragezeichen) erklärt, dass Shyft Verbräuche und Batterienutzung so verschiebt, dass möglichst wenig gedrosselt wird, und dass die tatsächliche Drosselung am Wechselrichter eingestellt werden muss. Das Feld „Einspeiseleistung drosseln auf“ springt mit den Pfeiltasten in 0,5-kW-Schritten (Beispiel „5,0“). Fehlermeldungen unter Eingabefeldern stehen jetzt in einer eigenen Zeile, sodass die Beschriftung links vertikal am Eingabefeld zentriert bleibt.
+
 ## 0.0.45.285
 
 * **Mindestversion: `addon_version` wird als Zahl gesendet.** Beim Senden der Optimierungsdaten (`update_site_addon`) geht die Add-on-Version jetzt als Zahl mit (jeder Versionsteil mit drei Stellen, z. B. 0.0.45.285 → 45285), nicht mehr als Text. Liegt sie unter der von shyft-power gesetzten Mindestversion, antwortet der Server mit HTTP 400: das Add-on startet dann keine Wartezeit auf ein Ergebnis und zeigt im Dashboard die Meldung „Optimierung fehlgeschlagen. Aktualisiere deine Shyft-App, deine Version wird nicht mehr unterstützt.“ Bei einer erfolgreichen Antwort verschwindet die Meldung wieder.

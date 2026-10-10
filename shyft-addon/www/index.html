@@ -112,6 +112,10 @@
             font-size: 0.85em;
             margin-top: 4px;
         }
+        /* Fehlertext in eigener Tabellenzeile (siehe applyConfigFieldErrorHighlights): die Trennlinie gehoert unter den Text, nicht zwischen Feld und Text. */
+        tr:has(+ .configFieldErrorRow) > td {
+            border-bottom: none;
+        }
         /* Mehrfachauswahl (buildMultiSensorField): die Markierung landet auf dem Container, der Rahmen sitzt
            aber am Auswahlfeld darin. */
         .multiSensorField.configFieldError .integrationPickerButton {
@@ -487,6 +491,10 @@
             font-weight: 700;
             margin-top: 0;
             margin-bottom: 0.6em;
+        }
+        /* "Einspeisung drosseln (§9 EEG)" (Wechselrichter): wie die Ueberschriften "Sensoren"/"Steuerung" mit deutlichem Abstand nach oben. */
+        .feedInLimitSection .autoActionTitle.sectionSubHeading {
+            margin-top: 2em;
         }
         .autoActionCheckmark {
             color: var(--color-accent);

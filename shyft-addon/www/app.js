@@ -1069,6 +1069,9 @@ function applyConfigFieldErrorHighlights(fieldIds, fieldHints = {}) {
     for (const el of document.querySelectorAll('.configFieldError')) {
         el.classList.remove('configFieldError');
     }
+    for (const el of document.querySelectorAll('.configFieldErrorRow')) {
+        el.remove();
+    }
     for (const el of document.querySelectorAll('.configFieldErrorText')) {
         el.remove();
     }
@@ -1082,7 +1085,22 @@ function applyConfigFieldErrorHighlights(fieldIds, fieldHints = {}) {
         const hint = document.createElement('div');
         hint.className = 'configFieldErrorText';
         hint.textContent = text;
-        (el.closest('td') || el.parentNode).appendChild(hint);
+        const cell = el.closest('td');
+        const row = cell && cell.parentElement;
+        if (row && row.tagName === 'TR') {
+            // Eigene Zeile direkt unter dem Feld: wuerde der Text in der Wert-Zelle stehen, waere die Zeile hoeher und die
+            // Beschriftung links (vertikal zentriert) rutschte zwischen Eingabefeld und Fehlertext.
+            const hintRow = document.createElement('tr');
+            hintRow.className = 'configFieldErrorRow';
+            for (let i = 0; i < cell.cellIndex; i++) hintRow.appendChild(document.createElement('td'));
+            const hintCell = document.createElement('td');
+            hintCell.colSpan = Math.max(1, row.cells.length - cell.cellIndex);
+            hintCell.appendChild(hint);
+            hintRow.appendChild(hintCell);
+            row.parentNode.insertBefore(hintRow, row.nextSibling);
+        } else {
+            (cell || el.parentNode).appendChild(hint);
+        }
     }
 }
 
@@ -3650,9 +3668,9 @@ function buildFeedInLimitSection() {
     const title = document.createElement('div');
     title.className = 'autoActionTitle sectionSubHeading';
     const titleText = document.createElement('span');
-    titleText.textContent = 'Einspeisung drosseln';
+    titleText.textContent = 'Einspeisung drosseln (§9 EEG)';
     title.appendChild(titleText);
-    title.appendChild(buildTooltip('Wenn du nach dem Solarspitzengesetz (§9 EEG) verpflichtet bist, die Einspeiseleistung zu drosseln, kannst du dies in der Shyft-Optimierung berücksichtigen. Shyft verschiebt deine Lasten dann so, dass die Grenze möglichst eingehalten wird. Die physische Drosselung deiner Anlage musst du separat einstellen, dies stellt Shyft nicht sicher.'));
+    title.appendChild(buildTooltip('Wenn du nach dem Solarspitzengesetz (§9 EEG) verpflichtet bist, die Einspeiseleistung zu drosseln, kannst du Shyft dies in der Optimierung berücksichtigen lassen. Shyft verschiebt deine Verbräuche und Batterienutzung dann so, dass möglichst wenig gedrosselt wird. Dass die Einspeisung tatsächlich gedrosselt wird, steuert Shyft nicht, dies musst du am Wechselrichter einstellen.'));
     const toggle = buildBareToggleSwitch(configData['feedInLimitEnabled'] === true);
     toggle.querySelector('input').id = 'feed_in_limit_enabled';
     title.appendChild(toggle);
@@ -3663,8 +3681,8 @@ function buildFeedInLimitSection() {
         tooltip: 'Maximale Einspeiseleistung in kW, auf die deine Anlage nach dem Solarspitzengesetz begrenzt ist. Shyft berücksichtigt den Wert in der Optimierung.',
         id: 'feed_in_limit_kw',
         configKey: 'feedInLimitKw',
-        placeholder: 'z.B. 4,2',
-        step: '0.1',
+        placeholder: 'z.B. 5,0',
+        step: '0.5',
         min: '0',
         unit: 'kW',
     });
