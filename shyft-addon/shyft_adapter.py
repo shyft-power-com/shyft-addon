@@ -37,7 +37,7 @@ class ShyftAdapter:
         payload = self._map_to_json(pv_history)
         return self._call_workflow("addon_pv_history", payload)
 
-    def send_site_data(self, addon_sensor_data_json: str, weather_fields: dict = None, addon_version: str = None):
+    def send_site_data(self, addon_sensor_data_json: str, weather_fields: dict = None, addon_version: int = None):
         """Sends the consolidated staticConfig+liveValues+EV-forecast JSON to shyft-power
         (update_site_addon workflow) - replaces the old per-sensor addon_sensor_data workflow.
 
@@ -46,8 +46,10 @@ class ShyftAdapter:
         "PV Prediction" Bubble object: comma-separated "Temperature"/"PV Prediction" strings and
         the "Datetime Weather" list of Bubble timestamps (Unix ms)."""
         body = {"addon_sensor_data_JSON": addon_sensor_data_json}
-        if addon_version:
-            # Landet in Bubbles toBeOptimized-Eintrag, damit veraltete Add-ons dort geblockt werden koennen.
+        if addon_version is not None:
+            # ZAHL (nicht Text): Bubble vergleicht sie per "Only when" mit der Mindestversion - ist addon_version groesser als die
+            # Mindestversion, antwortet der Workflow mit 200, sonst mit 400 (siehe sync_site_data in app.py). Landet ausserdem in
+            # Bubbles toBeOptimized-Eintrag.
             body["addon_version"] = addon_version
         if weather_fields:
             body["Temperature"] = weather_fields["temperature"]
@@ -157,7 +159,8 @@ class ShyftAdapter:
             return json.dumps({
                 "status": "success",
                 "payload": payload,
-                "external_status": status_code})
+                "external_status": status_code,
+                "external_body": (response.text or "")[:300]})
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)})
 

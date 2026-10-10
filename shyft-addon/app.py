@@ -41,6 +41,21 @@ def load_addon_version():
     return "0.0.0.0"
 
 
+def addon_version_number(version_text):
+    """Add-on-Version als ZAHL fuer den Mindestversions-Check in Bubble (update_site_addon: addon_version): jeder der bis zu vier
+    Versionsteile bekommt drei Stellen (je Teil < 1000), z.B. "0.0.45.285" -> 45285, "0.1.2.3" -> 1002003. Waechst mit jedem
+    Release, auch bei einem Wechsel der Minor-/Patch-Stelle, und laesst sich in Bubble als einfache Zahl vergleichen. 0 bei nicht
+    lesbarer Version."""
+    parts = [int(p) for p in re.findall(r"\d+", str(version_text or ""))[:4]]
+    if not parts:
+        return 0
+    parts += [0] * (4 - len(parts))
+    number = 0
+    for part in parts:
+        number = number * 1000 + min(part, 999)
+    return number
+
+
 def load_build_branch():
     """Git-Branch, von dem dieses Image gebaut wurde (siehe BUILD_BRANCH, vom CI-Workflow unmittelbar
     vor dem Docker-Build geschrieben - kein dauerhafter Unterschied zwischen main und test, damit sich
@@ -107,6 +122,10 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 app = Flask(__name__, static_folder="www", static_url_path="")
 
 VERSION = load_addon_version()
+ADDON_VERSION_NUMBER = addon_version_number(VERSION)
+# update_site_addon antwortet mit 400, wenn addon_version unter der von shyft-power gesetzten Mindestversion liegt.
+ADDON_VERSION_PROBLEM_ID = "addon_version_unsupported"
+ADDON_VERSION_UNSUPPORTED_MESSAGE = "Optimierung fehlgeschlagen. Aktualisiere deine Shyft-App, deine Version wird nicht mehr unterstützt."
 BUILD_BRANCH = load_build_branch()
 SHYFT_ACCESS_KEY = "not_set_yet"
 DETAILED_LOGGING = False
@@ -1312,7 +1331,19 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         print("[Shyft] Optimierung nicht angestoßen, Pflichtangaben fehlen:", " | ".join(blocking))
         return json.dumps({"status": "skipped", "message": "Pflichtangaben fehlen: " + " ".join(blocking)})
     submitted_at = datetime.now(timezone.utc)
-    result = shyft_adapter.send_site_data(payload, weather_fields, addon_version=VERSION)
+    result = shyft_adapter.send_site_data(payload, weather_fields, addon_version=ADDON_VERSION_NUMBER)
+    try:
+        external_status = json.loads(result).get("external_status")
+    except (TypeError, ValueError):
+        external_status = None
+    if external_status == 400:
+        # Bubble lehnt diese Add-on-Version ab (zu alt): es laeuft keine Optimierung - nicht auf ein Ergebnis warten, sondern dem
+        # Nutzer die Meldung zeigen (Problem-Karte im Dashboard).
+        print(f"[Shyft] update_site_addon abgelehnt (HTTP 400): Add-on-Version {ADDON_VERSION_NUMBER} wird nicht mehr unterstuetzt.")
+        problem_registry.register(ADDON_VERSION_PROBLEM_ID, ADDON_VERSION_UNSUPPORTED_MESSAGE)
+        return result
+    if external_status is not None and external_status < 300:
+        problem_registry.clear(ADDON_VERSION_PROBLEM_ID)
     _last_site_data_submit["at"] = submitted_at
     try:
         schedule_optimizer_result_wait(submitted_at, optimizer_period, attempt=_wait_attempt)

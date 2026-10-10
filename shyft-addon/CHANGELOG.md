@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.285
+
+* **Mindestversion: `addon_version` wird als Zahl gesendet.** Beim Senden der Optimierungsdaten (`update_site_addon`) geht die Add-on-Version jetzt als Zahl mit (jeder Versionsteil mit drei Stellen, z. B. 0.0.45.285 → 45285), nicht mehr als Text. Liegt sie unter der von shyft-power gesetzten Mindestversion, antwortet der Server mit HTTP 400: das Add-on startet dann keine Wartezeit auf ein Ergebnis und zeigt im Dashboard die Meldung „Optimierung fehlgeschlagen. Aktualisiere deine Shyft-App, deine Version wird nicht mehr unterstützt.“ Bei einer erfolgreichen Antwort verschwindet die Meldung wieder.
+
 ## 0.0.45.284
 
 * **Raumtemperatur: simulierte Prognose richtig umgerechnet.** Nur die simulierte Innentemperatur-Prognose (auch für vergangene Stunden) wird umgerechnet, die gemessene Temperatur bleibt unverändert: gewünschte Raumtemperatur + 10 × (simulierte Temperatur − gewünschte Raumtemperatur). „Gewünschte Raumtemperatur“ ist der Wert „Gewünschte Raumtemperatur (mindestens)“ aus der Wärmepumpen-Konfiguration – derselbe, den die Optimierung als Untergrenze verwendet, die simulierte Temperatur liegt also nie darunter und das Ergebnis wird nie niedriger als dieser Wert. Zuvor wurde gegen die Heizkurven-Solltemperatur gerechnet, die bis zu 4 Grad unter der Raumtemperatur liegen kann (das ergab z. B. −23,5 °C).
