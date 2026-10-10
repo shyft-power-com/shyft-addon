@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.45.290
+
+* **Neues Gerät „Heizstab“.** Über der Wärmepumpe gibt es eine neue Kachel „Heizstab“ (Info-Symbol mit Erklärung). Wer sein Brauchwasser ausschließlich über einen Heizstab erwärmt, richtet ihn hier ein: Gerät auswählen, dann „Temperatur Warmwassertank“, „Warmwasser-Speichergröße“, „Warmwasser: Solltemperatur“, „Heizstab aktiviert“ (der bisherige Sensor „Warmwasser gerade erwärmt?“, gleiche Logik) und „Heizstab max. Leistung“. Die Berechnungen zum Warmwasserbedarf bleiben unverändert.
+* **Steuerung des Heizstabs.** Unter „Steuerung“ wird die An-/Aus-Entität „Heizstab ein-/ausschalten“ aus dem Heizstab-Gerät ausgewählt, mit Testen-Button und Testergebnis. Löst Shyft eine Warmwasser-Aktion aus, schaltet es statt der Wärmepumpe den Heizstab ein (vorerst mit voller Leistung, ohne Modulation) und nach dem Ende der Aktion wieder aus.
+* **Schalter „Heizstab steuern“ / „Wärmepumpe steuern“.** Oben in der Heizstab-Kachel wechselst du zwischen beiden Geräten (z. B. saisonal), ohne Werte neu einzugeben. Ist ein Heizstab eingerichtet und der Schalter an, ist die Wärmepumpe deaktiviert: Die Überschrift wird grau mit dem Zusatz „(deaktiviert, Heizstab eingerichtet)“, Details lassen sich nicht einblenden, die hinterlegten Werte bleiben erhalten. Wird der Heizstab entfernt oder per Schalter deaktiviert, ist die Wärmepumpe wieder normal da.
+* **An shyft-power gesendet.** Neuer Parameter `heating_rod` (`yes`/`no`) in den statischen Daten (`staticConfig`): „yes“, wenn der Heizstab eingerichtet und aktiv ist, sonst „no“. Mit aktivem Heizstab geht „HP - Heating Activated“ immer als „off“ raus, und „Heizstab max. Leistung“ wird als „HP - Max. Power“ gesendet (gleiche Leistungsstufen wie bei der Wärmepumpe).
+* **Dashboard und Gerätesteuerung.** In der Geräteübersicht ersetzt ein Heizstab-Bild (Warmwasserspeicher mit Heizstab) die Wärmepumpe, ohne Heizungs- und Raumtemperatur-Angaben; der Chart „Raumtemperatur“ zeigt „Heizung deaktiviert“. Auf der Seite Gerätesteuerung gehört „Warmwasser steuern“ dann zum Heizstab, „Heizung steuern“ entfällt.
+
 ## 0.0.45.289
 
 * **Batterie-Steuerung: Testergebnis statt Werte neben „Testen“.** Neben den Testen-Buttons stehen keine Werte aus dem letzten Test mehr (z. B. „Entladeleistung: 5 kW“). Stattdessen zeigt die Zeile das letzte Ergebnis dauerhaft an: grünes Häkchen und „Erfolgreich getestet am TT.MM.JJJJ, HH:MM Uhr“ bzw. rotes „!“ und „Test fehlgeschlagen (TT.MM.JJJJ, HH:MM Uhr)“. Der grüne Haken steht jetzt neben dem Button statt an der Überschrift der Steuerung. Die Anzeige bleibt nach einem Neuladen erhalten, bis sich etwas an der Steuerung ändert.

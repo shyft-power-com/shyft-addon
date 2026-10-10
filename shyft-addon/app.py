@@ -1,4 +1,4 @@
-from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw
+from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active
 from homeassistant_adapter import HomeAssistantAdapter, EntityState
 from shyft_adapter import ShyftAdapter
 from live_entity_watcher import LiveEntityWatcher
@@ -645,7 +645,7 @@ def _persist_shyft_access_key(new_access_key):
 # DEMO_INTEGRATION_ID, buildIntegrationPicker/INTEGRATION_SECTIONS in www/app.js, DEMO_SECTION_SENSORS
 # in sync_service.py. "Sonstiger Verbraucher" und "Raumtemperatur" bewusst nicht dabei (Letztere hat
 # schon ihren eigenen Auto-Simulations-Fallback ohne Sensor).
-DEMO_CAPABLE_SECTIONS = ["wechselrichter", "batterie", "waermepumpe", "auto", "wallbox"]
+DEMO_CAPABLE_SECTIONS = ["wechselrichter", "batterie", "heizstab", "waermepumpe", "auto", "wallbox"]
 DEMO_INTEGRATION_ID = "demo"
 
 
@@ -2796,6 +2796,7 @@ def _wallbox_status_mapping_warning(config):
 # in www/app.js).
 _READY_KEY_TO_LABEL_SECTION = {
     "hot_water": ("Warmwasser", "waermepumpe"),
+    "heating_rod": ("Heizstab", "heizstab"),
     "heating_target_temp": ("Heizung Soll-Temperatur", "waermepumpe"),
     "car_charge_start": ("Auto laden", "wallbox"),
     "consumer_on_off": ("Verbraucher an/aus", "sonstiger_verbraucher"),
@@ -2806,7 +2807,7 @@ _READY_KEY_TO_LABEL_SECTION = {
 
 
 # ready_key -> Schluessel in config['actionTypeEnabled'] (nur der Verbraucher weicht ab, siehe ACTION_TYPE_TOGGLE_KEYS in www/app.js)
-_READY_KEY_TO_TOGGLE_KEY = {"consumer_on_off": "consumer_on"}
+_READY_KEY_TO_TOGGLE_KEY = {"consumer_on_off": "consumer_on", "heating_rod": "hot_water"}
 
 
 def _action_not_ready_warnings(config):
@@ -2821,7 +2822,13 @@ def _action_not_ready_warnings(config):
     out = []
     passed = config.get("actionTestPassed", {}) or {}
     integration_mappings = config.get("integrationMappings", {}) or {}
+    rod_active = heating_rod_active(config)
     for ready_key, (label, section_key) in _READY_KEY_TO_LABEL_SECTION.items():
+        # Waermepumpe und Heizstab schliessen sich aus: nur das jeweils aktive Geraet muss getestet sein.
+        if rod_active and ready_key in ("hot_water", "heating_target_temp"):
+            continue
+        if not rod_active and ready_key == "heating_rod":
+            continue
         # Geraet der Kachel wieder entfernt: die Sensor-/Aktions-Zuordnungen bleiben dabei stehen (und lassen
         # den Aktionstyp "vollstaendig eingerichtet" wirken), es gibt aber nichts mehr zu testen (Nutzer-Feedback:
         # "Verbraucher nicht getestet", obwohl der Verbraucher schon wieder geloescht war).
@@ -3773,8 +3780,7 @@ def build_hot_water_optimizer_fields(config, optimizer_period=48):
     Gibt {} zurueck, wenn keine Waermepumpe konfiguriert ist (mirrors build_ev_optimizer_fields's
     "kein Auto" -> {}-Verhalten).
     """
-    has_heatpump = bool(config.get("integrationMappings", {}).get("waermepumpe"))
-    if not has_heatpump:
+    if not _is_hot_water_device_configured(config):
         return {}
 
     hours = optimizer_period + 1
@@ -5133,7 +5139,8 @@ def compute_energy_flow_data():
     load_kw = _read_mapped_numeric(config, "photovoltaic_powerflow_load") if pv_configured else None
     load_updated_at = _read_mapped_last_updated_iso(config, "photovoltaic_powerflow_load") if pv_configured else None
     wallbox_kw = _read_mapped_numeric(config, "wallbox_current_charging_power")
-    heatpump_kw = _read_mapped_numeric(config, "heatpump_current_power_elect")
+    # Mit aktivem Heizstab ist die Waermepumpe deaktiviert - ihr (evtl. noch zugeordneter) Leistungssensor zaehlt nicht mehr mit.
+    heatpump_kw = None if heating_rod_active(config) else _read_mapped_numeric(config, "heatpump_current_power_elect")
     heatpump_kw_updated_at = _read_mapped_last_updated_iso(config, "heatpump_current_power_elect")
     residual_kw = load_kw
     if load_kw is not None and (wallbox_kw is not None or heatpump_kw is not None):
@@ -5156,19 +5163,39 @@ def compute_energy_flow_data():
         "updatedAt": _read_mapped_last_updated_iso(config, "photovoltaic_powerflow_battery") if battery_configured and pv_configured else None,
     }
 
-    heatpump_configured = configured("waermepumpe")
-    result["heatpump"] = {
-        "configured": heatpump_configured,
-        "on": _read_mapped_bool_on(config, "heatpump_on_off", anything_but_off=True) if heatpump_configured else None,
-        "heatingOn": _read_mapped_bool_on(config, "heatpump_heating_activated", anything_but_off=True) if heatpump_configured else None,
-        "supplyTempC": _read_mapped_numeric(config, "heatpump_supply_temp_hp") if heatpump_configured else None,
-        "dhwTankTempC": _read_mapped_numeric(config, "heatpump_dhw_tank_temp") if heatpump_configured else None,
-        "targetTempC": _read_mapped_numeric(config, "heatpump_heating_target_temp_normal") if heatpump_configured else None,
-        "kw": heatpump_kw if heatpump_configured else None,
-        # Ein einzelner Zeitstempel fuer die ganze Waermepumpen-Kachel (statt je Einzelwert) reicht -
-        # das Frontend zeigt hier ohnehin primaer den kW-Wert mit Zeitstempel an.
-        "updatedAt": heatpump_kw_updated_at if heatpump_configured else None,
-    }
+    # Heizstab statt Waermepumpe (siehe heating_rod_active): das Dashboard zeigt dann an derselben Stelle den Heizstab ("isRod") mit
+    # Warmwassertank-Temperatur und Heizstab-Status; "heatingOn" steht fest auf False (Heizung deaktiviert, siehe Chart "Raumtemperatur").
+    rod_active = heating_rod_active(config)
+    if rod_active:
+        rod_on = _read_mapped_bool_on(config, "heatpump_dhw_on_off")
+        if rod_on is None:
+            rod_on = _read_mapped_bool_on(config, HEATING_ROD_SWITCH_SENSOR_FIELD)
+        result["heatpump"] = {
+            "configured": True,
+            "isRod": True,
+            "on": rod_on,
+            "heatingOn": False,
+            "supplyTempC": None,
+            "dhwTankTempC": _read_mapped_numeric(config, "heatpump_dhw_tank_temp"),
+            "targetTempC": None,
+            "kw": heating_rod_power_kw(config),
+            "updatedAt": _read_mapped_last_updated_iso(config, "heatpump_dhw_on_off"),
+        }
+    else:
+        heatpump_configured = configured("waermepumpe")
+        result["heatpump"] = {
+            "configured": heatpump_configured,
+            "isRod": False,
+            "on": _read_mapped_bool_on(config, "heatpump_on_off", anything_but_off=True) if heatpump_configured else None,
+            "heatingOn": _read_mapped_bool_on(config, "heatpump_heating_activated", anything_but_off=True) if heatpump_configured else None,
+            "supplyTempC": _read_mapped_numeric(config, "heatpump_supply_temp_hp") if heatpump_configured else None,
+            "dhwTankTempC": _read_mapped_numeric(config, "heatpump_dhw_tank_temp") if heatpump_configured else None,
+            "targetTempC": _read_mapped_numeric(config, "heatpump_heating_target_temp_normal") if heatpump_configured else None,
+            "kw": heatpump_kw if heatpump_configured else None,
+            # Ein einzelner Zeitstempel fuer die ganze Waermepumpen-Kachel (statt je Einzelwert) reicht -
+            # das Frontend zeigt hier ohnehin primaer den kW-Wert mit Zeitstempel an.
+            "updatedAt": heatpump_kw_updated_at if heatpump_configured else None,
+        }
 
     raumtemperatur_configured = configured("raumtemperatur")
     result["indoorTemp"] = {
@@ -5900,6 +5927,85 @@ def _end_dhw_target_temp_restore(action, config):
         raise Exception(f"Solltemperatur konnte nicht auf {restore_value} °C zurückgesetzt werden ({detail.get('reason', 'Ursache unbekannt')})")
 
 
+# ============================================================================
+# Heizstab (Kachel "Heizstab", siehe heating_rod_active in sync_service.py): ersetzt die Waermepumpe bei der Warmwasserbereitung.
+# Eine "Warmwasser"-Aktion schaltet statt der Waermepumpen-Aktivierung die in der Kachel hinterlegte An-/Aus-Entitaet ein
+# (Annahme vorerst: der Heizstab laeuft dann mit voller Leistung, keine Modulation) und beim Ende der Aktion wieder aus.
+# ============================================================================
+HEATING_ROD_SWITCH_SENSOR_FIELD = "heating_rod_switch"
+HEATING_ROD_RETRY_DELAY_SECONDS = 10
+HEATING_ROD_RETRY_TIMEOUT_SECONDS = 60
+HEATING_ROD_TEST_TIMEOUT_SECONDS = 20
+HEATING_ROD_TEST_STATUS_TIMEOUT_SECONDS = 60
+HEATING_ROD_TEST_STATUS_POLL_SECONDS = 3
+
+
+def _heating_rod_entity(config):
+    return (config.get("sensorMappings", {}) or {}).get(HEATING_ROD_SWITCH_SENSOR_FIELD, "") or ""
+
+
+def _set_heating_rod_and_verify(entity_id, on, retry_timeout_seconds, detail=None):
+    """Schaltet die Heizstab-Entitaet an/aus (homeassistant.turn_on/turn_off, funktioniert fuer switch/input_boolean/...)
+    und prueft per Live-Status, ob sie den Zustand uebernommen hat - Retry alle HEATING_ROD_RETRY_DELAY_SECONDS bis
+    retry_timeout_seconds. True bei Erfolg; sonst False und detail['reason'] mit einem Klartext."""
+    service = "turn_on" if on else "turn_off"
+    expected = "on" if on else "off"
+    word = "eingeschaltet" if on else "ausgeschaltet"
+    deadline = time.time() + retry_timeout_seconds
+    attempt = 0
+    last_error = None
+    last_state = None
+    state_log = _TestStateLog(f"Zustand von {entity_id}", expected)
+    while True:
+        attempt += 1
+        test_log(f"Schalte {entity_id} {'ein' if on else 'aus'} (Versuch {attempt}) …")
+        try:
+            homeassistant_adapter.call_service("homeassistant", service, {"entity_id": entity_id})
+            last_error = None
+        except Exception as e:
+            test_log(f"Home Assistant meldet beim Schalten einen Fehler: {e}", "error")
+            last_error = str(e)
+            print(f"[Shyft] Heizstab: homeassistant.{service} auf '{entity_id}' fehlgeschlagen (Versuch {attempt}):", repr(e))
+        try:
+            last_state = homeassistant_adapter.load_entity_state(entity_id).state
+            state_log(last_state)
+            if str(last_state).lower() == expected:
+                test_log(f"{entity_id} ist {word}.", "ok")
+                return True
+        except Exception as e:
+            print(f"[Shyft] Heizstab: Status von '{entity_id}' nicht lesbar (Versuch {attempt}):", repr(e))
+        if time.time() >= deadline:
+            if last_state in BATTERY_UNAVAILABLE_STATES:
+                reason = f"Die Entität {entity_id} ist in Home Assistant nicht verfügbar ({last_state})"
+            elif last_error:
+                reason = f"Home Assistant meldet beim Schalten von {entity_id}: {last_error}"
+            elif last_state is not None:
+                reason = f"Die Entität {entity_id} steht weiterhin auf {last_state}"
+            else:
+                reason = f"Der Zustand von {entity_id} war nicht lesbar"
+            if detail is not None:
+                detail["reason"] = reason
+            test_log(f"Zustand nicht übernommen: {reason}", "error")
+            return False
+        test_sleep(HEATING_ROD_RETRY_DELAY_SECONDS)
+
+
+def execute_heating_rod(on, config, retry_timeout_seconds=HEATING_ROD_RETRY_TIMEOUT_SECONDS):
+    "Schaltet den Heizstab fuer eine echte 'Warmwasser'-Aktion (Start = ein, Ende = aus); wirft eine Exception mit Klartext bei einem Fehlschlag."
+    entity_id = _heating_rod_entity(config)
+    if not entity_id:
+        raise Exception("Keine Entität zum Ein-/Ausschalten des Heizstabs zugeordnet")
+    detail = {}
+    if not _set_heating_rod_and_verify(entity_id, on, retry_timeout_seconds, detail):
+        raise Exception(f"Der Heizstab konnte nicht {'eingeschaltet' if on else 'ausgeschaltet'} werden ({detail.get('reason', 'Ursache unbekannt')})")
+
+
+def heating_rod_power_kw(config):
+    "Leistung des Heizstabs in kW aus der Option 'Heizstab max. Leistung' (z.B. 'klein (4 kW)' -> 4.0), None wenn nicht lesbar."
+    match = re.search(r"\((\d+(?:[.,]\d+)?)\s*kW\)", str(config.get("heatingRodMaxPower") or ""))
+    return float(match.group(1).replace(",", ".")) if match else None
+
+
 DHW_ACTIVATION_TEST_POLL_INTERVAL_SECONDS = 5
 # Cloud-Integrationen wie ViCare pollen nur alle paar Minuten - nach dem Aktivieren-Button stand
 # "Einmalige Ladung" erst ~2 min spaeter auf An, laenger als die frueheren 90s. Deshalb laengeres
@@ -5943,11 +6049,13 @@ def _migrate_battery_pv_surplus_charge_limit():
     print("[Shyft] PV-Ueberschuss-Ladeleistungslimit einmalig von Netzladen-Entitaet uebernommen:", netzladen_entity)
 
 
-def _action_ready_key(action_name):
-    "Schluessel eines Aktionstyps in config['actionTestPassed'] / _action_type_config_state - oder None, wenn der Typ nicht gegated wird."
+def _action_ready_key(action_name, config=None):
+    "Schluessel eines Aktionstyps in config['actionTestPassed'] / _action_type_config_state - oder None, wenn der Typ nicht gegated wird. Mit aktivem Heizstab wird aus 'Warmwasser' der eigene Schluessel 'heating_rod' (eigener Test, eigenes Ergebnis - Waermepumpe und Heizstab behalten ihr Testergebnis beim saisonalen Wechsel)."
     if action_name in ACTION_NAME_TO_CONTROL_KEY:
         return ACTION_NAME_TO_CONTROL_KEY[action_name]  # heating_target_temp, consumer_on_off
     key = ACTION_NAME_TO_ACTOR_KEY.get(action_name)     # car_charge_start, hot_water, battery_*
+    if key == "hot_water" and config is not None and heating_rod_active(config):
+        return "heating_rod"
     return key if key not in ("pv_feed_in_limit", "consumption_limit_14a") else None
 
 
@@ -5972,6 +6080,10 @@ def _action_type_config_state(config, ready_key):
         return {"flags": {"auto": bool(im.get("auto")), "wallbox": bool(im.get("wallbox")), "recipe": recipe_ok},
                 "fp": {"auto": bool(im.get("auto")), "wallbox": bool(im.get("wallbox")),
                        "recipe": recipe_ok, "recipeType": recipe.get("type")}}
+    if ready_key == "heating_rod":
+        switch_entity = sm.get(HEATING_ROD_SWITCH_SENSOR_FIELD) or ""
+        return {"flags": {"heizstab": bool(im.get("heizstab")), "switchEntity": bool(switch_entity)},
+                "fp": {"heizstab": bool(im.get("heizstab")), "switchEntity": switch_entity}}
     if ready_key == "hot_water":
         recipe = config.get("hotWaterRecipe", {}) or {}
         recipe_ok = bool(recipe.get("haAutomationEntityId")) if recipe.get("type") == "ha_automation" else (
@@ -6006,7 +6118,7 @@ def _action_type_ready(config, action_name):
     """(ok, reason) - ok=True nur, wenn der Aktionstyp vollstaendig eingerichtet UND zuletzt
     erfolgreich getestet ist (config['actionTestPassed'][key] == aktueller Fingerprint). Nicht
     gegatete Typen (ready_key None) gelten immer als ok."""
-    ready_key = _action_ready_key(action_name)
+    ready_key = _action_ready_key(action_name, config)
     if not ready_key:
         return True, ""
     if not all(_action_type_config_state(config, ready_key)["flags"].values()):
@@ -6054,7 +6166,8 @@ def _clear_not_ready_problem(ready_key):
     davon unberuehrt."""
     label_section = _READY_KEY_TO_LABEL_SECTION.get(ready_key)
     if label_section:
-        problem_registry.clear(_action_problem_id(label_section[0]))
+        # Ein fehlgeschlagener Heizstab-Start wird unter dem Aktionsnamen "Warmwasser" gemeldet (siehe handle_shyft_action_start).
+        problem_registry.clear(_action_problem_id(DHW_ACTION_NAME if ready_key == "heating_rod" else label_section[0]))
 
 
 def _records_action_test(ready_key=None, record_success=True):
@@ -6137,6 +6250,82 @@ def _fail_action(action, config, exec_status, msg, prev_exec, verb):
     _update_computed_action(action)
     if prev_exec != exec_status:
         notify_action_event(config, action, f"Fehler beim {verb}", is_error=True)
+
+
+@app.route("/actions/heating_rod/test", methods=["POST"])
+@_records_action_test("heating_rod")
+@_with_test_session
+def testHeatingRod():
+    """Test der Heizstab-Steuerung: schaltet die zugeordnete An-/Aus-Entitaet ein (wie eine echte 'Warmwasser'-Aktion), wartet
+    darauf, dass "Heizstab aktiviert" auf An springt, und schaltet den Heizstab danach wieder aus (bzw. auf den Zustand
+    vor dem Test). Erfolg nur, wenn Einschalten, Statuswechsel und Ausschalten geklappt haben."""
+    config = _read_current_config()
+    entity_id = _heating_rod_entity(config)
+    if not entity_id:
+        return jsonify({"success": False, "message": "Keine Entität zum Ein-/Ausschalten des Heizstabs zugeordnet"}), 400
+
+    test_log(f"Heizstab-Schalter: {entity_id}")
+    try:
+        original_state = str(homeassistant_adapter.load_entity_state(entity_id).state).lower()
+    except Exception as e:
+        test_log(f"Der aktuelle Zustand ist nicht lesbar: {e}", "error")
+        return jsonify({"success": False, "message": "Aktueller Zustand des Heizstab-Schalters nicht lesbar"}), 500
+    test_log(f"Aktueller Zustand: {original_state}")
+
+    cancelled = False
+    switch_on_ok = False
+    status_confirmed = False
+    detail = {}
+    status_entity_id = config.get("sensorMappings", {}).get("heatpump_dhw_on_off", "")
+    try:
+        test_log("Schritt 1/3: Heizstab einschalten …")
+        switch_on_ok = _set_heating_rod_and_verify(entity_id, True, HEATING_ROD_TEST_TIMEOUT_SECONDS, detail)
+        if switch_on_ok:
+            if not status_entity_id:
+                status_confirmed = True
+                test_log("Kein Sensor „Heizstab aktiviert“ zugeordnet - der Statuswechsel wird nicht geprüft.", "warn")
+            else:
+                test_log(f"Schritt 2/3: Warte bis zu {HEATING_ROD_TEST_STATUS_TIMEOUT_SECONDS} s darauf, dass „Heizstab aktiviert“ ({status_entity_id}) auf An springt …", "wait")
+                state_log = _TestStateLog("Heizstab aktiviert")
+                deadline = time.time() + HEATING_ROD_TEST_STATUS_TIMEOUT_SECONDS
+                while True:
+                    status_state = _read_mapped_bool_on(config, "heatpump_dhw_on_off")
+                    state_log({True: "An", False: "Aus"}.get(status_state, "unbekannt"))
+                    if status_state is True:
+                        status_confirmed = True
+                        test_log("Der Heizstab ist aktiviert.", "ok")
+                        break
+                    if time.time() >= deadline:
+                        test_log("„Heizstab aktiviert“ ist innerhalb der Frist nicht auf An gesprungen.", "error")
+                        break
+                    test_sleep(HEATING_ROD_TEST_STATUS_POLL_SECONDS)
+    except _TestCancelled:
+        cancelled = True
+        test_log("Abbruch angefordert – schalte den Heizstab wieder aus …", "warn")
+
+    revert_ok = True
+    with _test_uninterruptible():
+        if original_state == "on":
+            test_log("Schritt 3/3: Der Heizstab war vor dem Test an – lasse ihn an.")
+        else:
+            test_log("Schritt 3/3: Schalte den Heizstab wieder aus …")
+            revert_ok = _set_heating_rod_and_verify(entity_id, False, HEATING_ROD_RETRY_TIMEOUT_SECONDS)
+            if not revert_ok:
+                test_log("Der Heizstab konnte nicht wieder ausgeschaltet werden – bitte in Home Assistant prüfen.", "error")
+
+    if cancelled:
+        return jsonify({"success": False, "cancelled": True,
+                        "message": "Test abgebrochen" + ("" if revert_ok else " - Heizstab konnte nicht ausgeschaltet werden")})
+    if switch_on_ok and status_confirmed and revert_ok:
+        _note_action_outcome(DHW_ACTION_NAME, "getestet", None)
+        return jsonify({"success": True})
+    if not switch_on_ok:
+        message = f"Heizstab konnte nicht eingeschaltet werden ({detail.get('reason', 'Ursache unbekannt')})"
+    elif not status_confirmed:
+        message = "\"Heizstab aktiviert\" ist nicht auf An gesprungen"
+    else:
+        message = "Heizstab konnte nach dem Test nicht ausgeschaltet werden"
+    return jsonify({"success": False, "message": message}), 500
 
 
 @app.route("/actions/hot_water_target_temp/test", methods=["POST"])
@@ -8043,7 +8232,7 @@ def check_device_status_deviation(config):
         _clear_device_deviation("sonstiger_verbraucher")
 
     # --- Heizung Soll-Temperatur: nur waehrend aktiv (kein sinnvoller Ruhezustand-Wert bekannt) ---
-    if configured("waermepumpe") and resolve_control_variant("heating_target_temp", config) == "direct"             and is_action_type_enabled(config, HEIZUNG_ACTION_NAME):
+    if configured("waermepumpe") and not heating_rod_active(config) and resolve_control_variant("heating_target_temp", config) == "direct"             and is_action_type_enabled(config, HEIZUNG_ACTION_NAME):
         heizung_action = _active_computed_action(computed_actions, HEIZUNG_ACTION_NAME)
         expected_temp = heizung_action.get("Target Value") if heizung_action is not None and past_grace(heizung_action) else None
         live_heizung_temp = _read_mapped_numeric(config, "heatpump_heating_target_temp_normal")
@@ -8058,7 +8247,7 @@ def check_device_status_deviation(config):
 
     # --- Warmwasser-Solltemperatur-Boost: nur waehrend "Warmwasser" aktiv, nur wenn eine
     # Solltemperatur-Entitaet zugeordnet ist (siehe _start_dhw_target_temp_boost) ---
-    if configured("waermepumpe") and _dhw_target_temp_entity(config) and is_action_type_enabled(config, DHW_ACTION_NAME):
+    if configured("waermepumpe") and not heating_rod_active(config) and _dhw_target_temp_entity(config) and is_action_type_enabled(config, DHW_ACTION_NAME):
         dhw_action = _active_computed_action(computed_actions, DHW_ACTION_NAME)
         expected_dhw_temp = dhw_action.get("Target Value") if dhw_action is not None and past_grace(dhw_action) else None
         live_dhw_temp = _read_mapped_numeric(config, DHW_TARGET_TEMP_SENSOR_FIELD)
@@ -8155,14 +8344,21 @@ def handle_shyft_action_start(action, actions_enabled, config):
         # versucht, auch wenn der jeweils andere fehlschlaegt (siehe _start_dhw_target_temp_boost),
         # aber jeder Fehlschlag zaehlt fuer die gemeldete Aktion als Ganzes.
         errors = []
-        try:
-            _start_dhw_target_temp_boost(action, config)
-        except Exception as e:
-            errors.append(str(e))
-        try:
-            execute_hot_water_activate()
-        except Exception as e:
-            errors.append(str(e))
+        if heating_rod_active(config):
+            # Heizstab statt Waermepumpe: kein Solltemperatur-Boost/Wärmepumpen-Befehl, sondern den Heizstab einschalten.
+            try:
+                execute_heating_rod(True, config)
+            except Exception as e:
+                errors.append(str(e))
+        else:
+            try:
+                _start_dhw_target_temp_boost(action, config)
+            except Exception as e:
+                errors.append(str(e))
+            try:
+                execute_hot_water_activate()
+            except Exception as e:
+                errors.append(str(e))
         if errors:
             start_error = "; ".join(errors)
             print(f"[Shyft] Start fuer '{label}' fehlgeschlagen: {start_error}")
@@ -8250,7 +8446,10 @@ def handle_shyft_action_end(action, actions_enabled, config):
             end_error = str(e)
     elif label == "Warmwasser":
         try:
-            _end_dhw_target_temp_restore(action, config)
+            if heating_rod_active(config):
+                execute_heating_rod(False, config)
+            else:
+                _end_dhw_target_temp_restore(action, config)
             print(f"[Shyft] Ende ausgefuehrt fuer '{label}'.")
             _note_action_outcome(label, "beendet")
         except Exception as e:
@@ -9018,7 +9217,13 @@ HP_MAX_SUPPLY_TEMP_DEFAULT_C = 55
 
 
 def _is_heatpump_configured(config):
-    return bool(config.get("integrationMappings", {}).get("waermepumpe"))
+    "Waermepumpe eingerichtet UND aktiv - mit aktivem Heizstab (siehe heating_rod_active) ist sie deaktiviert."
+    return bool(config.get("integrationMappings", {}).get("waermepumpe")) and not heating_rod_active(config)
+
+
+def _is_hot_water_device_configured(config):
+    "Es gibt ein aktives Geraet fuer die Warmwasserbereitung: die Waermepumpe oder (ersatzweise) der Heizstab."
+    return _is_heatpump_configured(config) or heating_rod_active(config)
 
 
 def _dhw_action_id(hour_start):
@@ -9032,7 +9237,7 @@ def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id
     laufende Stunde: Date Start = jetzt, Status = aktiv, sonst geplant mit Stundenbeginn) UND fuer
     net_profit_base/net_profit_opt/x_sum_total (siehe _action_energy_savings)."""
     result = {}
-    if not _is_heatpump_configured(config):
+    if not _is_hot_water_device_configured(config):
         return result
 
     row_count = len(output_rows)

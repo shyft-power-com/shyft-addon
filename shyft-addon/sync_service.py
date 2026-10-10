@@ -189,6 +189,18 @@ WALLBOX_MAX_PHASES_DEFAULT = 3
 WALLBOX_MAX_CURRENT_AMPS_DEFAULT = 16
 
 
+HEATING_ROD_SECTION_KEY = "heizstab"
+
+
+def heating_rod_active(config):
+    """Heizstab-Betrieb: die Kachel "Heizstab" hat ein Geraet UND der Schalter "Heizstab steuern" (heatingRodEnabled, Standard an)
+    steht auf an. Dann uebernimmt der Heizstab die Warmwasserbereitung und die Waermepumpe ist deaktiviert (ihre hinterlegten Werte
+    bleiben erhalten). Der Schalter erlaubt den saisonalen Wechsel zurueck zur Waermepumpe, ohne etwas neu einzugeben."""
+    if not (config.get("integrationMappings", {}) or {}).get(HEATING_ROD_SECTION_KEY):
+        return False
+    return config.get("heatingRodEnabled", True) is not False
+
+
 def feed_in_limit_kw(config):
     """Maximale Einspeiseleistung (kW) fuer "Einspeisung drosseln" (Solarspitzengesetz, §9 EEG) - der Server-Eingang "LPP"
     (staticConfig, kW, optional). Nur bei aktiviertem Toggle (feedInLimitEnabled) UND gueltigem Wert (Zahl >= 0), sonst None -
@@ -323,6 +335,15 @@ class SyncService:
         if lpp is not None:
             static_config["LPP"] = lpp
 
+        # Heizstab statt Waermepumpe (siehe heating_rod_active): "heating_rod" yes/no fuer den Optimierer (geaenderter Wirkungsgrad),
+        # und die Heizstab-Leistung ("Heizstab max. Leistung", gleiche Optionen wie die Waermepumpe) geht als "HP - Max. Power" raus.
+        rod_active = heating_rod_active(data)
+        static_config["heating_rod"] = "yes" if rod_active else "no"
+        if rod_active:
+            rod_power = data.get("heatingRodMaxPower")
+            if rod_power is not None and rod_power != "":
+                static_config["HP - Max. Power"] = rod_power
+
         return static_config
 
     def collect_live_values(self):
@@ -356,6 +377,9 @@ class SyncService:
         # ankommen. Explizit "on" nachtragen, wenn der Key fehlt.
         if LIST_OF_SENSORS["heatpump_heating_activated"] not in live_values:
             live_values[LIST_OF_SENSORS["heatpump_heating_activated"]] = "on"
+        # Mit aktivem Heizstab ist die Waermepumpen-Heizung deaktiviert: "Heizung aktiviert?" geht immer als "off" an shyft-power.
+        if heating_rod_active(data):
+            live_values[LIST_OF_SENSORS["heatpump_heating_activated"]] = "off"
         return live_values
 
     def _load_sensor_value(self, key, bubbleSensorIdentifier, data):

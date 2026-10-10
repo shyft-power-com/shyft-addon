@@ -132,6 +132,34 @@ const helpinformation = {
 
 }
 
+// Heizstab-Kachel: dieselben Sensoren wie bei der Waermepumpe (gleiche Schluessel, die hinterlegten Werte bleiben erhalten), nur anders
+// beschriftet - plus die An-/Aus-Entitaet des Heizstabs (heating_rod_switch).
+const HEATING_ROD_SWITCH_KEY = 'heating_rod_switch';
+const heatingRodHelpInformation = {
+    ...helpinformation,
+    'heatpump_dhw_tank_temp': {
+        label: 'Temperatur Warmwassertank',
+        description: ' Die aktuelle Temperatur im Warmwassertank (in °C), den dein Heizstab erwärmt.'
+    },
+    'heatpump_dhw_target_temp': {
+        label: 'Warmwasser: Solltemperatur (°C)',
+        description: ' Die Home-Assistant-Entity (number oder climate), an der die Ziel-/Solltemperatur des Warmwassers eingestellt ist. Daraus leitet Shyft die Untergrenze für die Warmwasserplanung ab.'
+    },
+    'heatpump_dhw_on_off': {
+        label: 'Heizstab aktiviert',
+        description: ' An/Aus, je nachdem ob dein Heizstab gerade heizt.'
+    },
+    [HEATING_ROD_SWITCH_KEY]: {
+        label: 'Heizstab ein-/ausschalten',
+        description: ' Die An-/Aus-Entität (z. B. ein Schalter oder Relais) aus deinem Heizstab-Gerät, über die Shyft den Heizstab ein- und ausschaltet.'
+    },
+};
+
+// Beschriftung/Beschreibung der Sensoren je Kachel (nur die Heizstab-Kachel weicht ab).
+function sectionHelpInformation(section) {
+    return section.key === 'heizstab' ? heatingRodHelpInformation : helpinformation;
+}
+
 const actorHelpInformation = {
     'pv_feed_in_limit': {
         label: 'PV: Einspeisung begrenzen',
@@ -206,6 +234,8 @@ const SENSOR_ENTITY_FILTERS = {
     'heatpump_dhw_target_temp': {type: 'writable_temperature'},
     'heatpump_dhw_activated': {type: 'state_on_off'},
     'heatpump_dhw_on_off': {type: 'state_on_off'},
+    // Das Addon SCHALTET hierueber den Heizstab: settable An-/Aus-Entitaet (Schalter/Relais/input_boolean).
+    [HEATING_ROD_SWITCH_KEY]: {type: 'domain', values: ['switch', 'input_boolean', 'light']},
     'heatpump_heating_target_temp_normal': {type: 'device_class', value: 'temperature'},
     'heatpump_heating_activated': {type: 'state_on_off_or_mode'},
     // Nur Leistungssensoren in W/kW (device_class 'power' liess z.B. auch Einheiten-lose Entitaeten durch)
@@ -240,6 +270,7 @@ const SENSOR_MATCH_KEYWORDS = {
     'heatpump_dhw_target_temp': ['ww_soll', 'dhw_target', 'warmwasser_soll', 'boiler_target', 'hot_water_target'],
     'heatpump_dhw_activated': ['ww', 'dhw', 'warmwasser', 'einmalige', 'one_time', 'boost'],
     'heatpump_dhw_on_off': ['ww', 'dhw', 'warmwasser', 'boiler'],
+    [HEATING_ROD_SWITCH_KEY]: ['heizstab', 'heating_rod', 'boiler', 'heater', 'relay', 'relais', 'schalter', 'switch'],
     'heatpump_heating_target_temp_normal': ['soll', 'target', 'zieltemperatur', 'normaltemperatur', 'raumsoll'],
     'heatpump_heating_activated': ['heizung', 'heating', 'heizen', 'heat'],
     'heatpump_current_power_elect': ['leistung', 'power', 'elektrisch', 'elect'],
@@ -279,6 +310,16 @@ const INTEGRATION_SECTIONS = [
         actions: ['battery_charge_shift_pv_surplus', 'battery_discharge_shift', 'battery_grid_charge', 'battery_action_stop'],
         requiresDeviceClass: 'power',
         hasDemo: true
+    },
+    {
+        key: 'heizstab',
+        label: 'Heizstab',
+        // Dieselben Sensor-Schluessel wie bei der Waermepumpe (Tank-Temperatur, Solltemperatur, "Heizstab aktiviert" = bisheriges
+        // "Warmwasser gerade erwaermt?") - dadurch bleiben die Werte beim saisonalen Wechsel erhalten. Dazu die An-/Aus-Entitaet.
+        sensors: ['heatpump_dhw_tank_temp', 'heatpump_dhw_target_temp', 'heatpump_dhw_on_off', HEATING_ROD_SWITCH_KEY],
+        actions: [],
+        requiresDeviceClass: 'temperature',
+        description: 'Wenn du dein Brauchwasser ausschließlich über den Heizstab erwärmst, statt über die Wärmepumpe, dann richte ihn hier ein. Shyft steuert den Stab dann vorausschauend, je nach Warmwasserbedarf.\nWenn du den Heizstab zusätzlich zu einer anderweitig bestehenden Heizung nutzt, dann richte ihn weiter unten als "Sonstigen Verbraucher" ein. Dort wird der Heizstab rein preisgesteuert zugeschaltet.'
     },
     {
         key: 'waermepumpe',
@@ -711,7 +752,7 @@ const ACTION_NAME_TO_SECTION_KEY = {
 // Home Assistant's public, unauthenticated brand-icon CDN - the same one HA's own frontend uses
 // for integration logos in Settings -> Devices & Services, no call to the user's instance needed.
 function getActionIconUrl(actionName) {
-    const sectionKey = ACTION_NAME_TO_SECTION_KEY[actionName];
+    const sectionKey = actionName === 'Warmwasser' ? hotWaterSectionKey() : ACTION_NAME_TO_SECTION_KEY[actionName];
     if (!sectionKey) return null;
     const selectedIds = currentIntegrationSelections[sectionKey] || [];
     if (selectedIds.length === 0) return null;
@@ -952,6 +993,8 @@ async function saveConfigurationNow() {
         "electricitySellCent": configData["electricitySellCent"] ?? null,
         "feedInLimitEnabled": configData["feedInLimitEnabled"] === true,
         "feedInLimitKw": configData["feedInLimitKw"] ?? null,
+        "heatingRodEnabled": configData["heatingRodEnabled"] !== false,
+        "heatingRodMaxPower": configData["heatingRodMaxPower"] ?? 'klein (4 kW)',
         // Konfig-Keys, die der Nutzer bewusst geaendert/bestaetigt hat (siehe markConfigFieldTouched) -
         // steuert den roten Rahmen um unbestaetigte Default-Felder und das Aufklappen der Kachel.
         "touchedFields": configData["touchedFields"] || [],
@@ -1380,7 +1423,7 @@ function renderDeviceNav(problems, warnings) {
 
     for (const section of INTEGRATION_SECTIONS) {
         const currentIds = currentIntegrationSelections[section.key] || [];
-        const iconState = currentIds.length === 0 ? 'unconfigured'
+        const iconState = (currentIds.length === 0 || isSectionDisabled(section.key, currentIds)) ? 'unconfigured'
             : (failedSectionKeys.has(section.key) || warningSectionKeys.has(section.key)) ? 'error' : 'ok';
         container.appendChild(buildDeviceNavChip(section.label, section.key, iconState));
     }
@@ -1411,7 +1454,8 @@ const ACTION_FAILED_SLUG_TO_SECTION = {
 
 function actionFailedProblemSectionKey(problemId) {
     if (!problemId || !problemId.startsWith('action_failed:')) return null;
-    return ACTION_FAILED_SLUG_TO_SECTION[problemId.slice('action_failed:'.length)] || null;
+    const slug = problemId.slice('action_failed:'.length);
+    return (slug === 'warmwasser' ? hotWaterSectionKey() : ACTION_FAILED_SLUG_TO_SECTION[slug]) || null;
 }
 
 // Wie ACTION_FAILED_SLUG_TO_SECTION oben, aber auf den internen Aktions-Schluessel (nicht die
@@ -1460,6 +1504,7 @@ function resolveActionControlFieldId(actionKey) {
         return recipe.type === 'ha_automation' ? 'car_charge_ha_automation_entity' : null;
     }
     if (HOT_WATER_ACTION_KEYS.has(actionKey)) {
+        if (isHeatingRodActive()) return HEATING_ROD_SWITCH_KEY + VALUE_POSTFIX;
         const recipe = configData['hotWaterRecipe'] || {};
         return recipe.type === 'ha_automation' ? 'hot_water_ha_automation_entity' : null;
     }
@@ -1526,7 +1571,9 @@ function sensorFieldForEntityId(entityId) {
 }
 
 function sensorFieldSectionKey(sensorField) {
-    const section = INTEGRATION_SECTIONS.find(s => s.sensors.includes(sensorField));
+    // Die Warmwasser-Sensoren gehoeren zu Waermepumpe UND Heizstab - die gerade aktive Kachel gewinnt.
+    const section = INTEGRATION_SECTIONS.find(s => s.sensors.includes(sensorField) && !isSectionDisabled(s.key, currentIntegrationSelections[s.key] || []))
+        || INTEGRATION_SECTIONS.find(s => s.sensors.includes(sensorField));
     return section ? section.key : null;
 }
 
@@ -1931,6 +1978,7 @@ function integrationHasDeviceClass(entryId, deviceClass) {
 const SECTION_MATCH_KEYWORDS = {
     wechselrichter: ['solar', 'pv_', 'photovolt', 'inverter', 'wechselrichter', 'einspeis', 'grid_power'],
     batterie: ['batter', 'akku', 'speicher', 'powerwall', 'state_of_charge', '_soc', 'bess'],
+    heizstab: ['heizstab', 'heating_rod', 'boiler', 'heater', 'warmwasser', '_dhw', 'relay', 'relais', 'shelly', 'switch'],
     waermepumpe: ['heat_pump', 'heatpump', 'waermepumpe', 'wärmepumpe', 'thermostat', 'vorlauf', 'heizung', 'heating', 'warmwasser', '_dhw', 'flow_temp', 'hvac', 'klima'],
     auto: ['vehicle', '_car', 'ev_', 'fahrzeug', 'odometer', 'state_of_charge', '_soc'],
     wallbox: ['wallbox', 'charg', 'evse', 'ladeleist', 'ladestrom', 'charge_current', 'charging_power', 'chargepoint', 'go_e'],
@@ -1975,7 +2023,9 @@ function scoreIntegrationForSection(integration, section) {
     const nameHit = keywords.some(k => shape.haystack.some(h => h.includes(k)));
     if (nameHit) score += 2;
 
-    if (section.key === 'waermepumpe') {
+    if (section.key === 'heizstab') {
+        if (shape.entityDomains.has('switch') && nameHit) score += 4;
+    } else if (section.key === 'waermepumpe') {
         if (shape.entityDomains.has('climate') || shape.entityDomains.has('water_heater')) score += 6;
     } else if (section.key === 'batterie') {
         const hasPower = shape.deviceClasses.has('power') || shape.deviceClasses.has('energy') || shape.deviceClasses.has('battery');
@@ -2016,6 +2066,46 @@ document.addEventListener('mousedown', (event) => {
     }
 });
 
+// Heizstab-Betrieb: die Kachel "Heizstab" hat ein Geraet UND der Schalter "Heizstab steuern" (heatingRodEnabled, Standard an) ist an.
+// Dann erwaermt der Heizstab das Brauchwasser und die Waermepumpe ist deaktiviert (Spiegel von heating_rod_active in sync_service.py).
+function isHeatingRodActive() {
+    const ids = currentIntegrationSelections['heizstab'] ?? ((configData['integrationMappings'] || {})['heizstab'] || []);
+    return ids.length > 0 && configData['heatingRodEnabled'] !== false;
+}
+
+// Hinweis hinter der Kachel-Ueberschrift, wenn die Kachel gerade deaktiviert ist (leer = aktiv): die Waermepumpe bei aktivem
+// Heizstab, der Heizstab bei ausgeschaltetem Schalter "Heizstab steuern". Deaktivierte Kacheln zeigen keine Details, behalten aber
+// alle hinterlegten Werte.
+function sectionDisabledNoteFor(sectionKey, selectedIds) {
+    if (sectionKey === 'waermepumpe' && isHeatingRodActive()) return ' (deaktiviert, Heizstab eingerichtet)';
+    if (sectionKey === 'heizstab' && selectedIds.length > 0 && !isHeatingRodActive()) return ' (deaktiviert)';
+    return '';
+}
+
+function isSectionDisabled(sectionKey, selectedIds) {
+    return sectionDisabledNoteFor(sectionKey, selectedIds || []) !== '';
+}
+
+// Kachel, zu der die Warmwasserbereitung gerade gehoert: der Heizstab, solange er aktiv ist, sonst die Waermepumpe.
+function hotWaterSectionKey() {
+    return isHeatingRodActive() ? 'heizstab' : 'waermepumpe';
+}
+
+// Baut alle Geraetekacheln neu auf (z.B. nach dem Umschalten Heizstab/Waermepumpe) und haelt die Scrollposition der Seite.
+// anchorId (optional): ein Element, das nach dem Neuaufbau an derselben Stelle im Bild bleiben soll (die Kacheln darueber/darunter
+// aendern ihre Hoehe, wenn eine auf- und die andere zuklappt) - z.B. der Schalter, den der Nutzer gerade bedient hat.
+function rerenderIntegrationSectionsKeepingScroll(anchorId = null) {
+    const x = window.scrollX, y = window.scrollY;
+    const anchorBefore = anchorId ? document.getElementById(anchorId) : null;
+    const anchorTop = anchorBefore ? anchorBefore.getBoundingClientRect().top : null;
+    renderIntegrationSections();
+    window.scrollTo(x, y);
+    const anchorAfter = anchorId ? document.getElementById(anchorId) : null;
+    if (anchorAfter && anchorTop !== null) window.scrollBy(0, anchorAfter.getBoundingClientRect().top - anchorTop);
+    renderSystemHealth();
+    renderControlToggles();
+}
+
 // Steuerung per Toggle deaktiviert? Dann gibt es weder Fehlermeldungen (Dashboard/Konfigurationsseite) noch ein
 // Aufklappen der Kachel wegen fehlender Einrichtung oder ausstehender Tests - die Aktion wird ja nur simuliert.
 function isActionToggleOff(toggleKey) {
@@ -2035,6 +2125,8 @@ function isEntityMappingEmpty(value) {
 // integration selected at all has nothing to show either way, so it's not forced open.
 function isSectionComplete(section, currentIds) {
     if (currentIds.length === 0) return true;
+    // Deaktivierte Kachel (Waermepumpe bei aktivem Heizstab bzw. umgekehrt): nichts zu pruefen, nichts aufzuklappen.
+    if (isSectionDisabled(section.key, currentIds)) return true;
     // Demo-Geraet braucht keine Sensor-/Actor-Zuordnung - zeigt Beispieldaten (siehe get_demo_value
     // in sync_service.py), gilt also immer als vollstaendig konfiguriert.
     if (currentIds.length === 1 && currentIds[0] === DEMO_INTEGRATION_ID) return true;
@@ -2140,6 +2232,7 @@ function computeMissingRequiredFieldsWarnings() {
         const currentIds = integrationMappings[section.key] || [];
         if (currentIds.length === 0) continue;
         if (currentIds.length === 1 && currentIds[0] === DEMO_INTEGRATION_ID) continue;
+        if (isSectionDisabled(section.key, currentIds)) continue;
 
         // {label, fieldId} statt nur eines Labels - fieldId ist die DOM-Id des konkreten
         // Eingabefelds (siehe resolveActionControlFieldId), Grundlage fuer den roten Rahmen um den
@@ -2151,7 +2244,7 @@ function computeMissingRequiredFieldsWarnings() {
         for (const key of section.sensors) {
             if (REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS.has(key)) continue;
             if (AUTO_MANAGED_CONTROLS.some(c => c.sensorField === key && isActionToggleOff(c.actionKeys[0]))) continue;
-            if (isEntityMappingEmpty(sensorMappings[key])) missing.push({label: (helpinformation[key] || {}).label || key, fieldId: key + VALUE_POSTFIX});
+            if (isEntityMappingEmpty(sensorMappings[key])) missing.push({label: (sectionHelpInformation(section)[key] || {}).label || key, fieldId: key + VALUE_POSTFIX});
         }
 
         for (const control of AUTO_MANAGED_CONTROLS) {
@@ -3006,10 +3099,13 @@ function renderIntegrationSections() {
 
         const currentIds = integrationMappings[section.key] || [];
         currentIntegrationSelections[section.key] = currentIds;
-        let expanded = !isSectionComplete(section, currentIds);
+        // Waermepumpe bei aktivem Heizstab bzw. Heizstab bei ausgeschaltetem Schalter: grau, ohne Details (Werte bleiben erhalten).
+        const sectionDisabledNote = sectionDisabledNoteFor(section.key, currentIds);
+        const sectionDisabled = sectionDisabledNote !== '';
+        let expanded = !sectionDisabled && !isSectionComplete(section, currentIds);
 
         const heading = document.createElement('div');
-        heading.className = 'integrationHeading';
+        heading.className = 'integrationHeading' + (sectionDisabled ? ' integrationHeadingDisabled' : '');
         const headingRow = document.createElement('div');
         headingRow.className = 'integrationHeadingRow';
 
@@ -3021,7 +3117,7 @@ function renderIntegrationSections() {
         headingRow.appendChild(toggleButton);
 
         const headingTitle = document.createElement('h2');
-        headingTitle.textContent = section.label;
+        headingTitle.textContent = section.label + sectionDisabledNote;
         headingRow.appendChild(headingTitle);
         if (section.description) {
             headingRow.appendChild(buildTooltip(section.description));
@@ -3054,7 +3150,12 @@ function renderIntegrationSections() {
                 bodyDiv.innerHTML = '';
             }
             updateBodyVisibility();
-            autoSave();
+            if (section.key === 'heizstab') {
+                // Ein Heizstab-Geraet (oder dessen Entfernen) entscheidet, ob Heizstab oder Waermepumpe aktiv ist: alle Kacheln neu aufbauen.
+                autoSave().then(rerenderIntegrationSectionsKeepingScroll);
+            } else {
+                autoSave();
+            }
         });
         heading.appendChild(picker);
 
@@ -3073,7 +3174,7 @@ function renderIntegrationSections() {
 
         function updateBodyVisibility() {
             const hasSelection = currentIntegrationSelections[section.key].length > 0;
-            bodyDiv.style.display = (hasSelection && expanded) ? '' : 'none';
+            bodyDiv.style.display = (hasSelection && expanded && !sectionDisabled) ? '' : 'none';
             // Eingeklappt (expanded=false) zeigt NUR die Ueberschriften-Zeile - der Geraete-Dropdown
             // blendet sich mit aus, nicht nur die Sensor-Zuordnungsfelder darunter. Einklappen ist
             // erst moeglich, wenn schon ein Geraet gewaehlt ist (toggleButton.disabled unten), das
@@ -3081,13 +3182,15 @@ function renderIntegrationSections() {
             // gewaehlt ist, bleibt der Dropdown immer sichtbar (eine noch leere Kachel gilt via
             // isSectionComplete als "vollstaendig" -> expanded=false, Pfeil disabled, kein
             // "Details einblenden" - ohne diese Ausnahme koennte man dort nie ein Geraet auswaehlen).
-            picker.style.display = (expanded || !hasSelection) ? '' : 'none';
+            // Deaktivierte Waermepumpe: keine Details und keine Geraeteauswahl; der deaktivierte Heizstab behaelt seine Geraeteauswahl
+            // (zum Entfernen) und den Schalter "Wärmepumpe steuern" darueber.
+            picker.style.display = sectionDisabled ? (section.key === 'heizstab' ? '' : 'none') : ((expanded || !hasSelection) ? '' : 'none');
             toggleButton.classList.toggle('collapsed', !expanded);
-            toggleButton.disabled = !hasSelection;
-            showDetailsButton.style.display = (hasSelection && !expanded) ? '' : 'none';
+            toggleButton.disabled = !hasSelection || sectionDisabled;
+            showDetailsButton.style.display = (hasSelection && !expanded && !sectionDisabled) ? '' : 'none';
         }
 
-        if (currentIds.length > 0) {
+        if (currentIds.length > 0 && !sectionDisabled) {
             renderSectionBody(bodyDiv, section, currentIds);
             // Ein nie bestaetigtes Default-Feld (siehe isUnconfirmedDefault) haelt die Kachel offen,
             // damit der Nutzer den Wert bewusst prueft statt ihn eingeklappt zu uebersehen.
@@ -3101,6 +3204,8 @@ function renderIntegrationSections() {
         });
 
         sectionDiv.appendChild(heading);
+        // Schalter oben in der Heizstab-Kachel: "Heizstab steuern" (an) bzw. "Wärmepumpe steuern" (aus) - siehe buildHeatingRodModeToggle.
+        if (section.key === 'heizstab' && currentIds.length > 0) sectionDiv.appendChild(buildHeatingRodModeToggle());
         sectionDiv.appendChild(showDetailsButton);
         sectionDiv.appendChild(bodyDiv);
 
@@ -3524,12 +3629,12 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         sensorsHeading.textContent = 'Sensoren';
         bodyDiv.appendChild(sensorsHeading);
 
-        if (section.key === 'waermepumpe') {
+        if (section.key === 'waermepumpe' || section.key === 'heizstab') {
             // "Warmwasser-Speichergröße" gehoert direkt unter die zugehoerige Sensor-Zeile
             // "Temperatur Warmwassertank" (Nutzer-Feedback) - dafuer wird dieser eine Sensor hier
             // vorgezogen und das Feld gleich daruntergesetzt, statt es weiter unten im Konfig-Block
             // zu belassen. heatpump_dhw_tank_temp ist ohnehin der erste Eintrag in section.sensors.
-            bodyDiv.appendChild(buildMappingTable(['heatpump_dhw_tank_temp'], configData["sensorMappings"] || {}, helpinformation, VALUE_POSTFIX, key => sensorDatalistIds[key], true));
+            bodyDiv.appendChild(buildMappingTable(['heatpump_dhw_tank_temp'], configData["sensorMappings"] || {}, sectionHelpInformation(section), VALUE_POSTFIX, key => sensorDatalistIds[key], true));
             bodyDiv.appendChild(buildHpDhwTankSizeField());
         }
 
@@ -3540,11 +3645,17 @@ function renderSectionBody(bodyDiv, section, entryIds) {
             ? section.sensors.filter(k => k !== 'wallbox_plugged')
             : section.key === 'waermepumpe'
                 ? section.sensors.filter(k => k !== 'heatpump_dhw_tank_temp')
-                : section.key === 'sonstiger_verbraucher'
-                    // Mehrfachauswahl (Liste) statt der Einzelzeile - siehe buildMultiSensorField unten.
-                    ? section.sensors.filter(k => k !== 'sonstiger_verbraucher_switch_entities')
-                    : section.sensors;
-        bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, helpinformation, VALUE_POSTFIX, key => sensorDatalistIds[key], true));
+                : section.key === 'heizstab'
+                    // Die An-/Aus-Entitaet steht weiter unten unter "Steuerung" (siehe buildHeatingRodControl).
+                    ? section.sensors.filter(k => k !== 'heatpump_dhw_tank_temp' && k !== HEATING_ROD_SWITCH_KEY)
+                    : section.key === 'sonstiger_verbraucher'
+                        // Mehrfachauswahl (Liste) statt der Einzelzeile - siehe buildMultiSensorField unten.
+                        ? section.sensors.filter(k => k !== 'sonstiger_verbraucher_switch_entities')
+                        : section.sensors;
+        bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, sectionHelpInformation(section), VALUE_POSTFIX, key => sensorDatalistIds[key], true));
+        if (section.key === 'heizstab') {
+            bodyDiv.appendChild(buildHeatingRodMaxPowerField());
+        }
 
         if (section.key === 'wechselrichter') {
             bodyDiv.appendChild(buildFeedInLimitSection());
@@ -3675,6 +3786,74 @@ function renderSectionBody(bodyDiv, section, entryIds) {
     if (hasHotWater) {
         steuerungTarget.appendChild(buildHotWaterControl());
     }
+
+    if (section.key === 'heizstab') {
+        const controlHeading = document.createElement('div');
+        controlHeading.className = 'sectionSubHeading controlSectionHeading';
+        const controlHeadingText = document.createElement('span');
+        controlHeadingText.textContent = 'Steuerung';
+        controlHeading.appendChild(controlHeadingText);
+        bodyDiv.appendChild(controlHeading);
+        bodyDiv.appendChild(buildHeatingRodControl());
+    }
+}
+
+// Schalter oben in der Heizstab-Kachel: an = "Heizstab steuern" (Shyft steuert den Heizstab, die Waermepumpe ist deaktiviert),
+// aus = "Wärmepumpe steuern" (saisonaler Wechsel zurueck zur Waermepumpe). Es geht nichts verloren: alle Werte beider Geraete bleiben
+// gespeichert. Ein Wechsel baut alle Kacheln neu auf (siehe rerenderIntegrationSectionsKeepingScroll).
+function buildHeatingRodModeToggle() {
+    const active = isHeatingRodActive();
+    const row = document.createElement('div');
+    row.className = 'autoActionTitle heatingRodModeRow';
+    const label = document.createElement('span');
+    label.textContent = active ? 'Heizstab steuern' : 'Wärmepumpe steuern';
+    row.appendChild(label);
+    row.appendChild(buildTooltip('Mit diesem Schalter wechselst du zwischen Heizstab und Wärmepumpe, z. B. saisonal. Ist er an, steuert Shyft den Heizstab und die Wärmepumpe ist deaktiviert; ist er aus, steuert Shyft die Wärmepumpe. Alle hinterlegten Werte bleiben erhalten, du musst nichts neu eingeben.'));
+    const toggle = buildBareToggleSwitch(active);
+    const input = toggle.querySelector('input');
+    input.id = 'heating_rod_enabled';
+    input.addEventListener('change', async () => {
+        input.disabled = true;
+        configData['heatingRodEnabled'] = input.checked;
+        try {
+            await autoSave();
+        } finally {
+            rerenderIntegrationSectionsKeepingScroll('heating_rod_enabled');
+        }
+    });
+    row.appendChild(toggle);
+    return row;
+}
+
+// "Steuerung" der Heizstab-Kachel: die An-/Aus-Entitaet des Heizstabs (aus dem Heizstab-Geraet) samt Testen-Button. Eine "Warmwasser"-Aktion
+// schaltet sie ein und am Ende wieder aus (siehe execute_heating_rod in app.py; Annahme vorerst: der Heizstab laeuft dann mit voller Leistung).
+function buildHeatingRodControl() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'autoActionControl';
+
+    // Titel ohne Haken - der gruene Haken steht neben dem Testen-Button (siehe buildBatteryDirectTestRow).
+    const title = document.createElement('div');
+    title.className = 'autoActionTitle';
+    const titleText = document.createElement('span');
+    titleText.textContent = 'Heizstab ein-/ausschalten';
+    title.appendChild(titleText);
+    title.appendChild(buildTooltip('Wenn Shyft Warmwasser bereiten will, schaltet es diese Entität ein und nach dem Ende der Aktion wieder aus. Shyft geht vorerst davon aus, dass der Heizstab dann mit voller Leistung läuft.'));
+    wrapper.appendChild(title);
+
+    const checkmark = document.createElement('span');  // nur fuer applyTestGate, wird nicht eingefuegt
+    checkmark.hidden = true;
+    const hint = buildTestGateHint();
+    const refreshGate = () => {
+        const input = document.getElementById(HEATING_ROD_SWITCH_KEY + VALUE_POSTFIX);
+        applyTestGate('heating_rod', checkmark, hint, !!(input && input.value));
+    };
+    wrapper.appendChild(buildMappingTable([HEATING_ROD_SWITCH_KEY], configData['sensorMappings'] || {}, heatingRodHelpInformation, VALUE_POSTFIX,
+        key => 'entityOptions_heizstab_' + key, true, undefined, refreshGate));
+    wrapper.appendChild(hint);
+    refreshGate();
+    wrapper.appendChild(buildBatteryDirectTestRow('heating_rod', checkmark, hint, null,
+        {testUrl: insideHomeAssistant + '/actions/heating_rod/test', title: 'Test: Heizstab'}));
+    return wrapper;
 }
 
 // "Einspeisung drosseln" (Wechselrichter-Kachel, Solarspitzengesetz §9 EEG): Toggle + Eingabefeld "Einspeiseleistung drosseln auf
@@ -3979,7 +4158,7 @@ function buildHpEnergyEfficiencyField() {
 function buildHpDhwTankSizeField() {
     return buildConfigSelectField({
         label: 'Warmwasser-Speichergröße',
-        tooltip: 'Größe des Warmwasserspeichers deiner Wärmepumpe.',
+        tooltip: 'Größe deines Warmwasserspeichers.',
         id: 'hp_dhw_tank_size',
         configKey: 'hpDhwTankSize',
         options: [
@@ -3987,6 +4166,19 @@ function buildHpDhwTankSizeField() {
             'groß (400 Liter)', 'sehr groß (600 Liter)', 'riesig (1.000 Liter)',
         ].map(v => [v, v]),
         defaultValue: 'klein (200 Liter)',
+    });
+}
+
+// "Heizstab max. Leistung": dieselben Leistungsstufen wie bei der Waermepumpe (die Optionsliste der Optimierung) - geht im Hintergrund als
+// "HP - Max. Power" an den Optimierer, solange der Heizstab aktiv ist (siehe collect_static_config in sync_service.py).
+function buildHeatingRodMaxPowerField() {
+    return buildConfigSelectField({
+        label: 'Heizstab max. Leistung',
+        tooltip: 'Maximale elektrische Leistung deines Heizstabs. Wähle die nächstliegende Stufe.',
+        id: 'heating_rod_max_power',
+        configKey: 'heatingRodMaxPower',
+        options: ['klein (4 kW)', 'mittel (6 kW)', 'groß (8 kW)', 'sehr groß (12 kW)'].map(v => [v, v]),
+        defaultValue: 'klein (4 kW)',
     });
 }
 
@@ -4389,7 +4581,7 @@ function buildTestGateHint() {
 // PV-Einspeisung/§14a-Verbrauchsbegrenzung/Batterie-Aktion beenden) - dort bleibt hint immer
 // versteckt und der Aufrufer setzt checkmark.hidden selbst (alte "ist konfiguriert"-Logik).
 // ready_key -> Schluessel des Toggles (siehe actionTypeEnabled): nur der Verbraucher weicht ab.
-const READY_KEY_TO_TOGGLE_KEY = {consumer_on_off: 'consumer_on'};
+const READY_KEY_TO_TOGGLE_KEY = {consumer_on_off: 'consumer_on', heating_rod: 'hot_water'};
 
 function applyTestGate(readyKey, checkmark, hint, configured) {
     if (readyKey === null) return;
@@ -6028,7 +6220,7 @@ const BATTERY_TEST_TITLES = {
     battery_charge_shift_pv_surplus: 'Batterie-Laden verschieben (PV-Überschuss)',
     battery_action_stop: 'Batterie-Aktion beenden',
 };
-function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
+function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason, options = {}) {
     const wrapper = document.createElement('div');
     wrapper.className = 'autoActionControl';
 
@@ -6074,7 +6266,7 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
     }
 
     button.addEventListener('click', async () => {
-        const popup = openTestPopup('Test: ' + (BATTERY_TEST_TITLES[actionKey] || actionKey));
+        const popup = openTestPopup(options.title || ('Test: ' + (BATTERY_TEST_TITLES[actionKey] || actionKey)));
         let outcome = null;
         let requestFailed = false;
         button.disabled = true;
@@ -6083,7 +6275,7 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
         statusText.className = 'autoActionValue testing';
         if (hint) hint.hidden = true;
         try {
-            const response = await fetch(insideHomeAssistant + '/actions/battery/' + actionKey + '/test', {method: 'POST', headers: popup.headers});
+            const response = await fetch(options.testUrl || (insideHomeAssistant + '/actions/battery/' + actionKey + '/test'), {method: 'POST', headers: popup.headers});
             outcome = await response.json();
             if (!outcome.cancelled && checkmark) {
                 // Abgebrochen: weder bestanden noch fehlgeschlagen - Bereitschafts-Haken bleibt unveraendert.
@@ -6885,7 +7077,8 @@ const SHYFT_ACTIONS_HIDDEN_DEVICES_KEY = 'shyftActionsHiddenDevices';
 // Aktions-"Gerät" = die Geraetekachel, zu der der Aktionstyp gehoert (ACTION_NAME_TO_SECTION_KEY);
 // alles Unbekannte landet im Sammel-Eimer "sonstige".
 function shyftActionDeviceKey(action) {
-    return ACTION_NAME_TO_SECTION_KEY[action && action['Action Name']] || 'sonstige';
+    const actionName = action && action['Action Name'];
+    return (actionName === 'Warmwasser' ? hotWaterSectionKey() : ACTION_NAME_TO_SECTION_KEY[actionName]) || 'sonstige';
 }
 function shyftDeviceLabel(key) {
     if (key === 'sonstige') return 'Sonstige';
@@ -7234,10 +7427,16 @@ function controlSectionHasRealDevice(sectionKey) {
     });
 }
 
+// Mit aktivem Heizstab gehoert "Warmwasser steuern" zur Heizstab-Kachel und "Heizung steuern" entfaellt (Waermepumpe deaktiviert).
+function controlCardSectionKey(card) {
+    if (card.sectionKey === 'waermepumpe' && isHeatingRodActive()) return card.key === 'hot_water' ? 'heizstab' : null;
+    return card.sectionKey;
+}
+
 function renderControlToggles() {
     const bar = document.getElementById('shyftControlToggles');
     if (!bar) return;
-    const cards = CONTROL_TOGGLE_CARDS.filter(card => controlSectionHasRealDevice(card.sectionKey));
+    const cards = CONTROL_TOGGLE_CARDS.filter(card => controlSectionHasRealDevice(controlCardSectionKey(card)));
     const enabled = configData['actionTypeEnabled'] || {};
     const structure = cards.map(card => card.key).join('|');
     if (bar.dataset.structure === structure) {
@@ -9966,6 +10165,14 @@ function withStaleness(valueText, updatedAtIso, thresholdMinutes) {
 // Fluss-Groessen der vier "rechten"/"unteren" Verbraucher (Waermepumpe/Auto/Sonstiges Geraet/
 // Haushaltsstrom) - von Desktop- UND Mobil-Layout gemeinsam genutzt (siehe buildEnergyFlowSvgDesktop/
 // buildEnergyFlowWidgetMobile), da beide dieselbe Logik brauchen, nur mit unterschiedlicher Geometrie.
+// Mit aktivem Heizstab (data.heatpump.isRod, siehe compute_energy_flow_data) zeigt das Dashboard an der Stelle der Waermepumpe den Heizstab.
+function heatDeviceImage(data) {
+    return data.heatpump && data.heatpump.isRod ? 'assets/heating-rod.svg' : 'assets/heatpump.jpg';
+}
+function heatDeviceName(data) {
+    return data.heatpump && data.heatpump.isRod ? 'Heizstab' : 'Wärmepumpe';
+}
+
 function computeEnergyFlowKw(data) {
     const heatpumpOn = !!(data.heatpump && data.heatpump.configured && data.heatpump.on);
     const carCharging = !!(data.car && data.car.configured && data.car.state === 'charging');
@@ -10155,15 +10362,15 @@ function buildEnergyFlowSvgDesktop(data) {
         // laeuft - sonst wirkt es so, als flösse Strom zu einem ausgeschalteten Geraet.
         const line = buildFlowLineFromPath(buildFlowPath(busX, rowY, consumerAnchorX, rowY), heatpumpFlowKw);
         if (line) svg.appendChild(line);
-        const hp = buildFlowImage('assets/heatpump.jpg', columnX, rowY, 499, 492, 80);
+        const hp = buildFlowImage(heatDeviceImage(data), columnX, rowY, 499, 492, 80);
         if (data.heatpump.on) hp.setAttribute('class', 'energyFlowPulse');
         svg.appendChild(hp);
         const statusLines = [
-            withStaleness(data.heatpump.on === null ? 'Wärmepumpe' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES),
+            withStaleness(data.heatpump.on === null ? heatDeviceName(data) : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES),
             data.heatpump.targetTempC !== null ? `Soll (aktuell): ${formatTemp(data.heatpump.targetTempC)}` : null,
-            data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
+            !data.heatpump.isRod && data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
             data.heatpump.dhwTankTempC !== null ? `WW-Speicher: ${formatTemp(data.heatpump.dhwTankTempC)}` : null,
-            (data.heatpump.heatingOn !== null || data.heatpump.supplyTempC !== null)
+            (!data.heatpump.isRod && (data.heatpump.heatingOn !== null || data.heatpump.supplyTempC !== null))
                 ? `Heizung: ${data.heatpump.heatingOn ? 'An' : 'Aus'}` + (data.heatpump.supplyTempC !== null ? ` (${formatTemp(data.heatpump.supplyTempC)})` : '')
                 : null,
         ].filter(Boolean);
@@ -10420,13 +10627,13 @@ function buildEnergyFlowSvgMobile(data) {
                 const iconHalfH = 35;
                 const drop = buildFlowLineFromPath(`M ${colX},${busY} V ${rowY - iconHalfH}`, flows.heatpumpFlowKw);
                 if (drop) svg.appendChild(drop);
-                const hp = buildFlowImage('assets/heatpump.jpg', colX, rowY, 499, 492, 70);
+                const hp = buildFlowImage(heatDeviceImage(data), colX, rowY, 499, 492, 70);
                 if (data.heatpump.on) hp.setAttribute('class', 'energyFlowPulse');
                 svg.appendChild(hp);
                 deviceDetailBlocks.push({colX, type, lines: [
-                    `Wärmepumpe: ${withStaleness(data.heatpump.on === null ? '–' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES)}`,
+                    `${heatDeviceName(data)}: ${withStaleness(data.heatpump.on === null ? '–' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES)}`,
                     data.heatpump.targetTempC !== null ? `Soll (aktuell): ${formatTemp(data.heatpump.targetTempC)}` : null,
-                    data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
+                    !data.heatpump.isRod && data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
                     // Label und Wert auf zwei Zeilen statt einer zu langen - "WW-Speicher: 36,5 °C"
                     // war bei der groesseren Mobil-Schrift die tatsaechlich breiteste Zeile im ganzen
                     // Block (breiter als "Wärmepumpe: An"), lief also trotz der Heizung-Aufteilung
@@ -10436,7 +10643,7 @@ function buildEnergyFlowSvgMobile(data) {
                     // Heizungsstatus und Vorlauftemperatur auf zwei Zeilen statt einer zu langen -
                     // "Heizung: An (45,2 °C)" lief bei der groesseren Mobil-Schrift leicht in die
                     // Nachbarspalte (dasselbe Problem wie zuvor bei Ladestand/Reichweite des Autos).
-                    data.heatpump.heatingOn !== null ? `Heizung: ${data.heatpump.heatingOn ? 'An' : 'Aus'}` : null,
+                    !data.heatpump.isRod && data.heatpump.heatingOn !== null ? `Heizung: ${data.heatpump.heatingOn ? 'An' : 'Aus'}` : null,
                     data.heatpump.supplyTempC !== null ? `(${formatTemp(data.heatpump.supplyTempC)})` : null,
                 ].filter(Boolean)});
             } else if (type === 'car') {
