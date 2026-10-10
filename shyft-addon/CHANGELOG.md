@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.288
+
+* **Test-Popup: Zurücksetzen der Werte klar bestätigt.** Nach dem Test prüft das Protokoll bis zu 30 Sekunden lang alle 3 Sekunden, ob die Entitäten wieder auf ihren Ausgangswerten stehen (manche Integrationen melden geschriebene Werte erst verzögert). Jede Entität wird gemeldet, sobald sie wieder passt, und zum Schluss steht „Alle Werte stehen wieder auf ihren Ausgangswerten.“ – nur wenn nach 30 Sekunden noch etwas abweicht, erscheint stattdessen die Warnung zu dieser Entität.
+
 ## 0.0.45.287
 
 * **Raumtemperatur-Chart: Fläche durchgehend, mehr Abstand.** Die grüne Fläche unter „Heizung-Soll“ reicht jetzt auch durch die Vergangenheit (bisher nur bei der Prognose) und schließt nahtlos an die Prognose an – das gilt genauso für „Ladestand Auto“. Die Kurve „Innenraum“ bekommt weniger Höhe (engere Skala) und liegt dadurch höher, mit mehr Abstand zur Heizungs-Soll-Kurve.

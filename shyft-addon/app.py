@@ -7532,6 +7532,9 @@ def _battery_test_problem_labels(action_key):
 # Test) zurueckgestellt. Nutzer-Feedback: vorher blieb z.B. das Ladeleistungslimit beim eingestellten
 # Testwert (BATTERY_DIRECT_TEST_TARGET_KW) stehen.
 BATTERY_TEST_REVERT_DELAY_SECONDS = 5
+# Wie lange (und in welchem Abstand) das Test-Popup nach dem Zuruecksetzen auf die gemeldeten Ausgangswerte wartet.
+BATTERY_TEST_REVERT_CHECK_TIMEOUT_SECONDS = 30
+BATTERY_TEST_REVERT_CHECK_INTERVAL_SECONDS = 3
 
 
 def _capture_battery_pre_test_state(config, action_key):
@@ -7584,17 +7587,40 @@ def _revert_battery_test_after_delay(pre_test_state):
                         print(f"[Shyft] Batterie-Test: Ruecksetzen von '{entity_id}' auf Ausgangswert fehlgeschlagen:", repr(e))
                         test_log(f"Zurücksetzen von {entity_id} fehlgeschlagen: {e}", "error")
                 if session is not None:
-                    test_sleep(4)
-                    for entity_id, _domain, _service, _data_key, original_value in pre_test_state:
-                        try:
-                            state = homeassistant_adapter.load_entity_state(entity_id).state
-                        except Exception as e:
-                            test_log(f"Zustand von {entity_id} nicht lesbar: {e}", "warn")
-                            continue
-                        if _battery_value_matches(state, original_value):
-                            test_log(f"{entity_id} steht wieder auf {state}.", "ok")
-                        else:
-                            test_log(f"{entity_id} meldet noch {state} (Ausgangswert: {original_value}) – manche Integrationen melden einen geschriebenen Wert erst verzögert zurück.", "warn")
+                    # Manche Integrationen melden einen geschriebenen Wert erst nach einigen Sekunden zurueck: bis zu
+                    # BATTERY_TEST_REVERT_CHECK_TIMEOUT_SECONDS lang alle paar Sekunden nachsehen, jede Entitaet beim ersten Treffer
+                    # melden und zum Schluss klar sagen, ob alles wieder auf dem Ausgangswert steht.
+                    pending = list(pre_test_state)
+                    last_state = {}
+                    deadline = time.time() + BATTERY_TEST_REVERT_CHECK_TIMEOUT_SECONDS
+                    test_sleep(BATTERY_TEST_REVERT_CHECK_INTERVAL_SECONDS)
+                    while pending:
+                        still_pending = []
+                        for item in pending:
+                            entity_id, _domain, _service, _data_key, original_value = item
+                            try:
+                                state = homeassistant_adapter.load_entity_state(entity_id).state
+                            except Exception as e:
+                                last_state[entity_id] = None
+                                print(f"[Shyft] Batterie-Test: Zustand von '{entity_id}' nicht lesbar:", repr(e))
+                                still_pending.append(item)
+                                continue
+                            last_state[entity_id] = state
+                            if _battery_value_matches(state, original_value):
+                                test_log(f"{entity_id} steht wieder auf {state}.", "ok")
+                            else:
+                                still_pending.append(item)
+                        pending = still_pending
+                        if not pending or time.time() >= deadline:
+                            break
+                        test_sleep(BATTERY_TEST_REVERT_CHECK_INTERVAL_SECONDS)
+                    if not pending:
+                        test_log("Alle Werte stehen wieder auf ihren Ausgangswerten.", "ok")
+                    else:
+                        for entity_id, _domain, _service, _data_key, original_value in pending:
+                            state = last_state.get(entity_id)
+                            shown = "keinen lesbaren Zustand" if state is None else state
+                            test_log(f"{entity_id} meldet noch {shown} (Ausgangswert: {original_value}) – manche Integrationen melden einen geschriebenen Wert erst verzögert zurück.", "warn")
         finally:
             if session is not None:
                 session.release()
