@@ -46,3 +46,13 @@ def test_temperature_limit_belongs_to_the_active_device():
     assert dhw_max_temp_c({**config, "heatingRodControl": False}) == 60.0
     assert dhw_max_temp_c(_config(heatingRodControl=True)) == 95.0     # Heizstab-Standard
     assert dhw_max_temp_c({"integrationMappings": {}}) == 55.0         # Wärmepumpen-Standard
+
+
+def test_electric_power_is_sent_one_to_one_for_the_rod_and_halved_thermal_power_for_the_heat_pump():
+    from sync_service import hp_max_power_electric_kw
+    rod = _config(heatingRodControl=True, heatingRodMaxPowerKw=7.5, hpMaxPower="mittel (6 kW)")
+    assert hp_max_power_electric_kw(rod) == 7.5                       # Heizstab: 1:1
+    heat_pump = _config(heatingRodControl=False, heatingRodMaxPowerKw=7.5, hpMaxPower="mittel (6 kW)")
+    assert hp_max_power_electric_kw(heat_pump) == 3.0                 # Wärmepumpe: Hälfte der thermischen Leistung
+    assert hp_max_power_electric_kw({"integrationMappings": {}, "hpMaxPower": "groß (8 kW)"}) == 4.0
+    assert hp_max_power_electric_kw({"integrationMappings": {}}) is None

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.295
+
+* **Leistung geht jetzt als elektrische kW an shyft-power.** Das Addon sendet in der `staticConfig` den neuen Wert `hp_max_power_kw` (maximale **elektrische** Leistung): beim Heizstab die eingegebene Leistung 1:1 (COP 1), bei der Wärmepumpe die Hälfte der gewählten thermischen Leistung (z. B. „groß (8 kW)“ → 4 kW). Der Server nimmt den Wert 1:1 für die Optimierung und rechnet nichts mehr um. `HP - Max. Power` (alter Stufen-Text) geht für noch nicht aktualisierte Server weiter mit; `heating_rod_power_kw` aus 0.0.45.294 entfällt (nie veröffentlicht).
+* **Beschriftung korrigiert:** „Max. elektrische Leistung“ der Wärmepumpe heißt jetzt „Max. thermische Leistung“, mit dem Info-Text „Über welche Leistung verfügt deine Wärmepumpe ungefähr? Du findest die maximale Nennleistung (thermische Wärmeleistung) im Datenblatt deines Geräts.“ Die Auswahl selbst ändert sich nicht.
+
 ## 0.0.45.294
 
 * **Heizstab-Kachel überarbeitet.**

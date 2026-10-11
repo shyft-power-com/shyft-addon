@@ -4184,8 +4184,8 @@ function buildHpDhwTankSizeField() {
     });
 }
 
-// "Heizstab max. Leistung": freie Zahleneingabe in kW (0 bis 30). Geht als "heating_rod_power_kw" (und fuer aeltere Server zusaetzlich als
-// naechstliegende Stufe in "HP - Max. Power") an den Optimierer, solange der Heizstab aktiv ist (siehe collect_static_config in sync_service.py).
+// "Heizstab max. Leistung": freie Zahleneingabe in kW (0 bis 30), elektrisch = thermisch (COP 1). Geht 1:1 als "hp_max_power_kw" (und fuer aeltere
+// Server zusaetzlich als naechstliegende Stufe in "HP - Max. Power") an den Optimierer, solange der Heizstab aktiv ist (siehe collect_static_config).
 // Default: die Zahl der frueheren Stufen-Auswahl (z.B. 'mittel (6 kW)' -> 6), sonst 4 kW.
 function buildHeatingRodMaxPowerField() {
     const legacy = /\((\d+(?:[.,]\d+)?)\s*kW\)/.exec(String(configData['heatingRodMaxPower'] || ''));
@@ -4221,8 +4221,8 @@ function buildHeatingRodMaxTempField() {
 
 function buildHpMaxPowerField() {
     return buildConfigSelectField({
-        label: 'Max. elektrische Leistung',
-        tooltip: 'Maximale elektrische Leistungsaufnahme deiner Wärmepumpe.',
+        label: 'Max. thermische Leistung',
+        tooltip: 'Über welche Leistung verfügt deine Wärmepumpe ungefähr? Du findest die maximale Nennleistung (thermische Wärmeleistung) im Datenblatt deines Geräts.',
         id: 'hp_max_power',
         configKey: 'hpMaxPower',
         options: ['klein (4 kW)', 'mittel (6 kW)', 'groß (8 kW)', 'sehr groß (12 kW)'].map(v => [v, v]),

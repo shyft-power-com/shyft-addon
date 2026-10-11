@@ -228,6 +228,16 @@ def heating_rod_power_kw(config):
     return min(max(kw, 0.0), HEATING_ROD_MAX_POWER_KW_LIMIT)
 
 
+def hp_max_power_electric_kw(config):
+    """Maximale ELEKTRISCHE Leistung des aktiven Warmwasser-/Heizgeraets in kW - geht 1:1 als "hp_max_power_kw" an shyft-power (der Server
+    rechnet nichts mehr um): Heizstab = eingegebene Leistung (COP 1), Waermepumpe = die Haelfte der thermischen Nennleistung aus der
+    Auswahl "Max. thermische Leistung" (z.B. 'klein (4 kW)' -> 2 kW). None, wenn nichts lesbar ist."""
+    if heating_rod_active(config):
+        return heating_rod_power_kw(config)
+    match = re.search(r"\((\d+(?:[.,]\d+)?)\s*kW\)", str(config.get("hpMaxPower") or ""))
+    return float(match.group(1).replace(",", ".")) / 2 if match else None
+
+
 def legacy_hp_power_label(kw):
     "Naechstliegende alte Leistungsstufe (Optionstext) fuer 'HP - Max. Power' - nur fuer shyft-Server, die die freie Heizstab-Leistung noch nicht kennen."
     return _LEGACY_HP_POWER_LABELS[min(_LEGACY_HP_POWER_LABELS, key=lambda electric_kw: abs(electric_kw - kw))]
@@ -379,13 +389,16 @@ class SyncService:
         rod_active = heating_rod_active(data)
         static_config["heating_rod"] = "yes" if rod_active else "no"
         if rod_active:
-            # Leistung in kW (freie Eingabe) als eigener Schluessel; "HP - Max. Power" bekommt zusaetzlich die naechstliegende alte Stufe,
-            # damit auch aeltere Server noch rechnen koennen. Die Temperatur-Obergrenze des Heizstabs ersetzt "HP - Max Supply Temp".
+            # Fuer aeltere Server (kennen nur die Stufen-Texte) bekommt "HP - Max. Power" die naechstliegende alte Stufe.
+            # Die Temperatur-Obergrenze des Heizstabs ersetzt "HP - Max Supply Temp".
             rod_power_kw = heating_rod_power_kw(data)
             if rod_power_kw is not None:
-                static_config["heating_rod_power_kw"] = rod_power_kw
                 static_config["HP - Max. Power"] = legacy_hp_power_label(rod_power_kw)
             static_config["HP - Max Supply Temp"] = dhw_max_temp_c(data)
+        # Elektrische Leistung in kW, vom Server 1:1 fuer die Optimierung genutzt (Heizstab und Waermepumpe, siehe hp_max_power_electric_kw).
+        electric_kw = hp_max_power_electric_kw(data)
+        if electric_kw is not None:
+            static_config["hp_max_power_kw"] = electric_kw
 
         return static_config
 
