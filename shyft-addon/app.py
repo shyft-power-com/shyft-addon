@@ -413,17 +413,6 @@ def compute_addon_update_status(info_data):
     }
 
 
-@app.route("/kiosk-mode-status", methods=["GET"])
-def kioskModeStatusEndpoint():
-    "Ist das HACS-Plugin kiosk-mode installiert? installed=None, wenn das nicht ermittelt werden konnte (dann blockiert die Oberflaeche den Vollbildmodus nicht)."
-    try:
-        installed = homeassistant_adapter.kiosk_mode_plugin_installed()
-    except Exception as e:
-        print("[Shyft] Kiosk-Mode-Plugin-Status nicht abrufbar:", repr(e))
-        installed = None
-    return jsonify({"installed": installed})
-
-
 @app.route("/addon-update-status", methods=["GET"])
 def addonUpdateStatusEndpoint():
     "Zeigt das Dashboard einen 'neue Version verfuegbar'-Hinweis? Siehe compute_addon_update_status; auch im Demo-Modus. Kurz gecacht (der Supervisor selbst aktualisiert seine Repository-Infos nur alle paar Stunden)."
@@ -12057,24 +12046,6 @@ scheduler.add_job(push_pv_forecast_sensor_periodically, 'cron', minute="0")
 scheduler.start()
 
 
-KIOSK_DASHBOARD_MARKER_PATH = "/data/kiosk_dashboard_created"
-
-
-def ensure_kiosk_dashboard_once():
-    """Legt beim allerersten erfolgreichen Start das Vollbild-Dashboard /shyft-kiosk in Home Assistant an
-    (siehe Vollbild-Symbol in der Kopfzeile). Danach verhindert die Marker-Datei, dass ein vom Nutzer
-    geloeschtes Dashboard bei jedem Neustart wieder auftaucht; bei einem Fehler wird beim naechsten Start erneut versucht."""
-    if os.path.exists(KIOSK_DASHBOARD_MARKER_PATH):
-        return
-    ingress_entry = homeassistant_adapter.get_from_supervisor("/addons/self/info").get("data", {}).get("ingress_entry")
-    if not ingress_entry:
-        raise Exception("ingress_entry fehlt in /addons/self/info")
-    result = homeassistant_adapter.ensure_kiosk_dashboard(ingress_entry)
-    print(f"[Shyft] Vollbild-Dashboard /{homeassistant_adapter.KIOSK_DASHBOARD_URL_PATH}: {result}")
-    with open(KIOSK_DASHBOARD_MARKER_PATH, "w") as f:
-        f.write(result)
-
-
 if __name__ == "__main__":
     try:
         get_ha_timezone()  # Zeitzone frueh laden, damit auch die Startzeilen in lokaler Zeit stehen
@@ -12106,11 +12077,6 @@ if __name__ == "__main__":
     print("TOKEN FOR HAOS_API", mask_secret(SUPERVISOR_TOKEN))
     print("Loaded SHYFT_ACCESS_KEY:", mask_secret(SHYFT_ACCESS_KEY), "- Testumgebung" if shyft_adapter.development_mode else "- Produktivumgebung")
     print("Detailed logging:", DETAILED_LOGGING)
-
-    try:
-        ensure_kiosk_dashboard_once()
-    except Exception as e:
-        print("Failed to create kiosk dashboard at startup:", repr(e))
 
     try:
         sync_all_auto_managed_scripts()

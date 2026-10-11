@@ -272,68 +272,6 @@ class HomeAssistantAdapter:
             return message[:400] or None
         return None
 
-    KIOSK_DASHBOARD_URL_PATH = "shyft-kiosk"
-
-    @staticmethod
-    def build_kiosk_dashboard_config(ingress_entry: str) -> dict:
-        "Lovelace-Konfiguration des Vollbild-Dashboards: eine Panel-Ansicht mit dem Add-on per Ingress-iframe, Kopfzeile/Sidebar per HACS-Plugin kiosk-mode ausgeblendet."
-        return {
-            "kiosk_mode": {"hide_header": True, "hide_sidebar": True},
-            "views": [{
-                "title": "Shyft",
-                "path": "shyft",
-                "type": "panel",
-                "cards": [{
-                    "type": "iframe",
-                    "url": ingress_entry.rstrip("/") + "/",
-                    "aspect_ratio": "100%",
-                }],
-            }],
-        }
-
-    def ensure_kiosk_dashboard(self, ingress_entry: str) -> str:
-        """Legt das Dashboard /shyft-kiosk an, falls es noch nicht existiert (Websocket lovelace/dashboards/*).
-        Ein vorhandenes Dashboard wird nie angefasst. Gibt 'created' oder 'exists' zurueck."""
-        ws_uri = self.homeassistant_uri.replace("https://", "wss://").replace("http://", "ws://") + WEBSOCKET_PATH
-        ws = websocket.create_connection(ws_uri, timeout=15)
-        try:
-            ws.recv()  # auth_required
-            ws.send(json.dumps({"type": "auth", "access_token": self._token()}))
-            if json.loads(ws.recv()).get("type") != "auth_ok":
-                raise Exception("Home Assistant websocket authentication failed")
-            existing = self._ws_command(ws, 1, "lovelace/dashboards/list")
-            if any(d.get("url_path") == self.KIOSK_DASHBOARD_URL_PATH for d in existing or []):
-                return "exists"
-            self._ws_command(ws, 2, "lovelace/dashboards/create", {
-                "url_path": self.KIOSK_DASHBOARD_URL_PATH,
-                "title": "Shyft",
-                "icon": "mdi:lightning-bolt",
-                "show_in_sidebar": True,
-                "require_admin": False,
-                "mode": "storage",
-            })
-            self._ws_command(ws, 3, "lovelace/config/save", {
-                "url_path": self.KIOSK_DASHBOARD_URL_PATH,
-                "config": self.build_kiosk_dashboard_config(ingress_entry),
-            })
-            return "created"
-        finally:
-            ws.close()
-
-    def kiosk_mode_plugin_installed(self) -> bool:
-        "Ist das Lovelace-Plugin kiosk-mode (HACS) als Dashboard-Ressource registriert? (Websocket lovelace/resources)"
-        ws_uri = self.homeassistant_uri.replace("https://", "wss://").replace("http://", "ws://") + WEBSOCKET_PATH
-        ws = websocket.create_connection(ws_uri, timeout=10)
-        try:
-            ws.recv()  # auth_required
-            ws.send(json.dumps({"type": "auth", "access_token": self._token()}))
-            if json.loads(ws.recv()).get("type") != "auth_ok":
-                raise Exception("Home Assistant websocket authentication failed")
-            resources = self._ws_command(ws, 1, "lovelace/resources")
-        finally:
-            ws.close()
-        return any("kiosk-mode" in str(r.get("url", "")) for r in resources or [])
-
     def _ws_command(self, ws, msg_id, command_type, payload=None):
         ws.send(json.dumps({"id": msg_id, "type": command_type, **(payload or {})}))
         response = json.loads(ws.recv())

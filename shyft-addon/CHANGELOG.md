@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.299
+
+* **Vollbildmodus ohne Zusatz-Plugin.** Das Vollbild-Symbol rechts in der Kopfzeile legt das Add-on jetzt direkt über das ganze Fenster (Home-Assistant-Seitenleiste und -Kopfzeile sind verdeckt) und schaltet, wo der Browser es erlaubt, zusätzlich den echten Browser-Vollbildmodus ein. Das „X“ (oder die Escape-Taste) stellt die normale Ansicht wieder her. Das Kiosk-Dashboard `/shyft-kiosk`, dessen automatisches Anlegen, das Plugin „Kiosk Mode“ und der zugehörige Hinweis entfallen (der Zugriff über ein Dashboard scheiterte am Ingress-Zugang mit 401). Funktioniert lokal, über Cloudflare/Nabu Casa und mobil.
+
 ## 0.0.45.298
 
 * **Heizstab: „Heizstab aktiviert“ entfällt als Sensorfeld.** Der Status (an/aus) kommt jetzt direkt aus dem Schalter der Steuerung „Heizstab ein-/ausschalten“ – das ist ohnehin dieselbe Entität. Im Heizstab-Betrieb liest das Addon überall (Sync an shyft-power, Dashboard) diesen Schalter; eine Zuordnung der Wärmepumpe unter demselben Schlüssel wird dann nicht mehr benutzt und bleibt gespeichert. Die Kachel muss dafür nichts mehr abfragen, ein Pflichtfeld weniger.
