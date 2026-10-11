@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.292
+
+* **Ausnahme für neue Day-ahead-Preise.** Bei dynamischen Tarifen fragen die stündlichen Läufe um 13:55, 14:55 und 15:55 Uhr (also rund um 14, 15 und 16 Uhr) Awattar in jedem Fall neu ab, ohne den Zwischenspeicher, solange der letzte Optimierungslauf noch keine Preise des Folgetags kannte. Liefert Awattar neue Preise, werden sie übernommen und sofort eine neue Optimierung angestoßen – auch wenn der Plan sonst noch gepasst hätte. Gibt es noch keine neuen Preise, gilt die normale Prüfung („Optimierung nur bei Bedarf“).
+
 ## 0.0.45.291
 
 * **Optimierung nur bei Bedarf.** Der stündliche Lauf fordert keine neue Optimierung mehr an, solange der letzte Plan noch zur Wirklichkeit passt. Verglichen wird der aktuelle Messwert mit dem geplanten Wert zum jetzigen Zeitpunkt: Batterie-Ladestand ±10 Prozentpunkte, Warmwassertemperatur ±5 Grad, Auto-Ladestand ±5 Prozentpunkte, Innenraumtemperatur ±0,2 Grad (wie im Chart „Raumtemperatur“ auf die gemessene Raumluft hochgerechnet). Geprüft werden nur Geräte, die es gibt und deren Sensor einen Wert liefert; ist nichts vergleichbar, wird optimiert. Spätestens nach 4 Stunden (bzw. beim letzten Lauf davor, damit es nicht länger als 4 Stunden dauert) wird auf jeden Fall neu optimiert, ebenso wenn die letzte Anfrage ohne Ergebnis blieb. Andere Auslöser (Verbindung testen, Auto eingesteckt, Fahrt geplant) optimieren weiter wie bisher. Der Grund steht im Add-on-Log.

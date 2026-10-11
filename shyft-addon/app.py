@@ -778,18 +778,19 @@ PRICE_FALLBACK_MAX_DAYS_BACK = 8
 AWATTAR_VAT_FACTOR = 1.19
 
 
-def _fetch_awattar_prices():
+def _fetch_awattar_prices(force_refresh=False):
     """{hour_start_epoch_ms: EUR/kWh} des aktuell von Awattar veroeffentlichten Fensters (heute +,
     ab ~13 Uhr, morgen). Brutto (Awattar liefert EUR/MWh netto -> *1.19/1000). Mit Datei-Cache
     (AWATTAR_CACHE_TTL_SECONDS), damit der stuendliche sync_site_data die API nicht bei jedem Lauf
-    trifft. Rueckgabe {} bei Fehler/leer - der Aufrufer faellt dann auf den letzten bekannten Wert
-    bzw. gar keinen p_buy_addon-Send zurueck."""
+    trifft - force_refresh=True umgeht den Cache und fragt Awattar in jedem Fall neu (siehe
+    day_ahead_prices_newly_available). Rueckgabe {} bei Fehler/leer - der Aufrufer faellt dann auf den
+    letzten bekannten Wert bzw. gar keinen p_buy_addon-Send zurueck."""
     try:
         with open(AWATTAR_CACHE_PATH, "r") as f:
             cached = json.load(f)
     except Exception:
         cached = None
-    if cached and time.time() - cached.get("fetched_at", 0) < AWATTAR_CACHE_TTL_SECONDS and cached.get("prices"):
+    if not force_refresh and cached and time.time() - cached.get("fetched_at", 0) < AWATTAR_CACHE_TTL_SECONDS and cached.get("prices"):
         return {int(k): v for k, v in cached["prices"].items()}
     try:
         # Ohne start/end liefert Awattar nur die naechsten 24 h ab der aktuellen Stunde - obwohl ab
@@ -1345,6 +1346,7 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
     if external_status is not None and external_status < 300:
         problem_registry.clear(ADDON_VERSION_PROBLEM_ID)
     _last_site_data_submit["at"] = submitted_at
+    _record_price_horizon_used(config)
     try:
         schedule_optimizer_result_wait(submitted_at, optimizer_period, attempt=_wait_attempt)
     except Exception as e:
@@ -11775,8 +11777,75 @@ def skip_hourly_optimization_if_plan_fits():
     return True
 
 
+# ============================================================================
+# Ausnahme: neue Day-ahead-Preise. Bei den dynamischen Tarifen (Awattar) kommen die Preise des Folgetags am fruehen Nachmittag. Die
+# stuendlichen Laeufe um 13:55, 14:55 und 15:55 (also rund um 14, 15 und 16 Uhr) fragen Awattar in jedem Fall neu ab (ohne Cache), sofern der
+# letzte Optimierungslauf noch keine Preise des Folgetags kannte. Gibt es neue, wird sofort neu optimiert - auch wenn der Plan sonst noch
+# passen wuerde (siehe skip_hourly_optimization_if_plan_fits).
+# ============================================================================
+DAY_AHEAD_CHECK_WINDOW_START = (13, 30)
+DAY_AHEAD_CHECK_WINDOW_END = (16, 30)
+OPTIMIZATION_PRICE_STATE_PATH = "/data/optimization_price_state.json"
+DYNAMIC_TARIFF_MODES = ("dynamic", "dynamic_variable")
+
+
+def _record_price_horizon_used(config):
+    "Merkt sich, bis zu welcher Stunde echte Awattar-Preise im zuletzt gesendeten Optimierungslauf lagen (nur bei dynamischen Tarifen) - Grundlage fuer day_ahead_prices_newly_available."
+    if (config.get("electricityTariffMode") or "fixed") not in DYNAMIC_TARIFF_MODES:
+        return
+    try:
+        prices = _fetch_awattar_prices()
+        if not prices:
+            return
+        tmp_path = OPTIMIZATION_PRICE_STATE_PATH + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump({"awattarMaxMs": max(prices)}, f)
+        os.replace(tmp_path, OPTIMIZATION_PRICE_STATE_PATH)
+    except Exception as e:
+        print("[Shyft] Preis-Stand der Optimierung konnte nicht gespeichert werden:", repr(e))
+
+
+def day_ahead_prices_newly_available(config, now_local=None):
+    """True, wenn Awattar jetzt Preise des Folgetags liefert, die der letzte Optimierungslauf noch nicht kannte. Nur bei dynamischen Tarifen und nur
+    im Zeitfenster DAY_AHEAD_CHECK_WINDOW_START..END (lokale Zeit); dort wird Awattar in jedem Fall neu abgefragt (kein Cache). Bei jedem Fehler False."""
+    if (config.get("electricityTariffMode") or "fixed") not in DYNAMIC_TARIFF_MODES:
+        return False
+    now_local = now_local or _local_now()
+    clock = (now_local.hour, now_local.minute)
+    if not (DAY_AHEAD_CHECK_WINDOW_START <= clock < DAY_AHEAD_CHECK_WINDOW_END):
+        return False
+    try:
+        tomorrow_start = (now_local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        prices = _fetch_awattar_prices(force_refresh=True)
+        if not prices:
+            print("[Shyft] Day-ahead-Abfrage: Awattar liefert keine Preise.")
+            return False
+        newest = max(prices)
+        try:
+            with open(OPTIMIZATION_PRICE_STATE_PATH, "r") as f:
+                used = int(json.load(f).get("awattarMaxMs") or 0)
+        except Exception:
+            used = 0
+        if newest >= int(tomorrow_start.timestamp() * 1000) and newest > used:
+            print(f"[Shyft] Neue Day-ahead-Preise von Awattar (bis {datetime.fromtimestamp(newest / 1000, tz=timezone.utc).isoformat()}).")
+            return True
+        print("[Shyft] Day-ahead-Abfrage: noch keine neuen Preise für den Folgetag.")
+    except Exception as e:
+        print("[Shyft] Day-ahead-Abfrage fehlgeschlagen:", repr(e))
+    return False
+
+
 def sync_sensors_periodically():
     with app.app_context():
+        if not is_demo_mode():
+            try:
+                new_prices = day_ahead_prices_newly_available(_read_current_config())
+            except Exception as e:
+                print("[Shyft] Day-ahead-Prüfung fehlgeschlagen:", repr(e))
+                new_prices = False
+            if new_prices:
+                sync_site_data()
+                return
         if skip_hourly_optimization_if_plan_fits():
             return
         sync_site_data()
