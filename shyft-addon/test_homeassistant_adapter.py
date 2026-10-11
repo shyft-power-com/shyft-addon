@@ -177,3 +177,51 @@ def test_time_weighted_buckets_converts_watts_and_stops_at_now():
     actual = sut._time_weighted_buckets(events, datetime.fromisoformat("2026-09-28T10:10:00+00:00"))
 
     assert actual == [PeriodElement("2.0000", datetime.fromisoformat("2026-09-28T10:00:00+00:00"))]
+
+
+class _FakeWs:
+    def __init__(self, existing_dashboards):
+        self.existing = existing_dashboards
+        self.sent = []
+        self._queue = ['{"type": "auth_required"}']
+
+    def recv(self):
+        return self._queue.pop(0)
+
+    def send(self, raw):
+        import json
+        msg = json.loads(raw)
+        self.sent.append(msg)
+        if msg["type"] == "auth":
+            self._queue.append('{"type": "auth_ok"}')
+        elif msg["type"] == "lovelace/dashboards/list":
+            self._queue.append(json.dumps({"id": msg["id"], "success": True, "result": self.existing}))
+        else:
+            self._queue.append(json.dumps({"id": msg["id"], "success": True, "result": {}}))
+
+    def close(self):
+        pass
+
+
+def test_ensure_kiosk_dashboard_creates_when_missing(monkeypatch):
+    fake = _FakeWs(existing_dashboards=[{"url_path": "other"}])
+    monkeypatch.setattr("homeassistant_adapter.websocket.create_connection", lambda *a, **k: fake)
+    sut = HomeAssistantAdapter(supervisor_token="t")
+
+    assert sut.ensure_kiosk_dashboard("/api/hassio_ingress/abc") == "created"
+
+    types = [m["type"] for m in fake.sent]
+    assert types == ["auth", "lovelace/dashboards/list", "lovelace/dashboards/create", "lovelace/config/save"]
+    save = fake.sent[-1]
+    assert save["url_path"] == "shyft-kiosk"
+    assert save["config"]["views"][0]["cards"][0]["url"] == "/api/hassio_ingress/abc/"
+    assert save["config"]["kiosk_mode"] == {"hide_header": True, "hide_sidebar": True}
+
+
+def test_ensure_kiosk_dashboard_leaves_existing_untouched(monkeypatch):
+    fake = _FakeWs(existing_dashboards=[{"url_path": "shyft-kiosk"}])
+    monkeypatch.setattr("homeassistant_adapter.websocket.create_connection", lambda *a, **k: fake)
+    sut = HomeAssistantAdapter(supervisor_token="t")
+
+    assert sut.ensure_kiosk_dashboard("/api/hassio_ingress/abc") == "exists"
+    assert [m["type"] for m in fake.sent] == ["auth", "lovelace/dashboards/list"]
