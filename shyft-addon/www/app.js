@@ -11534,6 +11534,63 @@ const KIOSK_RETURN_STORAGE_KEY = 'shyftKioskReturnPath';
 const FULLSCREEN_ICON_ENTER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
 const FULLSCREEN_ICON_EXIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
+// Fehlt das HACS-Plugin kiosk-mode, wuerde das Dashboard ohne ausgeblendete Kopfzeile/Sidebar oeffnen - dann erst
+// ein Hinweis mit Installationslink. Laesst sich der Status nicht ermitteln (installed: null), geht es direkt los.
+const KIOSK_MODE_HACS_PATH = '/hacs/repository/497319128';
+const KIOSK_MODE_GITHUB_URL = 'https://github.com/NemesisRE/kiosk-mode';
+
+async function enterKioskDashboard(topWindow) {
+    let installed = null;
+    try {
+        installed = (await getJson(insideHomeAssistant + '/kiosk-mode-status')).installed;
+    } catch (e) {
+        installed = null;
+    }
+    if (installed === false) {
+        openKioskModeMissingDialog(topWindow);
+    } else {
+        topWindow.location.href = KIOSK_DASHBOARD_PATH;
+    }
+}
+
+function openKioskModeMissingDialog(topWindow) {
+    const overlay = document.createElement('div');
+    overlay.className = 'testPopupOverlay';
+    const box = document.createElement('div');
+    box.className = 'testPopup';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    const heading = document.createElement('h3');
+    heading.className = 'testPopupTitle';
+    heading.textContent = 'Für den Vollbildmodus fehlt ein Plugin';
+    const text = document.createElement('div');
+    text.innerHTML = '<p>Damit Home Assistant im Vollbildmodus Kopfzeile und Seitenleiste ausblendet, braucht es das Plugin ' +
+        '<strong>Kiosk Mode</strong>. Es ist noch nicht installiert.</p>' +
+        '<ol><li>In <a href="' + KIOSK_MODE_HACS_PATH + '" target="_top">HACS</a> öffnen (<a href="https://hacs.xyz" target="_blank" rel="noopener">HACS</a> muss installiert sein) – oder direkt in HACS unter „Frontend“ nach „Kiosk Mode“ suchen.</li>' +
+        '<li>„Herunterladen“ wählen und die Seite danach neu laden.</li></ol>' +
+        '<p>Mehr dazu auf <a href="' + KIOSK_MODE_GITHUB_URL + '" target="_blank" rel="noopener">GitHub (NemesisRE/kiosk-mode)</a>.</p>';
+    const footer = document.createElement('div');
+    footer.className = 'testPopupFooter';
+    const openAnyway = document.createElement('button');
+    openAnyway.type = 'button';
+    openAnyway.textContent = 'Trotzdem öffnen';
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.textContent = 'Schließen';
+    footer.appendChild(openAnyway);
+    footer.appendChild(closeButton);
+    box.appendChild(heading);
+    box.appendChild(text);
+    box.appendChild(footer);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    closeButton.focus({preventScroll: true});
+    const close = () => overlay.remove();
+    closeButton.addEventListener('click', close);
+    openAnyway.addEventListener('click', () => { topWindow.location.href = KIOSK_DASHBOARD_PATH; });
+    overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+}
+
 // Vollbild = das Add-on im Kiosk-Dashboard (/shyft-kiosk, ohne Home-Assistant-Kopfzeile und Sidebar).
 // Es laeuft in einem iframe derselben Home-Assistant-Adresse, daher reichen relative Pfade auf
 // window.top - das funktioniert lokal, ueber Cloudflare/Nabu Casa und mobil gleichermassen.
@@ -11561,7 +11618,7 @@ function setupFullscreenToggle() {
                 topWindow.location.href = returnPath || '/';
             } else {
                 localStorage.setItem(KIOSK_RETURN_STORAGE_KEY, topWindow.location.pathname + topWindow.location.search);
-                topWindow.location.href = KIOSK_DASHBOARD_PATH;
+                enterKioskDashboard(topWindow);
             }
         } catch (e) {
             console.warn('Vollbildmodus nicht verfuegbar:', e);

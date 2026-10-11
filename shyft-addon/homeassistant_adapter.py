@@ -320,6 +320,20 @@ class HomeAssistantAdapter:
         finally:
             ws.close()
 
+    def kiosk_mode_plugin_installed(self) -> bool:
+        "Ist das Lovelace-Plugin kiosk-mode (HACS) als Dashboard-Ressource registriert? (Websocket lovelace/resources)"
+        ws_uri = self.homeassistant_uri.replace("https://", "wss://").replace("http://", "ws://") + WEBSOCKET_PATH
+        ws = websocket.create_connection(ws_uri, timeout=10)
+        try:
+            ws.recv()  # auth_required
+            ws.send(json.dumps({"type": "auth", "access_token": self._token()}))
+            if json.loads(ws.recv()).get("type") != "auth_ok":
+                raise Exception("Home Assistant websocket authentication failed")
+            resources = self._ws_command(ws, 1, "lovelace/resources")
+        finally:
+            ws.close()
+        return any("kiosk-mode" in str(r.get("url", "")) for r in resources or [])
+
     def _ws_command(self, ws, msg_id, command_type, payload=None):
         ws.send(json.dumps({"id": msg_id, "type": command_type, **(payload or {})}))
         response = json.loads(ws.recv())

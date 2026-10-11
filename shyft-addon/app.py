@@ -413,6 +413,17 @@ def compute_addon_update_status(info_data):
     }
 
 
+@app.route("/kiosk-mode-status", methods=["GET"])
+def kioskModeStatusEndpoint():
+    "Ist das HACS-Plugin kiosk-mode installiert? installed=None, wenn das nicht ermittelt werden konnte (dann blockiert die Oberflaeche den Vollbildmodus nicht)."
+    try:
+        installed = homeassistant_adapter.kiosk_mode_plugin_installed()
+    except Exception as e:
+        print("[Shyft] Kiosk-Mode-Plugin-Status nicht abrufbar:", repr(e))
+        installed = None
+    return jsonify({"installed": installed})
+
+
 @app.route("/addon-update-status", methods=["GET"])
 def addonUpdateStatusEndpoint():
     "Zeigt das Dashboard einen 'neue Version verfuegbar'-Hinweis? Siehe compute_addon_update_status; auch im Demo-Modus. Kurz gecacht (der Supervisor selbst aktualisiert seine Repository-Infos nur alle paar Stunden)."

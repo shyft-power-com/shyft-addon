@@ -225,3 +225,29 @@ def test_ensure_kiosk_dashboard_leaves_existing_untouched(monkeypatch):
 
     assert sut.ensure_kiosk_dashboard("/api/hassio_ingress/abc") == "exists"
     assert [m["type"] for m in fake.sent] == ["auth", "lovelace/dashboards/list"]
+
+
+class _FakeResourcesWs(_FakeWs):
+    def __init__(self, resources):
+        super().__init__(existing_dashboards=[])
+        self.resources = resources
+
+    def send(self, raw):
+        import json
+        msg = json.loads(raw)
+        if msg["type"] == "lovelace/resources":
+            self.sent.append(msg)
+            self._queue.append(json.dumps({"id": msg["id"], "success": True, "result": self.resources}))
+        else:
+            super().send(raw)
+
+
+@pytest.mark.parametrize("resources, expected", [
+    ([{"url": "/hacsfiles/kiosk-mode/kiosk-mode.js?hacstag=1"}], True),
+    ([{"url": "/hacsfiles/apexcharts-card/apexcharts-card.js"}], False),
+    ([], False),
+])
+def test_kiosk_mode_plugin_installed(monkeypatch, resources, expected):
+    fake = _FakeResourcesWs(resources)
+    monkeypatch.setattr("homeassistant_adapter.websocket.create_connection", lambda *a, **k: fake)
+    assert HomeAssistantAdapter(supervisor_token="t").kiosk_mode_plugin_installed() is expected

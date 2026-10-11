@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.297
+
+* **Hinweis, wenn das Plugin „Kiosk Mode“ fehlt.** Beim Klick auf das Vollbild-Symbol prüft das Add-on, ob das HACS-Plugin Kiosk Mode in Home Assistant installiert ist. Fehlt es, erscheint zuerst ein Hinweis mit Anleitung und Links (direkt zu HACS und zur GitHub-Seite des Plugins); mit „Trotzdem öffnen“ lässt sich das Dashboard dennoch aufrufen. Lässt sich der Status nicht ermitteln, öffnet der Vollbildmodus wie bisher direkt.
+
 ## 0.0.45.296
 
 * **Vollbild-Dashboard wird automatisch angelegt.** Beim ersten erfolgreichen Start legt das Add-on in Home Assistant das Dashboard „Shyft“ (`/shyft-kiosk`) selbst an – eine Vollbild-Ansicht mit dem Add-on, auf die das Vollbild-Symbol in der Kopfzeile verweist. Ein bereits vorhandenes Dashboard mit diesem Namen wird nie verändert, und ein später vom Nutzer gelöschtes wird nicht wieder angelegt. Schlägt das Anlegen fehl, steht der Grund im Add-on-Log und der nächste Start versucht es erneut. Header und Seitenleiste werden nur ausgeblendet, wenn das HACS-Plugin „Kiosk Mode“ installiert ist; ohne das Plugin läuft das Dashboard trotzdem.
