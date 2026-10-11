@@ -106,6 +106,16 @@
             border-color: var(--color-error) !important;
             border-width: 2px !important;
         }
+        /* Erklaerender Fehlertext direkt unter einem Konfigfeld (siehe applyConfigFieldErrorHighlights). */
+        .configFieldErrorText {
+            color: var(--color-error);
+            font-size: 0.85em;
+            margin-top: 4px;
+        }
+        /* Fehlertext in eigener Tabellenzeile (siehe applyConfigFieldErrorHighlights): die Trennlinie gehoert unter den Text, nicht zwischen Feld und Text. */
+        tr:has(+ .configFieldErrorRow) > td {
+            border-bottom: none;
+        }
         /* Mehrfachauswahl (buildMultiSensorField): die Markierung landet auf dem Container, der Rahmen sitzt
            aber am Auswahlfeld darin. */
         .multiSensorField.configFieldError .integrationPickerButton {
@@ -310,6 +320,14 @@
             font-size: 1.1em;
             font-weight: 700;
         }
+        /* Deaktivierte Kachel (Waermepumpe bei aktivem Heizstab / Heizstab bei ausgeschaltetem Schalter): Ueberschrift grau. */
+        .integrationHeading.integrationHeadingDisabled h2 {
+            color: var(--color-text-secondary);
+            opacity: 0.8;
+        }
+        .heatingRodModeRow {
+            margin: 0.4em 0 0.2em;
+        }
         .controlSectionHeading {
             margin-top: 2em;
             padding-top: 1.5em;
@@ -482,6 +500,10 @@
             margin-top: 0;
             margin-bottom: 0.6em;
         }
+        /* "Einspeisung drosseln (§9 EEG)" (Wechselrichter): wie die Ueberschriften "Sensoren"/"Steuerung" mit deutlichem Abstand nach oben. */
+        .feedInLimitSection .autoActionTitle.sectionSubHeading {
+            margin-top: 2em;
+        }
         .autoActionCheckmark {
             color: var(--color-accent);
             font-weight: 700;
@@ -531,6 +553,121 @@
         }
         .autoActionValue.testSuccess {
             color: var(--color-accent);
+        }
+        .testPopupOverlay {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            background: rgba(9, 23, 71, 0.55);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+        .testPopup {
+            background: var(--color-bg);
+            color: var(--color-text);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+            width: min(720px, 100%);
+            max-height: min(80vh, 640px);
+            display: flex;
+            flex-direction: column;
+            padding: 16px 18px;
+            gap: 12px;
+        }
+        .testPopupTitle {
+            margin: 0;
+            font-size: 1.1em;
+        }
+        .testPopupLog {
+            flex: 1 1 auto;
+            min-height: 160px;
+            overflow-y: auto;
+            background: var(--color-bg-card);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.82em;
+            line-height: 1.45;
+        }
+        .testPopupLine {
+            display: flex;
+            gap: 8px;
+            align-items: baseline;
+        }
+        .testPopupLine .testPopupTime {
+            flex: 0 0 auto;
+            color: var(--color-text-secondary);
+        }
+        .testPopupLine .testPopupIcon {
+            flex: 0 0 1.2em;
+            text-align: center;
+            font-weight: 700;
+        }
+        .testPopupLine .testPopupText {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+        }
+        .testPopupLine.level-ok .testPopupIcon,
+        .testPopupLine.level-ok .testPopupText {
+            color: var(--color-accent);
+        }
+        .testPopupLine.level-error .testPopupIcon,
+        .testPopupLine.level-error .testPopupText {
+            color: var(--color-error);
+        }
+        .testPopupLine.level-warn .testPopupIcon,
+        .testPopupLine.level-warn .testPopupText {
+            color: var(--color-warning);
+        }
+        .testPopupLine.level-wait .testPopupText {
+            color: var(--color-text-secondary);
+        }
+        .testPopupLine.level-result .testPopupText {
+            font-weight: 700;
+        }
+        .testPopupFooter {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .testPopupStatus {
+            color: var(--color-text-secondary);
+            font-size: 0.9em;
+        }
+        .testPopupStatus.status-ok {
+            color: var(--color-accent);
+            font-weight: 700;
+        }
+        .testPopupStatus.status-error {
+            color: var(--color-error);
+            font-weight: 700;
+        }
+        .testPopupStatus.status-warn {
+            color: var(--color-warning);
+            font-weight: 700;
+        }
+        .testPopupFooter button {
+            border: 1px solid var(--color-input-border);
+            background: var(--color-input-bg);
+            color: var(--color-text);
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-size: 0.9em;
+            cursor: pointer;
+        }
+        .testPopupFooter button:hover:not(:disabled) {
+            border-color: var(--color-accent);
+        }
+        .testPopupFooter button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
         .batteryTestStatusIcon {
             font-weight: 700;
@@ -666,6 +803,35 @@
             width: auto;
             flex: 0 0 auto;
         }
+        /* Wochentag-Mehrfachauswahl im Tarif-Zeitfenster-Editor (siehe buildWeekdayMultiPicker): passt sich
+           der Textbreite an statt der vollen Breite der Geraeteauswahl, Schnellwahl-Links oben im Panel. */
+        .htWindowForm .weekdayPicker {
+            width: auto;
+            min-width: 12em;
+            max-width: none;
+            flex: 0 0 auto;
+        }
+        .weekdayPicker .integrationPickerList {
+            max-height: none;
+            overflow-y: visible;
+        }
+        .weekdayPickerShortcuts {
+            display: flex;
+            gap: 0.4em;
+            padding: 0 0.3em 0.4em;
+        }
+        .weekdayPickerShortcut {
+            border: 1px solid var(--color-input-border);
+            background: var(--color-bg);
+            color: var(--color-text);
+            border-radius: 4px;
+            padding: 0.15em 0.6em;
+            font-size: 0.8em;
+            cursor: pointer;
+        }
+        .weekdayPickerShortcut:hover {
+            border-color: var(--color-accent);
+        }
         .htWindowFormLabel {
             color: var(--color-text-secondary);
             font-size: 0.9em;
@@ -694,8 +860,26 @@
         }
         .htWindowList {
             display: flex;
+            flex-direction: column;
+            gap: 0.5em;
+        }
+        /* Ein Block je Wochentag: Tagesname links, die Zeitfenster des Tages (nach Uhrzeit sortiert) daneben. */
+        .htWindowDay {
+            display: flex;
             flex-wrap: wrap;
-            gap: 0.6em;
+            align-items: center;
+            gap: 0.4em 0.8em;
+        }
+        .htWindowDayLabel {
+            flex: 0 0 7em;
+            font-weight: 600;
+            font-size: 0.9em;
+            color: var(--color-text);
+        }
+        .htWindowDayChips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5em;
         }
         .htWindowChip {
             display: flex;
@@ -770,6 +954,13 @@
             font-weight: 700;
             color: var(--color-text);
             white-space: nowrap;
+        }
+        /* Pruefzeile hinter einem Preisbestandteil-Feld im Modul-3-Tarif (siehe buildNetzentgeltTariffPreviews). */
+        .electricityTariffPreviewLine {
+            font-size: 0.85em;
+            color: var(--color-text-secondary);
+            line-height: 1.4;
+            margin-top: 4px;
         }
         .electricityPricePreviewFoot {
             font-size: 0.78em;
@@ -992,6 +1183,33 @@
             width: auto;
             display: block;
         }
+        .topBarIconButton {
+            margin-left: auto;
+            flex: 0 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.2em;
+            height: 2.2em;
+            padding: 0;
+            background: none;
+            border: none;
+            border-radius: 6px;
+            color: var(--color-text-secondary);
+            cursor: pointer;
+        }
+        .topBarIconButton[hidden] {
+            display: none;
+        }
+        .topBarIconButton:hover {
+            color: var(--color-text);
+            background: var(--color-border);
+        }
+        .topBarIconButton svg {
+            width: 1.3em;
+            height: 1.3em;
+            display: block;
+        }
         .tabBar {
             display: flex;
             gap: 0.5em;
@@ -1032,6 +1250,78 @@
 
         #shyftActionsBody {
             margin-top: 1em;
+        }
+        /* Schalter "Steuerung aktivieren/deaktivieren" oben auf der Gerätesteuerung-Seite (siehe renderControlToggles in
+           app.js): Kartenraster, klebt unter der Kopfzeile und blendet sich beim Herunterscrollen aus (.is-hidden,
+           siehe setupControlTogglesAutoHide), beim Hinaufscrollen wieder ein. */
+        .shyftControlToggles {
+            position: sticky;
+            top: var(--topbar-height, 60px);
+            z-index: 14;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.4em;
+            padding: 0.4em 0;
+            background: var(--color-bg);
+            transition: transform 0.25s ease, opacity 0.25s ease;
+        }
+        .shyftControlToggles[hidden] {
+            display: none;
+        }
+        .shyftControlToggles.is-hidden {
+            transform: translateY(-110%);
+            opacity: 0;
+            pointer-events: none;
+        }
+        .shyftControlToggle {
+            display: flex;
+            align-items: center;
+            gap: 0.4em;
+            padding: 0.25em 0.5em;
+            border: 1px solid var(--color-accent);
+            border-radius: 5px;
+            background: var(--color-bg-card);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            font-size: 0.78em;
+            color: var(--color-text);
+        }
+        .shyftControlToggleIcon {
+            display: inline-flex;
+            flex: none;
+            width: 16px;
+            height: 16px;
+        }
+        .shyftControlToggleIcon svg {
+            width: 100%;
+            height: 100%;
+        }
+        .shyftControlToggleLabel {
+            flex: 1;
+            min-width: 0;
+            text-align: left;
+            line-height: 1.2;
+        }
+        @media (max-width: 1000px) {
+            .shyftControlToggles {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+        }
+        @media (max-width: 760px) {
+            /* Schmale Bildschirme: nicht "klebend" - mehrere Zeilen Karten wuerden beim kleinsten Hinaufscrollen den
+               halben Bildschirm verdecken; die Leiste scrollt dort einfach mit der Seite weg. */
+            .shyftControlToggles {
+                position: static;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+        @media (max-width: 480px) {
+            .shyftControlToggles {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+        .shyftSectionHeading {
+            margin: 1.1em 0 0.2em;
+            font-size: 1.6em;
         }
         /* Geräte-Filter-Zeile oben auf der Gerätesteuerung-Seite (siehe renderShyftActionsFilter in
            app.js) - eine Checkbox je vorkommendem Gerät plus "Alle Geräte" (Tri-State). */
@@ -1939,6 +2229,19 @@
                "Shyft-Plan (5,59 €) (heute ... | morgen ...)" war das sonst unleserlich (Nutzer-Feedback). */
             white-space: nowrap;
         }
+        /* Antippbarer Legenden-Eintrag (chartLegendEntry in app.js): blendet die Kurve aus/ein. */
+        .dashboardChartLegendToggle {
+            background: none;
+            border: 0;
+            padding: 0;
+            font: inherit;
+            color: inherit;
+            cursor: pointer;
+        }
+        .dashboardChartLegendToggle.is-hidden {
+            opacity: 0.45;
+            text-decoration: line-through;
+        }
         .dashboardChartLegendDot {
             width: 0.7em;
             height: 0.7em;
@@ -1980,6 +2283,10 @@
                in buildLineChart, dreizeiliger Tooltip), ein einzeiliger Tooltip ohne "\n" bleibt
                unveraendert einzeilig. */
             white-space: pre-line;
+            /* max-content: der Tooltip ist absolut positioniert, seine Breite wurde sonst am Rand des Charts auf den
+               Restplatz begrenzt - die Beschriftung (z.B. "Heizung-Soll: 21 °C") brach dort um. */
+            width: max-content;
+            max-width: calc(100vw - 32px);
             text-align: center;
             pointer-events: none;
             z-index: 5;
@@ -1991,6 +2298,13 @@
            erkennbar, welche Stunde man gerade trifft. pointer-events:none, damit der Punkt selbst
            keine Touch-/Maus-Events abfaengt (die sollen weiter ans <svg> durchgereicht werden). */
         .dashboardChartMarker {
+            fill: var(--color-text);
+            stroke: var(--color-bg);
+            stroke-width: 2px;
+            pointer-events: none;
+        }
+        /* Dauerhaft sichtbarer Punkt bei "jetzt" (ohne Mouse-over), gleiches Aussehen wie der Hover-Punkt. */
+        .dashboardChartNowDot {
             fill: var(--color-text);
             stroke: var(--color-bg);
             stroke-width: 2px;
@@ -2435,6 +2749,7 @@
         <button type="button" class="tabButton" data-tab="analyse" id="analyseTabButton" hidden>Analyse</button>
         <button type="button" class="tabButton" data-tab="konfiguration">Konfiguration</button>
     </div>
+    <button type="button" id="fullscreenToggle" class="topBarIconButton" hidden></button>
 </div>
 
 <div id="tab-dashboard" class="tabPanel active">
@@ -2444,6 +2759,8 @@
 </div>
 
 <div id="tab-geraetesteuerung" class="tabPanel">
+    <div id="shyftControlToggles" class="shyftControlToggles" hidden></div>
+    <h2 class="shyftSectionHeading">Verlauf</h2>
     <div id="shyftActionsFilter" class="shyftActionsFilter"></div>
     <div id="shyftActionsBody"></div>
 </div>

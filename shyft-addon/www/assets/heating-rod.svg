@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 499 492" width="499" height="492">
+  <!-- Warmwasserspeicher mit Heizstab (Flachstil passend zum Waermepumpen-Bild: Hellgrau, Mauve, Dunkelblau) -->
+  <ellipse cx="250" cy="462" rx="170" ry="14" fill="#cdc3c2" opacity="0.6"/>
+  <!-- Anschlussrohre oben -->
+  <rect x="196" y="6" width="24" height="52" rx="5" fill="#8e7f7f"/>
+  <rect x="280" y="6" width="24" height="52" rx="5" fill="#8e7f7f"/>
+  <rect x="190" y="2" width="36" height="12" rx="4" fill="#6f6262"/>
+  <rect x="274" y="2" width="36" height="12" rx="4" fill="#6f6262"/>
+  <!-- Koerper -->
+  <path d="M110 92 Q110 52 152 50 H348 Q390 52 390 92 V404 H110 Z" fill="#e6e6e8"/>
+  <path d="M110 92 Q110 52 152 50 H206 V404 H110 Z" fill="#dacfce"/>
+  <!-- Kappe oben -->
+  <path d="M100 98 Q100 40 152 40 H348 Q400 40 400 98 V108 H100 Z" fill="#8e7f7f"/>
+  <!-- Sockel -->
+  <path d="M96 396 H404 V430 Q404 446 388 446 H112 Q96 446 96 430 Z" fill="#141a24"/>
+  <path d="M130 446 H370 L360 462 H140 Z" fill="#cbbfbd"/>
+  <!-- Sichtfenster mit Heizstab -->
+  <circle cx="294" cy="246" r="92" fill="#8e7f7f"/>
+  <circle cx="294" cy="246" r="80" fill="#ffffff"/>
+  <circle cx="294" cy="246" r="80" fill="#fbe3dc" opacity="0.75"/>
+  <path d="M236 212 H340 A17 17 0 0 1 340 246 H248 A17 17 0 0 0 248 280 H340" fill="none" stroke="#e5513a" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M244 207 H336" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity="0.55"/>
+  <!-- Flansch des Heizstabs links am Speicher -->
+  <rect x="84" y="226" width="36" height="42" rx="6" fill="#141a24"/>
+  <rect x="120" y="236" width="86" height="22" rx="4" fill="#8e7f7f"/>
+  <!-- Waermesymbol oben auf der Blende -->
+  <path d="M150 300 q-12 -14 0 -28 q12 -14 0 -28 M174 300 q-12 -14 0 -28 q12 -14 0 -28" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" opacity="0.85"/>
+</svg>

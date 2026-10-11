@@ -4,6 +4,7 @@ from constants import CONFIG_PATH
 
 import json
 import math
+import re
 from datetime import datetime, timedelta
 
 LIST_OF_SENSORS = {
@@ -189,6 +190,99 @@ WALLBOX_MAX_PHASES_DEFAULT = 3
 WALLBOX_MAX_CURRENT_AMPS_DEFAULT = 16
 
 
+HEATING_ROD_SECTION_KEY = "heizstab"
+
+
+def heating_rod_active(config):
+    """Heizstab-Betrieb: die Kachel "Heizstab" hat ein Geraet UND der Schalter "Heizstab steuern" (heatingRodControl) steht auf an.
+    Dann uebernimmt der Heizstab die Warmwasserbereitung und die Waermepumpe ist deaktiviert (ihre hinterlegten Werte bleiben
+    erhalten). Der Schalter erlaubt den saisonalen Wechsel zurueck zur Waermepumpe, ohne etwas neu einzugeben. Ohne gespeicherten
+    Schalter (Altbestand) gilt der fruehere Schluessel heatingRodEnabled, Standard an."""
+    if not (config.get("integrationMappings", {}) or {}).get(HEATING_ROD_SECTION_KEY):
+        return False
+    control = config.get("heatingRodControl")
+    if isinstance(control, bool):
+        return control
+    return config.get("heatingRodEnabled", True) is not False
+
+
+HEATING_ROD_SWITCH_SENSOR_KEY = "heating_rod_switch"
+
+
+def mapped_entity_id(config, sensor_key):
+    """Zugeordnete Home-Assistant-Entitaet eines Sensors (leer, wenn nicht zugeordnet). Im Heizstab-Betrieb liefert "heatpump_dhw_on_off"
+    ("Heizstab aktiviert") den Schalter aus der Steuerung "Heizstab ein-/ausschalten": das ist dieselbe Entitaet, die Kachel hat dafuer
+    kein eigenes Sensorfeld mehr (und eine Zuordnung der Waermepumpe unter demselben Schluessel wird dann nicht benutzt)."""
+    mappings = config.get("sensorMappings", {}) or {}
+    if sensor_key == "heatpump_dhw_on_off" and heating_rod_active(config):
+        switch_entity = mappings.get(HEATING_ROD_SWITCH_SENSOR_KEY)
+        if switch_entity:
+            return switch_entity
+    return mappings.get(sensor_key, "")
+
+
+HEATING_ROD_MAX_POWER_KW_DEFAULT = 4.0
+HEATING_ROD_MAX_POWER_KW_LIMIT = 30.0
+HEATING_ROD_MAX_TEMP_DEFAULT_C = 95
+HP_MAX_SUPPLY_TEMP_DEFAULT_C = 55
+# Aeltere shyft-Server kennen fuer "HP - Max. Power" nur diese Stufen (elektrische kW -> Optionstext).
+_LEGACY_HP_POWER_LABELS = {2: "klein (4 kW)", 3: "mittel (6 kW)", 4: "groß (8 kW)", 6: "sehr groß (12 kW)"}
+
+
+def heating_rod_power_kw(config):
+    """Maximale elektrische Leistung des Heizstabs in kW (freie Eingabe 0 bis 30 kW, Schluessel heatingRodMaxPowerKw). Aeltere
+    Konfigurationen hatten die Stufen-Auswahl heatingRodMaxPower (z.B. 'klein (4 kW)') - dann zaehlt deren Zahl. None, wenn nichts lesbar ist."""
+    value = config.get("heatingRodMaxPowerKw")
+    if value is None or value == "":
+        match = re.search(r"\((\d+(?:[.,]\d+)?)\s*kW\)", str(config.get("heatingRodMaxPower") or ""))
+        value = match.group(1).replace(",", ".") if match else None
+    try:
+        kw = float(value)
+    except (TypeError, ValueError):
+        return None
+    return min(max(kw, 0.0), HEATING_ROD_MAX_POWER_KW_LIMIT)
+
+
+def hp_max_power_electric_kw(config):
+    """Maximale ELEKTRISCHE Leistung des aktiven Warmwasser-/Heizgeraets in kW - geht 1:1 als "hp_max_power_kw" an shyft-power (der Server
+    rechnet nichts mehr um): Heizstab = eingegebene Leistung (COP 1), Waermepumpe = die Haelfte der thermischen Nennleistung aus der
+    Auswahl "Max. thermische Leistung" (z.B. 'klein (4 kW)' -> 2 kW). None, wenn nichts lesbar ist."""
+    if heating_rod_active(config):
+        return heating_rod_power_kw(config)
+    match = re.search(r"\((\d+(?:[.,]\d+)?)\s*kW\)", str(config.get("hpMaxPower") or ""))
+    return float(match.group(1).replace(",", ".")) / 2 if match else None
+
+
+def legacy_hp_power_label(kw):
+    "Naechstliegende alte Leistungsstufe (Optionstext) fuer 'HP - Max. Power' - nur fuer shyft-Server, die die freie Heizstab-Leistung noch nicht kennen."
+    return _LEGACY_HP_POWER_LABELS[min(_LEGACY_HP_POWER_LABELS, key=lambda electric_kw: abs(electric_kw - kw))]
+
+
+def dhw_max_temp_c(config):
+    "Temperatur-Obergrenze fuer die Warmwasserbereitung (°C) des gerade aktiven Geraets: Heizstab (Standard 95) bzw. Waermepumpe (Standard 55)."
+    if heating_rod_active(config):
+        return float(config.get("heatingRodMaxTempC") or HEATING_ROD_MAX_TEMP_DEFAULT_C)
+    return float(config.get("hpMaxSupplyTempC") or HP_MAX_SUPPLY_TEMP_DEFAULT_C)
+
+
+def feed_in_limit_kw(config):
+    """Maximale Einspeiseleistung (kW) fuer "Einspeisung drosseln" (Solarspitzengesetz, §9 EEG) - der Server-Eingang "LPP"
+    (staticConfig, kW, optional). Nur bei aktiviertem Toggle (feedInLimitEnabled) UND gueltigem Wert (Zahl >= 0), sonst None -
+    dann wird nichts gesendet."""
+    if not config.get("feedInLimitEnabled"):
+        return None
+    value = config.get("feedInLimitKw")
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    try:
+        kw = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(kw) or math.isinf(kw) or kw < 0:
+        return None
+    return round(kw, 3)
+
+
 def compute_wallbox_max_kw(config):
     """Maximale Ladeleistung der Wallbox (kW), aus den vom Nutzer hinterlegten Wallbox-Eckdaten
     ("Max. Anzahl an Phasen", "Max. Stromstärke (pro Phase)"). Doppelt verwendet: (1) als Obergrenze
@@ -299,6 +393,28 @@ class SyncService:
         if data.get("integrationMappings", {}).get("wallbox"):
             static_config["WB - Max Charging Power"] = round(compute_wallbox_max_kw(data), 3)
 
+        # "Einspeisung drosseln" (Solarspitzengesetz): maximal bezahlte PV-Einspeiseleistung in kW -> Server-Eingang "LPP"
+        # (siehe RunTimeService/AddonSensorData im shyft-Server). Ohne aktivierten Toggle bzw. ohne gueltigen Wert wird nichts gesendet.
+        lpp = feed_in_limit_kw(data)
+        if lpp is not None:
+            static_config["LPP"] = lpp
+
+        # Heizstab statt Waermepumpe (siehe heating_rod_active): "heating_rod" yes/no fuer den Optimierer (geaenderter Wirkungsgrad),
+        # und die Heizstab-Leistung ("Heizstab max. Leistung", gleiche Optionen wie die Waermepumpe) geht als "HP - Max. Power" raus.
+        rod_active = heating_rod_active(data)
+        static_config["heating_rod"] = "yes" if rod_active else "no"
+        if rod_active:
+            # Fuer aeltere Server (kennen nur die Stufen-Texte) bekommt "HP - Max. Power" die naechstliegende alte Stufe.
+            # Die Temperatur-Obergrenze des Heizstabs ersetzt "HP - Max Supply Temp".
+            rod_power_kw = heating_rod_power_kw(data)
+            if rod_power_kw is not None:
+                static_config["HP - Max. Power"] = legacy_hp_power_label(rod_power_kw)
+            static_config["HP - Max Supply Temp"] = dhw_max_temp_c(data)
+        # Elektrische Leistung in kW, vom Server 1:1 fuer die Optimierung genutzt (Heizstab und Waermepumpe, siehe hp_max_power_electric_kw).
+        electric_kw = hp_max_power_electric_kw(data)
+        if electric_kw is not None:
+            static_config["hp_max_power_kw"] = electric_kw
+
         return static_config
 
     def collect_live_values(self):
@@ -332,6 +448,9 @@ class SyncService:
         # ankommen. Explizit "on" nachtragen, wenn der Key fehlt.
         if LIST_OF_SENSORS["heatpump_heating_activated"] not in live_values:
             live_values[LIST_OF_SENSORS["heatpump_heating_activated"]] = "on"
+        # Mit aktivem Heizstab ist die Waermepumpen-Heizung deaktiviert: "Heizung aktiviert?" geht immer als "off" an shyft-power.
+        if heating_rod_active(data):
+            live_values[LIST_OF_SENSORS["heatpump_heating_activated"]] = "off"
         return live_values
 
     def _load_sensor_value(self, key, bubbleSensorIdentifier, data):
@@ -345,7 +464,7 @@ class SyncService:
                 "unit": unit,
                 "sensor": bubbleSensorIdentifier
             }
-        sensorId = data["sensorMappings"][key]
+        sensorId = mapped_entity_id(data, key) or data["sensorMappings"][key]
         try:
             sensorValue = self.homeassistant_adapter.load_entity_state(sensorId)
             state, unit = convert_to_expected_unit(key, sensorValue.state, sensorValue.unit)

@@ -1,8 +1,294 @@
 # Changelog
 
+## 0.0.45.299
+
+* **Vollbildmodus ohne Zusatz-Plugin.** Das Vollbild-Symbol rechts in der Kopfzeile legt das Add-on jetzt direkt über das ganze Fenster (Home-Assistant-Seitenleiste und -Kopfzeile sind verdeckt) und schaltet, wo der Browser es erlaubt, zusätzlich den echten Browser-Vollbildmodus ein. Das „X“ (oder die Escape-Taste) stellt die normale Ansicht wieder her. Das Kiosk-Dashboard `/shyft-kiosk`, dessen automatisches Anlegen, das Plugin „Kiosk Mode“ und der zugehörige Hinweis entfallen (der Zugriff über ein Dashboard scheiterte am Ingress-Zugang mit 401). Funktioniert lokal, über Cloudflare/Nabu Casa und mobil.
+
+## 0.0.45.298
+
+* **Heizstab: „Heizstab aktiviert“ entfällt als Sensorfeld.** Der Status (an/aus) kommt jetzt direkt aus dem Schalter der Steuerung „Heizstab ein-/ausschalten“ – das ist ohnehin dieselbe Entität. Im Heizstab-Betrieb liest das Addon überall (Sync an shyft-power, Dashboard) diesen Schalter; eine Zuordnung der Wärmepumpe unter demselben Schlüssel wird dann nicht mehr benutzt und bleibt gespeichert. Die Kachel muss dafür nichts mehr abfragen, ein Pflichtfeld weniger.
+
+## 0.0.45.297
+
+* **Hinweis, wenn das Plugin „Kiosk Mode“ fehlt.** Beim Klick auf das Vollbild-Symbol prüft das Add-on, ob das HACS-Plugin Kiosk Mode in Home Assistant installiert ist. Fehlt es, erscheint zuerst ein Hinweis mit Anleitung und Links (direkt zu HACS und zur GitHub-Seite des Plugins); mit „Trotzdem öffnen“ lässt sich das Dashboard dennoch aufrufen. Lässt sich der Status nicht ermitteln, öffnet der Vollbildmodus wie bisher direkt.
+
+## 0.0.45.296
+
+* **Vollbild-Dashboard wird automatisch angelegt.** Beim ersten erfolgreichen Start legt das Add-on in Home Assistant das Dashboard „Shyft“ (`/shyft-kiosk`) selbst an – eine Vollbild-Ansicht mit dem Add-on, auf die das Vollbild-Symbol in der Kopfzeile verweist. Ein bereits vorhandenes Dashboard mit diesem Namen wird nie verändert, und ein später vom Nutzer gelöschtes wird nicht wieder angelegt. Schlägt das Anlegen fehl, steht der Grund im Add-on-Log und der nächste Start versucht es erneut. Header und Seitenleiste werden nur ausgeblendet, wenn das HACS-Plugin „Kiosk Mode“ installiert ist; ohne das Plugin läuft das Dashboard trotzdem.
+
+## 0.0.45.295
+
+* **Leistung geht jetzt als elektrische kW an shyft-power.** Das Addon sendet in der `staticConfig` den neuen Wert `hp_max_power_kw` (maximale **elektrische** Leistung): beim Heizstab die eingegebene Leistung 1:1 (COP 1), bei der Wärmepumpe die Hälfte der gewählten thermischen Leistung (z. B. „groß (8 kW)“ → 4 kW). Der Server nimmt den Wert 1:1 für die Optimierung und rechnet nichts mehr um. `HP - Max. Power` (alter Stufen-Text) geht für noch nicht aktualisierte Server weiter mit; `heating_rod_power_kw` aus 0.0.45.294 entfällt (nie veröffentlicht).
+* **Beschriftung korrigiert:** „Max. elektrische Leistung“ der Wärmepumpe heißt jetzt „Max. thermische Leistung“, mit dem Info-Text „Über welche Leistung verfügt deine Wärmepumpe ungefähr? Du findest die maximale Nennleistung (thermische Wärmeleistung) im Datenblatt deines Geräts.“ Die Auswahl selbst ändert sich nicht.
+
+## 0.0.45.294
+
+* **Heizstab-Kachel überarbeitet.**
+  * **Schalter „Heizstab steuern“** steht jetzt immer direkt unter der Überschrift – auch bei eingeklappter Kachel und noch ohne gewähltes Gerät. Die Beschriftung „Wärmepumpe steuern“ bei ausgeschaltetem Schalter entfällt. Schaltest du ihn ein und der Heizstab ist noch nicht vollständig eingerichtet, klappt die Kachel auf. Der Zustand wird als `heatingRodControl` gespeichert; bestehende Konfigurationen behalten ihr bisheriges Verhalten (Heizstab aktiv, sobald ein Heizstab-Gerät gewählt ist).
+  * **Max. Leistung als freie Eingabe:** statt der Stufen-Auswahl trägst du die elektrische Leistung des Heizstabs jetzt frei ein (0 bis 30 kW, in 0,1-kW-Schritten). Eine frühere Stufen-Auswahl wird als Startwert übernommen (z. B. „mittel (6 kW)“ → 6 kW). Der Wert geht als `heating_rod_power_kw` an shyft-power; zusätzlich bekommt `HP - Max. Power` weiterhin die nächstliegende alte Stufe, damit ein noch nicht aktualisierter Server weiterrechnet (dort gilt dann höchstens die größte Stufe).
+  * **„Temperatur Obergrenze“ auch beim Heizstab:** neues Feld mit Standard 95 °C, getrennt von der Wärmepumpe. Im Heizstab-Betrieb geht es als `HP - Max Supply Temp` raus und begrenzt auch die Warmwasser-Zieltemperatur der Aktionen. Das bisherige Feld „Max. Vorlauftemperatur“ der Wärmepumpe heißt jetzt ebenfalls „Temperatur Obergrenze“ (Wert und Standard 55 °C unverändert).
+  * `heating_rod` (`yes`/`no`) geht wie bisher in der `staticConfig` an shyft-power.
+
+## 0.0.45.293
+
+* **Vollbildmodus.** Rechts in der Kopfzeile gibt es ein Vollbild-Symbol (Tooltip „Vollbildmodus“). Es öffnet das Add-on im Kiosk-Dashboard `/shyft-kiosk` von Home Assistant, also ohne dessen Kopfzeile und Seitenleiste. Dort zeigt das Symbol ein „X“ („Vollbildmodus verlassen“) und führt zur zuvor geöffneten Seite zurück. Die Adressen sind relativ und funktionieren daher lokal, über Cloudflare/Nabu Casa und mobil. Voraussetzung: das Dashboard `shyft-kiosk` mit dem HACS-Plugin Kiosk Mode existiert; ohne iframe (z. B. direkter Aufruf) bleibt das Symbol ausgeblendet.
+
+## 0.0.45.292
+
+* **Ausnahme für neue Day-ahead-Preise.** Bei dynamischen Tarifen fragen die stündlichen Läufe um 13:55, 14:55 und 15:55 Uhr (also rund um 14, 15 und 16 Uhr) Awattar in jedem Fall neu ab, ohne den Zwischenspeicher, solange der letzte Optimierungslauf noch keine Preise des Folgetags kannte. Liefert Awattar neue Preise, werden sie übernommen und sofort eine neue Optimierung angestoßen – auch wenn der Plan sonst noch gepasst hätte. Gibt es noch keine neuen Preise, gilt die normale Prüfung („Optimierung nur bei Bedarf“).
+
+## 0.0.45.291
+
+* **Optimierung nur bei Bedarf.** Der stündliche Lauf fordert keine neue Optimierung mehr an, solange der letzte Plan noch zur Wirklichkeit passt. Verglichen wird der aktuelle Messwert mit dem geplanten Wert zum jetzigen Zeitpunkt: Batterie-Ladestand ±10 Prozentpunkte, Warmwassertemperatur ±5 Grad, Auto-Ladestand ±5 Prozentpunkte, Innenraumtemperatur ±0,2 Grad (wie im Chart „Raumtemperatur“ auf die gemessene Raumluft hochgerechnet). Geprüft werden nur Geräte, die es gibt und deren Sensor einen Wert liefert; ist nichts vergleichbar, wird optimiert. Spätestens nach 4 Stunden (bzw. beim letzten Lauf davor, damit es nicht länger als 4 Stunden dauert) wird auf jeden Fall neu optimiert, ebenso wenn die letzte Anfrage ohne Ergebnis blieb. Andere Auslöser (Verbindung testen, Auto eingesteckt, Fahrt geplant) optimieren weiter wie bisher. Der Grund steht im Add-on-Log.
+* **Dashboard „Berechnet um …“ bleibt grün**, wenn die Optimierung deshalb übersprungen wurde: Der Plan zählt dann ab der letzten Prüfung („Berechnet um 07:00 Uhr (um 09:55 Uhr geprüft: passt noch)“) und wird erst gelb bzw. rot, wenn die Prüfung selbst ausbleibt.
+
+## 0.0.45.290
+
+* **Neues Gerät „Heizstab“.** Über der Wärmepumpe gibt es eine neue Kachel „Heizstab“ (Info-Symbol mit Erklärung). Wer sein Brauchwasser ausschließlich über einen Heizstab erwärmt, richtet ihn hier ein: Gerät auswählen, dann „Temperatur Warmwassertank“, „Warmwasser-Speichergröße“, „Warmwasser: Solltemperatur“, „Heizstab aktiviert“ (der bisherige Sensor „Warmwasser gerade erwärmt?“, gleiche Logik) und „Heizstab max. Leistung“. Die Berechnungen zum Warmwasserbedarf bleiben unverändert.
+* **Steuerung des Heizstabs.** Unter „Steuerung“ wird die An-/Aus-Entität „Heizstab ein-/ausschalten“ aus dem Heizstab-Gerät ausgewählt, mit Testen-Button und Testergebnis. Löst Shyft eine Warmwasser-Aktion aus, schaltet es statt der Wärmepumpe den Heizstab ein (vorerst mit voller Leistung, ohne Modulation) und nach dem Ende der Aktion wieder aus.
+* **Schalter „Heizstab steuern“ / „Wärmepumpe steuern“.** Oben in der Heizstab-Kachel wechselst du zwischen beiden Geräten (z. B. saisonal), ohne Werte neu einzugeben. Ist ein Heizstab eingerichtet und der Schalter an, ist die Wärmepumpe deaktiviert: Die Überschrift wird grau mit dem Zusatz „(deaktiviert, Heizstab eingerichtet)“, Details lassen sich nicht einblenden, die hinterlegten Werte bleiben erhalten. Wird der Heizstab entfernt oder per Schalter deaktiviert, ist die Wärmepumpe wieder normal da.
+* **An shyft-power gesendet.** Neuer Parameter `heating_rod` (`yes`/`no`) in den statischen Daten (`staticConfig`): „yes“, wenn der Heizstab eingerichtet und aktiv ist, sonst „no“. Mit aktivem Heizstab geht „HP - Heating Activated“ immer als „off“ raus, und „Heizstab max. Leistung“ wird als „HP - Max. Power“ gesendet (gleiche Leistungsstufen wie bei der Wärmepumpe).
+* **Dashboard und Gerätesteuerung.** In der Geräteübersicht ersetzt ein Heizstab-Bild (Warmwasserspeicher mit Heizstab) die Wärmepumpe, ohne Heizungs- und Raumtemperatur-Angaben; der Chart „Raumtemperatur“ zeigt „Heizung deaktiviert“. Auf der Seite Gerätesteuerung gehört „Warmwasser steuern“ dann zum Heizstab, „Heizung steuern“ entfällt.
+
+## 0.0.45.289
+
+* **Batterie-Steuerung: Testergebnis statt Werte neben „Testen“.** Neben den Testen-Buttons stehen keine Werte aus dem letzten Test mehr (z. B. „Entladeleistung: 5 kW“). Stattdessen zeigt die Zeile das letzte Ergebnis dauerhaft an: grünes Häkchen und „Erfolgreich getestet am TT.MM.JJJJ, HH:MM Uhr“ bzw. rotes „!“ und „Test fehlgeschlagen (TT.MM.JJJJ, HH:MM Uhr)“. Der grüne Haken steht jetzt neben dem Button statt an der Überschrift der Steuerung. Die Anzeige bleibt nach einem Neuladen erhalten, bis sich etwas an der Steuerung ändert.
+* **„Einspeisung drosseln“: Hinweistext am Feld angepasst** – „Bitte die maximale Einspeiseleistung in kW eintragen oder die Funktion deaktivieren.“
+* **Test-Popup: Seite springt beim Schließen nicht mehr.** Beim Öffnen und Schließen des Testprotokolls bleibt die Scrollposition der Konfigurationsseite unverändert (der Fokus kehrt ohne Scrollen zum Testen-Button zurück).
+
+## 0.0.45.288
+
+* **Test-Popup: Zurücksetzen der Werte klar bestätigt.** Nach dem Test prüft das Protokoll bis zu 30 Sekunden lang alle 3 Sekunden, ob die Entitäten wieder auf ihren Ausgangswerten stehen (manche Integrationen melden geschriebene Werte erst verzögert). Jede Entität wird gemeldet, sobald sie wieder passt, und zum Schluss steht „Alle Werte stehen wieder auf ihren Ausgangswerten.“ – nur wenn nach 30 Sekunden noch etwas abweicht, erscheint stattdessen die Warnung zu dieser Entität.
+
+## 0.0.45.287
+
+* **Raumtemperatur-Chart: Fläche durchgehend, mehr Abstand.** Die grüne Fläche unter „Heizung-Soll“ reicht jetzt auch durch die Vergangenheit (bisher nur bei der Prognose) und schließt nahtlos an die Prognose an – das gilt genauso für „Ladestand Auto“. Die Kurve „Innenraum“ bekommt weniger Höhe (engere Skala) und liegt dadurch höher, mit mehr Abstand zur Heizungs-Soll-Kurve.
+
+## 0.0.45.286
+
+* **„Einspeisung drosseln (§9 EEG)“ überarbeitet.** Die Überschrift heißt jetzt „Einspeisung drosseln (§9 EEG)“ und hat mehr Abstand nach oben (wie „Sensoren“/„Steuerung“); die Erläuterung (Fragezeichen) erklärt, dass Shyft Verbräuche und Batterienutzung so verschiebt, dass möglichst wenig gedrosselt wird, und dass die tatsächliche Drosselung am Wechselrichter eingestellt werden muss. Das Feld „Einspeiseleistung drosseln auf“ springt mit den Pfeiltasten in 0,5-kW-Schritten (Beispiel „5,0“). Fehlermeldungen unter Eingabefeldern stehen jetzt in einer eigenen Zeile, sodass die Beschriftung links vertikal am Eingabefeld zentriert bleibt.
+
+## 0.0.45.285
+
+* **Mindestversion: `addon_version` wird als Zahl gesendet.** Beim Senden der Optimierungsdaten (`update_site_addon`) geht die Add-on-Version jetzt als Zahl mit (jeder Versionsteil mit drei Stellen, z. B. 0.0.45.285 → 45285), nicht mehr als Text. Liegt sie unter der von shyft-power gesetzten Mindestversion, antwortet der Server mit HTTP 400: das Add-on startet dann keine Wartezeit auf ein Ergebnis und zeigt im Dashboard die Meldung „Optimierung fehlgeschlagen. Aktualisiere deine Shyft-App, deine Version wird nicht mehr unterstützt.“ Bei einer erfolgreichen Antwort verschwindet die Meldung wieder.
+
+## 0.0.45.284
+
+* **Raumtemperatur: simulierte Prognose richtig umgerechnet.** Nur die simulierte Innentemperatur-Prognose (auch für vergangene Stunden) wird umgerechnet, die gemessene Temperatur bleibt unverändert: gewünschte Raumtemperatur + 10 × (simulierte Temperatur − gewünschte Raumtemperatur). „Gewünschte Raumtemperatur“ ist der Wert „Gewünschte Raumtemperatur (mindestens)“ aus der Wärmepumpen-Konfiguration – derselbe, den die Optimierung als Untergrenze verwendet, die simulierte Temperatur liegt also nie darunter und das Ergebnis wird nie niedriger als dieser Wert. Zuvor wurde gegen die Heizkurven-Solltemperatur gerechnet, die bis zu 4 Grad unter der Raumtemperatur liegen kann (das ergab z. B. −23,5 °C).
+
+## 0.0.45.283
+
+* **Neu: „Einspeisung drosseln“ (Wechselrichter, Solarspitzengesetz §9 EEG).** In der Wechselrichter-Kachel gibt es einen Toggle „Einspeisung drosseln“ mit dem Feld „Einspeiseleistung drosseln auf [ ] kW“. Ist er aktiv und ein Wert eingetragen, sendet das Add-on diesen als `LPP` (kW, maximal bezahlte Einspeiseleistung) in der `staticConfig` an shyft-power; die Optimierung verschiebt Lasten dann so, dass die Grenze möglichst eingehalten wird (die physische Drosselung der Anlage stellt Shyft nicht sicher). Ist der Toggle aus oder das Feld leer, wird nichts gesendet. Ist der Toggle an, aber das Feld leer, ist es ein Pflichtfeld: es wird rot umrandet, eine Fehlermeldung erscheint, und es wird keine Optimierung angestoßen.
+* **Wechselrichter: Bereich „Steuerung“ ausgeblendet.** „PV: Einspeisung begrenzen“ und „Verbrauch begrenzen (§14a)“ erscheinen vorerst nicht mehr (kommen später wieder); ihre Toggles bleiben deaktiviert.
+* **Raumtemperatur: Umrechnung der simulierten Innentemperatur geändert** (siehe 0.0.45.284 für die endgültige Fassung).
+
+## 0.0.45.282
+
+* **Reale Werte fortlaufend statt stündlich.** Die Ist-Kurven der Charts (PV-Leistung, Ladestand Heimspeicher, Warmwasser, Ladestand Auto, Heizung-Soll und gemessene Innenraumtemperatur) werden jetzt in 5-Minuten-Schritten aus der Sensor-Historie gezeichnet (gemittelt je Schritt), nicht mehr nur als ein Wert je Stunde. Die Farbe der Kurve (steigend/fallend/gleichbleibend) richtet sich nach der Entwicklung über eine Stunde. Der „Jetzt“-Punkt sitzt auf dem letzten Messpunkt.
+* **Raumtemperatur: simulierte Innentemperatur zurückgerechnet.** Die vom Optimierer simulierte Innentemperatur ist die träge Gebäudetemperatur und reagiert viel schwächer als die gemessene Raumluft. Für den Vergleich wird sie deshalb umgerechnet: Soll + 10 × (simulierte Temperatur − Soll), mit dem geplanten Soll der jeweiligen Stunde (sonst dem tatsächlichen Soll).
+* **Raumtemperatur-Tooltip mit vier Einträgen.** Für Stunden mit Historie zeigt der Tooltip „Heizung-Soll Ist-Wert“, „Heizung-Soll Prognose“, „Innenraum Ist-Wert“ und „Innenraum Prognose“; für die Zukunft nur die beiden Prognosen. Entsprechend zeigt der Strompreis-Chart „Netzbezug Ist-Wert/Prognose“.
+
+## 0.0.45.281
+
+* **Fix: Add-on-Version heißt in Bubble `addon_version`.** Seit 0.0.45.280 ging der Parameter versehentlich als `Addon Version` an `update_site_addon`; der Parameter im Bubble-Workflow heißt aber `addon_version`. Der Name ist jetzt korrigiert, die Version kommt damit im `toBeOptimized`-Eintrag an.
+
+## 0.0.45.280
+
+* **Ohne Strompreis keine Optimierung mehr, dafür eine Problemmeldung.** Fehlt der Einkaufspreis (je nach Tarif z. B. kein Arbeitspreis, kein Aufschlag, kein Netzentgelt oder keine Awattar-Börsenpreise) oder – bei zugeordneter PV-Anlage – die Einspeisevergütung, sendet der stündliche Sync nichts mehr an shyft-power (`update_site_addon` legt die Site in die Optimierungs-Queue). Bisher rechnete der Server dann mit 0 €/kWh und lieferte unbrauchbare Läufe, ohne dass irgendwo ein Fehler zu sehen war. Stattdessen erscheint in der Statuskarte das Problem `price_missing` mit der konkreten Ursache und dem Hinweis, wo der Wert einzutragen ist; es verschwindet von selbst, sobald die Preise wieder berechnet werden können.
+* **Add-on-Version wird mitgeschickt.** `update_site_addon` bekommt den neuen Parameter `Addon Version` (die `version` aus der config.yaml), damit shyft-power Aufrufe veralteter Add-ons erkennen und blocken kann. Der Parameter muss im Bubble-Workflow angelegt sein.
+
+## 0.0.45.279
+
+* **Charts auf dem Handy: Werte auch im gezoomten Zustand ablesen.** Die Touch-Bedienung der Charts ist neu geregelt: **Antippen** setzt den Tooltip an dieser Stelle fest (er bleibt stehen, auch nach dem automatischen Aktualisieren; dieselbe Stelle noch einmal antippen blendet ihn aus, eine andere versetzt ihn). **Kurz halten und ziehen** schiebt den Tooltip über die Kurven (leichtes Vibrieren zeigt den Start). **Sofort wischen** verschiebt das Zeitfenster (nur wenn gezoomt, sonst scrollt die Seite wie gewohnt). **Zwei Finger** zoomen wie bisher. **Doppeltippen** setzt das Zeitfenster auf den Standard (heute plus halber Tag) zurück. Der bisherige Ein-Finger-Wisch zum Ablesen entfällt zugunsten von „Halten + Ziehen“; am Desktop bleibt der Tooltip beim Darüberfahren mit der Maus. Außerdem zeigen die Charts auf dem Handy nur noch vier statt sechs Zeitbeschriftungen unter der Achse, damit sie sich nicht überlappen.
+
+## 0.0.45.278
+
+* **Heizung: keine Aktionen mehr für die Standard-Temperatur, Rückstellung am Ende jeder Aktion.** Will die Optimierung genau die gewünschte Raumtemperatur („Gewünschte Raumtemperatur (mindestens)“, z. B. 20 °C) einstellen, wird keine „Heizung Soll-Temperatur“-Aktion mehr erzeugt (bisher entstand eine, sobald der Sollwert vom aktuellen Wert der Wärmepumpe abwich, z. B. nach einer 19-°C-Aktion). Dafür stellt jede Heizungs-Aktion beim Beenden den Sollwert selbst auf die Standard-Temperatur zurück – das war bisher **nicht** umgesetzt (das Ende einer Heizungs-Aktion tat nichts, der Sollwert blieb stehen, bis eine neue Aktion kam). Folgt in der nächsten Stunde eine Heizungs-Aktion mit anderem Sollwert, entfällt die Zwischen-Rückstellung; gleiche Sollwerte hintereinander werden wie bisher verlängert. Gilt für die direkte Steuerung und für die eigene Home-Assistant-Automation (die bekommt die Standard-Temperatur als Zielwert).
+
+## 0.0.45.277
+
+* **Raumtemperatur-Chart: „Heizung-Soll“ mit zwei Linien.** Wie beim Ladestand Heimspeicher zeigt „Heizung-Soll“ jetzt für vergangene Stunden zusätzlich zum tatsächlichen Verlauf (durchgezogen) den damals geplanten Wert (gestrichelt, der zum Beginn der Stunde jüngste Planungsstand). Beide Linien lassen sich über den Legenden-Eintrag „Heizung-Soll“ gemeinsam aus- und einblenden. Der geplante Verlauf wird erst ab dieser Version gespeichert – für frühere Stunden gibt es nur die durchgezogene Linie.
+
+## 0.0.45.276
+
+* **Dashboard-Charts auf dem Handy: Zeitfenster mit Wischen und Zwei-Finger-Zoom.** Beim Öffnen der Seite zeigen die Charts auf dem Handy (Bildschirmbreite bis 700 px) nur „heute plus einen halben Tag“ (0 Uhr heute bis 12 Uhr morgen), damit die Kurven größer sind. Mit einem Finger nach links wischen zeigt die späteren Stunden, zurück nach rechts die früheren. Mit zwei Fingern lässt sich stufenlos auf den gesamten Zeitraum heraus- und wieder hineinzoomen (mindestens 8 Stunden sichtbar). Das Fenster gilt für alle Charts gemeinsam; ein Chart reagiert sofort, die übrigen nach dem Loslassen. Ist der gesamte Zeitraum sichtbar, zeigt der Ein-Finger-Wisch wie bisher den Tooltip. Nach dem Neuladen gilt wieder der Standard. Am Desktop bleibt der gesamte Zeitraum sichtbar. Die PV-Ertragssumme („Heute | Morgen“) und die Summen der Vergleichs-Charts beziehen sich weiterhin auf den vollen Zeitraum.
+
+## 0.0.45.275
+
+* **Kurven in allen Dashboard-Charts per Antippen der Legende aus-/einblendbar.** Ein Tipp auf einen Legenden-Eintrag blendet die Kurve aus, ein weiterer wieder ein (ausgeblendete Einträge sind abgeblendet und durchgestrichen). Der Zustand wird je Chart und Kurve im Browser gespeichert und bleibt beim Verlassen/Neuladen der Seite erhalten; beim ersten Öffnen ist alles eingeblendet (auch die Netzbezug-Linie im Strompreis-Chart, die bisher standardmäßig aus war). Ausnahme: Außentemperatur (nur eine Kurve, Legende ohne Schaltfunktion). Auch die Aktions-Flächen (z. B. „Aktion“, „Aktion: Netzladen“) lassen sich über ihren Legenden-Eintrag ausblenden.
+* **Einheitliche Legenden.** Statt runder Punkte zeigen die Legenden jetzt Linien – durchgezogen für „Ist-Wert“, gestrichelt für „Prognose“ (zuerst Ist-Wert, dann Prognose; „Historisch“ und „Ist-Werte“ heißen überall „Ist-Wert“). Charts mit zwei Kurven (Raumtemperatur: „Heizung-Soll“/„Innenraum“, Strompreis: „Strompreis“/„Netzbezug“) zeigen je Kurve einen Eintrag mit durchgezogenem und gestricheltem Abschnitt; Flächen (Aktion, Anwesenheit) erscheinen als kleine Rechtecke.
+* **Kürzere Überschriften:** „PV-Leistung (kW)“, „Warmwasser (°C)“, „Ladestand Heimspeicher (%)“ ohne den Zusatz „Prognose vs. Ist“.
+* **Raumtemperatur-Chart: Kurven versetzt.** „Heizung-Soll“ (Verlauf bis jetzt durchgezogen, danach gestrichelt) liegt jetzt im unteren, „Innenraum“ im oberen Teil des Charts, sodass die Kurven übereinander statt aufeinander verlaufen. Die Achsen bleiben in vollen Grad beschriftet.
+
+## 0.0.45.274
+
+* **Dashboard-Charts um 25 % höher.** Die Liniendiagramme (Strompreis, PV, Raumtemperatur, Ladestand, Warmwasser, …) sind jetzt 275 statt 220 Einheiten hoch – auf dem Handy, wo sie auf die Bildschirmbreite skaliert werden, wirkten sie zu flach.
+* **Tooltip beim Darüberfahren/Antippen bricht nicht mehr um.** Der Tooltip (z. B. „Heizung-Soll: 21 °C“ beim Raumtemperatur-Chart) ist so breit wie seine Beschriftung und wird am linken/rechten Rand des Charts nach innen geschoben, statt dort umzubrechen oder abgeschnitten zu werden.
+
+## 0.0.45.273
+
+* **Raumtemperatur-Chart zeigt die Historie des heutigen Tages.** Der Chart beginnt jetzt – wie Ladestand Auto und Warmwasser – um 0 Uhr: „Heizung-Soll“ zeigt den tatsächlichen Verlauf der Solltemperatur-Entität bis jetzt, danach gestrichelt den Plan der Optimierung; „Innenraum“ zeigt die Sensorhistorie plus Prognose. Zuvor begann der Chart bei der aktuellen Stunde, und die Innenraum-Historie wurde dabei an die falschen Stunden gezeichnet (die Werte ab 0 Uhr lagen auf der Achse ab „jetzt“). Ohne Historie der Solltemperatur (Entität nicht zugeordnet) bleibt der Chart wie bisher ab „jetzt“.
+* **Rechte Achse (Innenraum) in vollen Grad beschriftet.** Es erscheinen nur ganze Gradzahlen (höchstens etwa fünf); liegt weniger als eine volle Gradzahl im Wertebereich, wird der Bereich auf die nächsten ganzen Zahlen erweitert.
+
+## 0.0.45.272
+
+* **Auto-Prognose: simulierte Fahrt am Ende des Zeitraums nicht mehr überzogen.** Sieht das Modell an einem Tag im Optimierungszeitraum keine Fahrstunde, legt es dessen Tagesverbrauch („Notnagel“) in die letzte Stunde des Zeitraums. Bei einem nur angeschnittenen Tag (z. B. Sonntag nur 0–4 Uhr im Zeitraum, oder der heutige Rest-Tag) war das der KOMPLETTE Tagesdurchschnitt – im Ladestand-Auto-Chart zeigte sich das als unplausible Fahrt in einer Stunde (z. B. 82,9 % → 20 %). Jetzt wird der Verbrauch solcher Tage anteilig (Stunden im Zeitraum / 24) angesetzt.
+* **„Prognose im Detail“ zeigt jetzt dasselbe wie der Optimierer.** Sie rechnete bisher mit anderem Zeitraum und ohne Pufferstunde als die an den Optimierer gesendeten Werte, deshalb fehlte dort die simulierte Fahrt. Jetzt gilt derselbe Zeitraum (Einstellung „Optimierungszeitraum“, Titel zeigt die tatsächliche Stundenzahl), und simulierte Stunden sind mit „– simuliert“ gekennzeichnet (Tooltip erklärt den Hintergrund).
+
+## 0.0.45.271
+
+* **Verständlichere, sparsame Fehler-Einträge im Log von Aktionen.** Ein Fehler beim Starten oder Beenden wird erst ins Log geschrieben, wenn er nach 2 Minuten noch besteht – gelingt der Start vorher (das Add-on wiederholt automatisch), steht gar nichts im Log. Danach gibt es höchstens alle 15 Minuten einen weiteren Eintrag, bei Erfolg einen kurzen Abschluss („Start jetzt gelungen.“). Der Eintrag ist kurz und sagt, was in Home Assistant nicht geklappt hat, z. B. „Fehler beim Starten. Grund: Home Assistant meldet „500 Internal Server Error“ für die Entität number.xyz.“, „… Die Entität number.xyz übernimmt den Wert nicht (steht weiterhin auf 5000).“ oder „… ist in Home Assistant nicht verfügbar.“ Statt „Batterie-Steuerung unvollständig: Timeout, Entladeleistung“. Die Wiederholungen selbst (alle 30 Sekunden in den ersten 15 Minuten, danach im 15-Minuten-Takt) laufen unverändert weiter. In Meldungen heißt die Entität „Timeout“ jetzt „Command-Timeout (Watchdog)“ (der Watchdog-Wert, den das Add-on setzt).
+
+## 0.0.45.269
+
+* **Kein Log-Eintrag mehr beim Ablösen von Aktionen.** Wenn eine Batterie- oder Heizungs-Aktion eine andere ablöst, standen bisher „löst die laufende Aktion ab (neuer Optimierungslauf)“ bzw. „abgelöst durch …“ im Log. Ein Ablösen ohne Fehler ist der Normalfall und braucht keinen Eintrag – der Status „abgelöst“ zeigt es bereits. Schlägt etwas fehl, steht der Fehler wie bisher im Log der Aktion.
+
+## 0.0.45.268
+
+* **Strompreis-Chart: optionale Linie zeigt jetzt den Netzbezug statt des Gesamtverbrauchs.** Der Legenden-Eintrag heißt „Netzbezug“. Ist (durchgezogen, 5-Minuten-Auflösung) kommt aus dem Netz-Sensor (nur positive Leistung, Einspeisung zählt als 0), die Prognose (gestrichelt) aus dem Netzbezug des Optimierungslaufs (GR_sum, nur positive Werte). „Dein Stromverbrauch“ bleibt beim Gesamtverbrauch des Haushalts. `/dashboard/usage-fine` liefert mit `?source=grid` den Netzbezug.
+
+## 0.0.45.267
+
+* **Steuerungs-Schalter kompakter.** Die Leiste auf der Gerätesteuerung-Seite ist deutlich kleiner: kleinere Schrift, Schalter und Symbole, weniger Abstand, linksbündige Beschriftung und bis zu 4 Karten pro Zeile (bei schmaleren Fenstern 3 bzw. 2/1). Nur Optik.
+
+## 0.0.45.266
+
+* **Steuerungs-Schalter: „Wallbox steuern“ heißt jetzt „Auto laden“.** Nur die Beschriftung der Karte auf der Gerätesteuerung-Seite, keine Änderung am Verhalten.
+
+## 0.0.45.265
+
+* **Fix: Steuerungs-Schalter blitzten beim Öffnen der Gerätesteuerung nur kurz auf.** Die Leiste mit den Schaltern wurde bei jedem Scrollen nach unten ausgeblendet – auch beim automatischen Sprung zur aktuellen Aktion und bei Layout-Änderungen während des Ladens. Jetzt blendet sie sich nur noch aus, wenn der Nutzer selbst nach unten scrollt (Mausrad, Touch, Tastatur, Scrollbalken); beim Öffnen der Seite startet sie immer eingeblendet, beim Hinaufscrollen kommt sie wie bisher wieder.
+
+## 0.0.45.264
+
+* **Prognose-vs.-Ist-Charts: durchgehende Prognose aus den Optimierungsläufen.** Der Ist-Wert wird nicht mehr an der „Jetzt“-Stunde in die Prognose-Linie eingesetzt (0.0.45.260 zurückgenommen). Stattdessen setzt das Add-on die Prognose Stunde für Stunde aus den Läufen zusammen: Jede Stunde zeigt den Wert des jüngsten Optimierungslaufs, der **vor** Beginn dieser Stunde lief. Zeile 1 eines Laufs (seine Startstunde, basiert auf Ist-Werten) zählt nicht als Prognose. Beispiel: Der Lauf von 8:33 liefert 9:00 und alle folgenden Stunden; kommt um 9:10 ein neuer Lauf, werden 10:00 ff. neu geschrieben, 9:00 bleibt aus dem 8:33-Lauf, 8:00 aus dem Lauf davor. Kommt kein neuer Lauf, stammen 9:00, 10:00 usw. weiter aus dem 8:33-Lauf. Die Prognose ist immer gestrichelt, Ist-Werte immer durchgezogen; beide Linien laufen unabhängig nebeneinander (auch über vergangene Stunden). Gilt für Ladestand Heimspeicher, Warmwasser, Raumtemperatur (Innenraum), Ladestand Auto und – ab der laufenden Stunde – Sonstiger Verbraucher. Technisch: neue Datei `forecast_stitched.json` (nur heutige Stunden), für Stunden vor dem Update bleibt der bisherige Planungsstand-Snapshot als Rückfall. Die PV-Prognose bleibt unverändert (Wetterprognose je Stunde, hier gab es keine Lücke).
+
+## 0.0.45.263
+
+* **„Auto laden“-Ladekontrolle: Abweichung vom Sollwert nur bei Auto-Ladestand unter 90 %.** Ab 90 % drosselt das Auto die Ladeleistung selbst, eine niedrigere Leistung als vorgegeben ist dann normal. Ab 90 % wird deshalb nur noch geprüft, ob überhaupt geladen wird (Ladeleistung > 0) – Log-Eintrag „Ladeleistung weicht ab“, Wiederholung und Fehler-Bewertung gelten dann nur noch für „lädt gar nicht“. Ohne zugeordneten Sensor für den Auto-Ladestand wird wie bisher immer gegen den Sollwert geprüft.
+
+## 0.0.45.262
+
+* **„Auto laden“: Ladekontrolle prüft, ob die Wallbox tatsächlich lädt.** Solange eine Auto-laden-Aktion läuft (Optimierer-Aktion und PV-Überschussladen), vergleicht das Add-on jede Minute die gemessene Wallbox-Ladeleistung mit dem Sollwert: Sie muss größer als 0 sein und innerhalb von ±2 kW um den Sollwert liegen. Die ersten 3 Minuten nach dem Start (bzw. 2 Minuten nach einer Wiederholung) zählen nicht, weil die Wallbox erst anläuft.
+  * **Log:** Lädt die Wallbox nicht, steht im Log der Aktion „Wallbox lädt nicht (gemessen … kW, Soll … kW)“; weicht die Leistung um mehr als 2 kW ab, „Ladeleistung weicht ab …“. Es wird nur beim Wechsel protokolliert (nach 2 aufeinanderfolgenden Messungen), nicht jede Minute; eine Erholung wird ebenfalls vermerkt.
+  * **Wiederholung:** Lädt die Wallbox nicht, wird der Startbefehl alle 3 Minuten erneut gesendet (höchstens 10-mal, jeweils im Log vermerkt).
+  * **Fehler:** Wurde über die geplante Zeit der Aktion (Stunde) überwiegend nicht geladen (mehr als die Hälfte ohne Ladeleistung), wird die Aktion rot umrandet und nach ihrem Ende als „Fehler“ statt „beendet“ angezeigt; dazu kommt eine Push-Benachrichtigung. Eine Ladeleistung außerhalb der Toleranz, aber über 0, wird nur protokolliert und zählt nicht als „nicht geladen“.
+  * **Nicht bewertet:** Zeiten, in denen das Auto nicht ladebereit ist oder schon voll geladen ist (≥ 99 %), sowie Aktionen ohne zugeordneten Sensor „Wallbox: Ladestrom“.
+
+## 0.0.45.261
+
+* **„Dein Stromverbrauch“: Ist-Verlauf alle 5 Minuten.** Der bisherige Stundenwert für heute wird durch den tatsächlichen Verlauf in 5-Minuten-Schritten ersetzt (mittlere Leistung je Schritt aus der Haushalts-Sensor-Historie, in kW = kWh pro Stunde, also auf derselben Achse wie die Stundenwerte). Die gestrichelte Shyft-Plan-Linie setzt direkt am letzten Ist-Punkt an; im Tooltip erscheint der Ist-Wert des 5-Minuten-Schritts. Ohne Haushalts-Sensor bleibt es bei den Stundenwerten. Neuer Endpunkt `/dashboard/usage-fine` (60 s zwischengespeichert).
+* **Strompreis-Chart: optionale Stromverbrauch-Linie.** Unter dem Titel steht ein Legenden-Eintrag „Stromverbrauch“ (graue Markierung), standardmäßig ausgegraut. Ein Klick blendet den Verbrauch als graue Linie mit eigener Skala rechts ein: Ist durchgezogen (5-Minuten-Auflösung), Prognose (Shyft-Plan) gestrichelt; ein weiterer Klick blendet sie wieder aus. Die Wahl wird im Browser gemerkt.
+
+## 0.0.45.260
+
+* **Prognose-Linie bei „Prognose vs. Ist“-Charts ohne Lücke an der aktuellen Stunde.** Bisher war die gestrichelte Prognose-Linie zwischen der Vorstunde, „jetzt“ und der Folgestunde unterbrochen. Jetzt läuft sie vom Prognosewert der Vorstunde über den „Jetzt“-Punkt (Ist-Wert) weiter zum Prognosewert der nächsten Stunde. Gilt für alle Prognose-vs.-Ist-Charts auf dem Dashboard (Ladestand Heimspeicher, Warmwasser, Raumtemperatur, Ladestand Auto, Sonstiges Gerät, PV). Nur die gezeichnete Linie ändert sich, Tooltips und Skalierung bleiben unverändert.
+
+## 0.0.45.259
+
+* **Test-Popup mit Live-Protokoll für alle „Testen“-Buttons.** Ein Klick auf einen Test (Batterie-Aktionen, Warmwasser, Auto laden, Heizung Soll-Temperatur, Sonstige Verbraucher) öffnet ein Popup, in dem Zeile für Zeile zu sehen ist, was der Test gerade tut: welche Entität auf welchen Wert gesetzt wird, ob der Schritt geklappt hat, worauf gerade gewartet wird (mit dem aktuellen Zustand der Entität) und am Ende das Ergebnis. „Abbrechen“ beendet den Test sauber: Sollwerte bzw. Limits werden dabei wieder auf ihre Ausgangswerte zurückgesetzt, ein abgebrochener Test gilt weder als bestanden noch als fehlgeschlagen. Nach dem Ende (erfolgreich, fehlgeschlagen oder abgebrochen) bleibt das Popup mit „Schließen“ offen; beim Batterie-Test zeigt es auch das Zurücksetzen der Entitäten samt Kontrolle der Zustände. Ein nach einem Neuladen der Seite noch laufender Heizungs-Test wird im Popup wieder aufgegriffen. Technisch: Der Server sammelt die Zeilen je Test-Sitzung (Header `X-Shyft-Test-Id`, `GET /actions/test-log/<id>`, `POST /actions/test-log/<id>/cancel`); echte Aktionen sind davon unberührt.
+* **Batterie-Test: Ergebniszeile verschwindet nach einem erfolgreichen Test.** Die grüne Werte-Zeile („Entladeleistung: … | Limit Ladeleistung …“) wird 10 Sekunden nach dem Schließen des Popups ausgeblendet (die Werte wurden ohnehin schon zurückgesetzt und zeigten nur den Testwert). Fehlgeschlagene Tests bleiben stehen.
+
+## 0.0.45.258
+
+* **Abweichungsmeldungen färben das Sensorfeld nicht mehr rot.** Meldet die Geräteüberwachung eine Abweichung (z. B. „Batterie-Ladelimit weicht ab“), erscheint nur noch die Meldung im Problemkasten (inkl. Link „zu den Einstellungen“). Das Sensorfeld in der Konfiguration bleibt unmarkiert, weil sich an der Sensorauswahl nichts ändern lässt – die Abweichung entsteht in der Regel durch manuelle Änderungen am Gerät.
+
+## 0.0.45.257
+
+* **Batterie-Konfiguration: „Max. Ladeleistung (kW)“ heißt jetzt „Max. Lade/Entladeleistung (kW)“.** Der Wert gilt schon bisher auch für die Entladeleistung (Rückstellwert „kein Limit“ nach einer Batterie-Aktion), das war aus Beschriftung und Tooltip nicht ersichtlich. Der Tooltip beschreibt jetzt alle drei Verwendungen: Sicherheitsgrenze für „Batterie netzladen“, „kein Limit“-Wert für Lade- und Entladeleistungs-Limit nach einer Aktion, erwarteter Ruhewert. Nur Beschriftung/Text, keine Änderung am Verhalten; der gespeicherte Wert bleibt unverändert.
+
+## 0.0.45.256
+
+* **Fix: Add-on startete seit 0.0.45.254 nicht mehr.** Der neue Zeitstempel für jede Protokollzeile (0.0.45.254) konnte nur Text verarbeiten; beim Start schreibt Flask über `click.echo` aber Bytes in den Stream (Server-Banner „Running on …“) - das Add-on brach mit „TypeError: endswith first arg must be bytes or a tuple of bytes, not str“ ab und stand auf „Fehler“. Der Zeitstempel-Stream wandelt Bytes jetzt in Text um. Geprüft durch einen echten Start von `app.py` (läuft bis „Running on …“) und Regressionstests für den click-Pfad.
+
+## 0.0.45.255
+
+* **Steuerungs-Schalter auf die Gerätesteuerung-Seite verschoben.** Die Schalter zum Aktivieren/Deaktivieren der Steuerungen (Warmwasser, Heizung, Batterie netzladen, Batterie schonen (PV-Überschuss), Batterie-Entladen verschieben, Wallbox, Verbraucher) stehen jetzt oben auf der Gerätesteuerung-Seite als Kartenraster mit Symbol, Beschriftung und Schalter, darunter die Überschrift „Verlauf“. Sie sind aus den Geräte-Kacheln der Konfiguration entfallen; nur „PV: Einspeisung begrenzen“ und „Verbrauch begrenzen §14a“ (SPiNE-Gateway, standardmäßig aus) behalten ihren Schalter dort. Gezeigt wird eine Karte nur, wenn das Gerät eingebunden ist: nicht der reine Demomodus, sondern ein echtes Gerät mit mindestens einer hinterlegten Home-Assistant-Entität. Die Leiste klebt unter der Kopfzeile, blendet sich beim Herunterscrollen aus und beim Hinaufscrollen (bzw. ganz oben) wieder ein; auf schmalen Bildschirmen (unter 760 px) scrollt sie einfach mit der Seite weg. Die Schalter speichern wie bisher sofort; gespeicherte Einstellungen bleiben unverändert.
+
+## 0.0.45.254
+
+* **Add-on-Protokoll: jede Zeile mit Datum und Uhrzeit.** Im Protokoll in Home Assistant standen bei den meisten Zeilen (Meldungen des Add-ons, Zugriffs- und Scheduler-Zeilen) keine Uhrzeiten, die Suche nach einem bestimmten Zeitpunkt war kaum möglich. Jetzt beginnt jede Zeile mit „JJJJ-MM-TT HH:MM:SS“ in der Zeitzone von Home Assistant (in den allerersten Startzeilen, bevor sie bekannt ist, in UTC und mit „UTC“ gekennzeichnet). Die Zeitstempel in den Aktions-Logs der Gerätesteuerung gab es schon und sind unverändert.
+* **Dashboard-Charts: aktuelle Uhrzeit mit Punkt auf der Linie.** Der senkrechte „Jetzt“-Strich war zu unauffällig, zusätzlich steht jetzt ein dauerhaft sichtbarer Punkt (gleiches Aussehen wie beim Mouse-over) an der aktuellen Stunde auf der Linie - in allen Charts mit „Jetzt“-Markierung (z. B. Strompreis, Raumtemperatur, PV, Warmwasser, Ladestand). Beim Mouse-over/Touch erscheint wie bisher die Beschriftung mit dem Hover-Punkt; der „Jetzt“-Punkt bleibt dabei stehen.
+
+## 0.0.45.253
+
+* **Dashboard: Der aktuelle Strompreis über dem Strommast ist jetzt wirklich farbig.** Die Einstufung (günstig/mittel/teuer, dieselben Schwellen wie im Strompreis-Chart: bis 25 ct grün, ab 35 ct rot, dazwischen grau) wurde schon berechnet, aber die Schriftfarbe der Beschriftung wurde von der Stylesheet-Regel des Widgets überschrieben - der Preis stand immer in Dunkelblau. Die Farbe wird jetzt als Inline-Style gesetzt und nutzt dieselben Farbvariablen wie der Chart (hell/dunkel passend). Die Grenzwerte 25/35 ct gelten wie im Chart jeweils inklusive. Die violette Stufe des Charts (ab 80 ct) gibt es beim Preis über dem Mast nicht - dort bleibt es bei rot.
+
+## 0.0.45.252
+
+* **Neuer Aktionsstatus „abgelöst“: Batterie-Aktionen und Heizungs-Solltemperaturen werden abgelöst statt beendet und neu gestartet.** Löst am Stundenwechsel (oder durch einen neuen Optimierungslauf) eine Batterie-Aktion eine andere Batterie-Aktion ab (Netzladen, Entladen verschieben, Laden verschieben untereinander und innerhalb desselben Typs mit neuem Zielwert), wird die alte nicht mehr beendet - bisher setzte „Aktion beenden“ Modus und Limits auf den Ruhewert, nur damit der Start der neuen sie sofort wieder umstellte. Die alte Aktion bekommt den Status „abgelöst“ (Log: „abgelöst durch …“), die neue startet einfach. Damit dabei nichts vom Zustand der alten stehen bleibt (z. B. Modus „Netzladen“ oder Entladelimit 0 W), setzt der Start einer ablösenden Batterie-Aktion die übrigen Limits/den Modus auf den Ruhewert („Max. Ladeleistung“), aber nur, wenn sie davon abweichen. Bei der Heizung wird eine neue Solltemperatur ebenfalls direkt geschrieben (z. B. 23 → 20 °C), ohne Zwischenschritt über den Ruhewert. Übernimmt keine andere Aktion (oder ist deren Aktionstyp ausgeschaltet), wird wie bisher regulär beendet. Entfällt eine laufende Batterie-Aktion durch einen neuen Lauf, wird erst nach allen Batterie-Abgleichen entschieden, ob eine andere sie ablöst oder wirklich beendet wird.
+
+## 0.0.45.251
+
+* **Batterie-Aktionen: fehlgeschlagene Starts/Enden werden alle 30 Sekunden wiederholt (erste 15 Minuten), Ersatz-Aktion startet sofort.** (1) Schlägt der Start oder das Beenden einer Batterie-Aktion fehl (z. B. weil die Integration zum Wechselrichter kurz „unavailable“ ist), wird alle 30 s bis zu 15 Minuten nach dem ersten Fehler neu versucht; danach wie bisher im 15-Minuten-Poll, solange die Aktion läuft. Bei Wiederholungen gibt es keine weitere Push-Nachricht je Versuch und keine 30-s-Wartezeit auf „unavailable“-Entitäten; dieselbe Fehlermeldung steht nur einmal im Log. (2) Am Stundenwechsel wurde ein fehlgeschlagener Start/Beenden bisher trotzdem als erledigt vorgemerkt und nie wiederholt - jetzt wird er wie im Poll behandelt. (3) Beendet ein neuer Optimierungslauf eine laufende Aktion (z. B. „Batterie netzladen“ wird durch eine neu berechnete ersetzt), startet der Ersatz sofort statt erst beim nächsten Viertelstunden-Poll (vorher bis zu 15 Minuten ohne Steuerung: Modus und Limits waren zurückgesetzt). (4) Stundenwechsel, Poll, Wiederholungen und Sofortstart laufen nacheinander, nie gleichzeitig, damit keine Aktion doppelt gestartet wird.
+
+## 0.0.45.250
+
+* **Fix: Am Stundenwechsel läuft das Beenden der alten Aktion jetzt immer vor dem Start der neuen.** Bisher wurden Start und Ende pro Aktionstyp nacheinander abgearbeitet, je nach Reihenfolge im Speicher also manchmal erst der Start der neuen und danach das Beenden der alten Batterie-Aktion. Da „Batterie-Aktion beenden“ Modus und Limits zurücksetzt, überschrieb es den gerade gesetzten Start (z. B. Netzladen-Limit 600 W um 04:00:00, um 04:00:21 wieder auf dem Maximum - der Speicher lud bis zum nächsten Poll unbegrenzt; oder „Entladen verschieben“ 0 W um 03:00:00, 21 s später zurückgesetzt). Jetzt werden im stündlichen Wechsel und im 15-Minuten-Poll zuerst alle Enden (über alle Aktionstypen), dann alle Starts ausgeführt. Es gibt weiterhin immer nur eine Batterie-Aktion zur selben Zeit - geändert ist nur die Reihenfolge der Ausführung.
+
+## 0.0.45.249
+
+* **Zurückgenommen: „Kein Limit“ der Batterie wieder aus der Eingabe „Max. Ladeleistung (kW)“ statt aus dem `max`-Attribut der Entität (Änderung aus 0.0.45.234).** Das `max` der Lade-/Entladeleistungs-Entitäten ist bei manchen Integrationen nicht die echte Leistungsgrenze, sondern nur der erlaubte Eingabebereich - bei SolarEdge z. B. 1.000.000 W statt der tatsächlichen 5.000 W. „Batterie-Aktion beenden“ setzte dort die Limits dadurch auf 1.000.000 W. Das Konfigurationsfeld „Max. Ladeleistung (kW)“ ist deshalb wieder da und wird für das Zurücksetzen der Limits, die Abweichungsüberwachung und die Deckelung von „Batterie netzladen“ genutzt (jeweils zusätzlich auf das `max` der Entität begrenzt, damit Home Assistant den Wert annimmt). **Bitte den Wert in der Konfiguration (Batterie-Kachel) kontrollieren bzw. neu eintragen** - ohne Wert werden beim Beenden keine Limits zurückgesetzt. Die Verfügbarkeits-Hinweise aus 0.0.45.235 bleiben.
+
+## 0.0.45.248
+
+* **Gerätesteuerung: Aktionen mit Fehler zeigen „Fehler“ und bleiben rot.** Bisher war die Karte nur rot, solange der aktuelle Status „Fehler“ war; klappte das Beenden/Starten beim nächsten Poll doch noch (z. B. nach einem kurzen Verbindungsabbruch zum Wechselrichter), stand sie wieder als normal „beendet“ da und der Fehler war nur im Log zu finden. Jetzt merkt sich die Aktion dauerhaft, dass sie auf einen Fehler gelaufen ist (neues Feld „Had Error“): die Karte bleibt rot umrandet und zeigt als Status „Fehler“ statt „beendet“; der Fehlertext steht im aufklappbaren Log. Gilt auch für bereits gespeicherte Aktionen mit einem „Fehler beim Starten/Beenden“ im Log. Aktive/geplante Aktionen behalten ihren Status-Text, werden aber ebenfalls rot umrandet.
+
+## 0.0.45.247
+
+* **Einsatzplan: „Eigenverbrauch“ nach der üblichen Definition berechnet.** Der Wert ist jetzt der Anteil der genutzten PV-Erzeugung, der nicht ins Netz eingespeist wird: (1 − Σ Einspeisung ÷ Σ genutzte PV) × 100, aus den Optimierer-Spalten `PV_GR` und `PV_sum_44`. PV, die in die Batterie geladen wird, zählt damit sofort als Eigenverbrauch. Bisher war es (Verbrauch − Netzbezug) ÷ PV-Prognose: eingespeicherte PV wurde erst bei der späteren Entladung gezählt (blieb Energie am Tagesende im Speicher, fehlte sie), Netzladen der Batterie wurde abgezogen und die PV-Prognose roh (vor Wechselrichterverlusten) als Nenner genommen - das ergab oft einen deutlich zu niedrigen Wert (z. B. 74 % für einen PV-starken Tag). Fehlen die Spalten (ältere Läufe), gilt weiter die alte Formel. „Autarkie“ und die übrigen Kennzahlen sind unverändert.
+
+## 0.0.45.246
+
+* **Warmwasser-Chart: gleichbleibende Verläufe grau statt grün.** Bisher wurde jedes Linienstück grün, sobald der Wert auch nur minimal stieg (Sensorrauschen/Rundungsdifferenzen im Zehntelgradbereich). Jetzt ist ein Stück nur noch bei einem Anstieg von mehr als 0,5 °C je Stunde grün (Aufheizen); darunter bleibt es grau, ein Abfall um 1 °C oder mehr bleibt rot. Gilt für Historie und Prognose, auch für die Ansicht ohne Ist-Vergleich. Die anderen Charts (Raumtemperatur, Ladestände) sind unverändert.
+
+## 0.0.45.245
+
+* **Stromtarif Modul 3, Preis-Prüfzeilen: Börse brutto und netto, zwei Nachkommastellen.** Die Zeile zeigt jetzt z. B. „heute 21-22 Uhr: Fix 27,54 + Börse 23,82 brutto (20,02 netto) = 51,36 ct/kWh“. Der Nettowert ist der Börsenpreis ohne Mehrwertsteuer - so weisen ihn andere Apps (z. B. Tibber) als Spotpreis aus; gerechnet wird mit dem Bruttowert. Alle Werte mit zwei Nachkommastellen, damit die Summe ohne Rundungsabweichung aufgeht (vorher z. B. 27,5 + 23,8 = „51,4“).
+
+## 0.0.45.244
+
+* **Stromtarif Modul 3: Reihenfolge der Tarifstufen-Felder.** Die drei Felder „Fixe Preisbestandteile“ stehen jetzt in der Reihenfolge Niedertarif, Standardtarif, Hochtarif (vorher Niedertarif, Hochtarif, Standardtarif). Nur die Anordnung ändert sich.
+
+## 0.0.45.243
+
+* **Stromtarif Modul 3, Preis-Prüfzeilen: nie die erste oder letzte Stunde eines Zeitfensters.** Beginnt oder endet ein Tarif mitten in einer Stunde, ist der Preis der Randstunde gemischt. Deshalb zeigen die Zeilen jetzt für ein künftiges Fenster dessen zweite Stunde (hat es nur eine, diese), für ein zurückliegendes die vorletzte; liegt die laufende Stunde im Fenster, bleibt sie, solange sie keine Randstunde ist (sonst gilt dieselbe Regel). Ein Fenster ist eine zusammenhängende Folge von Stunden derselben Tarifstufe am heutigen Tag. Nur die Anzeige ändert sich, nicht die Preisberechnung für den Optimierer.
+
+## 0.0.45.242
+
+* **Stromtarif-Zeitfenster: Liste übersichtlich nach Wochentag und Uhrzeit sortiert.** Die eingetragenen Zeitfenster stehen nicht mehr in Eingabereihenfolge durcheinander, sondern als ein Block je Wochentag (Montag bis Sonntag), darin nach Uhrzeit sortiert, z. B. „Montag: 0 - 6 Uhr, NT | 17 - 20 Uhr, HT | 22 - 24 Uhr, NT“. Nur die Anzeige ist sortiert, an den gespeicherten Daten und der Preisberechnung ändert sich nichts; Löschen entfernt weiterhin genau das angeklickte Zeitfenster.
+
+## 0.0.45.241
+
+* **Stromtarif-Zeitfenster: mehrere Wochentage auf einmal wählen.** Die Tagesauswahl im Zeitfenster-Editor (Hoch-/Niedertarif und Modul 3) ist jetzt ein Dropdown mit Häkchen statt einer Einzelauswahl, mit Schnellwahl „Mo-Fr“, „Sa-So“ und „Alle“. Beim Hinzufügen entsteht für jeden gewählten Tag ein eigenes Zeitfenster (gleiche Uhrzeiten, gleicher Tarif) - das gespeicherte Format ist unverändert. Überschneidet sich auch nur ein Tag mit einem bestehenden Fenster, wird kein Fenster hinzugefügt und die Meldung nennt das kollidierende. Ohne gewählten Tag wird die Auswahl rot markiert.
+
+## 0.0.45.240
+
+* **Add-on-Beschreibung: doppelter Schlusspunkt entfernt.** Home Assistant hängt beim Anzeigen der Beschreibung selbst einen Punkt an, die Beschreibung in `config.yaml` endete ebenfalls mit einem - im Add-on-Store stand dadurch „Batteriesteuerung..“.
+
+## 0.0.45.239
+
+* **Stromtarif „Dynamischer Tarif + variable Netzentgelte (Modul 3)“: klarere Eingabe und Preisprüfung je Tarifstufe.** (1) Die drei Felder heißen jetzt „Fixe Preisbestandteile, Niedertarif / Hochtarif / Standardtarif (brutto)“ - gemeint ist, wie bisher gerechnet, der gesamte Aufschlag auf den Börsenpreis (zeitvariables Netzentgelt plus Abgaben, Umlagen, Stromsteuer, Lieferantenmarge und Mehrwertsteuer), nicht nur das Netzentgelt; Tooltips und Hinweistext sagen das jetzt auch. (2) Reihenfolge: erst die Zeitfenster und Quartale, dann die drei Tarifstufen. (3) Hinter jedem der drei Felder steht der heutige Gesamtpreis einer passenden Stunde, z. B. „heute 18-19 Uhr: Fix 18,0 + Börse 12,3 = 30,3 ct/kWh“ - die laufende Stunde, wenn sie in dieser Tarifstufe liegt, sonst die nächste spätere, sonst die zuletzt zurückliegende. Gibt es heute keine Stunde in dieser Stufe, steht dort „heute kein Zeitfenster“, bzw. „gilt im aktuellen Quartal nicht“, wenn das aktuelle Quartal nicht gewählt ist. Es ist eine Stunde statt einer Viertelstunde, weil die Strombörse (Awattar) nur Stundenpreise liefert und die Zeitfenster stundengenau sind. Die Anzeige aktualisiert sich beim Tippen sowie beim Ändern von Zeitfenstern und Quartalen. An der Preisberechnung für den Optimierer ändert sich nichts.
+
 ## 0.0.45.238
 
 * **Fix: Aktionsliste (Gerätesteuerung) konnte komplett leer werden - inklusive aller historischen Aktionen.** Ursache: Der lokale Aktions-Speicher wurde beim Schreiben zuerst gekürzt und dann neu befüllt, und ein nicht lesbarer Speicher galt als „leer". Wurde er genau dann gelesen (parallel laufender Job) oder brach das Schreiben durch einen Neustart/ein Update ab, schrieb der nächste Optimierungslauf bzw. Stundenwechsel die leere Liste zurück - alle Aktionen waren weg. Jetzt wird atomar geschrieben (temporäre Datei, dann austauschen), Lesen und Schreiben sind gegeneinander gesperrt, die vorherige Fassung bleibt als Sicherungskopie (`computed_actions.json.bak`) erhalten, und ein defekter Speicher wird aus dieser Kopie wiederhergestellt statt als leer behandelt. Bereits verlorene Aktionen kommen dadurch nicht zurück.
+
+## 0.0.45.237
+
+* **Konfiguration: Warnung am Feld „Max. Vorlauftemperatur (°C)“, wenn die Warmwasser-Entität weniger annimmt.** Liegt der eingetragene Wert über dem Maximum der zugeordneten Warmwasser-Solltemperatur-Entität (`max` bei number-, `max_temp` bei climate-Entitäten), wird das Feld rot markiert, der Grund steht direkt darunter und zusätzlich in der Fehlerkarte oben (mit Sprung zum Feld). Hintergrund: Der Optimierer plant dann Zieltemperaturen, die die Wärmepumpe ablehnt, und die Aktion „Warmwasser“ schlägt fehl. Nur ein Hinweis - an der Steuerung und an den Optimierungsdaten ändert sich nichts. Ist das Maximum nicht lesbar, erscheint keine Warnung. Die Heizungs-Solltemperatur wird nicht verglichen (das ist eine Raumtemperatur, keine Vorlauftemperatur).
+
+## 0.0.45.236
+
+* **Kleine Textanpassungen** (Nutzer-Vorgabe): Im Testergebnis von „Batterie netzladen“ heißt die Anzeige jetzt „Ladeleistung“ statt „Limit Ladeleistung“. Die Karte „Ersparnis Haushaltsstrom / Batterie“ in der Gerätesteuerung zeigt keinen Status („aktiv“/„beendet“) mehr, da sie keine echte gestartete oder beendete Aktion ist.
+
+## 0.0.45.235
+
+* **Fehlermeldungen nennen jetzt die tatsächliche Ursache.** (1) Batterie-Steuerung: Fällt eine Entität erst während der Wiederholversuche aus (z. B. Integration verliert die Verbindung zum Wechselrichter), wird sie in der Meldung jetzt ebenfalls als „nicht verfügbar (unavailable)" genannt - bisher stand dort nur die zuletzt geprüfte Entität, obwohl mehrere Felder gescheitert waren. (2) Warmwasser-Solltemperatur: Die Meldung „Solltemperatur konnte nicht auf X °C gesetzt werden" enthält jetzt in Klammern den Grund (Fehlertext von Home Assistant, Entität nicht verfügbar oder Entität steht unverändert auf dem alten Wert) - bisher stand das nur im Add-on-Log. Gilt auch für das Zurücksetzen und den Test-Button. Am Verhalten der Steuerung selbst ändert sich nichts.
+
+## 0.0.45.234
+
+* **Batterie: „kein Limit" ist jetzt das Maximum der jeweiligen Entität - das Konfigurationsfeld „Max. Ladeleistung (kW)" entfällt.** „Batterie-Aktion beenden" setzt Entladeleistung, Netz-Ladeleistung und PV-Ladeleistung auf das `max`-Attribut der jeweiligen Home-Assistant-Entität zurück (statt auf einen einzigen, vom Nutzer eingetragenen Wert, der für die Lade-/Entladeleistungs-Entitäten nicht passen musste und dessen zweite Verwendung im Tooltip nie erklärt war). Nicht zugeordnete Limit-Entitäten werden dabei übersprungen, ein nicht lesbares Maximum führt zu einer ausdrücklichen Fehlermeldung. Dieselbe Quelle gilt für die Abweichungsüberwachung (erwarteter Ruhewert) und für die Deckelung des Zielwerts von „Batterie netzladen" (Maximum der Netz-Ladeleistungs-Entität, einmal je Berechnung gelesen). Ein bereits eingetragener Wert in bestehenden Konfigurationen wird nicht mehr ausgewertet.
 
 ## 0.0.45.233
 

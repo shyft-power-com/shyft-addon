@@ -177,3 +177,4 @@ def test_time_weighted_buckets_converts_watts_and_stops_at_now():
     actual = sut._time_weighted_buckets(events, datetime.fromisoformat("2026-09-28T10:10:00+00:00"))
 
     assert actual == [PeriodElement("2.0000", datetime.fromisoformat("2026-09-28T10:00:00+00:00"))]
+

@@ -272,8 +272,8 @@ class HomeAssistantAdapter:
             return message[:400] or None
         return None
 
-    def _ws_command(self, ws, msg_id, command_type):
-        ws.send(json.dumps({"id": msg_id, "type": command_type}))
+    def _ws_command(self, ws, msg_id, command_type, payload=None):
+        ws.send(json.dumps({"id": msg_id, "type": command_type, **(payload or {})}))
         response = json.loads(ws.recv())
         if not response.get("success"):
             raise Exception(f"Home Assistant websocket command {command_type} failed: {response}")

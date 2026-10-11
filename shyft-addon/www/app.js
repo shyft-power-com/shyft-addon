@@ -14,6 +14,7 @@ const notificationTargetsUri = insideHomeAssistant + "/notification-targets";
 const servicesUri = insideHomeAssistant + "/services";
 const systemHealthUri = insideHomeAssistant + "/system-health";
 const actionTestStatusUri = insideHomeAssistant + "/actions/test-status";
+const actionTestResultsUri = insideHomeAssistant + "/actions/test-results";
 let configData = {}
 let integrationsData = {integrations: [], entityMap: {}};
 let integrationDomainHints = {};
@@ -24,6 +25,8 @@ let notificationTargetOptions = [];
 // dieses Aktionstyps noch zur aktuellen Konfiguration passt (Fingerprint-Vergleich serverseitig,
 // siehe _action_type_fingerprint) - Grundlage fuer den dauerhaften gruenen Haken der Testen-Zeilen.
 let actionTestStatusMap = {};
+// ready_key -> {ok, at, label}: Ergebnis + Zeitpunkt des letzten Tests (siehe /actions/test-results)
+let actionTestResultsMap = {};
 
 const helpinformation = {
     'electricity_grid_power_sensors': {
@@ -129,6 +132,30 @@ const helpinformation = {
 
 }
 
+// Heizstab-Kachel: dieselben Sensoren wie bei der Waermepumpe (gleiche Schluessel, die hinterlegten Werte bleiben erhalten), nur anders
+// beschriftet - plus die An-/Aus-Entitaet des Heizstabs (heating_rod_switch).
+const HEATING_ROD_SWITCH_KEY = 'heating_rod_switch';
+const heatingRodHelpInformation = {
+    ...helpinformation,
+    'heatpump_dhw_tank_temp': {
+        label: 'Temperatur Warmwassertank',
+        description: ' Die aktuelle Temperatur im Warmwassertank (in °C), den dein Heizstab erwärmt.'
+    },
+    'heatpump_dhw_target_temp': {
+        label: 'Warmwasser: Solltemperatur (°C)',
+        description: ' Die Home-Assistant-Entity (number oder climate), an der die Ziel-/Solltemperatur des Warmwassers eingestellt ist. Daraus leitet Shyft die Untergrenze für die Warmwasserplanung ab.'
+    },
+    [HEATING_ROD_SWITCH_KEY]: {
+        label: 'Heizstab ein-/ausschalten',
+        description: ' Die An-/Aus-Entität (z. B. ein Schalter oder Relais) aus deinem Heizstab-Gerät, über die Shyft den Heizstab ein- und ausschaltet.'
+    },
+};
+
+// Beschriftung/Beschreibung der Sensoren je Kachel (nur die Heizstab-Kachel weicht ab).
+function sectionHelpInformation(section) {
+    return section.key === 'heizstab' ? heatingRodHelpInformation : helpinformation;
+}
+
 const actorHelpInformation = {
     'pv_feed_in_limit': {
         label: 'PV: Einspeisung begrenzen',
@@ -203,6 +230,8 @@ const SENSOR_ENTITY_FILTERS = {
     'heatpump_dhw_target_temp': {type: 'writable_temperature'},
     'heatpump_dhw_activated': {type: 'state_on_off'},
     'heatpump_dhw_on_off': {type: 'state_on_off'},
+    // Das Addon SCHALTET hierueber den Heizstab: settable An-/Aus-Entitaet (Schalter/Relais/input_boolean).
+    [HEATING_ROD_SWITCH_KEY]: {type: 'domain', values: ['switch', 'input_boolean', 'light']},
     'heatpump_heating_target_temp_normal': {type: 'device_class', value: 'temperature'},
     'heatpump_heating_activated': {type: 'state_on_off_or_mode'},
     // Nur Leistungssensoren in W/kW (device_class 'power' liess z.B. auch Einheiten-lose Entitaeten durch)
@@ -237,6 +266,7 @@ const SENSOR_MATCH_KEYWORDS = {
     'heatpump_dhw_target_temp': ['ww_soll', 'dhw_target', 'warmwasser_soll', 'boiler_target', 'hot_water_target'],
     'heatpump_dhw_activated': ['ww', 'dhw', 'warmwasser', 'einmalige', 'one_time', 'boost'],
     'heatpump_dhw_on_off': ['ww', 'dhw', 'warmwasser', 'boiler'],
+    [HEATING_ROD_SWITCH_KEY]: ['heizstab', 'heating_rod', 'boiler', 'heater', 'relay', 'relais', 'schalter', 'switch'],
     'heatpump_heating_target_temp_normal': ['soll', 'target', 'zieltemperatur', 'normaltemperatur', 'raumsoll'],
     'heatpump_heating_activated': ['heizung', 'heating', 'heizen', 'heat'],
     'heatpump_current_power_elect': ['leistung', 'power', 'elektrisch', 'elect'],
@@ -276,6 +306,18 @@ const INTEGRATION_SECTIONS = [
         actions: ['battery_charge_shift_pv_surplus', 'battery_discharge_shift', 'battery_grid_charge', 'battery_action_stop'],
         requiresDeviceClass: 'power',
         hasDemo: true
+    },
+    {
+        key: 'heizstab',
+        label: 'Heizstab',
+        // Dieselben Sensor-Schluessel wie bei der Waermepumpe (Tank-Temperatur, Solltemperatur, "Heizstab aktiviert" = bisheriges
+        // "Warmwasser gerade erwaermt?") - dadurch bleiben die Werte beim saisonalen Wechsel erhalten. Dazu die An-/Aus-Entitaet.
+        // "Heizstab aktiviert" (heatpump_dhw_on_off) gibt es hier nicht als Sensorfeld: der Status kommt aus dem Schalter der Steuerung
+        // "Heizstab ein-/ausschalten" (siehe mapped_entity_id in sync_service.py).
+        sensors: ['heatpump_dhw_tank_temp', 'heatpump_dhw_target_temp', HEATING_ROD_SWITCH_KEY],
+        actions: [],
+        requiresDeviceClass: 'temperature',
+        description: 'Wenn du dein Brauchwasser ausschließlich über den Heizstab erwärmst, statt über die Wärmepumpe, dann richte ihn hier ein. Shyft steuert den Stab dann vorausschauend, je nach Warmwasserbedarf.\nWenn du den Heizstab zusätzlich zu einer anderweitig bestehenden Heizung nutzt, dann richte ihn weiter unten als "Sonstigen Verbraucher" ein. Dort wird der Heizstab rein preisgesteuert zugeschaltet.'
     },
     {
         key: 'waermepumpe',
@@ -359,6 +401,193 @@ async function getJson(url) {
     const result = await response.json();
 
     return result;
+}
+
+// Test-Popup fuer die "Testen"-Buttons der Konfigurationsseite: zeigt Zeile fuer Zeile, was der Test gerade tut
+// (Schritt, Wartezeit, aktueller Zustand der Entitaet, Ergebnis) und kann per "Abbrechen" beendet werden; nach dem
+// Ende (erfolgreich, fehlgeschlagen oder abgebrochen) bleibt es offen, bis der Nutzer es mit "Schliessen" schliesst.
+// Der Server sammelt die Zeilen unter der hier erzeugten Sitzungs-ID (Header X-Shyft-Test-Id, siehe
+// _with_test_session/test_log in app.py) und liefert sie per GET /actions/test-log/<id>; Abbrechen setzt dort nur ein
+// Flag, der Test raeumt danach selbst auf (Sollwert/Limits zuruecksetzen). Rueckgabe:
+//   headers          - an JEDEN Test-Request dieses Popups haengen (fetch(..., {headers: {...popup.headers}}))
+//   log(text, level) - eigene (clientseitige) Zeile, level: info|ok|warn|error|wait
+//   isCancelRequested()
+//   finish(result)   - Test ist zu Ende: result {success, cancelled, message}; holt zuerst noch Zeilen von
+//                      Hintergrundschritten (z.B. Zuruecksetzen), zeigt dann das Ergebnis und "Schliessen"
+//   closed           - Promise, die beim Schliessen des Popups aufgeloest wird
+// options.sessionId: an einen bereits laufenden Test anhaengen (z.B. Heizungs-Test nach Seiten-Neuladen).
+const TEST_POPUP_LEVEL_ICONS = {ok: '✓', error: '✗', warn: '!', wait: '…', info: '•', result: '►'};
+
+function openTestPopup(title, options = {}) {
+    const sessionId = options.sessionId || ('t' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+    const logUri = insideHomeAssistant + '/actions/test-log/' + sessionId;
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    const overlay = document.createElement('div');
+    overlay.className = 'testPopupOverlay';
+    const box = document.createElement('div');
+    box.className = 'testPopup';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    const heading = document.createElement('h3');
+    heading.className = 'testPopupTitle';
+    heading.textContent = title;
+    const logEl = document.createElement('div');
+    logEl.className = 'testPopupLog';
+    const footer = document.createElement('div');
+    footer.className = 'testPopupFooter';
+    const statusEl = document.createElement('span');
+    statusEl.className = 'testPopupStatus';
+    statusEl.textContent = 'Test läuft …';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.textContent = 'Abbrechen';
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.textContent = 'Schließen';
+    closeButton.hidden = true;
+    footer.appendChild(statusEl);
+    footer.appendChild(cancelButton);
+    footer.appendChild(closeButton);
+    box.appendChild(heading);
+    box.appendChild(logEl);
+    box.appendChild(footer);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    // Fokus ohne Scrollen setzen und merken, wohin er beim Schliessen zurueckkehrt (Testen-Button): das Popup darf die Seite
+    // dahinter weder beim Oeffnen noch beim Schliessen verschieben.
+    const previouslyFocused = document.activeElement;
+    cancelButton.focus({preventScroll: true});
+
+    let nextIndex = 0;
+    let finished = false;
+    let cancelRequested = false;
+    let resolveClosed = () => {};
+    const closed = new Promise(resolve => { resolveClosed = resolve; });
+
+    function addLine(line) {
+        const level = line.level || 'info';
+        const row = document.createElement('div');
+        row.className = 'testPopupLine level-' + level;
+        const time = document.createElement('span');
+        time.className = 'testPopupTime';
+        time.textContent = line.t || new Date().toLocaleTimeString('de-DE');
+        const icon = document.createElement('span');
+        icon.className = 'testPopupIcon';
+        icon.textContent = TEST_POPUP_LEVEL_ICONS[level] || '•';
+        const text = document.createElement('span');
+        text.className = 'testPopupText';
+        text.textContent = line.text;
+        row.appendChild(time);
+        row.appendChild(icon);
+        row.appendChild(text);
+        logEl.appendChild(row);
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    async function pollOnce() {
+        try {
+            const result = await getJson(logUri + '?since=' + nextIndex);
+            for (const line of result.lines || []) addLine(line);
+            nextIndex = result.next || nextIndex;
+            return result;
+        } catch (err) {
+            console.log(err);
+            return null;
+        }
+    }
+
+    // Abfragen nacheinander, damit keine Zeile doppelt erscheint (Intervall + finish() koennten sich ueberlappen).
+    let pollChain = Promise.resolve();
+    let pollQueued = false;
+    function pollSerial() {
+        pollChain = pollChain.then(pollOnce);
+        return pollChain;
+    }
+    const timer = setInterval(() => {
+        if (pollQueued || finished) return;
+        pollQueued = true;
+        pollSerial().finally(() => { pollQueued = false; });
+    }, 1000);
+
+    function close() {
+        clearInterval(timer);
+        document.removeEventListener('keydown', onKeyDown);
+        // Scrollposition der Seite merken und nach dem Entfernen des Popups wiederherstellen (Entfernen des fokussierten
+        // Schliessen-Buttons bzw. Layout-Aenderungen waehrend des Tests duerfen die Seite nicht springen lassen).
+        const scrollX = window.scrollX, scrollY = window.scrollY;
+        overlay.remove();
+        if (previouslyFocused && previouslyFocused.isConnected && typeof previouslyFocused.focus === 'function') {
+            previouslyFocused.focus({preventScroll: true});
+        }
+        window.scrollTo(scrollX, scrollY);
+        requestAnimationFrame(() => window.scrollTo(scrollX, scrollY));
+        resolveClosed();
+    }
+    function onKeyDown(event) {
+        if (event.key === 'Escape' && finished) close();
+    }
+    document.addEventListener('keydown', onKeyDown);
+    closeButton.addEventListener('click', close);
+
+    cancelButton.addEventListener('click', async () => {
+        cancelRequested = true;
+        cancelButton.disabled = true;
+        cancelButton.textContent = 'Wird abgebrochen …';
+        try {
+            const response = await fetch(logUri + '/cancel', {method: 'POST'});
+            if (!response.ok) {
+                // Der Server kennt die Sitzung (noch) nicht - der Test-Request ist evtl. noch nicht angekommen: nochmal klicken.
+                cancelRequested = false;
+                cancelButton.disabled = false;
+                cancelButton.textContent = 'Abbrechen';
+            }
+        } catch (err) {
+            console.log(err);
+            cancelRequested = false;
+            cancelButton.disabled = false;
+            cancelButton.textContent = 'Abbrechen';
+        }
+    });
+
+    async function finish(result) {
+        if (finished) return;
+        finished = true;
+        const outcome = result || {success: false, message: 'Der Test konnte nicht abgeschlossen werden (Verbindung zum Add-on unterbrochen?)'};
+        statusEl.textContent = 'Räume auf …';
+        cancelButton.hidden = true;  // ab hier laeuft nur noch das Aufraeumen/Zuruecksetzen - das soll nicht mehr unterbrochen werden
+        // Hintergrundschritte des Tests (z.B. Zuruecksetzen der Batterie-Entitaeten) laufen nach der Antwort noch eine Weile.
+        for (let i = 0; i < 20; i++) {
+            const state = await pollSerial();
+            if (!state || !state.busy) break;
+            await sleep(1000);
+        }
+        cancelButton.hidden = true;
+        closeButton.hidden = false;
+        closeButton.focus({preventScroll: true});
+        if (outcome.cancelled) {
+            statusEl.textContent = 'Test abgebrochen';
+            statusEl.className = 'testPopupStatus status-warn';
+            addLine({level: 'result', text: 'Ergebnis: Test abgebrochen.' + (outcome.message && outcome.message !== 'Test abgebrochen' ? ' ' + outcome.message : '')});
+        } else if (outcome.success) {
+            statusEl.textContent = 'Test erfolgreich';
+            statusEl.className = 'testPopupStatus status-ok';
+            addLine({level: 'result', text: 'Ergebnis: Test erfolgreich.'});
+        } else {
+            statusEl.textContent = 'Test fehlgeschlagen';
+            statusEl.className = 'testPopupStatus status-error';
+            addLine({level: 'result', text: 'Ergebnis: Test fehlgeschlagen' + (outcome.message ? ' – ' + outcome.message : '.')});
+        }
+    }
+
+    return {
+        id: sessionId,
+        headers: {'X-Shyft-Test-Id': sessionId},
+        log: (text, level = 'info') => addLine({level, text}),
+        isCancelRequested: () => cancelRequested,
+        finish,
+        closed,
+    };
 }
 
 // Historie-abgeleitete Formsignale (negativ? Tag/Nacht-Muster wie PV? bidirektional wie Netz/
@@ -486,6 +715,10 @@ const ACTION_TYPE_TOGGLE_KEYS = new Set([
     'battery_discharge_shift', 'battery_grid_charge', 'hot_water', 'car_charge_start', 'consumer_on'
 ]);
 
+// Aktionstypen, deren Steuerungs-Schalter weiterhin auf der Konfigurationsseite stehen: die zwei SPiNE-Gateway-Automationen
+// (standardmaessig aus, nur fuer wenige Nutzer) - alle anderen Schalter stehen auf der Gerätesteuerung-Seite.
+const CONFIG_PAGE_TOGGLE_KEYS = new Set(['pv_feed_in_limit', 'consumption_limit_14a']);
+
 const NOTIFICATION_TYPES = {
     'action_start_end': 'Aktionen starten / beenden (alle)',
     'action_start_end_errors_only': 'Aktionen starten / beenden (nur bei Fehlern)',
@@ -517,7 +750,7 @@ const ACTION_NAME_TO_SECTION_KEY = {
 // Home Assistant's public, unauthenticated brand-icon CDN - the same one HA's own frontend uses
 // for integration logos in Settings -> Devices & Services, no call to the user's instance needed.
 function getActionIconUrl(actionName) {
-    const sectionKey = ACTION_NAME_TO_SECTION_KEY[actionName];
+    const sectionKey = actionName === 'Warmwasser' ? hotWaterSectionKey() : ACTION_NAME_TO_SECTION_KEY[actionName];
     if (!sectionKey) return null;
     const selectedIds = currentIntegrationSelections[sectionKey] || [];
     if (selectedIds.length === 0) return null;
@@ -756,6 +989,12 @@ async function saveConfigurationNow() {
         "electricityNetzentgeltWindows": configData["electricityNetzentgeltWindows"] ?? [],
         "electricityNetzentgeltQuarters": configData["electricityNetzentgeltQuarters"] ?? [],
         "electricitySellCent": configData["electricitySellCent"] ?? null,
+        "feedInLimitEnabled": configData["feedInLimitEnabled"] === true,
+        "feedInLimitKw": configData["feedInLimitKw"] ?? null,
+        "heatingRodControl": isHeatingRodToggleOn(),
+        "heatingRodMaxPowerKw": configData["heatingRodMaxPowerKw"] ?? null,
+        "heatingRodMaxPower": configData["heatingRodMaxPower"] ?? null,  // Altbestand (Stufen-Auswahl), nur noch Quelle fuer den Default von heatingRodMaxPowerKw
+        "heatingRodMaxTempC": configData["heatingRodMaxTempC"] ?? 95,
         // Konfig-Keys, die der Nutzer bewusst geaendert/bestaetigt hat (siehe markConfigFieldTouched) -
         // steuert den roten Rahmen um unbestaetigte Default-Felder und das Aufklappen der Kachel.
         "touchedFields": configData["touchedFields"] || [],
@@ -880,13 +1119,45 @@ function buildProblemListItem(message, sectionKey, fieldId, haLink) {
 // Pflichtfeld) ausloesen - fieldIds ist eine flache Liste aller betroffenen DOM-Ids (siehe
 // actionFailedFieldId/computeMissingRequiredFieldsWarnings). Entfernt zuerst IMMER alle bisherigen
 // Markierungen, damit ein inzwischen behobenes Feld seinen roten Rahmen auch wieder verliert.
-function applyConfigFieldErrorHighlights(fieldIds) {
+// fieldHints (optional): {fieldId: Text} - zeigt den Text zusaetzlich direkt unter dem Feld (rot), nicht
+// nur in der Fehlerkarte oben (siehe 'fieldHint' der Konfigurations-Warnungen). Auch diese Hinweise werden
+// bei jedem Aufruf zuerst entfernt.
+function applyConfigFieldErrorHighlights(fieldIds, fieldHints = {}) {
     for (const el of document.querySelectorAll('.configFieldError')) {
         el.classList.remove('configFieldError');
+    }
+    for (const el of document.querySelectorAll('.configFieldErrorRow')) {
+        el.remove();
+    }
+    for (const el of document.querySelectorAll('.configFieldErrorText')) {
+        el.remove();
     }
     for (const fieldId of fieldIds) {
         const el = document.getElementById(fieldId);
         if (el) el.classList.add('configFieldError');
+    }
+    for (const [fieldId, text] of Object.entries(fieldHints)) {
+        const el = document.getElementById(fieldId);
+        if (!el) continue;
+        const hint = document.createElement('div');
+        hint.className = 'configFieldErrorText';
+        hint.textContent = text;
+        const cell = el.closest('td');
+        const row = cell && cell.parentElement;
+        if (row && row.tagName === 'TR') {
+            // Eigene Zeile direkt unter dem Feld: wuerde der Text in der Wert-Zelle stehen, waere die Zeile hoeher und die
+            // Beschriftung links (vertikal zentriert) rutschte zwischen Eingabefeld und Fehlertext.
+            const hintRow = document.createElement('tr');
+            hintRow.className = 'configFieldErrorRow';
+            for (let i = 0; i < cell.cellIndex; i++) hintRow.appendChild(document.createElement('td'));
+            const hintCell = document.createElement('td');
+            hintCell.colSpan = Math.max(1, row.cells.length - cell.cellIndex);
+            hintCell.appendChild(hint);
+            hintRow.appendChild(hintCell);
+            row.parentNode.insertBefore(hintRow, row.nextSibling);
+        } else {
+            (cell || el.parentNode).appendChild(hint);
+        }
     }
 }
 
@@ -1089,7 +1360,8 @@ async function renderSystemHealth() {
     for (const problem of problems) {
         const availability = sensorAvailabilityProblemFieldAndSection(problem.id);
         const fieldId = actionFailedFieldId(problem.id) || deviceDeviationProblemFieldId(problem.id) || availability.fieldId;
-        if (fieldId) errorFieldIds.push(fieldId);
+        // Abweichungen (device_deviation) nur melden, das Sensorfeld nicht rot umranden: an der Sensorauswahl laesst sich nichts aendern.
+        if (fieldId && !deviceDeviationKey(problem.id)) errorFieldIds.push(fieldId);
         const sectionKey = actionFailedProblemSectionKey(problem.id) || deviceDeviationProblemSectionKey(problem.id) || availability.sectionKey;
         list.appendChild(buildProblemListItem(problem.message, sectionKey, fieldId, sensorProblemHaLink(problem.id)));
     }
@@ -1098,7 +1370,11 @@ async function renderSystemHealth() {
         list.appendChild(buildProblemListItem(warning.message, warning.sectionKey, warning.fieldId));
     }
     container.appendChild(list);
-    applyConfigFieldErrorHighlights(errorFieldIds);
+    const fieldHints = {};
+    for (const warning of warnings) {
+        if (warning.fieldId && warning.fieldHint) fieldHints[warning.fieldId] = warning.fieldHint;
+    }
+    applyConfigFieldErrorHighlights(errorFieldIds, fieldHints);
     renderDeviceNav(problems, warnings);
 }
 
@@ -1147,7 +1423,7 @@ function renderDeviceNav(problems, warnings) {
 
     for (const section of INTEGRATION_SECTIONS) {
         const currentIds = currentIntegrationSelections[section.key] || [];
-        const iconState = currentIds.length === 0 ? 'unconfigured'
+        const iconState = (currentIds.length === 0 || isSectionDisabled(section.key, currentIds)) ? 'unconfigured'
             : (failedSectionKeys.has(section.key) || warningSectionKeys.has(section.key)) ? 'error' : 'ok';
         container.appendChild(buildDeviceNavChip(section.label, section.key, iconState));
     }
@@ -1178,7 +1454,8 @@ const ACTION_FAILED_SLUG_TO_SECTION = {
 
 function actionFailedProblemSectionKey(problemId) {
     if (!problemId || !problemId.startsWith('action_failed:')) return null;
-    return ACTION_FAILED_SLUG_TO_SECTION[problemId.slice('action_failed:'.length)] || null;
+    const slug = problemId.slice('action_failed:'.length);
+    return (slug === 'warmwasser' ? hotWaterSectionKey() : ACTION_FAILED_SLUG_TO_SECTION[slug]) || null;
 }
 
 // Wie ACTION_FAILED_SLUG_TO_SECTION oben, aber auf den internen Aktions-Schluessel (nicht die
@@ -1227,6 +1504,7 @@ function resolveActionControlFieldId(actionKey) {
         return recipe.type === 'ha_automation' ? 'car_charge_ha_automation_entity' : null;
     }
     if (HOT_WATER_ACTION_KEYS.has(actionKey)) {
+        if (isHeatingRodActive()) return HEATING_ROD_SWITCH_KEY + VALUE_POSTFIX;
         const recipe = configData['hotWaterRecipe'] || {};
         return recipe.type === 'ha_automation' ? 'hot_water_ha_automation_entity' : null;
     }
@@ -1293,7 +1571,9 @@ function sensorFieldForEntityId(entityId) {
 }
 
 function sensorFieldSectionKey(sensorField) {
-    const section = INTEGRATION_SECTIONS.find(s => s.sensors.includes(sensorField));
+    // Die Warmwasser-Sensoren gehoeren zu Waermepumpe UND Heizstab - die gerade aktive Kachel gewinnt.
+    const section = INTEGRATION_SECTIONS.find(s => s.sensors.includes(sensorField) && !isSectionDisabled(s.key, currentIntegrationSelections[s.key] || []))
+        || INTEGRATION_SECTIONS.find(s => s.sensors.includes(sensorField));
     return section ? section.key : null;
 }
 
@@ -1453,6 +1733,12 @@ const loadConfiguration = async (event) => {
         } catch (err) {
             console.log(err);
             actionTestStatusMap = {};
+        }
+        try {
+            actionTestResultsMap = await getJson(actionTestResultsUri);
+        } catch (err) {
+            console.log(err);
+            actionTestResultsMap = {};
         }
 
         const allEntityOptionsElement = document.getElementById('allEntityOptions');
@@ -1692,6 +1978,7 @@ function integrationHasDeviceClass(entryId, deviceClass) {
 const SECTION_MATCH_KEYWORDS = {
     wechselrichter: ['solar', 'pv_', 'photovolt', 'inverter', 'wechselrichter', 'einspeis', 'grid_power'],
     batterie: ['batter', 'akku', 'speicher', 'powerwall', 'state_of_charge', '_soc', 'bess'],
+    heizstab: ['heizstab', 'heating_rod', 'boiler', 'heater', 'warmwasser', '_dhw', 'relay', 'relais', 'shelly', 'switch'],
     waermepumpe: ['heat_pump', 'heatpump', 'waermepumpe', 'wärmepumpe', 'thermostat', 'vorlauf', 'heizung', 'heating', 'warmwasser', '_dhw', 'flow_temp', 'hvac', 'klima'],
     auto: ['vehicle', '_car', 'ev_', 'fahrzeug', 'odometer', 'state_of_charge', '_soc'],
     wallbox: ['wallbox', 'charg', 'evse', 'ladeleist', 'ladestrom', 'charge_current', 'charging_power', 'chargepoint', 'go_e'],
@@ -1736,7 +2023,9 @@ function scoreIntegrationForSection(integration, section) {
     const nameHit = keywords.some(k => shape.haystack.some(h => h.includes(k)));
     if (nameHit) score += 2;
 
-    if (section.key === 'waermepumpe') {
+    if (section.key === 'heizstab') {
+        if (shape.entityDomains.has('switch') && nameHit) score += 4;
+    } else if (section.key === 'waermepumpe') {
         if (shape.entityDomains.has('climate') || shape.entityDomains.has('water_heater')) score += 6;
     } else if (section.key === 'batterie') {
         const hasPower = shape.deviceClasses.has('power') || shape.deviceClasses.has('energy') || shape.deviceClasses.has('battery');
@@ -1777,6 +2066,56 @@ document.addEventListener('mousedown', (event) => {
     }
 });
 
+// Schalter "Heizstab steuern" (heatingRodControl). Der Schalter ist auch ohne Geraet sichtbar und schaltbar. Ohne gespeicherten Wert
+// (Altbestand) galt frueher heatingRodEnabled, Standard an - aber nur mit Heizstab-Geraet.
+function heatingRodDeviceIds() {
+    return currentIntegrationSelections['heizstab'] ?? ((configData['integrationMappings'] || {})['heizstab'] || []);
+}
+
+function isHeatingRodToggleOn() {
+    if (typeof configData['heatingRodControl'] === 'boolean') return configData['heatingRodControl'];
+    return heatingRodDeviceIds().length > 0 && configData['heatingRodEnabled'] !== false;
+}
+
+// Heizstab-Betrieb: die Kachel "Heizstab" hat ein Geraet UND der Schalter "Heizstab steuern" ist an.
+// Dann erwaermt der Heizstab das Brauchwasser und die Waermepumpe ist deaktiviert (Spiegel von heating_rod_active in sync_service.py).
+function isHeatingRodActive() {
+    return heatingRodDeviceIds().length > 0 && isHeatingRodToggleOn();
+}
+
+// Hinweis hinter der Kachel-Ueberschrift, wenn die Kachel gerade deaktiviert ist (leer = aktiv): die Waermepumpe bei aktivem
+// Heizstab, der Heizstab bei ausgeschaltetem Schalter "Heizstab steuern". Deaktivierte Kacheln zeigen keine Details, behalten aber
+// alle hinterlegten Werte.
+function sectionDisabledNoteFor(sectionKey, selectedIds) {
+    if (sectionKey === 'waermepumpe' && isHeatingRodActive()) return ' (deaktiviert, Heizstab eingerichtet)';
+    if (sectionKey === 'heizstab' && selectedIds.length > 0 && !isHeatingRodActive()) return ' (deaktiviert)';
+    return '';
+}
+
+function isSectionDisabled(sectionKey, selectedIds) {
+    return sectionDisabledNoteFor(sectionKey, selectedIds || []) !== '';
+}
+
+// Kachel, zu der die Warmwasserbereitung gerade gehoert: der Heizstab, solange er aktiv ist, sonst die Waermepumpe.
+function hotWaterSectionKey() {
+    return isHeatingRodActive() ? 'heizstab' : 'waermepumpe';
+}
+
+// Baut alle Geraetekacheln neu auf (z.B. nach dem Umschalten Heizstab/Waermepumpe) und haelt die Scrollposition der Seite.
+// anchorId (optional): ein Element, das nach dem Neuaufbau an derselben Stelle im Bild bleiben soll (die Kacheln darueber/darunter
+// aendern ihre Hoehe, wenn eine auf- und die andere zuklappt) - z.B. der Schalter, den der Nutzer gerade bedient hat.
+function rerenderIntegrationSectionsKeepingScroll(anchorId = null) {
+    const x = window.scrollX, y = window.scrollY;
+    const anchorBefore = anchorId ? document.getElementById(anchorId) : null;
+    const anchorTop = anchorBefore ? anchorBefore.getBoundingClientRect().top : null;
+    renderIntegrationSections();
+    window.scrollTo(x, y);
+    const anchorAfter = anchorId ? document.getElementById(anchorId) : null;
+    if (anchorAfter && anchorTop !== null) window.scrollBy(0, anchorAfter.getBoundingClientRect().top - anchorTop);
+    renderSystemHealth();
+    renderControlToggles();
+}
+
 // Steuerung per Toggle deaktiviert? Dann gibt es weder Fehlermeldungen (Dashboard/Konfigurationsseite) noch ein
 // Aufklappen der Kachel wegen fehlender Einrichtung oder ausstehender Tests - die Aktion wird ja nur simuliert.
 function isActionToggleOff(toggleKey) {
@@ -1796,6 +2135,8 @@ function isEntityMappingEmpty(value) {
 // integration selected at all has nothing to show either way, so it's not forced open.
 function isSectionComplete(section, currentIds) {
     if (currentIds.length === 0) return true;
+    // Deaktivierte Kachel (Waermepumpe bei aktivem Heizstab bzw. umgekehrt): nichts zu pruefen, nichts aufzuklappen.
+    if (isSectionDisabled(section.key, currentIds)) return true;
     // Demo-Geraet braucht keine Sensor-/Actor-Zuordnung - zeigt Beispieldaten (siehe get_demo_value
     // in sync_service.py), gilt also immer als vollstaendig konfiguriert.
     if (currentIds.length === 1 && currentIds[0] === DEMO_INTEGRATION_ID) return true;
@@ -1901,6 +2242,7 @@ function computeMissingRequiredFieldsWarnings() {
         const currentIds = integrationMappings[section.key] || [];
         if (currentIds.length === 0) continue;
         if (currentIds.length === 1 && currentIds[0] === DEMO_INTEGRATION_ID) continue;
+        if (isSectionDisabled(section.key, currentIds)) continue;
 
         // {label, fieldId} statt nur eines Labels - fieldId ist die DOM-Id des konkreten
         // Eingabefelds (siehe resolveActionControlFieldId), Grundlage fuer den roten Rahmen um den
@@ -1912,7 +2254,7 @@ function computeMissingRequiredFieldsWarnings() {
         for (const key of section.sensors) {
             if (REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS.has(key)) continue;
             if (AUTO_MANAGED_CONTROLS.some(c => c.sensorField === key && isActionToggleOff(c.actionKeys[0]))) continue;
-            if (isEntityMappingEmpty(sensorMappings[key])) missing.push({label: (helpinformation[key] || {}).label || key, fieldId: key + VALUE_POSTFIX});
+            if (isEntityMappingEmpty(sensorMappings[key])) missing.push({label: (sectionHelpInformation(section)[key] || {}).label || key, fieldId: key + VALUE_POSTFIX});
         }
 
         for (const control of AUTO_MANAGED_CONTROLS) {
@@ -2147,8 +2489,16 @@ function buildElectricityTariffControl() {
         return buildConfigNumberField({label, tooltip, id, configKey, placeholder, step: '1', min: '0', unit: 'ct/kWh'});
     }
 
+    // Pruefzeilen je Tarifstufe (nur im Modus 'dynamic_variable' belegt, siehe renderPanels). Jede Eingabe/
+    // Aenderung/Klick im Panel (Felder, Zeitfenster, Quartale) loest eine entprellte Neuberechnung aus.
+    let variableTariffPreview = null;
+    for (const eventName of ['input', 'change', 'click']) {
+        panels.addEventListener(eventName, () => { if (variableTariffPreview) variableTariffPreview.scheduleRefresh(); });
+    }
+
     function renderPanels(m) {
         panels.innerHTML = '';
+        variableTariffPreview = null;
         if (m === 'fixed') {
             panels.appendChild(centField('Kosten (brutto)',
                 'Dein fester Arbeitspreis pro Kilowattstunde.',
@@ -2169,21 +2519,24 @@ function buildElectricityTariffControl() {
         } else if (m === 'dynamic_variable') {
             const note = document.createElement('p');
             note.className = 'electricityHint';
-            note.textContent = 'Die Börsenpreise (Brutto, EPEX Day-Ahead) werden automatisch von der Strombörse abgerufen. Das Netzentgelt (deckt zugleich Abgaben, Steuer und Lieferantenmarge mit ab) ist zeitvariabel (§14a, Modul 3): in den unten gewählten Quartalen gilt in den Hochtarif-Zeitfenstern der Hochtarif, in den Niedertarif-Zeitfenstern der Niedertarif und zu allen übrigen Zeiten der Standardtarif - außerhalb der gewählten Quartale durchgehend der Standardtarif. Überlappen sich zwei Zeitfenster, gilt der Hochtarif.';
+            note.textContent = 'Die Börsenpreise (Brutto, EPEX Day-Ahead) werden automatisch von der Strombörse abgerufen. Lege zuerst fest, wann welche Tarifstufe gilt (§14a, Modul 3): in den unten gewählten Quartalen gilt in den Hochtarif-Zeitfenstern der Hochtarif, in den Niedertarif-Zeitfenstern der Niedertarif und zu allen übrigen Zeiten der Standardtarif - außerhalb der gewählten Quartale durchgehend der Standardtarif. Überlappen sich zwei Zeitfenster, gilt der Hochtarif. Trag danach pro Tarifstufe alle fixen Preisbestandteile ein (zeitvariables Netzentgelt plus Abgaben, Umlagen, Stromsteuer, Lieferantenmarge und Mehrwertsteuer) - sie werden auf den jeweiligen Börsen-Stundenpreis addiert.';
             panels.appendChild(note);
-            panels.appendChild(centField('Netzentgelte, Niedertarif (brutto)',
-                'Netzentgelt (inkl. Abgaben/Steuer/Marge) in den Niedertarif-Zeitfenstern, in den gewählten Quartalen.',
-                'electricity_netzentgelt_nt_cent', 'electricityNetzentgeltNtCent', 'z.B. 7'));
-            panels.appendChild(centField('Netzentgelte, Hochtarif (brutto)',
-                'Netzentgelt (inkl. Abgaben/Steuer/Marge) in den Hochtarif-Zeitfenstern, in den gewählten Quartalen.',
-                'electricity_netzentgelt_ht_cent', 'electricityNetzentgeltHtCent', 'z.B. 18'));
             panels.appendChild(buildHtWindowEditor('electricityNetzentgeltWindows',
                 'Noch keine Zeitfenster - ohne Fenster gilt durchgehend der Standardtarif.',
                 {withTariff: true}));
-            panels.appendChild(centField('Standardtarif (brutto)',
-                'Netzentgelt (inkl. Abgaben/Steuer/Marge) zu allen Zeiten ohne Hoch-/Niedertarif-Zeitfenster sowie außerhalb der gewählten Quartale.',
-                'electricity_netzentgelt_standard_cent', 'electricityNetzentgeltStandardCent', 'z.B. 14'));
             panels.appendChild(buildNetzentgeltQuarterField());
+            const ntField = centField('Fixe Preisbestandteile, Niedertarif (brutto)',
+                'Alles, was in den Niedertarif-Zeitfenstern zum Börsenpreis dazukommt: das zeitvariable Netzentgelt plus Abgaben, Umlagen, Stromsteuer, Lieferantenmarge und Mehrwertsteuer (brutto).',
+                'electricity_netzentgelt_nt_cent', 'electricityNetzentgeltNtCent', 'z.B. 7');
+            const htField = centField('Fixe Preisbestandteile, Hochtarif (brutto)',
+                'Alles, was in den Hochtarif-Zeitfenstern zum Börsenpreis dazukommt: das zeitvariable Netzentgelt plus Abgaben, Umlagen, Stromsteuer, Lieferantenmarge und Mehrwertsteuer (brutto).',
+                'electricity_netzentgelt_ht_cent', 'electricityNetzentgeltHtCent', 'z.B. 18');
+            const standardField = centField('Fixe Preisbestandteile, Standardtarif (brutto)',
+                'Alles, was zu allen Zeiten ohne Hoch-/Niedertarif-Zeitfenster sowie außerhalb der gewählten Quartale zum Börsenpreis dazukommt: das Netzentgelt plus Abgaben, Umlagen, Stromsteuer, Lieferantenmarge und Mehrwertsteuer (brutto).',
+                'electricity_netzentgelt_standard_cent', 'electricityNetzentgeltStandardCent', 'z.B. 14');
+            panels.append(ntField, standardField, htField);
+            variableTariffPreview = buildNetzentgeltTariffPreviews({nt: ntField, ht: htField, standard: standardField});
+            variableTariffPreview.refresh();
         } else {
             const note = document.createElement('p');
             note.className = 'electricityHint';
@@ -2237,6 +2590,120 @@ function htWindowsOverlap(a, b) {
     return false;
 }
 
+const WEEKDAY_SHORT_NAMES = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+
+// Kurztext der gewaehlten Wochentage fuer den Picker-Button: mindestens drei zusammenhaengende Tage als
+// Bereich ("Mo-Fr"), sonst Aufzaehlung ("Mo, Mi"); alle sieben = "Alle Tage"; keiner = Platzhalter.
+function summarizeWeekdays(days) {
+    const sorted = [...days].sort((a, b) => a - b);
+    if (sorted.length === 0) return 'Wochentage wählen';
+    if (sorted.length === 7) return 'Alle Tage';
+    const parts = [];
+    let i = 0;
+    while (i < sorted.length) {
+        let j = i;
+        while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
+        parts.push(j - i >= 2
+            ? WEEKDAY_SHORT_NAMES[sorted[i]] + '-' + WEEKDAY_SHORT_NAMES[sorted[j]]
+            : sorted.slice(i, j + 1).map(d => WEEKDAY_SHORT_NAMES[d]).join(', '));
+        i = j + 1;
+    }
+    return parts.join(', ');
+}
+
+// Dropdown mit Haekchen fuer die Wochentage eines Tarif-Zeitfensters (mehrere Tage auf einmal; fuer jeden
+// gewaehlten Tag entsteht beim Hinzufuegen ein eigenes Fenster, siehe buildHtWindowEditor). Nutzt die
+// Klassen/das Schliessverhalten der Geraeteauswahl (openIntegrationPicker). Mit Schnellwahl
+// "Mo-Fr" / "Sa-So" / "Alle".
+function buildWeekdayMultiPicker() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'integrationPicker weekdayPicker';
+
+    const button = document.createElement('div');
+    button.className = 'integrationPickerButton';
+    button.setAttribute('role', 'button');
+    button.tabIndex = 0;
+    button.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            button.click();
+        }
+    });
+    const buttonText = document.createElement('span');
+    buttonText.className = 'integrationPickerButtonText';
+    const buttonArrow = document.createElement('span');
+    buttonArrow.className = 'integrationPickerButtonArrow';
+    buttonArrow.textContent = '▾';
+    button.append(buttonText, buttonArrow);
+    wrapper.appendChild(button);
+
+    const panel = document.createElement('div');
+    panel.className = 'integrationPickerPanel';
+    panel.hidden = true;
+    wrapper.appendChild(panel);
+
+    const selected = new Set();
+    const checkboxes = [];
+
+    function sync() {
+        buttonText.textContent = summarizeWeekdays(selected);
+        checkboxes.forEach((cb, day) => { cb.checked = selected.has(day); });
+        button.classList.remove('configFieldError');
+    }
+
+    const shortcuts = document.createElement('div');
+    shortcuts.className = 'weekdayPickerShortcuts';
+    for (const [label, days] of [['Mo-Fr', [0, 1, 2, 3, 4]], ['Sa-So', [5, 6]], ['Alle', [0, 1, 2, 3, 4, 5, 6]]]) {
+        const shortcut = document.createElement('button');
+        shortcut.type = 'button';
+        shortcut.className = 'weekdayPickerShortcut';
+        shortcut.textContent = label;
+        shortcut.addEventListener('click', () => {
+            selected.clear();
+            days.forEach(d => selected.add(d));
+            sync();
+        });
+        shortcuts.appendChild(shortcut);
+    }
+    panel.appendChild(shortcuts);
+
+    const list = document.createElement('div');
+    list.className = 'integrationPickerList';
+    WEEKDAY_NAMES.forEach((name, day) => {
+        const optionLabel = document.createElement('label');
+        optionLabel.className = 'integrationPickerOption';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) selected.add(day); else selected.delete(day);
+            sync();
+        });
+        checkboxes[day] = checkbox;
+        const text = document.createElement('span');
+        text.textContent = name;
+        optionLabel.append(checkbox, text);
+        list.appendChild(optionLabel);
+    });
+    panel.appendChild(list);
+
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const wasOpen = !panel.hidden;
+        closeOpenIntegrationPicker();
+        if (wasOpen) return;
+        panel.hidden = false;
+        openIntegrationPicker = {wrapper, panel};
+    });
+
+    sync();
+    return {
+        element: wrapper,
+        getSelected: () => [...selected].sort((a, b) => a - b),
+        // Hinzufuegen ohne gewaehlten Tag: Auswahl kurz rot markieren statt stumm zu ignorieren.
+        markMissing: () => button.classList.add('configFieldError'),
+    };
+}
+
 // Wochentag/Stundenfenster-Editor fuer Tarif-Zeitfenster - von 'ht_nt' und 'dynamic_variable'
 // geteilt (je eigener configKey: electricityHtWindows bzw. electricityNetzentgeltWindows), da beide
 // Tarifarten eigene, unabhaengige Zeitfenster brauchen koennen (unterschiedliche Vertraege).
@@ -2249,14 +2716,7 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
 
     const form = document.createElement('div');
     form.className = 'htWindowForm';
-    const wdSel = document.createElement('select');
-    wdSel.className = 'sensorInput';
-    WEEKDAY_NAMES.forEach((n, i) => {
-        const o = document.createElement('option');
-        o.value = String(i);
-        o.textContent = n;
-        wdSel.appendChild(o);
-    });
+    const weekdayPicker = buildWeekdayMultiPicker();
     const fromSel = document.createElement('select');
     fromSel.className = 'sensorInput';
     for (let h = 0; h < 24; h++) {
@@ -2312,9 +2772,9 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
             tariffSel.appendChild(o);
         }
         tariffSel.addEventListener('change', () => tariffSel.classList.remove('status-error'));
-        form.append(wdSel, lbl('von'), fromSel, lbl('bis'), toSel, lbl('gilt der'), tariffSel, addBtn);
+        form.append(weekdayPicker.element, lbl('von'), fromSel, lbl('bis'), toSel, lbl('gilt der'), tariffSel, addBtn);
     } else {
-        form.append(wdSel, lbl('von'), fromSel, lbl('bis'), toSel, addBtn);
+        form.append(weekdayPicker.element, lbl('von'), fromSel, lbl('bis'), toSel, addBtn);
     }
     wrap.appendChild(form);
 
@@ -2330,9 +2790,13 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
     list.className = 'htWindowList';
     wrap.appendChild(list);
 
-    function describeWindow(w) {
+    function describeWindowTimes(w) {
         const tariffSuffix = withTariff ? `, ${w.tariff === 'nt' ? 'NT' : 'HT'}` : '';
-        return `${WEEKDAY_NAMES[w.weekday] || '?'}: ${w.from} - ${w.to} Uhr${tariffSuffix}`;
+        return `${w.from} - ${w.to} Uhr${tariffSuffix}`;
+    }
+
+    function describeWindow(w) {
+        return `${WEEKDAY_NAMES[w.weekday] || '?'}: ${describeWindowTimes(w)}`;
     }
 
     function render() {
@@ -2345,29 +2809,56 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
             list.appendChild(empty);
             return;
         }
+        // Pro Wochentag ein Block (Montag bis Sonntag), darin nach Uhrzeit sortiert. Nur die Anzeige ist
+        // sortiert - gespeichert bleibt die Eingabereihenfolge; idx verweist beim Loeschen auf den
+        // gespeicherten Eintrag.
+        const byDay = new Map();
         windows.forEach((w, idx) => {
-            const chip = document.createElement('div');
-            chip.className = 'htWindowChip';
-            const text = document.createElement('span');
-            text.textContent = describeWindow(w);
-            const del = document.createElement('button');
-            del.type = 'button';
-            del.className = 'htWindowDelete';
-            del.title = 'Zeitfenster entfernen';
-            del.textContent = '🗑';
-            del.addEventListener('click', () => {
-                configData[configKey].splice(idx, 1);
-                render();
-                autoSave();
-            });
-            chip.append(text, del);
-            list.appendChild(chip);
+            if (!byDay.has(w.weekday)) byDay.set(w.weekday, []);
+            byDay.get(w.weekday).push({w, idx});
         });
+        for (const weekday of [...byDay.keys()].sort((a, b) => a - b)) {
+            const entries = byDay.get(weekday).sort((a, b) => a.w.from - b.w.from || a.w.to - b.w.to);
+            const dayRow = document.createElement('div');
+            dayRow.className = 'htWindowDay';
+            const dayLabel = document.createElement('span');
+            dayLabel.className = 'htWindowDayLabel';
+            dayLabel.textContent = WEEKDAY_NAMES[weekday] || '?';
+            const chips = document.createElement('div');
+            chips.className = 'htWindowDayChips';
+            for (const {w, idx} of entries) {
+                const chip = document.createElement('div');
+                chip.className = 'htWindowChip';
+                const text = document.createElement('span');
+                text.textContent = describeWindowTimes(w);
+                const del = document.createElement('button');
+                del.type = 'button';
+                del.className = 'htWindowDelete';
+                del.title = `Zeitfenster ${describeWindow(w)} entfernen`;
+                del.textContent = '🗑';
+                del.addEventListener('click', () => {
+                    configData[configKey].splice(idx, 1);
+                    render();
+                    autoSave();
+                });
+                chip.append(text, del);
+                chips.appendChild(chip);
+            }
+            dayRow.append(dayLabel, chips);
+            list.appendChild(dayRow);
+        }
     }
 
     addBtn.addEventListener('click', () => {
-        const w = {weekday: parseInt(wdSel.value, 10), from: parseInt(fromSel.value, 10), to: parseInt(toSel.value, 10)};
-        if (w.to === w.from) return;
+        const days = weekdayPicker.getSelected();
+        if (days.length === 0) {
+            weekdayPicker.markMissing();
+            return;
+        }
+        const from = parseInt(fromSel.value, 10);
+        const to = parseInt(toSel.value, 10);
+        if (to === from) return;
+        let tariff = null;
         if (tariffSel) {
             if (!tariffSel.value) {
                 // ohne Tarifoption kein Fenster - Auswahlfeld kurz hervorheben statt stumm zu ignorieren
@@ -2376,17 +2867,26 @@ function buildHtWindowEditor(configKey, emptyHint, {withTariff = false} = {}) {
                 return;
             }
             tariffSel.classList.remove('status-error');
-            w.tariff = tariffSel.value;
+            tariff = tariffSel.value;
         }
+        // Ein Fenster je gewaehltem Tag (gleiche Uhrzeiten/gleicher Tarif) - das Datenmodell bleibt
+        // unveraendert. Alles oder nichts: ueberschneidet sich auch nur ein Tag, wird keiner hinzugefuegt.
+        const newWindows = days.map(weekday => {
+            const w = {weekday, from, to};
+            if (tariff) w.tariff = tariff;
+            return w;
+        });
         configData[configKey] = configData[configKey] || [];
-        const conflict = configData[configKey].find(existing => htWindowsOverlap(existing, w));
-        if (conflict) {
-            errorEl.textContent = `Dieses Zeitfenster überschneidet sich mit "${describeWindow(conflict)}". Zeitfenster dürfen sich nicht überschneiden - passe von/bis an oder entferne das andere Fenster zuerst.`;
-            errorEl.hidden = false;
-            return;
+        for (const w of newWindows) {
+            const conflict = configData[configKey].find(existing => htWindowsOverlap(existing, w));
+            if (conflict) {
+                errorEl.textContent = `Dieses Zeitfenster überschneidet sich mit "${describeWindow(conflict)}". Zeitfenster dürfen sich nicht überschneiden - passe Tage bzw. von/bis an oder entferne das andere Fenster zuerst.${newWindows.length > 1 ? ' Es wurde kein Zeitfenster hinzugefügt.' : ''}`;
+                errorEl.hidden = false;
+                return;
+            }
         }
         clearError();
-        configData[configKey].push(w);
+        configData[configKey].push(...newWindows);
         render();
         autoSave();
     });
@@ -2426,6 +2926,80 @@ function buildNetzentgeltQuarterField() {
     }
     wrap.appendChild(list);
     return wrap;
+}
+
+// Pruefzeilen fuer den Modus "Dynamischer Tarif + variable Netzentgelte" (Modul 3): hinter jedem der drei
+// Preisbestandteil-Felder (fields = {nt, ht, standard}, je das von buildConfigNumberField gelieferte Element)
+// steht der Gesamtpreis einer passenden Stunde von heute - laufende Stunde, sonst die naechste, sonst die
+// zuletzt zurueckliegende dieser Tarifstufe (siehe /electricity/variable-tariff-preview). Stunde statt
+// Viertelstunde: die Boerse (Awattar) liefert nur Stundenpreise. Die Werte kommen live aus den Eingabefeldern
+// (auch waehrend des Tippens), Zeitfenster/Quartale aus configData.
+function buildNetzentgeltTariffPreviews(fields) {
+    const lines = {};
+    for (const [tariff, fieldEl] of Object.entries(fields)) {
+        const line = document.createElement('div');
+        line.className = 'electricityTariffPreviewLine';
+        const cells = fieldEl.querySelectorAll('td');
+        (cells[cells.length - 1] || fieldEl).appendChild(line);
+        lines[tariff] = line;
+    }
+    const inputIds = {
+        nt: 'electricity_netzentgelt_nt_cent',
+        ht: 'electricity_netzentgelt_ht_cent',
+        standard: 'electricity_netzentgelt_standard_cent',
+    };
+    const fmt = (n) => Number(n).toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    let debounceTimer = null;
+    let requestCounter = 0;
+
+    function describe(tariff, info) {
+        if (!info) return '';
+        if (info.status === 'quarter_inactive') return 'gilt im aktuellen Quartal nicht';
+        if (info.status === 'no_window') return tariff === 'standard' ? 'heute keine Stunde im Standardtarif' : 'heute kein Zeitfenster';
+        if (info.status === 'no_spot') return 'Börsenpreis für diese Stunde nicht abrufbar';
+        const prefix = 'heute ' + info.start_hour + '-' + info.end_hour + ' Uhr: ';
+        // Börse brutto UND netto: andere Apps (z.B. Tibber) zeigen den Spotpreis netto, die Summe rechnet mit brutto.
+        const spot = 'Börse ' + fmt(info.spot_ct) + ' brutto (' + fmt(info.spot_ct_netto) + ' netto)';
+        if (info.fixed_ct === null || info.fixed_ct === undefined) {
+            return prefix + spot + ' ct/kWh - Fixe Preisbestandteile eintragen für den Gesamtpreis';
+        }
+        return prefix + 'Fix ' + fmt(info.fixed_ct) + ' + ' + spot + ' = ' + fmt(info.total_ct) + ' ct/kWh';
+    }
+
+    async function refresh() {
+        const ticket = ++requestCounter;
+        const centValue = (tariff) => {
+            const el = document.getElementById(inputIds[tariff]);
+            const parsed = parseFloat(el ? el.value : '');
+            return isNaN(parsed) ? null : parsed;
+        };
+        let result;
+        try {
+            result = await postJson(insideHomeAssistant + '/electricity/variable-tariff-preview', {
+                nt_ct: centValue('nt'),
+                ht_ct: centValue('ht'),
+                standard_ct: centValue('standard'),
+                windows: configData['electricityNetzentgeltWindows'] || [],
+                quarters: configData['electricityNetzentgeltQuarters'] || [],
+            });
+        } catch (e) {
+            console.log(e);
+            result = {ok: false};
+        }
+        if (ticket !== requestCounter) return;  // eine neuere Anfrage ist unterwegs/fertig
+        for (const [tariff, line] of Object.entries(lines)) {
+            line.textContent = result.ok
+                ? describe(tariff, (result.tariffs || {})[tariff])
+                : 'Börsenpreis ist derzeit nicht abrufbar (Awattar). Bitte später erneut prüfen.';
+        }
+    }
+
+    function scheduleRefresh() {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(refresh, 600);
+    }
+
+    return {refresh, scheduleRefresh};
 }
 
 // Pruefzeile fuer den dynamischen Stromtarif. getSurcharge() liefert den aktuell im Feld
@@ -2535,10 +3109,13 @@ function renderIntegrationSections() {
 
         const currentIds = integrationMappings[section.key] || [];
         currentIntegrationSelections[section.key] = currentIds;
-        let expanded = !isSectionComplete(section, currentIds);
+        // Waermepumpe bei aktivem Heizstab bzw. Heizstab bei ausgeschaltetem Schalter: grau, ohne Details (Werte bleiben erhalten).
+        const sectionDisabledNote = sectionDisabledNoteFor(section.key, currentIds);
+        const sectionDisabled = sectionDisabledNote !== '';
+        let expanded = !sectionDisabled && !isSectionComplete(section, currentIds);
 
         const heading = document.createElement('div');
-        heading.className = 'integrationHeading';
+        heading.className = 'integrationHeading' + (sectionDisabled ? ' integrationHeadingDisabled' : '');
         const headingRow = document.createElement('div');
         headingRow.className = 'integrationHeadingRow';
 
@@ -2550,7 +3127,7 @@ function renderIntegrationSections() {
         headingRow.appendChild(toggleButton);
 
         const headingTitle = document.createElement('h2');
-        headingTitle.textContent = section.label;
+        headingTitle.textContent = section.label + sectionDisabledNote;
         headingRow.appendChild(headingTitle);
         if (section.description) {
             headingRow.appendChild(buildTooltip(section.description));
@@ -2583,7 +3160,12 @@ function renderIntegrationSections() {
                 bodyDiv.innerHTML = '';
             }
             updateBodyVisibility();
-            autoSave();
+            if (section.key === 'heizstab') {
+                // Ein Heizstab-Geraet (oder dessen Entfernen) entscheidet, ob Heizstab oder Waermepumpe aktiv ist: alle Kacheln neu aufbauen.
+                autoSave().then(rerenderIntegrationSectionsKeepingScroll);
+            } else {
+                autoSave();
+            }
         });
         heading.appendChild(picker);
 
@@ -2602,7 +3184,7 @@ function renderIntegrationSections() {
 
         function updateBodyVisibility() {
             const hasSelection = currentIntegrationSelections[section.key].length > 0;
-            bodyDiv.style.display = (hasSelection && expanded) ? '' : 'none';
+            bodyDiv.style.display = (hasSelection && expanded && !sectionDisabled) ? '' : 'none';
             // Eingeklappt (expanded=false) zeigt NUR die Ueberschriften-Zeile - der Geraete-Dropdown
             // blendet sich mit aus, nicht nur die Sensor-Zuordnungsfelder darunter. Einklappen ist
             // erst moeglich, wenn schon ein Geraet gewaehlt ist (toggleButton.disabled unten), das
@@ -2610,13 +3192,15 @@ function renderIntegrationSections() {
             // gewaehlt ist, bleibt der Dropdown immer sichtbar (eine noch leere Kachel gilt via
             // isSectionComplete als "vollstaendig" -> expanded=false, Pfeil disabled, kein
             // "Details einblenden" - ohne diese Ausnahme koennte man dort nie ein Geraet auswaehlen).
-            picker.style.display = (expanded || !hasSelection) ? '' : 'none';
+            // Deaktivierte Waermepumpe: keine Details und keine Geraeteauswahl; der deaktivierte Heizstab behaelt seine Geraeteauswahl
+            // (zum Entfernen) und den Schalter "Wärmepumpe steuern" darueber.
+            picker.style.display = sectionDisabled ? (section.key === 'heizstab' ? '' : 'none') : ((expanded || !hasSelection) ? '' : 'none');
             toggleButton.classList.toggle('collapsed', !expanded);
-            toggleButton.disabled = !hasSelection;
-            showDetailsButton.style.display = (hasSelection && !expanded) ? '' : 'none';
+            toggleButton.disabled = !hasSelection || sectionDisabled;
+            showDetailsButton.style.display = (hasSelection && !expanded && !sectionDisabled) ? '' : 'none';
         }
 
-        if (currentIds.length > 0) {
+        if (currentIds.length > 0 && !sectionDisabled) {
             renderSectionBody(bodyDiv, section, currentIds);
             // Ein nie bestaetigtes Default-Feld (siehe isUnconfirmedDefault) haelt die Kachel offen,
             // damit der Nutzer den Wert bewusst prueft statt ihn eingeklappt zu uebersehen.
@@ -2630,6 +3214,9 @@ function renderIntegrationSections() {
         });
 
         sectionDiv.appendChild(heading);
+        // Schalter "Heizstab steuern" direkt unter der Ueberschrift - auch bei eingeklappter Kachel und ohne gewaehltes Geraet sichtbar
+        // (siehe buildHeatingRodModeToggle).
+        if (section.key === 'heizstab') sectionDiv.appendChild(buildHeatingRodModeToggle());
         sectionDiv.appendChild(showDetailsButton);
         sectionDiv.appendChild(bodyDiv);
 
@@ -3053,12 +3640,12 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         sensorsHeading.textContent = 'Sensoren';
         bodyDiv.appendChild(sensorsHeading);
 
-        if (section.key === 'waermepumpe') {
+        if (section.key === 'waermepumpe' || section.key === 'heizstab') {
             // "Warmwasser-Speichergröße" gehoert direkt unter die zugehoerige Sensor-Zeile
             // "Temperatur Warmwassertank" (Nutzer-Feedback) - dafuer wird dieser eine Sensor hier
             // vorgezogen und das Feld gleich daruntergesetzt, statt es weiter unten im Konfig-Block
             // zu belassen. heatpump_dhw_tank_temp ist ohnehin der erste Eintrag in section.sensors.
-            bodyDiv.appendChild(buildMappingTable(['heatpump_dhw_tank_temp'], configData["sensorMappings"] || {}, helpinformation, VALUE_POSTFIX, key => sensorDatalistIds[key], true));
+            bodyDiv.appendChild(buildMappingTable(['heatpump_dhw_tank_temp'], configData["sensorMappings"] || {}, sectionHelpInformation(section), VALUE_POSTFIX, key => sensorDatalistIds[key], true));
             bodyDiv.appendChild(buildHpDhwTankSizeField());
         }
 
@@ -3069,12 +3656,22 @@ function renderSectionBody(bodyDiv, section, entryIds) {
             ? section.sensors.filter(k => k !== 'wallbox_plugged')
             : section.key === 'waermepumpe'
                 ? section.sensors.filter(k => k !== 'heatpump_dhw_tank_temp')
-                : section.key === 'sonstiger_verbraucher'
-                    // Mehrfachauswahl (Liste) statt der Einzelzeile - siehe buildMultiSensorField unten.
-                    ? section.sensors.filter(k => k !== 'sonstiger_verbraucher_switch_entities')
-                    : section.sensors;
-        bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, helpinformation, VALUE_POSTFIX, key => sensorDatalistIds[key], true));
+                : section.key === 'heizstab'
+                    // Die An-/Aus-Entitaet steht weiter unten unter "Steuerung" (siehe buildHeatingRodControl).
+                    ? section.sensors.filter(k => k !== 'heatpump_dhw_tank_temp' && k !== HEATING_ROD_SWITCH_KEY)
+                    : section.key === 'sonstiger_verbraucher'
+                        // Mehrfachauswahl (Liste) statt der Einzelzeile - siehe buildMultiSensorField unten.
+                        ? section.sensors.filter(k => k !== 'sonstiger_verbraucher_switch_entities')
+                        : section.sensors;
+        bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, sectionHelpInformation(section), VALUE_POSTFIX, key => sensorDatalistIds[key], true));
+        if (section.key === 'heizstab') {
+            bodyDiv.appendChild(buildHeatingRodMaxPowerField());
+            bodyDiv.appendChild(buildHeatingRodMaxTempField());
+        }
 
+        if (section.key === 'wechselrichter') {
+            bodyDiv.appendChild(buildFeedInLimitSection());
+        }
         if (section.key === 'wallbox') {
             bodyDiv.appendChild(buildWallboxMaxPhasesField());
             bodyDiv.appendChild(buildWallboxMaxCurrentField());
@@ -3119,8 +3716,11 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         }
     }
 
-    const manualActions = section.actions.filter(key => !AUTO_MANAGED_ACTION_KEYS.has(key) && !CAR_CHARGE_ACTION_KEYS.has(key) && !HOT_WATER_ACTION_KEYS.has(key) && !BATTERY_DIRECT_ACTION_KEYS.has(key));
-    const sectionControls = AUTO_MANAGED_CONTROLS.filter(c => c.actionKeys.some(k => section.actions.includes(k)));
+    // Die "Steuerung" der Wechselrichter-Kachel (PV: Einspeisung begrenzen / Verbrauch begrenzen §14a) ist vorerst vollstaendig
+    // ausgeblendet (kommt spaeter) - an ihrer Stelle steht "Einspeisung drosseln" (buildFeedInLimitSection). Die Toggles bleiben deaktiviert.
+    const hideSteuerung = section.key === 'wechselrichter';
+    const manualActions = hideSteuerung ? [] : section.actions.filter(key => !AUTO_MANAGED_ACTION_KEYS.has(key) && !CAR_CHARGE_ACTION_KEYS.has(key) && !HOT_WATER_ACTION_KEYS.has(key) && !BATTERY_DIRECT_ACTION_KEYS.has(key));
+    const sectionControls = hideSteuerung ? [] : AUTO_MANAGED_CONTROLS.filter(c => c.actionKeys.some(k => section.actions.includes(k)));
     const hasCarCharge = section.actions.some(k => CAR_CHARGE_ACTION_KEYS.has(k));
     const hasHotWater = section.actions.some(k => HOT_WATER_ACTION_KEYS.has(k));
 
@@ -3198,6 +3798,116 @@ function renderSectionBody(bodyDiv, section, entryIds) {
     if (hasHotWater) {
         steuerungTarget.appendChild(buildHotWaterControl());
     }
+
+    if (section.key === 'heizstab') {
+        const controlHeading = document.createElement('div');
+        controlHeading.className = 'sectionSubHeading controlSectionHeading';
+        const controlHeadingText = document.createElement('span');
+        controlHeadingText.textContent = 'Steuerung';
+        controlHeading.appendChild(controlHeadingText);
+        bodyDiv.appendChild(controlHeading);
+        bodyDiv.appendChild(buildHeatingRodControl());
+    }
+}
+
+// Schalter "Heizstab steuern" unter der Ueberschrift der Heizstab-Kachel: an = Shyft steuert den Heizstab und die Waermepumpe ist
+// deaktiviert, aus = saisonaler Wechsel zurueck zur Waermepumpe (Beschriftung bleibt immer "Heizstab steuern"). Es geht nichts verloren:
+// alle Werte beider Geraete bleiben gespeichert. Ein Wechsel baut alle Kacheln neu auf (siehe rerenderIntegrationSectionsKeepingScroll);
+// dabei klappt die Heizstab-Kachel auf, wenn sie noch nicht vollstaendig eingerichtet ist (isSectionComplete).
+function buildHeatingRodModeToggle() {
+    const active = isHeatingRodToggleOn();
+    const row = document.createElement('div');
+    row.className = 'autoActionTitle heatingRodModeRow';
+    const label = document.createElement('span');
+    label.textContent = 'Heizstab steuern';
+    row.appendChild(label);
+    row.appendChild(buildTooltip('Mit diesem Schalter wechselst du zwischen Heizstab und Wärmepumpe, z. B. saisonal. Ist er an, steuert Shyft den Heizstab und die Wärmepumpe ist deaktiviert; ist er aus, steuert Shyft die Wärmepumpe. Alle hinterlegten Werte bleiben erhalten, du musst nichts neu eingeben.'));
+    const toggle = buildBareToggleSwitch(active);
+    const input = toggle.querySelector('input');
+    input.id = 'heating_rod_enabled';
+    input.addEventListener('change', async () => {
+        input.disabled = true;
+        configData['heatingRodControl'] = input.checked;
+        try {
+            await autoSave();
+        } finally {
+            rerenderIntegrationSectionsKeepingScroll('heating_rod_enabled');
+        }
+    });
+    row.appendChild(toggle);
+    return row;
+}
+
+// "Steuerung" der Heizstab-Kachel: die An-/Aus-Entitaet des Heizstabs (aus dem Heizstab-Geraet) samt Testen-Button. Eine "Warmwasser"-Aktion
+// schaltet sie ein und am Ende wieder aus (siehe execute_heating_rod in app.py; Annahme vorerst: der Heizstab laeuft dann mit voller Leistung).
+function buildHeatingRodControl() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'autoActionControl';
+
+    // Titel ohne Haken - der gruene Haken steht neben dem Testen-Button (siehe buildBatteryDirectTestRow).
+    const title = document.createElement('div');
+    title.className = 'autoActionTitle';
+    const titleText = document.createElement('span');
+    titleText.textContent = 'Heizstab ein-/ausschalten';
+    title.appendChild(titleText);
+    title.appendChild(buildTooltip('Wenn Shyft Warmwasser bereiten will, schaltet es diese Entität ein und nach dem Ende der Aktion wieder aus. Shyft geht vorerst davon aus, dass der Heizstab dann mit voller Leistung läuft.'));
+    wrapper.appendChild(title);
+
+    const checkmark = document.createElement('span');  // nur fuer applyTestGate, wird nicht eingefuegt
+    checkmark.hidden = true;
+    const hint = buildTestGateHint();
+    const refreshGate = () => {
+        const input = document.getElementById(HEATING_ROD_SWITCH_KEY + VALUE_POSTFIX);
+        applyTestGate('heating_rod', checkmark, hint, !!(input && input.value));
+    };
+    wrapper.appendChild(buildMappingTable([HEATING_ROD_SWITCH_KEY], configData['sensorMappings'] || {}, heatingRodHelpInformation, VALUE_POSTFIX,
+        key => 'entityOptions_heizstab_' + key, true, undefined, refreshGate));
+    wrapper.appendChild(hint);
+    refreshGate();
+    wrapper.appendChild(buildBatteryDirectTestRow('heating_rod', checkmark, hint, null,
+        {testUrl: insideHomeAssistant + '/actions/heating_rod/test', title: 'Test: Heizstab'}));
+    return wrapper;
+}
+
+// "Einspeisung drosseln" (Wechselrichter-Kachel, Solarspitzengesetz §9 EEG): Toggle + Eingabefeld "Einspeiseleistung drosseln auf
+// [ ] kW". Der Wert geht als "LPP" (kW) in die Optimierung (siehe collect_static_config in sync_service.py). Ist der Toggle an,
+// ist das Feld Pflicht - fehlt der Wert, wird nichts an die Optimierung gesendet und das Feld rot umrandet (Konfigurations-Warnung
+// feed_in_limit_missing in compute_config_warnings, fieldId feed_in_limit_kw).
+function buildFeedInLimitSection() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'feedInLimitSection';
+
+    const title = document.createElement('div');
+    title.className = 'autoActionTitle sectionSubHeading';
+    const titleText = document.createElement('span');
+    titleText.textContent = 'Einspeisung drosseln (§9 EEG)';
+    title.appendChild(titleText);
+    title.appendChild(buildTooltip('Wenn du nach dem Solarspitzengesetz (§9 EEG) verpflichtet bist, die Einspeiseleistung zu drosseln, kannst du Shyft dies in der Optimierung berücksichtigen lassen. Shyft verschiebt deine Verbräuche und Batterienutzung dann so, dass möglichst wenig gedrosselt wird. Dass die Einspeisung tatsächlich gedrosselt wird, steuert Shyft nicht, dies musst du am Wechselrichter einstellen.'));
+    const toggle = buildBareToggleSwitch(configData['feedInLimitEnabled'] === true);
+    toggle.querySelector('input').id = 'feed_in_limit_enabled';
+    title.appendChild(toggle);
+    wrapper.appendChild(title);
+
+    const field = buildConfigNumberField({
+        label: 'Einspeiseleistung drosseln auf',
+        tooltip: 'Maximale Einspeiseleistung in kW, auf die deine Anlage nach dem Solarspitzengesetz begrenzt ist. Shyft berücksichtigt den Wert in der Optimierung.',
+        id: 'feed_in_limit_kw',
+        configKey: 'feedInLimitKw',
+        placeholder: 'z.B. 5,0',
+        step: '0.5',
+        min: '0',
+        unit: 'kW',
+    });
+    field.style.display = toggle.querySelector('input').checked ? '' : 'none';
+    wrapper.appendChild(field);
+
+    toggle.querySelector('input').addEventListener('change', () => {
+        const checked = toggle.querySelector('input').checked;
+        configData['feedInLimitEnabled'] = checked;
+        field.style.display = checked ? '' : 'none';
+        autoSave();
+    });
+    return wrapper;
 }
 
 // Lets the user classify each status value that has actually shown up on their "Wallbox: Auto
@@ -3461,7 +4171,7 @@ function buildHpEnergyEfficiencyField() {
 function buildHpDhwTankSizeField() {
     return buildConfigSelectField({
         label: 'Warmwasser-Speichergröße',
-        tooltip: 'Größe des Warmwasserspeichers deiner Wärmepumpe.',
+        tooltip: 'Größe deines Warmwasserspeichers.',
         id: 'hp_dhw_tank_size',
         configKey: 'hpDhwTankSize',
         options: [
@@ -3472,10 +4182,45 @@ function buildHpDhwTankSizeField() {
     });
 }
 
+// "Heizstab max. Leistung": freie Zahleneingabe in kW (0 bis 30), elektrisch = thermisch (COP 1). Geht 1:1 als "hp_max_power_kw" (und fuer aeltere
+// Server zusaetzlich als naechstliegende Stufe in "HP - Max. Power") an den Optimierer, solange der Heizstab aktiv ist (siehe collect_static_config).
+// Default: die Zahl der frueheren Stufen-Auswahl (z.B. 'mittel (6 kW)' -> 6), sonst 4 kW.
+function buildHeatingRodMaxPowerField() {
+    const legacy = /\((\d+(?:[.,]\d+)?)\s*kW\)/.exec(String(configData['heatingRodMaxPower'] || ''));
+    return buildConfigNumberField({
+        label: 'Heizstab max. Leistung',
+        tooltip: 'Maximale elektrische Leistung deines Heizstabs in kW (frei wählbar zwischen 0 und 30 kW).',
+        id: 'heating_rod_max_power',
+        configKey: 'heatingRodMaxPowerKw',
+        placeholder: 'z.B. 4',
+        defaultValue: legacy ? parseFloat(legacy[1].replace(',', '.')) : 4,
+        step: '0.1',
+        min: '0',
+        max: '30',
+        unit: 'kW',
+    });
+}
+
+// "Temperatur Obergrenze" des Heizstabs: hoechste Temperatur, auf die Shyft das Warmwasser erwaermen darf (eigener Wert, unabhaengig von
+// der Waermepumpe). Geht als "HP - Max Supply Temp" an den Optimierer, solange der Heizstab aktiv ist.
+function buildHeatingRodMaxTempField() {
+    return buildConfigNumberField({
+        label: 'Temperatur Obergrenze (°C)',
+        tooltip: 'Höchste Temperatur, auf die Shyft das Warmwasser mit dem Heizstab erwärmen darf (maximale Speichertemperatur).',
+        id: 'heating_rod_max_temp',
+        configKey: 'heatingRodMaxTempC',
+        placeholder: 'z.B. 95',
+        defaultValue: 95,
+        step: '1',
+        max: '95',
+        unit: '°C',
+    });
+}
+
 function buildHpMaxPowerField() {
     return buildConfigSelectField({
-        label: 'Max. elektrische Leistung',
-        tooltip: 'Maximale elektrische Leistungsaufnahme deiner Wärmepumpe.',
+        label: 'Max. thermische Leistung',
+        tooltip: 'Über welche Leistung verfügt deine Wärmepumpe ungefähr? Du findest die maximale Nennleistung (thermische Wärmeleistung) im Datenblatt deines Geräts.',
         id: 'hp_max_power',
         configKey: 'hpMaxPower',
         options: ['klein (4 kW)', 'mittel (6 kW)', 'groß (8 kW)', 'sehr groß (12 kW)'].map(v => [v, v]),
@@ -3527,8 +4272,8 @@ function buildHpHeatingBufferField() {
 
 function buildHpMaxSupplyTempField() {
     return buildConfigNumberField({
-        label: 'Max. Vorlauftemperatur (°C)',
-        tooltip: 'Vorlauftemperatur, auf die Shyft Warmwasser maximal erwärmen soll / maximale Systemtemperatur.',
+        label: 'Temperatur Obergrenze (°C)',
+        tooltip: 'Höchste Temperatur, auf die Shyft das Warmwasser erwärmen darf / maximale Systemtemperatur.',
         id: 'hp_max_supply_temp',
         configKey: 'hpMaxSupplyTempC',
         placeholder: 'z.B. 55',
@@ -3580,8 +4325,8 @@ function buildBatteryCapacityField() {
 // Optimierung sind unproblematisch, diese Deckelung ist nur ein Sicherheitsnetz.
 function buildBatteryMaxChargeKwField() {
     return buildConfigNumberField({
-        label: 'Max. Ladeleistung (kW)',
-        tooltip: 'Sicherheitsgrenze für "Batterie netzladen": der berechnete Zielwert wird im Addon nie über diesen Wert hinaus gesetzt, unabhängig davon, was die Optimierung ausrechnet.',
+        label: 'Max. Lade/Entladeleistung (kW)',
+        tooltip: 'Maximale Lade- bzw. Entladeleistung deiner Batterie (laut Datenblatt/Wechselrichter). Shyft nutzt diesen Wert dreifach: (1) als Sicherheitsgrenze für "Batterie netzladen" - der berechnete Zielwert wird nie darüber hinaus gesetzt, egal was die Optimierung ausrechnet; (2) als "kein Limit"-Wert: nach einer Batterie-Aktion setzt Shyft das Lade- und das Entladeleistungs-Limit der Batterie auf diesen Wert zurück (höchstens auf das Maximum der jeweiligen Entität); (3) als erwarteter Ruhewert, wenn gerade keine Aktion läuft. Ohne Wert werden die Limits nach einer Aktion nicht zurückgesetzt.',
         id: 'battery_max_charge_kw',
         configKey: 'batteryMaxChargeKw',
         placeholder: 'z.B. 5',
@@ -3844,8 +4589,12 @@ function buildAutoActionTitle(control, toggleKey) {
     checkmark.textContent = ' ✓';
     checkmark.hidden = true;
     title.appendChild(checkmark);
-    const toggleChecked = (configData["actionTypeEnabled"] || {})[toggleKey] !== false;
-    title.appendChild(buildToggleSwitch(toggleKey + ACTION_TOGGLE_POSTFIX, toggleChecked));
+    // Die Steuerungs-Schalter der uebrigen Aktionstypen stehen auf der Gerätesteuerung-Seite (siehe
+    // renderControlToggles); hier bleiben nur die beiden SPiNE-Gateway-Automationen, die es dort nicht gibt.
+    if (CONFIG_PAGE_TOGGLE_KEYS.has(toggleKey)) {
+        const toggleChecked = (configData["actionTypeEnabled"] || {})[toggleKey] !== false;
+        title.appendChild(buildToggleSwitch(toggleKey + ACTION_TOGGLE_POSTFIX, toggleChecked));
+    }
     return {title, checkmark};
 }
 
@@ -3867,7 +4616,7 @@ function buildTestGateHint() {
 // PV-Einspeisung/§14a-Verbrauchsbegrenzung/Batterie-Aktion beenden) - dort bleibt hint immer
 // versteckt und der Aufrufer setzt checkmark.hidden selbst (alte "ist konfiguriert"-Logik).
 // ready_key -> Schluessel des Toggles (siehe actionTypeEnabled): nur der Verbraucher weicht ab.
-const READY_KEY_TO_TOGGLE_KEY = {consumer_on_off: 'consumer_on'};
+const READY_KEY_TO_TOGGLE_KEY = {consumer_on_off: 'consumer_on', heating_rod: 'hot_water'};
 
 function applyTestGate(readyKey, checkmark, hint, configured) {
     if (readyKey === null) return;
@@ -4241,6 +4990,13 @@ function buildAutoManagedNumberControl(control) {
     }
 
     function handleTestResult(result) {
+        if (result.cancelled) {
+            // Abgebrochen: weder bestanden noch fehlgeschlagen - Bereitschafts-Haken bleibt unveraendert.
+            valueDisplay.textContent = result.message || 'Test abgebrochen';
+            valueDisplay.className = 'autoActionValue';
+            setTimeout(refreshStatus, 4000);
+            return;
+        }
         if (readyKey) markActionTested(readyKey, !!result.success);
         if (control.onlyIncrement) {
             if (result.success) {
@@ -4310,7 +5066,11 @@ function buildAutoManagedNumberControl(control) {
             // Feedback) - applyTestGate() in handleTestResult() blendet ihn danach wieder passend ein.
             hint.hidden = true;
             valueDisplay.textContent = 'Teste … ' + (status.progress || '');
-            handleTestResult(await pollTestUntilDone());
+            // Laeuft noch ein Test (Seite neu geladen), das Test-Popup wieder daran anhaengen.
+            const popup = status.sessionId ? openTestPopup('Test: ' + control.titleLabel, {sessionId: status.sessionId}) : null;
+            const result = await pollTestUntilDone();
+            handleTestResult(result);
+            if (popup) await popup.finish(result);
         } catch (err) {
             console.log(err);
         } finally {
@@ -4330,13 +5090,15 @@ function buildAutoManagedNumberControl(control) {
         // generische Delta-Test.
         valueDisplay.textContent = control.onlyIncrement ? 'Teste … (kann mehrere Minuten dauern)' : 'Teste...';
         pinnedTestError = null;
+        const popup = openTestPopup('Test: ' + control.titleLabel);
+        let result = null;
         try {
             const response = await fetch(insideHomeAssistant + '/actions/' + control.key + '/test', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', ...popup.headers},
                 body: JSON.stringify({delta})
             });
-            let result = await response.json();
+            result = await response.json();
             // Langer Heizungs-Test: der POST startet ihn nur, das Ergebnis kommt per Abfrage (siehe
             // pollTestUntilDone) - eine einzige lange Anfrage brach an Proxys mit Zeitlimit ab.
             if (control.onlyIncrement && result.running) result = await pollTestUntilDone();
@@ -4349,6 +5111,7 @@ function buildAutoManagedNumberControl(control) {
         } finally {
             if (minusButton) minusButton.disabled = false;
             plusButton.disabled = false;
+            await popup.finish(result);
         }
     }
 
@@ -4516,6 +5279,8 @@ function buildAutoManagedSwitchControl(control) {
 
     testButton.addEventListener('click', async () => {
         const phase = nextPhase;
+        const popup = openTestPopup('Test: ' + control.titleLabel + ' (' + (phase === 'start' ? 'Start' : 'Ende') + ')');
+        let outcome = null;
         testButton.disabled = true;
         valueDisplay.textContent = 'Teste...';
         valueDisplay.className = 'autoActionValue testing';
@@ -4523,11 +5288,12 @@ function buildAutoManagedSwitchControl(control) {
         try {
             const response = await fetch(insideHomeAssistant + '/actions/' + control.key + '/test', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', ...popup.headers},
                 body: JSON.stringify({phase})
             });
             const result = await response.json();
-            markActionTested(readyKey, !!result.success);
+            outcome = result;
+            if (!result.cancelled) markActionTested(readyKey, !!result.success);
             if (result.success) {
                 const phaseLabel = phase === 'start' ? 'Start' : 'Ende';
                 if (variant === 'ha_automation') {
@@ -4541,7 +5307,7 @@ function buildAutoManagedSwitchControl(control) {
                 }
                 valueDisplay.className = 'autoActionValue testSuccess';
             } else {
-                valueDisplay.textContent = 'Fehler: ' + (result.message || 'unbekannt');
+                valueDisplay.textContent = result.cancelled ? 'Test abgebrochen' : 'Fehler: ' + (result.message || 'unbekannt');
                 valueDisplay.className = 'autoActionValue';
             }
             applyTestGate(readyKey, checkmark, hint, true);
@@ -4551,6 +5317,7 @@ function buildAutoManagedSwitchControl(control) {
             valueDisplay.className = 'autoActionValue';
         } finally {
             testButton.disabled = false;
+            await popup.finish(outcome);
         }
     });
 
@@ -5008,13 +5775,16 @@ function buildCarChargeControl() {
         testButton.disabled = true;
         wallboxStatusDisplay.className = 'autoActionValue testing';
         carChargeHint.hidden = true;
+        const popup = openTestPopup('Test: Laden starten und beenden');
         let startedCharging = false;
         let ok = true;
+        let cancelled = false;
         let failMessage = '';
         let unverifiedSteps = 0;
         try {
             for (const targetKw of [2.3, 6.9]) {
                 const kwLabel = targetKw.toFixed(1).replace('.', ',');
+                popup.log(`Teil ${targetKw === 2.3 ? 1 : 2} von 2: mit ${kwLabel} kW laden`, 'info');
                 // three sequential HA calls with a 10s pause between each (see
                 // CHARGING_STAGE_DELAY_SECONDS in app.py) add up to a noticeable wait - let the
                 // user know it's not stuck
@@ -5022,13 +5792,19 @@ function buildCarChargeControl() {
                 status.className = 'autoActionStatus';
                 const response = await fetch(insideHomeAssistant + '/actions/car_charge_start/test', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {'Content-Type': 'application/json', ...popup.headers},
                     body: JSON.stringify({targetKw})
                 });
                 const result = await response.json();
                 // commandsSent: die Befehle sind rausgegangen (auch wenn die Wallbox danach nicht laedt) - "Laden
                 // beenden" muss dann trotzdem folgen.
                 if (result.commandsSent) startedCharging = true;
+                if (result.cancelled) {
+                    cancelled = true;
+                    ok = false;
+                    failMessage = 'Test abgebrochen';
+                    break;
+                }
                 if (!result.success) {
                     ok = false;
                     failMessage = `Fehler bei ${kwLabel} kW: ` + (result.message || 'unbekannt');
@@ -5037,23 +5813,34 @@ function buildCarChargeControl() {
                 if (result.verified === false) unverifiedSteps++;
                 startedCharging = true;
                 refreshWallboxStatus();
+                popup.log(`Pause ${WALLBOX_TEST_STEP_PAUSE_MS / 1000} s, damit der Wallbox-Status nachzieht …`, 'wait');
                 await new Promise(resolve => setTimeout(resolve, WALLBOX_TEST_STEP_PAUSE_MS));
+                if (popup.isCancelRequested()) {
+                    cancelled = true;
+                    ok = false;
+                    failMessage = 'Test abgebrochen';
+                    break;
+                }
             }
             // Laden auch nach einem fehlgeschlagenen Zwischenschritt beenden, wenn tatsaechlich
             // gestartet wurde - die Wallbox soll nach einem Testlauf nie einfach weiterladen.
             if (startedCharging) {
                 status.textContent = 'Teste: Laden beenden...';
                 status.className = 'autoActionStatus';
-                const stopResponse = await fetch(insideHomeAssistant + '/actions/car_charge_stop/test', {method: 'POST'});
+                const stopResponse = await fetch(insideHomeAssistant + '/actions/car_charge_stop/test', {method: 'POST', headers: popup.headers});
                 const stopResult = await stopResponse.json();
                 if (!stopResult.success) {
                     ok = false;
                     failMessage = failMessage || ('Fehler beim Beenden: ' + (stopResult.message || 'unbekannt'));
                 }
             }
-            markActionTested('car_charge_start', ok);
+            if (!cancelled) markActionTested('car_charge_start', ok);
             applyTestGate('car_charge_start', checkmark, carChargeHint, true);
-            if (ok) {
+            if (cancelled) {
+                status.textContent = 'Test abgebrochen' + (startedCharging ? ' - das Laden wurde beendet. Bitte prüfe kurz in deiner Wallbox-App, ob die Wallbox nicht mehr lädt.' : '.');
+                status.className = 'autoActionStatus';
+                wallboxStatusDisplay.className = 'autoActionValue';
+            } else if (ok) {
                 status.textContent = 'Erfolgreich: 2,3 kW → 6,9 kW → Laden beendet.'
                     + (unverifiedSteps > 0 ? ' (Ladeleistung konnte nicht geprüft werden - Sensor "Wallbox: Ladestrom" nicht lesbar.)' : ' Die Wallbox hat erfolgreich geladen. Bitte prüfe kurz in deiner Wallbox-App, ob das Laden auch erfolgreich beendet wurde.');
                 status.className = 'autoActionStatus status-ok';
@@ -5068,11 +5855,14 @@ function buildCarChargeControl() {
             status.textContent = 'Fehler beim Testen';
             status.className = 'autoActionStatus status-error';
             wallboxStatusDisplay.className = 'autoActionValue';
+            ok = false;
+            failMessage = failMessage || 'Fehler beim Testen';
             markActionTested('car_charge_start', false);
             applyTestGate('car_charge_start', checkmark, carChargeHint, true);
         } finally {
             testButton.disabled = false;
             setTimeout(refreshWallboxStatus, 4000);
+            await popup.finish({success: ok && !cancelled, cancelled, message: failMessage});
         }
     });
 
@@ -5216,13 +6006,19 @@ function buildHotWaterControl() {
         status.className = 'autoActionStatus';
         statusDisplay.className = 'autoActionValue testing';
         hotWaterHint.hidden = true;
+        const popup = openTestPopup('Test: Warmwasserbereitung');
+        let outcome = null;
         let success = false;
         try {
-            const response = await fetch(insideHomeAssistant + '/actions/hot_water_target_temp/test', {method: 'POST'});
+            const response = await fetch(insideHomeAssistant + '/actions/hot_water_target_temp/test', {method: 'POST', headers: popup.headers});
             const result = await response.json();
+            outcome = result;
             success = !!result.success;
-            markActionTested('hot_water', success);
-            if (success) {
+            if (!result.cancelled) markActionTested('hot_water', success);
+            if (result.cancelled) {
+                status.textContent = 'Test abgebrochen.';
+                status.className = 'autoActionStatus';
+            } else if (success) {
                 status.textContent = `Erfolgreich: Solltemperatur ${result.originalValue} °C → ${result.boostedValue} °C → zurückgesetzt, "Warmwasser gerade erwärmt?" ist auf An gesprungen.`;
                 status.className = 'autoActionStatus status-ok';
             } else {
@@ -5251,6 +6047,7 @@ function buildHotWaterControl() {
             // erfolgreichem Test erst DANACH auf Gruen ueberschreiben, siehe Anforderung "geänderten
             // Wert in grün anzeigen".
             if (success) statusDisplay.className = 'autoActionValue testSuccess';
+            await popup.finish(outcome);
         }
     });
 
@@ -5269,7 +6066,8 @@ function buildMappingTable(keys, mappingData, helpInfo, valuePostfix, getDatalis
 
     const tbody = document.createElement('tbody');
     for (const key of keys) {
-        const hasToggle = !!toggleData && ACTION_TYPE_TOGGLE_KEYS.has(key);
+        // Schalter stehen seit 0.0.45.255 auf der Gerätesteuerung-Seite (siehe renderControlToggles) - hier keine mehr.
+        const hasToggle = false;
         tbody.appendChild(buildMappingRow(key, mappingData[key] || '', helpInfo, valuePostfix, getDatalistId(key), showLiveValue, hasToggle ? (toggleData[key] !== false) : null, onChange));
     }
     table.appendChild(tbody);
@@ -5451,7 +6249,13 @@ function buildBatteryCoupledEntityField(sensorKey, datalistId, onChange, suggest
 // Aktionstypen die dort konfigurierte(n) Entitaet(en) zurueck (siehe execute_battery_direct) - ein
 // Testklick vor deren Einrichtung wuerde deshalb nur mit "Entitaet fehlt" scheitern. Button bleibt
 // dann dauerhaft deaktiviert, mit Begruendung statt der Live-Werte.
-function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
+const BATTERY_TEST_TITLES = {
+    battery_grid_charge: 'Batterie netzladen',
+    battery_discharge_shift: 'Batterie-Entladen verschieben',
+    battery_charge_shift_pv_surplus: 'Batterie-Laden verschieben (PV-Überschuss)',
+    battery_action_stop: 'Batterie-Aktion beenden',
+};
+function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason, options = {}) {
     const wrapper = document.createElement('div');
     wrapper.className = 'autoActionControl';
 
@@ -5460,77 +6264,95 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason) {
     button.textContent = 'Testen';
     if (blockedReason) button.disabled = true;
 
-    const valuesDisplay = document.createElement('span');
-    valuesDisplay.className = 'autoActionValue';
-    valuesDisplay.textContent = blockedReason || 'Lade Werte...';
-
     const statusIcon = document.createElement('span');
     statusIcon.className = 'batteryTestStatusIcon';
     statusIcon.hidden = true;
 
-    function renderValues(values) {
-        // unit kommt jetzt vom Server (siehe _battery_direct_field_values in app.py) statt hier
-        // fest "kW" anzunehmen - bei "Batterie netzladen" steht seit Nutzer-Feedback zusaetzlich
-        // der Modus (Rohzustand, keine Einheit) neben dem Ladeleistungslimit.
-        valuesDisplay.textContent = (values || [])
-            .map(v => `${v.label}: ${(v.value === null || v.value === undefined) ? '–' : v.value + (v.unit ? ' ' + v.unit : '')}`)
-            .join(' | ');
-    }
+    const statusText = document.createElement('span');
+    statusText.className = 'autoActionValue';
 
-    async function refreshValues() {
-        valuesDisplay.className = 'autoActionValue';
-        try {
-            const result = await getJson(insideHomeAssistant + '/actions/battery/' + actionKey + '/status');
-            renderValues(result.values);
-        } catch (err) {
-            console.log(err);
-            valuesDisplay.textContent = 'Werte konnten nicht geladen werden.';
+    // Ergebnis des letzten Tests (vom Server, bleibt ueber Seiten-Reloads bestehen, bis sich die Steuerung aendert):
+    // gruenes Haekchen + "Erfolgreich getestet am ..." bzw. rotes "!" + "Test fehlgeschlagen (...)". Statt der frueheren
+    // Live-Werte ("Entladeleistung: 5 kW"), die nach einem Test ewig stehen blieben.
+    function renderLastResult() {
+        statusIcon.hidden = true;
+        statusIcon.title = '';
+        statusText.className = 'autoActionValue';
+        statusText.textContent = '';
+        if (blockedReason) {
+            statusText.textContent = blockedReason;
+            return;
+        }
+        const entry = actionTestResultsMap[actionKey];
+        const passedWithoutDate = !entry && actionTestStatusMap[actionKey] === true;  // vor diesem Update bestanden, kein Zeitpunkt bekannt
+        if (entry && !entry.ok) {
+            statusIcon.textContent = '!';
+            statusIcon.className = 'batteryTestStatusIcon status-error';
+            statusIcon.hidden = false;
+            statusText.textContent = `Test fehlgeschlagen (${entry.label})`;
+            statusText.className = 'autoActionValue testFailed';
+        } else if (entry || passedWithoutDate) {
+            statusIcon.textContent = '✓';
+            statusIcon.className = 'batteryTestStatusIcon status-ok';
+            statusIcon.hidden = false;
+            statusText.textContent = entry ? `Erfolgreich getestet am ${entry.label}` : 'Erfolgreich getestet';
+            statusText.className = 'autoActionValue testSuccess';
         }
     }
 
     button.addEventListener('click', async () => {
+        const popup = openTestPopup(options.title || ('Test: ' + (BATTERY_TEST_TITLES[actionKey] || actionKey)));
+        let outcome = null;
+        let requestFailed = false;
         button.disabled = true;
         statusIcon.hidden = true;
-        valuesDisplay.textContent = 'Teste...';
-        valuesDisplay.className = 'autoActionValue testing';
+        statusText.textContent = 'Teste...';
+        statusText.className = 'autoActionValue testing';
         if (hint) hint.hidden = true;
         try {
-            const response = await fetch(insideHomeAssistant + '/actions/battery/' + actionKey + '/test', {method: 'POST'});
-            const result = await response.json();
-            renderValues(result.values);
-            statusIcon.textContent = result.success ? '✓' : '!';
-            statusIcon.className = 'batteryTestStatusIcon ' + (result.success ? 'status-ok' : 'status-error');
-            statusIcon.title = result.success ? '' : (result.message || 'Test fehlgeschlagen');
-            statusIcon.hidden = false;
-            valuesDisplay.className = 'autoActionValue' + (result.success ? ' testSuccess' : '');
-            if (checkmark) {
-                markActionTested(actionKey, !!result.success);
+            const response = await fetch(options.testUrl || (insideHomeAssistant + '/actions/battery/' + actionKey + '/test'), {method: 'POST', headers: popup.headers});
+            outcome = await response.json();
+            if (!outcome.cancelled && checkmark) {
+                // Abgebrochen: weder bestanden noch fehlgeschlagen - Bereitschafts-Haken bleibt unveraendert.
+                markActionTested(actionKey, !!outcome.success);
                 applyTestGate(actionKey, checkmark, hint, true);
             }
         } catch (err) {
             console.log(err);
-            statusIcon.textContent = '!';
-            statusIcon.className = 'batteryTestStatusIcon status-error';
-            statusIcon.title = 'Test fehlgeschlagen';
-            statusIcon.hidden = false;
-            valuesDisplay.textContent = 'Fehler beim Testen';
-            valuesDisplay.className = 'autoActionValue';
+            requestFailed = true;
         } finally {
             button.disabled = false;
-            // Der Testausgang ist serverseitig in actionTestFailed/actionTestPassed hinterlegt -
+            // Der Server hat Ergebnis und Zeitpunkt synchron im selben Request festgehalten (siehe _record_action_test_result).
+            try {
+                actionTestResultsMap = await getJson(actionTestResultsUri);
+            } catch (err) {
+                console.log(err);
+            }
+            renderLastResult();
+            if (requestFailed) {
+                statusIcon.textContent = '!';
+                statusIcon.className = 'batteryTestStatusIcon status-error';
+                statusIcon.title = 'Test fehlgeschlagen';
+                statusIcon.hidden = false;
+                statusText.textContent = 'Fehler beim Testen';
+                statusText.className = 'autoActionValue testFailed';
+            } else if (outcome && !outcome.success && !outcome.cancelled) {
+                statusIcon.title = outcome.message || 'Test fehlgeschlagen';
+            }
             // Fehlerkarte + Geraete-Navigation ("!" statt grünem Haken) sofort neu bewerten.
             renderSystemHealth();
+            await popup.finish(outcome);
         }
     });
 
     const controls = document.createElement('div');
     controls.className = 'autoActionButtons';
     controls.appendChild(button);
-    controls.appendChild(valuesDisplay);
     controls.appendChild(statusIcon);
+    controls.appendChild(statusText);
     wrapper.appendChild(controls);
 
-    if (!blockedReason) refreshValues();
+    renderLastResult();
     return wrapper;
 }
 
@@ -5569,15 +6391,10 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     checkmark.className = 'autoActionCheckmark';
     checkmark.textContent = ' ✓';
     checkmark.hidden = true;
-    if (gated) headingRow.appendChild(checkmark);
-    const actionTypeEnabled = configData['actionTypeEnabled'] || {};
-    const toggle = buildToggleSwitch(actionKey + ACTION_TOGGLE_POSTFIX, actionTypeEnabled[actionKey] !== false);
-    // margin-left:auto statt eines generischen Gaps auf .integrationHeadingRow (das wird auch fuer
-    // die Geraete-Abschnitts-Ueberschriften mit anderer Kindanzahl verwendet) - schiebt hier gezielt
-    // nur diesen Toggle an den rechten Rand, mit spuerbarem Abstand zum Info-"?" davor (siehe
-    // Nutzer-Screenshot: beide sassen ohne Abstand direkt nebeneinander).
-    toggle.style.marginLeft = 'auto';
-    headingRow.appendChild(toggle);
+    // Der gruene Haken steht neben dem Testen-Button (siehe buildBatteryDirectTestRow), nicht an der Ueberschrift - das Element
+    // bleibt nur fuer applyTestGate (Hinweis "Bitte Gerätesteuerung testen") bestehen und wird nicht eingefuegt.
+    // Der Steuerungs-Schalter dieses Batterie-Aktionstyps steht auf der Gerätesteuerung-Seite (siehe
+    // renderControlToggles), nicht mehr hier.
     wrapper.appendChild(headingRow);
     const hint = buildTestGateHint();
     if (gated) {
@@ -6155,8 +6972,10 @@ function buildShyftActionCard(action) {
     const baseStatus = status.replace(/\s*\(deaktiviert\)/i, '').trim();
     // "no, error" = Start nicht moeglich (nicht eingerichtet/getestet ODER Geraetefehler),
     // "yes, not finished" = Beenden fehlgeschlagen - beides rot umranden (siehe .shyftActionCard.is-error).
+    // "Had Error" (Backend, bleibt dauerhaft gesetzt): auch eine Aktion, bei der ein spaeterer Versuch doch noch
+    // klappte (z.B. Beenden beim naechsten Poll), bleibt rot und zeigt statt "beendet" den Status "Fehler".
     const exec = (action['Execution Status'] || '').toLowerCase();
-    const isError = exec === 'no, error' || exec === 'yes, not finished';
+    const isError = exec === 'no, error' || exec === 'yes, not finished' || action['Had Error'] === true;
 
     const card = document.createElement('div');
     card.className = 'shyftActionCard' + (isActive ? ' is-active' : '') + (isDeactivated ? ' is-deactivated' : '') + (isError ? ' is-error' : '');
@@ -6263,10 +7082,12 @@ function buildShyftActionCard(action) {
 
     const statusEl = document.createElement('div');
     statusEl.className = 'shyftActionStatus';
+    // Die Haushaltsstrom-Ersparnis ist keine echte, gestartete/beendete Aktion (siehe oben) -
+    // deshalb ohne Status-Text (Nutzer-Vorgabe), die Spalte bleibt fuer das Layout aber erhalten.
     const statusMain = document.createElement('div');
-    statusMain.textContent = baseStatus || '–';
+    statusMain.textContent = isHouseholdSavings ? '' : ((isError && baseStatus.toLowerCase() === 'beendet') ? 'Fehler' : (baseStatus || '–'));
     statusEl.appendChild(statusMain);
-    if (isDeactivated) {
+    if (isDeactivated && !isHouseholdSavings) {
         const statusSub = document.createElement('div');
         statusSub.className = 'shyftActionStatusSub';
         statusSub.textContent = '(deaktiviert)';
@@ -6291,7 +7112,8 @@ const SHYFT_ACTIONS_HIDDEN_DEVICES_KEY = 'shyftActionsHiddenDevices';
 // Aktions-"Gerät" = die Geraetekachel, zu der der Aktionstyp gehoert (ACTION_NAME_TO_SECTION_KEY);
 // alles Unbekannte landet im Sammel-Eimer "sonstige".
 function shyftActionDeviceKey(action) {
-    return ACTION_NAME_TO_SECTION_KEY[action && action['Action Name']] || 'sonstige';
+    const actionName = action && action['Action Name'];
+    return (actionName === 'Warmwasser' ? hotWaterSectionKey() : ACTION_NAME_TO_SECTION_KEY[actionName]) || 'sonstige';
 }
 function shyftDeviceLabel(key) {
     if (key === 'sonstige') return 'Sonstige';
@@ -6603,7 +7425,111 @@ function maybeAutoScrollToActiveShyftActions() {
     });
 }
 
+// --- Gerätesteuerung: Schalter "Steuerung aktivieren/deaktivieren" je Aktionstyp --------------------------
+// Karten wie auf der Seite oben (siehe #shyftControlToggles): Symbol, Beschriftung, Schalter. Der Schalter nutzt dieselbe
+// Id (<Aktionstyp>_toggle) und dieselbe Speicherlogik (buildToggleSwitch) wie frueher auf der Konfigurationsseite -
+// saveConfigurationNow liest ihn weiter ueber diese Id. Gezeigt wird nur, was eingebunden ist (siehe
+// controlSectionHasRealDevice).
+const CONTROL_TOGGLE_ICONS = {
+    thermometer: '<path d="M14 14.76V5a2 2 0 0 0-4 0v9.76a4 4 0 1 0 4 0z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
+    radiator: '<path d="M5 5v14M10 5v14M15 5v14M20 5v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+    battery: '<rect x="2" y="7" width="17" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="20" y="10" width="2" height="4" fill="currentColor"/><rect x="5" y="10" width="6" height="4" fill="currentColor"/>',
+    car: '<path d="M5 17H3v-5l2-6h14l2 6v5h-2M3 12h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="7.5" cy="17" r="1.6" fill="currentColor"/><circle cx="16.5" cy="17" r="1.6" fill="currentColor"/>',
+    plug: '<path d="M9 3v5M15 3v5M7 8h10v4a5 5 0 0 1-10 0V8zM12 17v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+};
+
+const CONTROL_TOGGLE_CARDS = [
+    {key: 'hot_water', sectionKey: 'waermepumpe', label: 'Warmwasser steuern', icon: 'thermometer'},
+    {key: 'heating_target_temp', sectionKey: 'waermepumpe', label: 'Heizung steuern', icon: 'radiator'},
+    {key: 'battery_grid_charge', sectionKey: 'batterie', label: 'Batterie netzladen', icon: 'battery'},
+    {key: 'battery_charge_shift_pv_surplus', sectionKey: 'batterie', label: 'Batterie schonen (PV-Überschuss)', icon: 'battery'},
+    {key: 'battery_discharge_shift', sectionKey: 'batterie', label: 'Batterie-Entladen verschieben', icon: 'battery'},
+    {key: 'car_charge_start', sectionKey: 'wallbox', label: 'Auto laden', icon: 'car'},
+    {key: 'consumer_on', sectionKey: 'sonstiger_verbraucher', label: 'Verbraucher steuern', icon: 'plug'},
+];
+
+// Ein Geraet gilt als eingebunden, wenn die Kachel ein ECHTES Geraet (nicht nur das Demo-Geraet) ausgewaehlt hat UND mindestens
+// eine Home-Assistant-Entitaet dafuer hinterlegt ist - ein reiner Demomodus oder eine leere Kachel zeigt keine Schalter.
+function controlSectionHasRealDevice(sectionKey) {
+    const section = INTEGRATION_SECTIONS.find(s => s.key === sectionKey);
+    if (!section) return false;
+    const ids = (configData['integrationMappings'] || {})[sectionKey] || [];
+    if (!ids.some(id => id !== DEMO_INTEGRATION_ID)) return false;
+    const sensors = configData['sensorMappings'] || {};
+    return section.sensors.some(key => {
+        const value = sensors[key];
+        return Array.isArray(value) ? value.some(Boolean) : !!value;
+    });
+}
+
+// Mit aktivem Heizstab gehoert "Warmwasser steuern" zur Heizstab-Kachel und "Heizung steuern" entfaellt (Waermepumpe deaktiviert).
+function controlCardSectionKey(card) {
+    if (card.sectionKey === 'waermepumpe' && isHeatingRodActive()) return card.key === 'hot_water' ? 'heizstab' : null;
+    return card.sectionKey;
+}
+
+function renderControlToggles() {
+    const bar = document.getElementById('shyftControlToggles');
+    if (!bar) return;
+    const cards = CONTROL_TOGGLE_CARDS.filter(card => controlSectionHasRealDevice(controlCardSectionKey(card)));
+    const enabled = configData['actionTypeEnabled'] || {};
+    const structure = cards.map(card => card.key).join('|');
+    if (bar.dataset.structure === structure) {
+        // gleiche Karten: nur die Schalterstellung angleichen (z.B. nach einer Aenderung auf der Konfigurationsseite)
+        for (const card of cards) {
+            const input = document.getElementById(card.key + ACTION_TOGGLE_POSTFIX);
+            if (input) input.checked = enabled[card.key] !== false;
+        }
+        return;
+    }
+    bar.dataset.structure = structure;
+    bar.innerHTML = '';
+    bar.hidden = cards.length === 0;
+    for (const card of cards) {
+        const item = document.createElement('div');
+        item.className = 'shyftControlToggle';
+        const icon = document.createElement('span');
+        icon.className = 'shyftControlToggleIcon';
+        icon.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${CONTROL_TOGGLE_ICONS[card.icon] || ''}</svg>`;
+        const label = document.createElement('span');
+        label.className = 'shyftControlToggleLabel';
+        label.textContent = card.label;
+        item.append(icon, label, buildToggleSwitch(card.key + ACTION_TOGGLE_POSTFIX, enabled[card.key] !== false));
+        bar.appendChild(item);
+    }
+}
+
+// Blendet die Schalter-Leiste beim Herunterscrollen aus und beim Hinaufscrollen (bzw. ganz oben) wieder ein - sie klebt
+// sonst unter der Kopfzeile und nimmt auf dem Handy viel Platz weg.
+function setupControlTogglesAutoHide() {
+    const bar = document.getElementById('shyftControlToggles');
+    if (!bar) return;
+    let lastY = window.scrollY;
+    // Ausgeblendet wird NUR, wenn der Nutzer selbst scrollt (Mausrad, Touch, Tastatur, Scrollbalken ziehen). Programmatisches
+    // Scrollen - z.B. der automatische Sprung zur aktuellen Aktion beim Oeffnen der Seite (maybeAutoScrollToActiveShyftActions)
+    // oder Layout-Aenderungen beim Laden - liess die Leiste sonst kurz aufblitzen und sofort wieder verschwinden.
+    let lastUserInputAt = 0;
+    const markUserInput = () => { lastUserInputAt = Date.now(); };
+    for (const type of ['wheel', 'touchmove', 'keydown', 'mousedown']) {
+        window.addEventListener(type, markUserInput, {passive: true});
+    }
+    window.addEventListener('scroll', () => {
+        const y = window.scrollY;
+        const byUser = Date.now() - lastUserInputAt < 1000;
+        if (y <= 24 || y < lastY - 4) bar.classList.remove('is-hidden');
+        else if (byUser && y > lastY + 4) bar.classList.add('is-hidden');
+        lastY = y;
+    }, {passive: true});
+    // Beim Oeffnen der Gerätesteuerung-Seite immer eingeblendet starten (siehe setupTabs/loadShyftActions).
+    window.showControlToggles = () => {
+        bar.classList.remove('is-hidden');
+        lastY = window.scrollY;
+        lastUserInputAt = 0;
+    };
+}
+
 async function loadShyftActions() {
+    renderControlToggles();
     const container = document.getElementById('shyftActionsBody');
     if (!container) return;
 
@@ -6724,9 +7650,13 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
 
     const legend = document.createElement('div');
     legend.className = 'einsatzplanLegend';
-    const ageMs = Date.now() - einsatzplan.creation_date;
+    // validated_at: der Plan wurde zuletzt geprueft und "passt noch" (die stuendliche Optimierung wurde deshalb uebersprungen, siehe
+    // skip_hourly_optimization_if_plan_fits in app.py) - dann zaehlt dieser Zeitpunkt fuer die Farbe, nicht das Alter der Berechnung.
+    const validatedAt = einsatzplan.validated_at && einsatzplan.validated_at > einsatzplan.creation_date ? einsatzplan.validated_at : null;
+    const ageMs = Date.now() - (validatedAt || einsatzplan.creation_date);
     const timeSpan = document.createElement('span');
     timeSpan.textContent = `Berechnet um ${formatShyftTime(einsatzplan.creation_date)} Uhr`;
+    if (validatedAt) timeSpan.textContent += ` (um ${formatShyftTime(validatedAt)} Uhr geprüft: passt noch)`;
     if (ageMs >= EINSATZPLAN_STALE_ERROR_MS) {
         timeSpan.className = 'einsatzplanLegendStaleError';
         timeSpan.textContent += '!';
@@ -6825,6 +7755,453 @@ function computePvEnergySummary(labels, values) {
 // "nice numbers" (1/2/2.5/5/10 je Zehnerpotenz) gerundet, statt den Bereich stur in (targetCount-1)
 // gleiche Teile zu zerlegen. Gemeinsam genutzt von buildLineChart/buildForecastActualChart/
 // buildComparisonChart statt je Chart eine eigene (bisher: feste 3 Ticks top/mitte/unten).
+// Hoehe der Liniendiagramm-SVGs (viewBox 600 x CHART_SVG_HEIGHT) - 275 statt frueher 220 (+25 %), damit die Charts auf dem
+// Handy (wo das SVG auf die Bildschirmbreite skaliert wird) nicht so flach wirken.
+const CHART_SVG_HEIGHT = 275;
+
+// Anteil der Diagrammhoehe, den eine Kurve mit "Versatz" (bandPrimary/secondSeries.band, z.B. Raumtemperatur) einnimmt:
+// die Hauptkurve (linke Achse) im unteren, die zweite Kurve (rechte Achse) im oberen Teil - so liegen beide eher
+// uebereinander statt aufeinander.
+const CHART_BAND_FRACTION = 0.6;
+// Die zweite Kurve (z.B. Innenraum) bekommt weniger Hoehe (oberes Band): Wertebereich enger, die Kurve liegt hoeher und deutlich
+// ueber der Hauptkurve (Heizung-Soll im unteren Band) statt dicht daneben.
+const CHART_BAND_FRACTION_SECOND = 0.4;
+
+// Anzahl der Zeitbeschriftungen auf der x-Achse: auf dem Handy weniger, damit sie sich nicht ueberlappen ("Sa, 05 UhrSa, 12 Uhr").
+function chartXTickCount(n) {
+    return Math.min(window.innerWidth <= 700 ? 4 : 6, n);
+}
+
+// Haelt den Tooltip innerhalb des Chart-Containers: er ist per translate(-50%) um die Maus-/Touch-Stelle zentriert und
+// wuerde am linken/rechten Rand sonst abgeschnitten (bzw. dort umbrechen, siehe .dashboardChartTooltip in index.html).
+function clampChartTooltip(tooltip) {
+    const container = tooltip.parentElement;
+    if (!container) return;
+    const half = tooltip.offsetWidth / 2;
+    const left = parseFloat(tooltip.style.left);
+    if (isNaN(left)) return;
+    tooltip.style.left = Math.min(Math.max(left, half), Math.max(half, container.clientWidth - half)).toFixed(1) + 'px';
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Legende der Dashboard-Charts: Linienmuster statt Punkten (durchgezogen = Ist-Wert, gestrichelt = Prognose) und
+// Antippen/Anklicken eines Legenden-Eintrags blendet die zugehoerige Kurve aus bzw. wieder ein. Der Zustand wird je
+// Chart und Kurve im Browser gespeichert (localStorage, ueberlebt Neuladen/Verlassen der Seite); Standard beim ersten
+// Oeffnen: alles eingeblendet. Charts ohne chartKey (Aussentemperatur - nur eine Kurve) bekommen eine Legende ohne
+// Schaltfunktion.
+// ---------------------------------------------------------------------------------------------------------------
+const CHART_HIDDEN_SERIES_STORAGE_KEY = 'shyftChartHiddenSeries';
+const chartHiddenSeriesMemory = {};  // Rueckfall (und Cache), falls der Browser-Speicher nicht verfuegbar ist
+
+function loadHiddenChartSeries(chartKey) {
+    if (chartKey in chartHiddenSeriesMemory) return new Set(chartHiddenSeriesMemory[chartKey]);
+    let list = [];
+    try {
+        const all = JSON.parse(localStorage.getItem(CHART_HIDDEN_SERIES_STORAGE_KEY) || '{}');
+        if (Array.isArray(all[chartKey])) list = all[chartKey];
+    } catch (err) { /* Browser-Speicher nicht verfuegbar oder kaputt: alles eingeblendet */ }
+    chartHiddenSeriesMemory[chartKey] = list;
+    return new Set(list);
+}
+
+function saveHiddenChartSeries(chartKey, hiddenSet) {
+    chartHiddenSeriesMemory[chartKey] = [...hiddenSet];
+    try {
+        const all = JSON.parse(localStorage.getItem(CHART_HIDDEN_SERIES_STORAGE_KEY) || '{}');
+        if (hiddenSet.size) all[chartKey] = [...hiddenSet]; else delete all[chartKey];
+        localStorage.setItem(CHART_HIDDEN_SERIES_STORAGE_KEY, JSON.stringify(all));
+    } catch (err) { /* egal - der Zustand gilt dann nur bis zum Neuladen */ }
+}
+
+// Zeitfenster der Dashboard-Charts (Handy): beim Oeffnen "heute plus ein halber Tag" (ab 0 Uhr heute 36 Stunden), per
+// Wischen (ein Finger) verschiebbar, per Zwei-Finger-Zoom (Pinch) bis auf den gesamten Zeitraum aus- und wieder
+// einzoomen. Das Fenster gilt fuer alle Charts gemeinsam (chartGlobalView, nur im Speicher - nach dem Neuladen gilt wieder
+// der Standard); null = gesamter Zeitraum (Standard am Desktop). Ein Chart passt sich beim Zoomen/Wischen sofort an, die
+// uebrigen nach dem Loslassen.
+const CHART_MOBILE_MAX_WIDTH_PX = 700;
+const CHART_DEFAULT_VIEW_HOURS = 36;
+const CHART_MIN_VIEW_SPAN_MS = 8 * 3600000;
+
+function defaultChartView() {
+    try {
+        if (!window.matchMedia || !window.matchMedia(`(max-width: ${CHART_MOBILE_MAX_WIDTH_PX}px)`).matches) return null;
+    } catch (err) { return null; }
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    return {startMs: midnight.getTime(), endMs: midnight.getTime() + CHART_DEFAULT_VIEW_HOURS * 3600000};
+}
+
+let chartGlobalView = defaultChartView();
+const chartRefreshers = new Set();
+
+function applyGlobalChartView(view, exceptEntry) {
+    chartGlobalView = view;
+    for (const entry of [...chartRefreshers]) {
+        if (!entry.wrapper.isConnected) { chartRefreshers.delete(entry); continue; }
+        if (entry !== exceptEntry) entry.refresh();
+    }
+}
+
+// Indizes [i0, i1] der (stuendlichen) labels, die im Zeitfenster view liegen; full=true, wenn das Fenster den ganzen
+// Zeitraum dieses Charts abdeckt (oder keins gesetzt ist). Das Fenster wird auf den Zeitraum des Charts geklemmt
+// (Breite bleibt erhalten).
+function chartWindowIndices(labels, view) {
+    const n = labels.length;
+    const full = {i0: 0, i1: n - 1, full: true};
+    if (!view || n < 3) return full;
+    const times = labels.map(l => new Date(l).getTime());
+    const fullStart = times[0], fullEnd = times[n - 1];
+    const span = view.endMs - view.startMs;
+    if (!(span > 0) || span >= fullEnd - fullStart) return full;
+    const start = Math.min(Math.max(view.startMs, fullStart), fullEnd - span);
+    const end = start + span;
+    let i0 = times.findIndex(t => t >= start - 1);
+    let i1 = -1;
+    for (let k = n - 1; k >= 0; k--) { if (times[k] <= end + 1) { i1 = k; break; } }
+    if (i0 < 0 || i1 - i0 < 2) return full;
+    return {i0, i1, full: false};
+}
+
+const sliceChartSeries = (series, w) => (Array.isArray(series) ? series.slice(w.i0, w.i1 + 1) : series);
+
+// Touch-Bedienung der Charts (Handy), zentral statt je Chart:
+//   Antippen             - Tooltip an dieser Stelle FESTSETZEN (bleibt stehen, auch nach Neuzeichnen/30-s-Refresh); erneut dieselbe
+//                          Stelle antippen blendet ihn aus, eine andere Stelle (auch in einem anderen Chart) versetzt ihn
+//   Kurz halten + ziehen - Tooltip ueber die Kurven schieben (Ablesen ohne dass der Finger die Stelle verdeckt, auch gezoomt)
+//   Sofort wischen       - Zeitfenster verschieben (nur wenn gezoomt; sonst scrollt die Seite wie gewohnt)
+//   Zwei Finger          - stufenlos zoomen (Pinch)
+//   Doppeltippen         - Zeitfenster auf den Standard zuruecksetzen
+// Das Neuzeichnen (entry.refresh) ersetzt das SVG waehrend der Geste: die Touch-Listener haengen deshalb direkt an den
+// Touch-Zielen - ein Touch liefert seine Folge-Events weiter an sein urspruengliches Ziel, auch wenn es aus dem DOM verschwindet.
+const CHART_LONG_PRESS_MS = 300;
+const CHART_TAP_MAX_MOVE_PX = 8;
+const CHART_DOUBLE_TAP_MS = 350;
+let chartSticky = null;   // {key, ms}: festgesetzter Tooltip (Chart-Schluessel + Zeitpunkt), hoechstens einer
+let chartLastTap = null;  // {time, x, y} fuer das Doppeltippen
+
+function setChartSticky(entry, ms) {
+    chartSticky = (entry && ms !== null && ms !== undefined) ? {key: entry.stickyKey, ms} : null;
+    for (const other of chartRefreshers) {
+        if (other !== entry && other.ctx && other.ctx.tooltipApi) other.ctx.tooltipApi.hide();
+    }
+}
+
+// Schnittstelle eines gebauten Charts zum Touch-Controller (siehe ctx.tooltipApi in den Chart-Funktionen).
+function makeChartTooltipApi({svgEl, labels, lastIndex, paddingLeft, plotWidth, width, showTooltip, hideTooltip}) {
+    const indexAtClientX = clientX => {
+        const rect = svgEl.getBoundingClientRect();
+        if (rect.width === 0) return null;
+        const scale = rect.width / width;
+        return Math.max(0, Math.min(lastIndex, Math.round(((clientX - rect.left) / scale - paddingLeft) / plotWidth * lastIndex)));
+    };
+    return {
+        showAtClientX: showTooltip,
+        hide: hideTooltip,
+        labelMsAtClientX: clientX => {
+            const idx = indexAtClientX(clientX);
+            return idx === null ? null : new Date(labels[idx]).getTime();
+        },
+        showAtLabelMs: ms => {
+            const idx = labels.findIndex(l => new Date(l).getTime() === ms);
+            const rect = svgEl.getBoundingClientRect();
+            if (idx < 0 || idx > lastIndex || rect.width === 0) { hideTooltip(); return; }
+            showTooltip(rect.left + (paddingLeft + idx / lastIndex * plotWidth) * rect.width / width);
+        },
+    };
+}
+
+function attachChartViewGestures(entry) {
+    const wrapper = entry.wrapper;
+    let g = null;
+    let rafPending = false;
+    const clamp01 = v => Math.min(1, Math.max(0, v));
+    const tooltipApi = () => (entry.ctx && entry.ctx.tooltipApi) || null;
+
+    function metrics() {
+        const svg = wrapper.querySelector('svg.dashboardChartSvg');
+        if (!svg) return null;
+        const rect = svg.getBoundingClientRect();
+        if (rect.width === 0) return null;
+        const k = rect.width / 600;
+        const plotLeft = entry.ctx && entry.ctx.plotLeft !== undefined ? entry.ctx.plotLeft : 52;
+        const plotRight = entry.ctx && entry.ctx.plotRight !== undefined ? entry.ctx.plotRight : 15;
+        return {left: rect.left + plotLeft * k, width: (600 - plotLeft - plotRight) * k};
+    }
+    function effectiveView() {
+        const full = entry.fullRange();
+        const fullSpan = full.endMs - full.startMs;
+        const v = chartGlobalView;
+        if (!v || v.endMs - v.startMs >= fullSpan) return {startMs: full.startMs, endMs: full.endMs, zoomed: false};
+        const span = v.endMs - v.startMs;
+        const start = Math.min(Math.max(v.startMs, full.startMs), full.endMs - span);
+        return {startMs: start, endMs: start + span, zoomed: true};
+    }
+    function toView(startMs, spanMs) {
+        const full = entry.fullRange();
+        if (spanMs >= (full.endMs - full.startMs) * 0.98) return null;
+        const start = Math.round(Math.min(Math.max(startMs, full.startMs), full.endMs - spanMs) / 3600000) * 3600000;
+        return {startMs: start, endMs: start + spanMs};
+    }
+    function scheduleLive(view) {
+        chartGlobalView = view;
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(() => { rafPending = false; entry.refresh(); });
+    }
+    const cancelDefault = e => { if (e.cancelable) e.preventDefault(); };
+
+    function onMove(e) {
+        if (!g) return;
+        const m = metrics();
+        if (!m) return;
+        if (g.mode === 'pinch' && e.touches.length >= 2) {
+            const a = e.touches[0], b = e.touches[1];
+            const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+            const mid = (a.clientX + b.clientX) / 2;
+            const startSpan = g.start.endMs - g.start.startMs;
+            const full = entry.fullRange();
+            const newSpan = Math.min(full.endMs - full.startMs, Math.max(CHART_MIN_VIEW_SPAN_MS, startSpan * g.dist0 / dist));
+            const anchorMs = g.start.startMs + clamp01((g.mid0 - m.left) / m.width) * startSpan;
+            scheduleLive(toView(anchorMs - clamp01((mid - m.left) / m.width) * newSpan, newSpan));
+            cancelDefault(e);
+            e.stopPropagation();
+            return;
+        }
+        if (e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        g.lastX = touch.clientX;
+        if (g.mode === 'pending') {
+            const dx = touch.clientX - g.x0, dy = touch.clientY - g.y0;
+            if (Math.hypot(dx, dy) > CHART_TAP_MAX_MOVE_PX) {
+                clearTimeout(g.timer);
+                // nur horizontal und nur gezoomt: Zeitfenster verschieben; sonst ignorieren (die Seite scrollt senkrecht)
+                g.mode = (g.start.zoomed && Math.abs(dx) > Math.abs(dy)) ? 'pan' : 'none';
+            }
+        }
+        if (g.mode === 'pan') {
+            const span = g.start.endMs - g.start.startMs;
+            scheduleLive(toView(g.start.startMs - (touch.clientX - g.x0) / m.width * span, span));
+            cancelDefault(e);
+            e.stopPropagation();
+        } else if (g.mode === 'scrub') {
+            const api = tooltipApi();
+            if (api) api.showAtClientX(touch.clientX);
+            cancelDefault(e);
+            e.stopPropagation();
+        }
+    }
+    function onEnd(e) {
+        if (e.touches.length > 0) {
+            if (g && g.mode === 'pinch') g.mode = 'ended';
+            return;
+        }
+        const done = g;
+        g = null;
+        if (!done) return;
+        clearTimeout(done.timer);
+        if (e.type === 'touchcancel') {
+            if (done.mode === 'pan' || done.mode === 'pinch' || done.mode === 'ended') applyGlobalChartView(chartGlobalView, entry);
+            return;
+        }
+        if (done.mode === 'pan' || done.mode === 'pinch' || done.mode === 'ended') {
+            applyGlobalChartView(chartGlobalView, entry);
+            cancelDefault(e);
+        } else if (done.mode === 'scrub') {
+            const api = tooltipApi();
+            setChartSticky(entry, api ? api.labelMsAtClientX(done.lastX) : null);
+            cancelDefault(e);
+        } else if (done.mode === 'pending') {
+            // Antippen. cancelDefault unterdrueckt die vom Browser nachgeschobenen Maus-Events (mousemove/-leave), die den Tooltip sonst wieder aendern.
+            cancelDefault(e);
+            const now = Date.now();
+            if (chartLastTap && now - chartLastTap.time < CHART_DOUBLE_TAP_MS && Math.hypot(done.x0 - chartLastTap.x, done.y0 - chartLastTap.y) < 40) {
+                chartLastTap = null;
+                applyGlobalChartView(defaultChartView(), null);  // Doppeltippen: Standard-Zeitfenster
+                return;
+            }
+            chartLastTap = {time: now, x: done.x0, y: done.y0};
+            const api = tooltipApi();
+            if (!api) return;
+            const ms = api.labelMsAtClientX(done.x0);
+            if (chartSticky && chartSticky.key === entry.stickyKey && chartSticky.ms === ms) {
+                api.hide();
+                chartSticky = null;
+            } else {
+                api.showAtClientX(done.x0);
+                setChartSticky(entry, ms);
+            }
+        }
+    }
+    function bind(el) {
+        if (!el || el.__shyftChartGesture) return;
+        el.__shyftChartGesture = true;
+        el.addEventListener('touchmove', onMove, {passive: false});
+        el.addEventListener('touchend', onEnd);
+        el.addEventListener('touchcancel', onEnd);
+    }
+
+    wrapper.addEventListener('touchstart', e => {
+        if (!e.target.closest || !e.target.closest('svg.dashboardChartSvg')) return;
+        for (const t of e.changedTouches) bind(t.target);
+        if (g) clearTimeout(g.timer);
+        const eff = effectiveView();
+        if (e.touches.length >= 2) {
+            const a = e.touches[0], b = e.touches[1];
+            g = {mode: 'pinch', dist0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1, mid0: (a.clientX + b.clientX) / 2, start: eff};
+        } else if (e.touches.length === 1) {
+            const touch = e.touches[0];
+            g = {mode: 'pending', x0: touch.clientX, y0: touch.clientY, lastX: touch.clientX, start: eff, timer: null};
+            const current = g;
+            current.timer = setTimeout(() => {
+                if (g !== current || current.mode !== 'pending') return;
+                current.mode = 'scrub';  // langes Halten ohne Bewegung: ab jetzt schiebt der Finger den Tooltip
+                if (navigator.vibrate) { try { navigator.vibrate(8); } catch (err) { /* egal */ } }
+                const api = tooltipApi();
+                if (api) api.showAtClientX(current.lastX);
+            }, CHART_LONG_PRESS_MS);
+        }
+    }, {capture: true, passive: true});
+}
+
+// Baut einen Chart ueber build(ctx) und baut ihn bei Aenderungen an Ort und Stelle neu (Kurve ein-/ausblenden per Legende,
+// Zeitfenster per Zoom/Wischen). ctx = {hidden: Set ausgeblendeter Kurven, toggle: Funktion(seriesId) | null (ohne chartKey),
+// view: Zeitfenster | null}. Nur die von build() erzeugten Knoten werden getauscht, vom Aufrufer spaeter angehaengte
+// Elemente (z.B. Prognose-Details unter "Ladestand Auto") bleiben erhalten. info.labels (stuendliche ISO-Zeitpunkte des
+// vollen Zeitraums) schaltet das Zoom-/Wisch-Verhalten ein.
+function makeToggleableChart(chartKey, build, info = {}) {
+    let wrapper = null;
+    let ownNodes = [];
+    let lastCtx = null;
+    const labelTimes = (info.labels || []).map(l => new Date(l).getTime());
+    const entry = {
+        wrapper: null,
+        stickyKey: info.stickyKey || chartKey || null,
+        fullRange: () => ({startMs: labelTimes[0], endMs: labelTimes[labelTimes.length - 1]}),
+        refresh: () => rebuild(),
+        get ctx() { return lastCtx; },
+    };
+    const makeCtx = () => ({hidden: chartKey ? loadHiddenChartSeries(chartKey) : new Set(), toggle: chartKey ? toggle : null, view: chartGlobalView});
+    function rebuild() {
+        lastCtx = makeCtx();
+        const next = build(lastCtx);
+        const nextNodes = [...next.childNodes];
+        const anchor = ownNodes[0] || null;
+        for (const node of nextNodes) wrapper.insertBefore(node, anchor);
+        for (const node of ownNodes) node.remove();
+        ownNodes = nextNodes;
+        restoreSticky();
+    }
+    // Festgesetzten Tooltip (siehe chartSticky) nach dem (Neu-)Bau wieder anzeigen - erst im naechsten Frame, wenn das SVG im DOM steht.
+    function restoreSticky() {
+        if (!chartSticky || !entry.stickyKey || chartSticky.key !== entry.stickyKey) return;
+        const ms = chartSticky.ms;
+        requestAnimationFrame(() => {
+            if (wrapper.isConnected && lastCtx && lastCtx.tooltipApi) lastCtx.tooltipApi.showAtLabelMs(ms);
+        });
+    }
+    function toggle(seriesId) {
+        const hidden = loadHiddenChartSeries(chartKey);
+        if (hidden.has(seriesId)) hidden.delete(seriesId); else hidden.add(seriesId);
+        saveHiddenChartSeries(chartKey, hidden);
+        rebuild();
+    }
+    lastCtx = makeCtx();
+    wrapper = build(lastCtx);
+    ownNodes = [...wrapper.childNodes];
+    entry.wrapper = wrapper;
+    restoreSticky();
+    if (labelTimes.length > 2) {
+        chartRefreshers.add(entry);
+        attachChartViewGestures(entry);
+    }
+    return wrapper;
+}
+
+// Reale Werte fortlaufend (Backend: actualFine = [[ISO-Zeitpunkt, Wert], ...] in 5-Minuten-Schritten) statt nur einmal je Stunde.
+function parseFinePoints(points) {
+    return (points || []).map(([t, v]) => [new Date(t).getTime(), v]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v));
+}
+
+// Nur die feinen Punkte, die im Zeitraum der (ggf. auf ein Zeitfenster zugeschnittenen) Stunden-Labels liegen.
+function filterFineByLabels(points, labels, binMs = 300000) {
+    if (!points || labels.length === 0) return points;
+    const fromMs = new Date(labels[0]).getTime() - binMs, toMs = new Date(labels[labels.length - 1]).getTime();
+    return points.filter(([t]) => { const ms = new Date(t).getTime(); return ms >= fromMs && ms <= toMs; });
+}
+
+// Zeichnet feine Ist-Punkte [[ms, Wert], ...] als Linie (stepped: Treppe) und fasst gleichfarbige Abschnitte zu einem Pfad
+// zusammen. colorFor(Wert vor einer Stunde, Wert) legt die Farbe fest (Richtung ueber eine Stunde statt je 5-Minuten-Schritt).
+// areaParts + baseline (optional): zusaetzlich die Flaeche unter der Linie (gleiche Farbe, wie bei der Prognose) in areaParts; areaEndX
+// verlaengert sie nach dem letzten Punkt waagerecht bis zu dieser x-Position (bis die Prognose-Flaeche beginnt).
+function fineSeriesMarkup(points, {xOfMs, yOf, stepped = false, colorFor, binMs = 300000, areaParts = null, baseline = 0, areaEndX = null}) {
+    const lookback = Math.max(1, Math.round(3600000 / binMs));
+    const parts = [];
+    let runColor = null, d = '', runStartX = 0, runEndX = 0, runEndY = 0;
+    const flush = (final = false) => {
+        if (d) {
+            parts.push(`<path d="${d}" fill="none" stroke="${runColor}" stroke-width="2" />`);
+            if (areaParts) {
+                let area = d;
+                let endX = runEndX;
+                if (final && areaEndX !== null && areaEndX > endX) { area += ` L${areaEndX.toFixed(1)},${runEndY.toFixed(1)}`; endX = areaEndX; }
+                areaParts.push(`<path d="${area} L${endX.toFixed(1)},${baseline.toFixed(1)} L${runStartX.toFixed(1)},${baseline.toFixed(1)} Z" fill="${runColor}" opacity="0.15" stroke="none" />`);
+            }
+        }
+        d = ''; runColor = null;
+    };
+    for (let k = 0; k < points.length - 1; k++) {
+        const [t0, v0] = points[k], [t1, v1] = points[k + 1];
+        if (t1 - t0 > binMs * 2.5) { flush(); continue; }  // Luecke (z.B. Sensor ohne Daten)
+        const color = colorFor(points[Math.max(0, k + 1 - lookback)][1], v1);
+        const x0 = xOfMs(t0 + binMs / 2), x1 = xOfMs(t1 + binMs / 2);
+        const seg = stepped
+            ? `L${x1.toFixed(1)},${yOf(v0).toFixed(1)} L${x1.toFixed(1)},${yOf(v1).toFixed(1)}`
+            : `L${x1.toFixed(1)},${yOf(v1).toFixed(1)}`;
+        if (color !== runColor || !d) {
+            flush();
+            runColor = color;
+            runStartX = x0;
+            d = `M${x0.toFixed(1)},${yOf(v0).toFixed(1)} ${seg}`;
+        } else {
+            d += ` ${seg}`;
+        }
+        runEndX = x1;
+        runEndY = yOf(v1);
+    }
+    flush(true);
+    return parts.join('');
+}
+
+// Ein Legenden-Eintrag. style: 'solid' (Ist-Wert), 'dashed' (Prognose), 'both' (Kurve mit Ist-Wert und Prognose) oder
+// 'square' (Flaeche, z.B. Aktion). id=null oder ctx.toggle=null: reine Beschriftung ohne Schaltfunktion.
+function chartLegendEntry(ctx, {id = null, label, color = 'var(--color-text-secondary)', style = 'solid', opacity = null}) {
+    const hidden = !!id && ctx.hidden.has(id);
+    const interactive = !!id && !!ctx.toggle;
+    const item = document.createElement(interactive ? 'button' : 'span');
+    item.className = 'dashboardChartLegendItem' + (interactive ? ' dashboardChartLegendToggle' : '') + (hidden ? ' is-hidden' : '');
+    if (interactive) {
+        item.type = 'button';
+        item.setAttribute('aria-pressed', hidden ? 'false' : 'true');
+        item.title = hidden ? 'Zum Einblenden antippen' : 'Zum Ausblenden antippen';
+        item.addEventListener('click', () => ctx.toggle(id));
+    }
+    const line = (x1, x2, dashed) => `<line x1="${x1}" y1="5" x2="${x2}" y2="5" stroke="${color}" stroke-width="2" ${dashed ? 'stroke-dasharray="4,3"' : ''} />`;
+    let svg;
+    if (style === 'square') {
+        svg = `<svg width="12" height="10" viewBox="0 0 12 10"><rect x="0" y="0" width="12" height="10" fill="${color}" ${opacity ? `opacity="${opacity}"` : ''} /></svg>`;
+    } else if (style === 'both') {
+        svg = `<svg width="28" height="10" viewBox="0 0 28 10">${line(0, 11, false)}${line(15, 28, true)}</svg>`;
+    } else {
+        svg = `<svg width="20" height="10" viewBox="0 0 20 10">${line(0, 20, style === 'dashed')}</svg>`;
+    }
+    const icon = document.createElement('span');
+    icon.style.display = 'inline-flex';
+    icon.innerHTML = svg;
+    item.appendChild(icon);
+    item.appendChild(document.createTextNode(label));
+    return item;
+}
+
 function computeNiceTicks(min, max, targetCount = 4) {
     const range = max - min;
     if (!isFinite(range) || range <= 0) return [min];
@@ -6844,13 +8221,38 @@ function computeNiceTicks(min, max, targetCount = 4) {
 }
 
 function buildLineChart(title, unit, labels, values, options = {}) {
-    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null} = options;
-    const width = 600, height = 220;
+    return makeToggleableChart(options.chartKey, ctx => {
+        const w = chartWindowIndices(labels, ctx.view);
+        if (w.full) return buildLineChartImpl(title, unit, labels, values, options, ctx);
+        const sliced = {...options};
+        if (options.dashedFromIndex !== null && options.dashedFromIndex !== undefined) sliced.dashedFromIndex = Math.max(0, options.dashedFromIndex - w.i0);
+        if (options.overlayForecast) sliced.overlayForecast = sliceChartSeries(options.overlayForecast, w);
+        if (options.actionHours) sliced.actionHours = sliceChartSeries(options.actionHours, w);
+        const windowLabels = sliceChartSeries(labels, w);
+        if (options.primaryFine) sliced.primaryFine = filterFineByLabels(options.primaryFine, windowLabels);
+        if (options.secondSeries) {
+            const s = options.secondSeries;
+            const fromMs = new Date(windowLabels[0]).getTime() - 3600000, toMs = new Date(windowLabels[windowLabels.length - 1]).getTime() + 3600000;
+            sliced.secondSeries = {
+                ...s, actual: sliceChartSeries(s.actual, w), forecast: sliceChartSeries(s.forecast, w), values: sliceChartSeries(s.values, w),
+                fine: s.fine ? s.fine.filter(p => p[0] >= fromMs && p[0] <= toMs) : s.fine,
+                actualFine: s.actualFine ? filterFineByLabels(s.actualFine, windowLabels) : s.actualFine,
+            };
+        }
+        return buildLineChartImpl(title, unit, windowLabels, sliceChartSeries(values, w), sliced, ctx);
+    }, {labels, stickyKey: options.chartKey || title});
+}
+
+function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hidden: new Set(), toggle: null}) {
+    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, overlayForecast = null, curveLegend = false, bandPrimary = null, primaryFine = null} = options;
+    const width = 600, height = CHART_SVG_HEIGHT;
     // presenceForecast reserves an extra strip just above the x-axis labels for the
     // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
     // eigener rechter Skala, siehe unten) braucht zusaetzlichen Platz rechts fuer ihre eigene
     // Achsenbeschriftung.
     const paddingLeft = 52, paddingRight = secondSeries ? 42 : 15, paddingTop = 20, paddingBottom = presenceForecast ? 38 : 26;
+    ctx.plotLeft = paddingLeft;
+    ctx.plotRight = paddingRight;
     const plotWidth = width - paddingLeft - paddingRight;
     const plotHeight = height - paddingTop - paddingBottom;
 
@@ -6867,75 +8269,43 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     titleEl.textContent = title + (parenthetical ? ` (${parenthetical})` : '');
     wrapper.appendChild(titleEl);
 
-    if (presenceForecast) {
-        // Die "Anwesenheitsprognose"-Ueberschrift + Erklaerung sitzt jetzt unter dem Chart als
-        // Ueberschrift der "Verbrauchsprognose (48h)"-Details (siehe buildPresenceForecastHeading
-        // am Aufrufort) - hier oben bleibt nur die Legende zur farbigen Anwesenheits-Leiste im Chart.
-        const legend = document.createElement('div');
-        legend.className = 'dashboardChartLegend';
-        for (const [color, label] of [
-            ['var(--color-accent)', 'eingesteckt'],
-            ['var(--color-text-secondary)', 'steht'],
-            ['var(--color-error)', 'fährt'],
-        ]) {
-            const item = document.createElement('span');
-            item.className = 'dashboardChartLegendItem';
-            const dot = document.createElement('span');
-            dot.className = 'dashboardChartLegendDot';
-            dot.style.background = color;
-            item.appendChild(dot);
-            item.appendChild(document.createTextNode(label));
-            legend.appendChild(item);
-        }
-        wrapper.appendChild(legend);
+    // Legende (siehe chartLegendEntry): 'curves' = je Kurve ein Eintrag (Hauptkurve + optionale zweite Kurve, z.B.
+    // Raumtemperatur "Heizung-Soll"/"Innenraum", Strompreis/Netzbezug); 'actualForecast' = "Ist-Wert" (durchgezogen) und
+    // "Prognose" (gestrichelt) bei einer Kurve, deren Ist-Teil bis dashedFromIndex reicht (z.B. Ladestand Auto).
+    const hid = ctx.hidden;
+    const legendMode = (secondSeries || curveLegend) ? 'curves' : (dashedFromIndex !== null ? 'actualForecast' : null);
+    const legendEntries = [];
+    if (legendMode === 'curves') {
+        legendEntries.push(chartLegendEntry(ctx, {id: 'primary', label: primaryLabel || subtitle || title, color: 'var(--color-accent)', style: 'both'}));
+        if (secondSeries) legendEntries.push(chartLegendEntry(ctx, {id: 'second', label: secondSeries.label, color: secondSeries.color || 'var(--color-text-secondary)', style: 'both'}));
+    } else if (legendMode === 'actualForecast') {
+        legendEntries.push(chartLegendEntry(ctx, {id: 'actual', label: 'Ist-Wert', color: 'var(--color-text-secondary)', style: 'solid'}));
+        legendEntries.push(chartLegendEntry(ctx, {id: 'forecast', label: 'Prognose', color: 'var(--color-text-secondary)', style: 'dashed'}));
     }
-
-    // Aktions-Indikator-Legende (siehe actionBandsMarkup unten) - eigener Eintrag nur, wenn der
-    // Aufrufer ueberhaupt Aktionsstunden mitgibt. "Aktion (deaktiviert)" (Nutzer-Feedback) nur, wenn
-    // tatsaechlich eine deaktivierte Stunde vorkommt - der Aktionstyp ist dann per Toggle aus, der
-    // Optimierer plant trotzdem weiter damit, das Geraet wird aber nie wirklich angesteuert.
+    // Aktions-Indikator-Legende - eigener Eintrag nur, wenn der Aufrufer ueberhaupt Aktionsstunden mitgibt. "Aktion
+    // (deaktiviert)" nur, wenn tatsaechlich eine deaktivierte Stunde vorkommt (Aktionstyp per Toggle aus - der Optimierer
+    // plant trotzdem weiter damit, das Geraet wird aber nie wirklich angesteuert).
     if (actionHours) {
+        legendEntries.push(chartLegendEntry(ctx, {id: 'action', label: 'Aktion', color: 'var(--color-accent)', style: 'square', opacity: ACTION_BAND_OPACITY}));
+        if (actionHours.includes('deactivated')) legendEntries.push(chartLegendEntry(ctx, {id: 'action:deactivated', label: 'Aktion (deaktiviert)', color: 'var(--color-border)', style: 'square', opacity: ACTION_BAND_OPACITY}));
+    }
+    // Legende zur farbigen Anwesenheits-Leiste im Chart (die Ueberschrift + Erklaerung "Anwesenheitsprognose" sitzt unter
+    // dem Chart, siehe buildPresenceForecastHeading am Aufrufort) - reine Beschriftung, nicht ausblendbar.
+    if (presenceForecast) {
+        for (const [color, label] of [['var(--color-accent)', 'eingesteckt'], ['var(--color-text-secondary)', 'steht'], ['var(--color-error)', 'fährt']]) {
+            legendEntries.push(chartLegendEntry(ctx, {label, color, style: 'square'}));
+        }
+    }
+    if (legendEntries.length > 0) {
         const legend = document.createElement('div');
         legend.className = 'dashboardChartLegend';
-        function addActionLegendItem(color, label) {
-            const item = document.createElement('span');
-            item.className = 'dashboardChartLegendItem';
-            const dot = document.createElement('span');
-            dot.className = 'dashboardChartLegendDot';
-            dot.style.background = color;
-            dot.style.opacity = ACTION_BAND_OPACITY;
-            item.appendChild(dot);
-            item.appendChild(document.createTextNode(label));
-            legend.appendChild(item);
-        }
-        addActionLegendItem('var(--color-accent)', 'Aktion');
-        if (actionHours.includes('deactivated')) addActionLegendItem('var(--color-border)', 'Aktion (deaktiviert)');
+        legendEntries.forEach(entry => legend.appendChild(entry));
         wrapper.appendChild(legend);
     }
-
-    // Kleine Legende, damit die Hauptkurve (linke Skala) von der zweiten (rechte Skala, siehe
-    // secondSeries) unterscheidbar bleibt - beide Skalen sind unabhaengig voneinander, die Farben
-    // allein wuerden das nicht selbsterklaerend machen. primaryLabel (statt subtitle/title) laesst
-    // sich unabhaengig vom Chart-Titel beschriften (Nutzer-Vorgabe: Titel bleibt "Raumtemperatur
-    // (°C)", die Legende darunter zeigt trotzdem "Heizung-Soll").
-    if (secondSeries) {
-        const legend = document.createElement('div');
-        legend.className = 'dashboardChartLegend';
-        for (const [color, label] of [
-            ['var(--color-accent)', primaryLabel || subtitle || title],
-            [secondSeries.color || 'var(--color-text-secondary)', secondSeries.label],
-        ]) {
-            const item = document.createElement('span');
-            item.className = 'dashboardChartLegendItem';
-            const dot = document.createElement('span');
-            dot.className = 'dashboardChartLegendDot';
-            dot.style.background = color;
-            item.appendChild(dot);
-            item.appendChild(document.createTextNode(label));
-            legend.appendChild(item);
-        }
-        wrapper.appendChild(legend);
-    }
+    const hidePrimarySeg = i => (legendMode === 'curves' ? hid.has('primary')
+        : legendMode === 'actualForecast' ? (i >= dashedFromIndex ? hid.has('forecast') : hid.has('actual'))
+        : false);
+    const hideSecond = !!secondSeries && hid.has('second');
 
     if (!values || values.length === 0) {
         const empty = document.createElement('p');
@@ -6947,14 +8317,27 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 
     let scaledValues = values.map(v => v * valueScale);
     if (round) scaledValues = scaledValues.map(Math.round);
-    const rawMin = Math.min(...scaledValues);
-    const rawMax = Math.max(...scaledValues);
+    // overlayForecast (gestrichelte Prognose ueber den Ist-Stunden, z.B. Ladestand Auto, Heizung-Soll): ihre Werte zaehlen
+    // fuer den Wertebereich mit, damit sie nicht ueber den Rand laufen.
+    const overlayValues = overlayForecast
+        ? overlayForecast.map(v => (v === null || v === undefined ? null : (round ? Math.round(v * valueScale) : v * valueScale)))
+        : null;
+    const overlayDefined = overlayValues ? overlayValues.filter(v => v !== null) : [];
+    // primaryFine: reale Werte der Hauptkurve fortlaufend (siehe parseFinePoints) - ersetzt deren Ist-Teil (Index < dashedFromIndex)
+    const fineP = dashedFromIndex !== null ? parseFinePoints(primaryFine).map(([t, v]) => [t, round ? Math.round(v * valueScale) : v * valueScale]) : [];
+    const rawMin = Math.min(...scaledValues, ...overlayDefined, ...fineP.map(p => p[1]));
+    const rawMax = Math.max(...scaledValues, ...overlayDefined, ...fineP.map(p => p[1]));
     const valueRange = (rawMax - rawMin) || 1;
     let yMin = rawMin - valueRange * 0.1;
     let yMax = rawMax + valueRange * 0.1;
     if (minY !== null) yMin = Math.max(yMin, minY);
     if (fixedMin !== null) yMin = fixedMin;
     if (fixedMax !== null) yMax = fixedMax;
+    if (bandPrimary) {
+        // Versatz (siehe CHART_BAND_FRACTION): den Wertebereich auf den Bruchteil der Hoehe stauchen und nach unten/oben schieben.
+        const totalRange = ((yMax - yMin) || 1) / CHART_BAND_FRACTION;
+        if (bandPrimary === 'upper') yMin = yMax - totalRange; else yMax = yMin + totalRange;
+    }
     const yRange = (yMax - yMin) || 1;
     const lastIndex = scaledValues.length - 1 || 1;
 
@@ -6975,34 +8358,102 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     if (secondSeries) {
         merged2 = secondSeries.actual ? labels.map((_, i) => (secondSeries.actual[i] ?? secondSeries.forecast[i])) : secondSeries.values;
         const defined2 = merged2.filter(v => v !== null && v !== undefined);
-        const rawMin2 = Math.min(...defined2);
+        if (secondSeries.fine) defined2.push(...secondSeries.fine.map(p => p[1]));
+        if (secondSeries.actual && secondSeries.forecast) defined2.push(...secondSeries.forecast.filter(v => v !== null && v !== undefined));
+        if (secondSeries.actualFine) defined2.push(...parseFinePoints(secondSeries.actualFine).map(p => p[1]));
+        const rawMin2 = secondSeries.zeroBased ? 0 : Math.min(...defined2);
         const rawMax2 = Math.max(...defined2);
         const valueRange2 = (rawMax2 - rawMin2) || 1;
         // absolutePadding (z.B. 0.2 °C beim Innenraum): fester Abstand in Einheiten des Werts statt
         // 10 % der Spanne - bei einer kleinen Spanne (Innentemperatur schwankt nur um Zehntel Grad)
         // verlaeuft die Kurve dadurch deutlich flacher, statt die volle Diagrammhoehe auszufuellen.
         const pad2 = secondSeries.absolutePadding ?? valueRange2 * 0.1;
-        yMin2 = rawMin2 - pad2;
+        yMin2 = secondSeries.zeroBased ? 0 : rawMin2 - pad2;
         yMax2 = rawMax2 + pad2;
+        if (secondSeries.band) {
+            const totalRange2 = (yMax2 - yMin2) / CHART_BAND_FRACTION_SECOND;
+            if (secondSeries.band === 'upper') yMin2 = yMax2 - totalRange2; else yMax2 = yMin2 + totalRange2;
+        }
+        if (secondSeries.integerTicks && Math.floor(yMax2) - Math.ceil(yMin2) < 1) {
+            // integerTicks (z.B. Innenraum in vollen Grad): liegen weniger als zwei ganze Zahlen im Bereich, wird der
+            // Bereich auf die naechsten ganzen Zahlen erweitert, damit mindestens zwei Beschriftungen entstehen.
+            yMin2 = Math.floor(yMin2);
+            yMax2 = Math.ceil(yMax2);
+            if (yMax2 === yMin2) yMax2 = yMin2 + 1;
+        }
         yRange2 = yMax2 - yMin2;
         points2 = merged2.map((v, i) => (v === null || v === undefined ? null : [
             paddingLeft + (i / lastIndex) * plotWidth,
             paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight,
         ]));
         const color2 = secondSeries.color || 'var(--color-text-secondary)';
-        if (secondSeries.actual) {
+        if (secondSeries.fine && secondSeries.fine.length >= 2) {
+            // Ist in feiner Aufloesung (z.B. 5 Minuten, Punkte [ms, Wert]) durchgezogen, danach ab dem
+            // letzten Ist-Punkt gestrichelt mit der stuendlichen Prognose der kommenden Stunden.
+            const firstMs2 = new Date(labels[0]).getTime();
+            const xMs = ms => paddingLeft + ((ms - firstMs2) / 3600000 / lastIndex) * plotWidth;
+            const yVal2 = v => paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight;
+            const binMs = secondSeries.binMs || 300000;
             const parts = [];
-            for (let i = 0; i < points2.length - 1; i++) {
-                if (!points2[i] || !points2[i + 1]) continue;
-                let segColor = color2;
-                if (secondSeries.slopeColors) {
-                    const delta = merged2[i + 1] - merged2[i];
-                    segColor = delta > 0 ? secondSeries.slopeColors.riseColor
-                        : delta <= -(secondSeries.slopeColors.bigDropThreshold ?? 1) ? secondSeries.slopeColors.dropColor
-                        : secondSeries.slopeColors.flatColor;
+            let run = [];
+            const flush = () => { if (run.length >= 2) parts.push(`<path d="${run.join(' ')}" fill="none" stroke="${color2}" stroke-width="2" />`); run = []; };
+            let prevMs = null;
+            for (const [ms, v] of secondSeries.fine) {
+                if (prevMs !== null && ms - prevMs > binMs * 2) flush();
+                run.push(`${run.length ? 'L' : 'M'}${xMs(ms + binMs / 2).toFixed(1)},${yVal2(v).toFixed(1)}`);
+                prevMs = ms;
+            }
+            flush();
+            const last = secondSeries.fine[secondSeries.fine.length - 1];
+            const dash = [`M${xMs(last[0] + binMs / 2).toFixed(1)},${yVal2(last[1]).toFixed(1)}`];
+            for (let i = 0; i < labels.length; i++) {
+                if (new Date(labels[i]).getTime() <= last[0]) continue;
+                const fv = secondSeries.forecast[i];
+                if (fv === null || fv === undefined) break;
+                dash.push(`L${xMs(new Date(labels[i]).getTime()).toFixed(1)},${yVal2(fv).toFixed(1)}`);
+            }
+            if (dash.length >= 2) parts.push(`<path d="${dash.join(' ')}" fill="none" stroke="${color2}" stroke-width="2" stroke-dasharray="5,4" />`);
+            secondLineMarkup = parts.join('');
+        } else if (secondSeries.actual) {
+            // Ist (durchgezogen) und Prognose (gestrichelt) sind zwei voneinander unabhaengige Linien -
+            // die Prognose laeuft auch ueber bereits vergangene Stunden (Werte aus dem jeweils letzten
+            // Optimierungslauf vor der Stunde, siehe Backend) und wird nicht vom Ist verdraengt.
+            const parts = [];
+            const pt = (series, i) => {
+                const v = series ? series[i] : null;
+                if (v === null || v === undefined) return null;
+                return [paddingLeft + (i / lastIndex) * plotWidth, paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight, v];
+            };
+            const fine2 = parseFinePoints(secondSeries.actualFine);
+            const useFine2 = fine2.length >= 2;
+            if (useFine2) {
+                // reale Werte fortlaufend (5-Minuten-Schritte) statt je Stunde; Farbe nach Richtung ueber eine Stunde
+                const firstMs2 = new Date(labels[0]).getTime();
+                parts.push(fineSeriesMarkup(fine2, {
+                    xOfMs: ms => paddingLeft + ((ms - firstMs2) / 3600000 / lastIndex) * plotWidth,
+                    yOf: v => paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight,
+                    colorFor: (vPrev, v) => {
+                        if (!secondSeries.slopeColors) return color2;
+                        const delta = v - vPrev;
+                        return delta > 0 ? secondSeries.slopeColors.riseColor
+                            : delta <= -(secondSeries.slopeColors.bigDropThreshold ?? 1) ? secondSeries.slopeColors.dropColor
+                            : secondSeries.slopeColors.flatColor;
+                    },
+                }));
+            }
+            for (const [series, dashed] of (useFine2 ? [[secondSeries.forecast, true]] : [[secondSeries.forecast, true], [secondSeries.actual, false]])) {
+                for (let i = 0; i < labels.length - 1; i++) {
+                    const a = pt(series, i), b = pt(series, i + 1);
+                    if (!a || !b) continue;
+                    let segColor = color2;
+                    if (secondSeries.slopeColors) {
+                        const delta = b[2] - a[2];
+                        segColor = delta > 0 ? secondSeries.slopeColors.riseColor
+                            : delta <= -(secondSeries.slopeColors.bigDropThreshold ?? 1) ? secondSeries.slopeColors.dropColor
+                            : secondSeries.slopeColors.flatColor;
+                    }
+                    parts.push(`<path d="M${a[0].toFixed(1)},${a[1].toFixed(1)} L${b[0].toFixed(1)},${b[1].toFixed(1)}" fill="none" stroke="${segColor}" stroke-width="2" ${dashed ? 'stroke-dasharray="5,4"' : ''} />`);
                 }
-                const dashed = secondSeries.actual[i] === null || secondSeries.actual[i] === undefined;
-                parts.push(`<path d="M${points2[i][0].toFixed(1)},${points2[i][1].toFixed(1)} L${points2[i + 1][0].toFixed(1)},${points2[i + 1][1].toFixed(1)}" fill="none" stroke="${segColor}" stroke-width="2" ${dashed ? 'stroke-dasharray="5,4"' : ''} />`);
             }
             secondLineMarkup = parts.join('');
         } else {
@@ -7026,7 +8477,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     function colorForSlope(v0, v1) {
         if (!slopeBands) return 'var(--color-accent)';
         const delta = v1 - v0;
-        if (delta > 0) return slopeBands.riseColor;
+        if (delta > (slopeBands.riseThreshold ?? 0)) return slopeBands.riseColor;
         if (delta <= -(slopeBands.bigDropThreshold ?? 1)) return slopeBands.dropColor;
         return slopeBands.flatColor;
     }
@@ -7058,6 +8509,8 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         // splitJumpByBands), or otherwise takes the color of the value it's leaving
         const lineParts = [], areaParts = [];
         for (let i = 0; i < points.length - 1; i++) {
+            if (hidePrimarySeg(i)) continue;
+            if (fineP.length >= 2 && i < dashedFromIndex) continue;  // Ist-Teil kommt aus den feinen Punkten (fineMarkup)
             const color = colorBands ? colorForValue(scaledValues[i]) : colorForSlope(scaledValues[i], scaledValues[i + 1]);
             // Nutzer-Vorgabe (Strompreis): ab dashedFromIndex (jenseits des bekannten Awattar-Fensters)
             // gestrichelt statt durchgezogen - reine Prognose statt bekanntem/veroeffentlichtem Preis.
@@ -7081,6 +8534,8 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         // one straight sub-path per segment, colored by that segment's own rise/fall
         const lineParts = [], areaParts = [];
         for (let i = 0; i < points.length - 1; i++) {
+            if (hidePrimarySeg(i)) continue;
+            if (fineP.length >= 2 && i < dashedFromIndex) continue;  // Ist-Teil kommt aus den feinen Punkten (fineMarkup)
             const color = colorForSlope(scaledValues[i], scaledValues[i + 1]);
             const dashAttr = (dashedFromIndex !== null && i >= dashedFromIndex) ? 'stroke-dasharray="5,4"' : '';
             const [x0, y0] = points[i];
@@ -7094,11 +8549,54 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         const color = colorForValue(scaledValues[0]);
         const linePath = points.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
         const areaPath = `${linePath} L${points[points.length - 1][0].toFixed(1)},${baseline.toFixed(1)} L${points[0][0].toFixed(1)},${baseline.toFixed(1)} Z`;
-        areaMarkup = `<path d="${areaPath}" fill="${color}" opacity="0.15" stroke="none" />`;
-        lineMarkup = `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2" />`;
+        areaMarkup = hidePrimarySeg(0) ? '' : `<path d="${areaPath}" fill="${color}" opacity="0.15" stroke="none" />`;
+        lineMarkup = hidePrimarySeg(0) ? '' : `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2" />`;
     }
 
-    const tickCount = Math.min(6, labels.length);
+    if (fineP.length >= 2 && (stepped || slopeBands)) {
+        const firstMs = new Date(labels[0]).getTime();
+        const hideFine = (legendMode === 'curves' && hid.has('primary')) || (legendMode === 'actualForecast' && hid.has('actual'));
+        if (!hideFine) {
+            const fineAreaParts = [];
+            lineMarkup += fineSeriesMarkup(fineP, {
+                xOfMs: ms => paddingLeft + ((ms - firstMs) / 3600000 / lastIndex) * plotWidth,
+                yOf: v => paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight,
+                stepped,
+                colorFor: (vPrev, v) => (stepped ? 'var(--color-accent)' : colorForSlope(vPrev, v)),
+                areaParts: fineAreaParts,
+                baseline,
+                areaEndX: paddingLeft + (dashedFromIndex / lastIndex) * plotWidth,
+            });
+            areaMarkup += fineAreaParts.join('');
+        }
+    }
+
+    // overlayForecast (Ladestand Auto): die Prognose-Linie (gestrichelt) laeuft zusaetzlich ueber die
+    // Stunden, fuer die es schon einen Ist-Wert gibt (die Hauptlinie zeigt dort das Ist) - Werte aus
+    // dem jeweils letzten Optimierungslauf vor der Stunde. Ab dashedFromIndex uebernimmt die Hauptlinie.
+    let overlayMarkup = '';
+    if (overlayForecast && dashedFromIndex !== null && !(legendMode === 'actualForecast' && hid.has('forecast')) && !(legendMode === 'curves' && hid.has('primary'))) {
+        const parts = [];
+        const ov = overlayValues;
+        const xOf = i => paddingLeft + (i / lastIndex) * plotWidth;
+        const yOf = v => paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight;
+        for (let i = 0; i < Math.min(dashedFromIndex, ov.length, points.length - 1); i++) {
+            if (ov[i] === null) continue;
+            const next = i + 1 < ov.length ? ov[i + 1] : null;
+            if (stepped) {
+                // Treppenkurve (Heizung-Soll): waagerecht ueber die Stunde, senkrecht zum naechsten Wert
+                parts.push(`<path d="M${xOf(i).toFixed(1)},${yOf(ov[i]).toFixed(1)} L${xOf(i + 1).toFixed(1)},${yOf(ov[i]).toFixed(1)}" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-dasharray="5,4" />`);
+                if (next !== null && i + 1 < dashedFromIndex) {
+                    parts.push(`<path d="M${xOf(i + 1).toFixed(1)},${yOf(ov[i]).toFixed(1)} L${xOf(i + 1).toFixed(1)},${yOf(next).toFixed(1)}" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-dasharray="5,4" />`);
+                }
+            } else if (next !== null) {
+                parts.push(`<path d="M${xOf(i).toFixed(1)},${yOf(ov[i]).toFixed(1)} L${xOf(i + 1).toFixed(1)},${yOf(next).toFixed(1)}" fill="none" stroke="${colorForSlope(ov[i], next)}" stroke-width="2" stroke-dasharray="5,4" />`);
+            }
+        }
+        overlayMarkup = parts.join('');
+    }
+
+    const tickCount = chartXTickCount(labels.length);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
     const xLabels = tickIndices.map(i => {
         const x = (paddingLeft + (i / lastIndex) * plotWidth).toFixed(1);
@@ -7116,10 +8614,17 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     // wie yLabels links), am rechten Rand nach aussen ausgerichtet.
     let yLabels2 = '';
     if (secondSeries) {
-        const yTicks2 = [yMax2, (yMin2 + yMax2) / 2, yMin2];
+        let yTicks2 = [yMax2, (yMin2 + yMax2) / 2, yMin2];
+        if (secondSeries.integerTicks) {
+            // Nur volle Zahlen als Achsenbeschriftung (hoechstens ~5 Stueck, bei grossem Bereich in groeberen Schritten)
+            const lowTick = Math.ceil(yMin2 - 1e-9), highTick = Math.floor(yMax2 + 1e-9);
+            const tickStep = Math.max(1, Math.ceil((highTick - lowTick) / 4));
+            yTicks2 = [];
+            for (let v = lowTick; v <= highTick + 1e-9; v += tickStep) yTicks2.push(v);
+        }
         yLabels2 = yTicks2.map(v => {
             const y = (paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight).toFixed(1);
-            return `<text x="${(width - paddingRight + 6).toFixed(1)}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="start">${v.toFixed(secondSeries.decimals ?? 1)}</text>`;
+            return `<text x="${(width - paddingRight + 6).toFixed(1)}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="start">${v.toFixed(secondSeries.integerTicks ? 0 : (secondSeries.decimals ?? 1))}</text>`;
         }).join('');
     }
 
@@ -7149,6 +8654,12 @@ function buildLineChart(title, unit, labels, values, options = {}) {
     if (nowIndex >= 0 && nowIndex <= lastIndex) {
         const x = (paddingLeft + (nowIndex / lastIndex) * plotWidth).toFixed(1);
         nowMarkup = `<line x1="${x}" y1="${paddingTop}" x2="${x}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
+        // Zusaetzlich ein dauerhaft sichtbarer Punkt auf der Linie (der Strich allein ist zu unauffaellig) - gleiches
+        // Aussehen wie der Punkt beim Mouse-over (dashboardChartMarker), aber eigene Klasse, damit er nicht mit dem
+        // verschiebbaren Hover-Punkt verwechselt wird (der per querySelector gesucht wird).
+        for (const p of [hidePrimarySeg(nowIndex) ? null : points[nowIndex], hideSecond ? null : (points2 && points2[nowIndex])]) {
+            if (p) nowMarkup += `<circle class="dashboardChartNowDot" r="4.5" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" />`;
+        }
     }
 
     // Anwesenheitsprognose overlay: one cell per point in THIS chart's own x-scale (not the
@@ -7178,6 +8689,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         for (let i = 0; i < labels.length; i++) {
             const category = actionHours[i];
             if (!category) continue;
+            if (hid.has(category === 'deactivated' ? 'action:deactivated' : 'action')) continue;
             const xStart = paddingLeft + (i / lastIndex) * plotWidth;
             const xEnd = i < lastIndex ? paddingLeft + ((i + 1) / lastIndex) * plotWidth : (width - paddingRight);
             const color = category === 'deactivated' ? 'var(--color-border)' : 'var(--color-accent)';
@@ -7194,15 +8706,16 @@ function buildLineChart(title, unit, labels, values, options = {}) {
             ${actionBandsMarkup}
             ${areaMarkup}
             ${lineMarkup}
-            ${secondLineMarkup}
+            ${overlayMarkup}
+            ${hideSecond ? '' : secondLineMarkup}
             ${presenceMarkup}
             ${nowMarkup}
             ${dayBoundaryMarkup}
             ${yLabels}
-            ${yLabels2}
+            ${hideSecond ? '' : yLabels2}
             ${xLabels}
             <circle class="dashboardChartMarker" r="4.5" cx="0" cy="0" visibility="hidden" />
-            ${secondSeries ? '<circle class="dashboardChartMarker dashboardChartMarkerSecond" r="4.5" cx="0" cy="0" visibility="hidden" />' : ''}
+            ${secondSeries && !hideSecond ? '<circle class="dashboardChartMarker dashboardChartMarkerSecond" r="4.5" cx="0" cy="0" visibility="hidden" />' : ''}
         </svg>`;
     wrapper.appendChild(chartContainer);
 
@@ -7235,26 +8748,52 @@ function buildLineChart(title, unit, labels, values, options = {}) {
         const idx = Math.max(0, Math.min(lastIndex, Math.round((svgX - paddingLeft) / plotWidth * lastIndex)));
         const d = new Date(labels[idx]);
         const dateText = d.toLocaleString('de-DE', {weekday: 'short', hour: '2-digit', minute: '2-digit'}).replace('.', '');
+        const primaryHiddenHere = hidePrimarySeg(idx);
         let text;
         if (secondSeries) {
-            // Dreizeilig (Nutzer-Vorgabe): Zeitpunkt, dann je eine Zeile pro Kurve, jeweils mit
-            // ihrer eigenen Beschriftung (primaryLabel fuer die Hauptreihe, secondSeries.label fuer
-            // die zweite) statt einer einzelnen, mit "·" zusammengequetschten Zeile.
-            const v2 = merged2[idx];
-            const unit2 = secondSeries.unit !== undefined ? secondSeries.unit : unit;
-            const primaryText = `${primaryLabel || subtitle || title}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
-            const secondaryText = (v2 === null || v2 === undefined) ? `${secondSeries.label}: –` : `${secondSeries.label}: ${v2.toFixed(secondSeries.decimals ?? 1)}${unit2 ? ' ' + unit2 : ''}`;
-            text = `${dateText}\n${primaryText}\n${secondaryText}`;
+            // Zeitpunkt, dann je Kurve eine Zeile - bei Kurven mit Ist- UND Prognose-Teil je eine Zeile fuer "Ist-Wert" und
+            // "Prognose" (Raumtemperatur: Heizung-Soll Ist-Wert/Prognose, Innenraum Ist-Wert/Prognose). Ausgeblendete Kurven fehlen.
+            const lines = [dateText];
+            const fmtPrimary = v => `${v.toFixed(decimals)}${unit ? ' ' + unit : ''}`;
+            const primaryName = primaryLabel || subtitle || title;
+            if (!primaryHiddenHere) {
+                if (overlayValues) {
+                    if (dashedFromIndex !== null && idx < dashedFromIndex) {
+                        lines.push(`${primaryName} Ist-Wert: ${fmtPrimary(scaledValues[idx])}`);
+                        if (overlayValues[idx] !== null && overlayValues[idx] !== undefined) lines.push(`${primaryName} Prognose: ${fmtPrimary(overlayValues[idx])}`);
+                    } else {
+                        lines.push(`${primaryName} Prognose: ${fmtPrimary(scaledValues[idx])}`);
+                    }
+                } else {
+                    lines.push(`${primaryName}: ${fmtPrimary(scaledValues[idx])}`);
+                }
+            }
+            if (!hideSecond) {
+                const unit2 = secondSeries.unit !== undefined ? secondSeries.unit : unit;
+                const fmtSecond = v => `${v.toFixed(secondSeries.decimals ?? 1)}${unit2 ? ' ' + unit2 : ''}`;
+                const present = v => v !== null && v !== undefined;
+                if (secondSeries.actual && secondSeries.forecast) {
+                    const a = secondSeries.actual[idx], f = secondSeries.forecast[idx];
+                    if (present(a)) lines.push(`${secondSeries.label} Ist-Wert: ${fmtSecond(a)}`);
+                    if (present(f)) lines.push(`${secondSeries.label} Prognose: ${fmtSecond(f)}`);
+                    if (!present(a) && !present(f)) lines.push(`${secondSeries.label}: –`);
+                } else {
+                    const v2 = merged2[idx];
+                    lines.push(present(v2) ? `${secondSeries.label}: ${fmtSecond(v2)}` : `${secondSeries.label}: –`);
+                }
+            }
+            text = lines.join('\n');
         } else {
-            text = `${dateText}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
+            text = primaryHiddenHere ? dateText : `${dateText}: ${scaledValues[idx].toFixed(decimals)}${unit ? ' ' + unit : ''}`;
         }
         tooltip.textContent = text;
         tooltip.style.left = (points[idx][0] * scale).toFixed(1) + 'px';
         tooltip.style.top = (points[idx][1] * scale).toFixed(1) + 'px';
         tooltip.hidden = false;
+        clampChartTooltip(tooltip);
         marker.setAttribute('cx', points[idx][0].toFixed(1));
         marker.setAttribute('cy', points[idx][1].toFixed(1));
-        marker.setAttribute('visibility', 'visible');
+        marker.setAttribute('visibility', primaryHiddenHere ? 'hidden' : 'visible');
         if (marker2 && points2 && points2[idx]) {
             marker2.setAttribute('cx', points2[idx][0].toFixed(1));
             marker2.setAttribute('cy', points2[idx][1].toFixed(1));
@@ -7272,9 +8811,8 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 
     svgEl.addEventListener('mousemove', e => showTooltip(e.clientX));
     svgEl.addEventListener('mouseleave', hideTooltip);
-    svgEl.addEventListener('touchstart', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
-    svgEl.addEventListener('touchmove', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
-    svgEl.addEventListener('touchend', hideTooltip);
+    // Touch-Bedienung (Antippen, Halten + Ziehen, Wischen, Zoom) laeuft zentral ueber attachChartViewGestures.
+    ctx.tooltipApi = makeChartTooltipApi({svgEl, labels, lastIndex, paddingLeft, plotWidth, width, showTooltip, hideTooltip});
 
     return wrapper;
 }
@@ -7294,8 +8832,8 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 // "Ladestand Heimspeicher", siehe buildBatterySocForecastActualChart) - Optik/Interaktion (Tooltip,
 // Touch-Marker, Tagesgrenzen) bleiben fuer alle gleich, nur Titel/Einheit/Skalierung/Nachkommastellen
 // und die PV-spezifische Ertragssumme sind parametrisiert.
-function buildPvForecastActualChart(labels, forecast, actual) {
-    return buildForecastActualChart('PV-Leistung: Prognose vs. Ist', 'kW', labels, forecast, actual, {decimals: 1, energySummary: true});
+function buildPvForecastActualChart(labels, forecast, actual, actualFine = null) {
+    return buildForecastActualChart('PV-Leistung', 'kW', labels, forecast, actual, {decimals: 1, energySummary: true, chartKey: 'pvLeistung', actualFine});
 }
 
 // "Ladestand Heimspeicher": Ist-Werte kommen direkt aus der echten Sensorhistorie (siehe
@@ -7307,6 +8845,10 @@ function buildPvForecastActualChart(labels, forecast, actual) {
 // steigend - fuer Ladestand Heimspeicher/Warmwasser/Ladestand Auto/Sonstiges Geraet dieselben
 // Schwellen wie zuvor in den jeweiligen buildLineChart-Aufrufen (siehe Git-Historie), jetzt gebuendelt.
 const TEMPERATURE_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 1};
+// Warmwasser: gruen nur bei einem echten Anstieg (Aufheizen), nicht schon bei Sensorrauschen/Rundungsdifferenzen
+// im Zehntelgradbereich - ein gleichbleibender Verlauf soll grau bleiben (Nutzer-Feedback). Aufheizen steigt
+// um mehrere Grad pro Stunde, deshalb reicht ein Schwellwert deutlich unter 1 °C.
+const WARMWASSER_SLOPE_COLORS = {...TEMPERATURE_SLOPE_COLORS, riseThreshold: 0.5};
 const PERCENT_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 0.1};
 const ON_OFF_SLOPE_COLORS = {riseColor: 'var(--color-accent)', dropColor: 'var(--color-error)', flatColor: 'var(--color-text-secondary)', bigDropThreshold: 50};
 
@@ -7322,18 +8864,18 @@ const BATTERY_ACTION_COLORS = {
     deactivated: {color: 'var(--color-border)', label: 'Aktion (deaktiviert)'},
 };
 
-function buildBatterySocForecastActualChart(labels, forecast, actual, actionHours, plannedHistory) {
-    return buildForecastActualChart('Ladestand Heimspeicher: Prognose vs. Ist', '%', labels, forecast, actual, {
-        decimals: 0, yBounds: {min: 0, max: 100}, actionHours, actionColors: BATTERY_ACTION_COLORS, plannedHistory, slopeColors: PERCENT_SLOPE_COLORS,
+function buildBatterySocForecastActualChart(labels, forecast, actual, actionHours, plannedHistory, actualFine = null) {
+    return buildForecastActualChart('Ladestand Heimspeicher', '%', labels, forecast, actual, {
+        decimals: 0, yBounds: {min: 0, max: 100}, actionHours, actionColors: BATTERY_ACTION_COLORS, plannedHistory, slopeColors: PERCENT_SLOPE_COLORS, chartKey: 'ladestandHeimspeicher', actualFine,
     });
 }
 
-function buildWarmwasserForecastActualChart(labels, forecast, actual, actionHours) {
-    return buildForecastActualChart('Warmwasser: Prognose vs. Ist', '°C', labels, forecast, actual, {decimals: 1, actionHours, slopeColors: TEMPERATURE_SLOPE_COLORS});
+function buildWarmwasserForecastActualChart(labels, forecast, actual, actionHours, actualFine = null) {
+    return buildForecastActualChart('Warmwasser', '°C', labels, forecast, actual, {decimals: 1, actionHours, slopeColors: WARMWASSER_SLOPE_COLORS, chartKey: 'warmwasser', actualFine});
 }
 
 function buildLadestandAutoForecastActualChart(labels, forecast, actual, actionHours) {
-    return buildForecastActualChart('Ladestand Auto: Prognose vs. Ist', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}, actionHours, slopeColors: PERCENT_SLOPE_COLORS});
+    return buildForecastActualChart('Ladestand Auto', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}, actionHours, slopeColors: PERCENT_SLOPE_COLORS, chartKey: 'ladestandAutoFA'});
 }
 
 // Neu (Nutzer-Vorgabe): bisher gab es fuer "Sonstiger Verbraucher" im Dashboard nur ein Icon im
@@ -7341,7 +8883,7 @@ function buildLadestandAutoForecastActualChart(labels, forecast, actual, actionH
 // forecast-vs-actual (Ist aus der echten Schalter-Historie, Prognose aus den geplanten/ausgefuehrten
 // "Verbraucher an"-Aktionsfenstern statt einer output_csv-Spalte).
 function buildSonstigesGeraetForecastActualChart(labels, forecast, actual, actionHours) {
-    return buildForecastActualChart('Sonstiger Verbraucher: Prognose vs. Ist', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}, actionHours, slopeColors: ON_OFF_SLOPE_COLORS});
+    return buildForecastActualChart('Sonstiger Verbraucher', '%', labels, forecast, actual, {decimals: 0, yBounds: {min: 0, max: 100}, actionHours, slopeColors: ON_OFF_SLOPE_COLORS, chartKey: 'sonstigesGeraet'});
 }
 
 // Aussentemperatur bleibt bewusst durchgehend gruen (Nutzer-Vorgabe, kein grau/rot/gruen wie bei den
@@ -7360,7 +8902,19 @@ function buildAussentemperaturForecastActualChart(labels, temperature) {
 // Nutzers kaum erkennbar (siehe Nutzer-Feedback), deutlich angehoben.
 const ACTION_BAND_OPACITY = 0.32;
 
-function buildForecastActualChart(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null} = {}) {
+function buildForecastActualChart(title, unit, labels, forecast, actual, options = {}) {
+    return makeToggleableChart(options.chartKey, ctx => {
+        const w = chartWindowIndices(labels, ctx.view);
+        if (w.full) return buildForecastActualChartImpl(title, unit, labels, forecast, actual, options, ctx);
+        // summaryLabels/summaryForecast: die PV-Ertragssumme (Heute | Morgen) bezieht sich immer auf den vollen Zeitraum
+        const windowLabels = sliceChartSeries(labels, w);
+        const sliced = {...options, plannedHistory: sliceChartSeries(options.plannedHistory, w), actionHours: sliceChartSeries(options.actionHours, w),
+            summaryLabels: labels, summaryForecast: forecast, actualFine: filterFineByLabels(options.actualFine, windowLabels)};
+        return buildForecastActualChartImpl(title, unit, windowLabels, sliceChartSeries(forecast, w), sliceChartSeries(actual, w), sliced, ctx);
+    }, {labels, stickyKey: options.chartKey || title});
+}
+
+function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null, actualFine = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
     // "Prognose" ist visuell EINE Linie ueber den ganzen Tag: fuer bereits vergangene Stunden der zu
     // ihrer Zeit juengste Planungsstand (plannedHistory), fuer die Zukunft die aktuelle Prognose
     // (forecast) - ersetzt die fruehere separate dritte Linie/Legende "Letzter Planungsstand".
@@ -7372,8 +8926,10 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     // erkannt, ob 'actual' dort einen Wert hat (bei jedem Aufrufer nur fuer bereits vergangene/
     // laufende Stunden befuellt).
     const prognose = plannedHistory ? labels.map((_, i) => (plannedHistory[i] ?? forecast[i])) : forecast;
-    const width = 600, height = 220;
+    const width = 600, height = CHART_SVG_HEIGHT;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
+    ctx.plotLeft = paddingLeft;
+    ctx.plotRight = paddingRight;
     const plotWidth = width - paddingLeft - paddingRight;
     const plotHeight = height - paddingTop - paddingBottom;
 
@@ -7391,65 +8947,32 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
 
     const legend = document.createElement('div');
     legend.className = 'dashboardChartLegend';
-    function legendDotItem(color, label, opacity) {
-        const item = document.createElement('span');
-        item.className = 'dashboardChartLegendItem';
-        const dot = document.createElement('span');
-        dot.className = 'dashboardChartLegendDot';
-        dot.style.background = color;
-        if (opacity) dot.style.opacity = opacity;
-        item.appendChild(dot);
-        item.appendChild(document.createTextNode(label));
-        legend.appendChild(item);
-    }
-    // Kleines Linien-Icon (statt eines Punkts) fuer die Legende, wenn Farbe schon per slopeColors die
-    // Wertrichtung bedeutet (siehe unten) - hier zaehlt nur noch die Linienart (durchgezogen/gestrichelt).
-    function legendLineItem(dashed, label, color) {
-        const item = document.createElement('span');
-        item.className = 'dashboardChartLegendItem';
-        const svg = `<svg width="16" height="10" viewBox="0 0 16 10"><line x1="0" y1="5" x2="16" y2="5" stroke="${color || 'var(--color-text-secondary)'}" stroke-width="2" ${dashed ? 'stroke-dasharray="4,3"' : ''} /></svg>`;
-        const icon = document.createElement('span');
-        icon.style.display = 'inline-flex';
-        icon.innerHTML = svg;
-        item.appendChild(icon);
-        item.appendChild(document.createTextNode(label));
-        legend.appendChild(item);
-    }
-    if (slopeColors) {
-        // Nutzer-Vorgabe: Farbe zeigt die Wertrichtung (grau/rot/gruen, selbsterklaerend - keine
-        // eigene Legende dafuer noetig), Linienart unterscheidet Historisch/Prognose - durchgehend,
-        // auch fuer den plannedHistory-Abschnitt der Prognose-Linie (sonst optisch nicht von der
-        // Ist-Linie zu unterscheiden, Nutzer-Feedback).
-        legendLineItem(false, 'Historisch');
-        legendLineItem(true, 'Prognose');
-    } else if (flatColor) {
-        // Nutzer-Vorgabe (Aussentemperatur): durchgehend eine Farbe, nur Historisch/Prognose per
-        // Linienart unterscheiden - kein grau/rot/gruen, kein separates Ist/Prognose-Farbpaar.
-        legendLineItem(false, 'Historisch', flatColor);
-        legendLineItem(true, 'Prognose', flatColor);
-    } else {
-        legendDotItem('var(--color-accent)', 'Prognose');
-        legendDotItem('var(--color-text)', 'Ist-Werte');
-    }
+    // Linienmuster statt Punkten (Nutzer-Vorgabe): zuerst "Ist-Wert" (durchgezogen), dann "Prognose" (gestrichelt). Bei
+    // slopeColors zeigt die Farbe der Kurve die Wertrichtung (grau/rot/gruen) - das Legenden-Muster bleibt dann neutral.
+    const actualLegendColor = slopeColors ? 'var(--color-text-secondary)' : (flatColor || 'var(--color-text)');
+    const forecastLegendColor = slopeColors ? 'var(--color-text-secondary)' : (flatColor || 'var(--color-accent)');
+    legend.appendChild(chartLegendEntry(ctx, {id: 'actual', label: 'Ist-Wert', color: actualLegendColor, style: 'solid'}));
+    legend.appendChild(chartLegendEntry(ctx, {id: 'forecast', label: 'Prognose', color: forecastLegendColor, style: 'dashed'}));
     // Aktions-Indikator (siehe actionHours/actionBandsMarkup unten) - eigener Legenden-Eintrag nur,
-    // wenn der Aufrufer ueberhaupt Aktionsstunden mitgibt. Deutlich kraeftigere Opacity als zuvor
-    // (0.12 -> ACTION_BAND_OPACITY) - Nutzer-Feedback: bisher auf dem eigenen Bildschirm kaum zu
-    // erkennen. actionColors (nur Ladestand Heimspeicher, Nutzer-Vorgabe): je Aktions-Kategorie
-    // (siehe BATTERY_ACTION_CATEGORY_BY_NAME in app.py) eine eigene Farbe/Legenden-Zeile statt
-    // einer einzigen "Aktion"-Farbe fuer alle.
+    // wenn der Aufrufer ueberhaupt Aktionsstunden mitgibt. actionColors (nur Ladestand Heimspeicher,
+    // Nutzer-Vorgabe): je Aktions-Kategorie (siehe BATTERY_ACTION_CATEGORY_BY_NAME in app.py) eine eigene
+    // Farbe/Legenden-Zeile statt einer einzigen "Aktion"-Farbe fuer alle.
     if (actionColors) {
         for (const [category, {color, label}] of Object.entries(actionColors)) {
-            if (actionHours.includes(category)) legendDotItem(color, label, ACTION_BAND_OPACITY);
+            if (actionHours.includes(category)) legend.appendChild(chartLegendEntry(ctx, {id: `action:${category}`, label, color, style: 'square', opacity: ACTION_BAND_OPACITY}));
         }
     } else if (actionHours) {
-        legendDotItem('var(--color-accent)', 'Aktion', ACTION_BAND_OPACITY);
+        legend.appendChild(chartLegendEntry(ctx, {id: 'action', label: 'Aktion', color: 'var(--color-accent)', style: 'square', opacity: ACTION_BAND_OPACITY}));
         // Aktionstyp per Toggle aus (Nutzer-Feedback) - der Optimierer plant trotzdem weiter damit,
         // das Geraet wird aber nie wirklich angesteuert, siehe _action_hours_for in app.py.
-        if (actionHours.includes('deactivated')) legendDotItem('var(--color-border)', 'Aktion (deaktiviert)', ACTION_BAND_OPACITY);
+        if (actionHours.includes('deactivated')) legend.appendChild(chartLegendEntry(ctx, {id: 'action:deactivated', label: 'Aktion (deaktiviert)', color: 'var(--color-border)', style: 'square', opacity: ACTION_BAND_OPACITY}));
     }
     wrapper.appendChild(legend);
+    const showActual = !ctx.hidden.has('actual');
+    const showForecast = !ctx.hidden.has('forecast');
 
-    const definedValues = [...prognose, ...actual].filter(v => v !== null && v !== undefined);
+    const fineActual = parseFinePoints(actualFine);
+    const definedValues = [...prognose, ...actual, ...fineActual.map(p => p[1])].filter(v => v !== null && v !== undefined);
     if (labels.length === 0 || definedValues.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'shyftActionsEmpty';
@@ -7501,16 +9024,23 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     function colorForSlope(v0, v1, fallback) {
         if (!slopeColors) return fallback;
         const delta = v1 - v0;
-        if (delta > 0) return slopeColors.riseColor;
+        if (delta > (slopeColors.riseThreshold ?? 0)) return slopeColors.riseColor;
         if (delta <= -(slopeColors.bigDropThreshold ?? 1)) return slopeColors.dropColor;
         return slopeColors.flatColor;
     }
 
-    const actualPath = buildSegmentedPath(actual, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-text)'), dashed: false}));
+    // Ist-Wert: fortlaufend (feine Punkte), sonst je Stunde
+    const firstLabelMs = new Date(labels[0]).getTime();
+    const xOfMs = ms => paddingLeft + ((ms - firstLabelMs) / 3600000 / lastIndex) * plotWidth;
+    const useFineActual = showActual && fineActual.length >= 2;
+    const actualPath = !showActual ? ''
+        : useFineActual
+            ? fineSeriesMarkup(fineActual, {xOfMs, yOf: yFor, colorFor: (vPrev, v) => colorForSlope(vPrev, v, flatColor || 'var(--color-text)')})
+            : buildSegmentedPath(actual, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-text)'), dashed: false}));
     // "Prognose" (siehe prognose-Merge oben): immer gestrichelt, auch der plannedHistory-Abschnitt.
-    const forecastPath = buildSegmentedPath(prognose, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-accent)'), dashed: true}));
+    const forecastPath = showForecast ? buildSegmentedPath(prognose, (i, v0, v1) => ({color: colorForSlope(v0, v1, flatColor || 'var(--color-accent)'), dashed: true})) : '';
 
-    const tickCount = Math.min(6, labels.length);
+    const tickCount = chartXTickCount(labels.length);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
     const xLabels = tickIndices.map(i => {
         const x = xFor(i).toFixed(1);
@@ -7532,6 +9062,26 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
         const x = xFor(lastActualIndex).toFixed(1);
         nowMarkup = `<line x1="${x}" y1="${paddingTop}" x2="${x}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
     }
+    // Dauerhaft sichtbarer Punkt auf der Linie bei "jetzt" (der Strich allein ist zu unauffaellig) - wird UEBER den
+    // Linien gezeichnet (siehe nowDotMarkup im SVG unten), nicht wie der Strich darunter.
+    let nowDotMarkup = '';
+    if (lastActualIndex >= 0 && showActual) {
+        const nowDotValue = actual[lastActualIndex] ?? prognose[lastActualIndex];
+        if (nowDotValue !== null && nowDotValue !== undefined) {
+            nowDotMarkup = `<circle class="dashboardChartNowDot" r="4.5" cx="${xFor(lastActualIndex).toFixed(1)}" cy="${yFor(nowDotValue).toFixed(1)}" />`;
+        }
+    }
+    if (useFineActual) {
+        // "Jetzt" = letzter feiner Ist-Punkt (statt der Stundengrenze)
+        const [lastMs, lastValue] = fineActual[fineActual.length - 1];
+        const nowX = xOfMs(lastMs + 150000);
+        if (nowX >= paddingLeft && nowX <= width - paddingRight) {
+            nowDotMarkup = `<circle class="dashboardChartNowDot" r="4.5" cx="${nowX.toFixed(1)}" cy="${yFor(lastValue).toFixed(1)}" />`;
+            if (lastActualIndex < labels.length - 1) {
+                nowMarkup = `<line x1="${nowX.toFixed(1)}" y1="${paddingTop}" x2="${nowX.toFixed(1)}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
+            }
+        }
+    }
 
     // Aktions-Indikator: eine Stunde mit Aktion (siehe actionHours) bekommt eine volldeckende
     // Hintergrundflaeche ueber die volle Chart-Hoehe, eine Stunde ohne bleibt einfach unbelegt (=
@@ -7542,6 +9092,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     if (actionHours) {
         for (let i = 0; i < labels.length; i++) {
             if (!actionHours[i]) continue;
+            if (ctx.hidden.has(actionColors ? `action:${actionHours[i]}` : (actionHours[i] === 'deactivated' ? 'action:deactivated' : 'action'))) continue;
             // actionColors (nur Ladestand Heimspeicher): actionHours[i] ist dann die Kategorie
             // (z.B. "charging"/"passive"/"deactivated") statt "active" - eigene Farbe je Kategorie.
             // Ohne actionColors gibt es nur "active" (gruen) und "deactivated" (hellgrau, Nutzer-
@@ -7577,6 +9128,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
             ${nowMarkup}
             ${forecastPath}
             ${actualPath}
+            ${nowDotMarkup}
             ${dayBoundaryMarkup}
             ${yLabels}
             ${xLabels}
@@ -7591,7 +9143,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
     // Nur bei PV (energySummary): eine kWh-Ertragssumme ergibt fuer andere Prognose/Ist-Charts (z.B.
     // Ladestand Heimspeicher in %) keinen Sinn.
     if (energySummary) {
-        const pvSummaryParts = computePvEnergySummary(labels, forecast).map(({label, kwh}) => `${label}: ${kwh} kWh`);
+        const pvSummaryParts = computePvEnergySummary(summaryLabels || labels, summaryForecast || forecast).map(({label, kwh}) => `${label}: ${kwh} kWh`);
         if (pvSummaryParts.length > 0) {
             const pvSummary = document.createElement('div');
             pvSummary.className = 'dashboardPvEnergySummary';
@@ -7620,13 +9172,14 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
         const d = new Date(labels[idx]);
         const dateText = d.toLocaleString('de-DE', {weekday: 'short', hour: '2-digit', minute: '2-digit'}).replace('.', '');
         const parts = [];
-        if (prognose[idx] !== null && prognose[idx] !== undefined) parts.push(`Prognose ${prognose[idx].toFixed(decimals)} ${unit}`);
-        if (actual[idx] !== null && actual[idx] !== undefined) parts.push(`Ist ${actual[idx].toFixed(decimals)} ${unit}`);
+        if (showForecast && prognose[idx] !== null && prognose[idx] !== undefined) parts.push(`Prognose ${prognose[idx].toFixed(decimals)} ${unit}`);
+        if (showActual && actual[idx] !== null && actual[idx] !== undefined) parts.push(`Ist-Wert ${actual[idx].toFixed(decimals)} ${unit}`);
         tooltip.textContent = `${dateText}: ${parts.join(' / ') || '–'}`;
-        const markerY = yFor(prognose[idx] ?? actual[idx] ?? yMin);
+        const markerY = yFor((showForecast ? prognose[idx] : null) ?? (showActual ? actual[idx] : null) ?? yMin);
         tooltip.style.left = xFor(idx).toFixed(1) * scale + 'px';
         tooltip.style.top = markerY.toFixed(1) * scale + 'px';
         tooltip.hidden = false;
+        clampChartTooltip(tooltip);
         marker.setAttribute('cx', xFor(idx).toFixed(1));
         marker.setAttribute('cy', markerY.toFixed(1));
         marker.setAttribute('visibility', 'visible');
@@ -7639,9 +9192,8 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
 
     svgEl.addEventListener('mousemove', e => showTooltip(e.clientX));
     svgEl.addEventListener('mouseleave', hideTooltip);
-    svgEl.addEventListener('touchstart', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
-    svgEl.addEventListener('touchmove', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
-    svgEl.addEventListener('touchend', hideTooltip);
+    // Touch-Bedienung (Antippen, Halten + Ziehen, Wischen, Zoom) laeuft zentral ueber attachChartViewGestures.
+    ctx.tooltipApi = makeChartTooltipApi({svgEl, labels, lastIndex, paddingLeft, plotWidth, width, showTooltip, hideTooltip});
 
     return wrapper;
 }
@@ -7650,9 +9202,23 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, {decima
 // base_case.py / /dashboard/chart-data: opt_cost/opt_usage vs. base_cost/base_usage) auf
 // gemeinsamer Stundenachse. Bewusst eigene Funktion (wie buildPvForecastActualChart): zwei Reihen
 // ohne Luecken, Summen in der Legende, "(Beta)" im Titel.
-function buildComparisonChart(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false, actualValues = null} = {}) {
-    const width = 600, height = 220;
+function buildComparisonChart(title, unit, labels, optValues, baseValues, options = {}) {
+    return makeToggleableChart(options.chartKey, ctx => {
+        const w = chartWindowIndices(labels, ctx.view);
+        if (w.full) return buildComparisonChartImpl(title, unit, labels, optValues, baseValues, options, ctx);
+        const windowLabels = sliceChartSeries(labels, w);
+        const fromMs = new Date(windowLabels[0]).getTime() - 3600000, toMs = new Date(windowLabels[windowLabels.length - 1]).getTime() + 3600000;
+        const sliced = {...options, actualValues: sliceChartSeries(options.actualValues, w),
+            actualFine: options.actualFine ? options.actualFine.filter(([t]) => { const ms = new Date(t).getTime(); return ms >= fromMs && ms <= toMs; }) : options.actualFine};
+        return buildComparisonChartImpl(title, unit, windowLabels, sliceChartSeries(optValues, w), sliceChartSeries(baseValues, w), sliced, ctx);
+    }, {labels, stickyKey: options.chartKey || title});
+}
+
+function buildComparisonChartImpl(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false, actualValues = null, actualFine = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
+    const width = 600, height = CHART_SVG_HEIGHT;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
+    ctx.plotLeft = paddingLeft;
+    ctx.plotRight = paddingRight;
     const plotWidth = width - paddingLeft - paddingRight;
     const plotHeight = height - paddingTop - paddingBottom;
 
@@ -7698,30 +9264,29 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
     // reales Gegenstueck, nur "optimiert" (das ist ja tatsaechlich passiert).
     const legend = document.createElement('div');
     legend.className = 'dashboardChartLegend';
+    // [Farbe, Linienart, Beschriftung, Schluessel (Summen/Sichtbarkeit), Werte] - zuerst "Ist-Wert", dann die Prognosen.
     const legendRows = actualValues
         ? [
-            ['var(--color-accent)', false, 'Ist', 'actual', actualValues],
-            ['var(--color-accent)', true, 'Shyft-Plan', 'opt', optValues],
-            ['var(--color-text-secondary)', true, 'Ohne Steuerung', 'base', baseValues],
+            ['var(--color-accent)', 'solid', 'Ist-Wert', 'actual', actualValues],
+            ['var(--color-accent)', 'dashed', 'Shyft-Plan', 'opt', optValues],
+            ['var(--color-text-secondary)', 'dashed', 'Ohne Steuerung', 'base', baseValues],
         ]
         : [
-            ['var(--color-accent)', false, 'Shyft-Plan', 'opt', optValues],
-            ['var(--color-text-secondary)', true, 'Ohne Steuerung', 'base', baseValues],
+            ['var(--color-accent)', 'solid', 'Shyft-Plan', 'opt', optValues],
+            ['var(--color-text-secondary)', 'dashed', 'Ohne Steuerung', 'base', baseValues],
         ];
-    for (const [color, dashed, label, key, values] of legendRows) {
-        const item = document.createElement('span');
-        item.className = 'dashboardChartLegendItem';
-        const dot = document.createElement('span');
-        dot.className = 'dashboardChartLegendDot' + (dashed ? ' dashboardChartLegendDotDashed' : '');
-        dot.style.background = color;
-        item.appendChild(dot);
-        item.appendChild(document.createTextNode(`${label} (${fmt(seriesTotal(key, values))} ${unit})${dayPart(key)}`));
-        legend.appendChild(item);
+    for (const [color, lineStyle, label, key, values] of legendRows) {
+        legend.appendChild(chartLegendEntry(ctx, {id: key, label: `${label} (${fmt(seriesTotal(key, values))} ${unit})${dayPart(key)}`, color, style: lineStyle}));
     }
     wrapper.appendChild(legend);
 
     const n = Math.min(labels.length, Math.max(optValues.length, baseValues.length, (actualValues || []).length));
-    const defined = [...optValues.slice(0, n), ...baseValues.slice(0, n), ...(actualValues || []).slice(0, n)].filter(v => Number.isFinite(v));
+    // actualFine (Nutzer-Vorgabe, nur "Dein Stromverbrauch"): Ist-Verlauf in 5-Minuten-Schritten
+    // [[ISO, Wert], ...] statt der Stundenwerte - Wert = mittlere Leistung im Schritt (kW = kWh pro Stunde,
+    // liegt damit auf derselben Achse wie die Stundenwerte).
+    const fine = (actualFine || []).map(([t, v]) => [new Date(t).getTime(), v]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v));
+    const useFine = fine.length >= 2 && actualValues;
+    const defined = [...optValues.slice(0, n), ...baseValues.slice(0, n), ...(actualValues || []).slice(0, n), ...(useFine ? fine.map(p => p[1]) : [])].filter(v => Number.isFinite(v));
     if (n === 0 || defined.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'shyftActionsEmpty';
@@ -7756,11 +9321,12 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
     // noetig, damit das gruene "Ist"/"Shyft-Plan"-Gesamtband je Segment durchgezogen oder gestrichelt
     // sein kann (siehe dashedAt), was ein einzelnes <path>-Element mit EINEM stroke-dasharray nicht
     // koennte.
-    function segmentedPath(values, dashedAt, color) {
+    function segmentedPath(values, dashedAt, color, skipAt = null) {
         const parts = [];
         for (let i = 0; i < n - 1; i++) {
             const v0 = values[i], v1 = values[i + 1];
             if (!Number.isFinite(v0) || !Number.isFinite(v1)) continue;
+            if (skipAt && skipAt(i)) continue;
             const dashAttr = dashedAt(i) ? ' stroke-dasharray="6,4"' : '';
             parts.push(`<path d="M${xFor(i).toFixed(1)},${yFor(v0).toFixed(1)} L${xFor(i + 1).toFixed(1)},${yFor(v1).toFixed(1)}" fill="none" stroke="${color}" stroke-width="2"${dashAttr} />`);
         }
@@ -7772,16 +9338,48 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
     // sind EIN visuelles Band: Ist (durchgezogen) fuer bereits vergangene Stunden, nahtlos uebergehend
     // in Shyft-Plan (gestrichelt) fuer die Zukunft - Nutzer-Vorgabe, analog zur Historisch/Prognose-
     // Linie im Ladestand-Heimspeicher-Chart.
-    const basePathMarkup = seriesPath(baseValues, 'var(--color-text-secondary)', true);
+    const basePathMarkup = ctx.hidden.has('base') ? '' : seriesPath(baseValues, 'var(--color-text-secondary)', true);
     const isHistorical = i => !!(actualValues && Number.isFinite(actualValues[i]));
-    const optPathMarkup = actualValues
+    const firstMs = new Date(labels[0]).getTime();
+    const xForMs = ms => paddingLeft + ((ms - firstMs) / 3600000 / lastIndex) * plotWidth;
+    let finePathMarkup = '';
+    if (useFine) {
+        // Ist durchgezogen aus den 5-Minuten-Werten (Luecken > 2 Schritte unterbrechen die Linie),
+        // dann ab dem letzten Ist-Punkt gestrichelt weiter mit dem Shyft-Plan der kommenden Stunden.
+        const binMs = Math.max(60000, fine.length > 1 ? fine[1][0] - fine[0][0] : 300000);
+        const parts = [];
+        let run = [];
+        const flush = () => { if (run.length >= 2) parts.push(`<path d="${run.join(' ')}" fill="none" stroke="var(--color-accent)" stroke-width="2" />`); run = []; };
+        let prevMs = null;
+        for (const [ms, v] of fine) {
+            if (prevMs !== null && ms - prevMs > binMs * 2) flush();
+            run.push(`${run.length ? 'L' : 'M'}${xForMs(ms + binMs / 2).toFixed(1)},${yFor(v).toFixed(1)}`);
+            prevMs = ms;
+        }
+        flush();
+        const fineSolidMarkup = parts.join('');  // Ist-Wert (durchgezogen)
+        parts.length = 0;
+        const last = fine[fine.length - 1];
+        const lastX = xForMs(last[0] + binMs / 2), lastY = yFor(last[1]);
+        let curIdx = -1;
+        for (let i = 0; i < n; i++) if (new Date(labels[i]).getTime() <= last[0]) curIdx = i;
+        const dash = [`M${lastX.toFixed(1)},${lastY.toFixed(1)}`];
+        for (let i = curIdx + 1; i < n; i++) {
+            if (!Number.isFinite(optValues[i])) break;
+            dash.push(`L${xFor(i).toFixed(1)},${yFor(optValues[i]).toFixed(1)}`);
+        }
+        if (dash.length >= 2) parts.push(`<path d="${dash.join(' ')}" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-dasharray="6,4" />`);
+        finePathMarkup = (ctx.hidden.has('actual') ? '' : fineSolidMarkup) + (ctx.hidden.has('opt') ? '' : parts.join(''));
+    }
+    const optPathMarkup = useFine ? finePathMarkup : actualValues
         ? segmentedPath(
             Array.from({length: n}, (_, i) => (isHistorical(i) ? actualValues[i] : optValues[i])),
             i => !isHistorical(i),
-            'var(--color-accent)')
-        : seriesPath(optValues, 'var(--color-accent)');
+            'var(--color-accent)',
+            i => (isHistorical(i) ? ctx.hidden.has('actual') : ctx.hidden.has('opt')))
+        : (ctx.hidden.has('opt') ? '' : seriesPath(optValues, 'var(--color-accent)'));
 
-    const tickCount = Math.min(6, n);
+    const tickCount = chartXTickCount(n);
     const tickIndices = [...new Set(Array.from({length: tickCount}, (_, i) => Math.round(i * lastIndex / (tickCount - 1 || 1))))];
     const xLabels = tickIndices.map(i => {
         const text = new Date(labels[i]).toLocaleString('de-DE', {weekday: 'short', hour: '2-digit'}).replace('.', '');
@@ -7839,13 +9437,22 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
         const dateText = new Date(labels[idx]).toLocaleString('de-DE', {weekday: 'short', hour: '2-digit', minute: '2-digit'}).replace('.', '');
         const o = optValues[idx], b = baseValues[idx];
         const parts = [];
-        if (Number.isFinite(o)) parts.push(`Shyft ${fmt(o)} ${unit}`);
-        if (Number.isFinite(b)) parts.push(`ohne ${fmt(b)} ${unit}`);
+        // Mit 5-Minuten-Ist: den naechstgelegenen Ist-Schritt zum Cursor zeigen (nur wo der Ist-Verlauf reicht)
+        let fineHit = null;
+        if (useFine) {
+            const cursorMs = firstMs + (((clientX - rect.left) / scale - paddingLeft) / plotWidth * lastIndex) * 3600000;
+            const binMs = fine.length > 1 ? fine[1][0] - fine[0][0] : 300000;
+            for (const p of fine) if (Math.abs(p[0] + binMs / 2 - cursorMs) <= binMs / 2 + 1) { fineHit = p; break; }
+            if (fineHit && !ctx.hidden.has('actual')) parts.push(`Ist-Wert ${fmt(fineHit[1])} ${unit === 'kWh' ? 'kW' : unit}`);
+        }
+        if (Number.isFinite(o) && !ctx.hidden.has('opt')) parts.push(`Shyft ${fmt(o)} ${unit}`);
+        if (Number.isFinite(b) && !ctx.hidden.has('base')) parts.push(`ohne ${fmt(b)} ${unit}`);
         tooltip.textContent = `${dateText}: ${parts.join(' / ') || '–'}`;
-        const my = yFor(Number.isFinite(o) ? o : (Number.isFinite(b) ? b : yMin));
+        const my = yFor(fineHit ? fineHit[1] : Number.isFinite(o) ? o : (Number.isFinite(b) ? b : yMin));
         tooltip.style.left = (xFor(idx) * scale).toFixed(1) + 'px';
         tooltip.style.top = (my * scale).toFixed(1) + 'px';
         tooltip.hidden = false;
+        clampChartTooltip(tooltip);
         marker.setAttribute('cx', xFor(idx).toFixed(1));
         marker.setAttribute('cy', my.toFixed(1));
         marker.setAttribute('visibility', 'visible');
@@ -7853,9 +9460,8 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, {decim
     function hideTooltip() { tooltip.hidden = true; marker.setAttribute('visibility', 'hidden'); }
     svgEl.addEventListener('mousemove', e => showTooltip(e.clientX));
     svgEl.addEventListener('mouseleave', hideTooltip);
-    svgEl.addEventListener('touchstart', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
-    svgEl.addEventListener('touchmove', e => { if (e.touches[0]) showTooltip(e.touches[0].clientX); }, {passive: true});
-    svgEl.addEventListener('touchend', hideTooltip);
+    // Touch-Bedienung (Antippen, Halten + Ziehen, Wischen, Zoom) laeuft zentral ueber attachChartViewGestures.
+    ctx.tooltipApi = makeChartTooltipApi({svgEl, labels, lastIndex, paddingLeft, plotWidth, width, showTooltip, hideTooltip});
 
     return wrapper;
 }
@@ -7923,11 +9529,11 @@ function scheduleConsumptionForecastOptimizerTrigger() {
     }, CONSUMPTION_FORECAST_DELETE_TRIGGER_DELAY_MS);
 }
 
-function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionBasis, presenceForecast) {
+function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionBasis, presenceForecast, simulatedHours = []) {
     const details = document.createElement('details');
     details.className = 'dashboardConsumptionForecast';
     const summary = document.createElement('summary');
-    summary.textContent = 'Prognose im Detail (48h) anzeigen';
+    summary.textContent = `Prognose im Detail (${labels.length}h) anzeigen`;
     details.appendChild(summary);
     const uncertain = consumptionBasis && consumptionBasis !== 'ok';
     if (uncertain) {
@@ -7955,7 +9561,11 @@ function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionB
         }
         const text = document.createElement('span');
         text.className = 'dashboardConsumptionForecastRowText';
-        text.textContent = `${marker}${timeText}: ${consumptionKwh[i].toFixed(3)} kWh` + (state ? ` (${state.label})` : '');
+        text.textContent = `${marker}${timeText}: ${consumptionKwh[i].toFixed(3)} kWh` + (state ? ` (${state.label})` : '') + (simulatedHours[i] ? ' – simuliert' : '');
+        if (simulatedHours[i]) {
+            // Siehe "Notnagel" in compute_car_presence_forecast (app.py): Platzhalter, keine vorhergesagte Fahrt.
+            row.title = 'Simulierte Fahrt: Für einen Tag im Zeitraum ist keine Fahrstunde vorhergesagt. Damit der Optimierer den üblichen Tagesverbrauch nicht ignoriert, wird er (bei angeschnittenen Tagen anteilig) in die letzte Stunde des Zeitraums gelegt.';
+        }
         row.appendChild(text);
         // Muelleimer-Icon: nagelt diese Stunde dauerhaft auf "abwesend, keine Fahrt" fest (siehe
         // deleteConsumptionForecast/_apply_manual_absence_overrides in app.py) - fuer eine einzelne
@@ -8164,6 +9774,16 @@ function buildTripPlanButtonRow() {
 // ============================================================================
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+// Farbe des aktuellen Strompreises ueber dem Strommast im Energiefluss-Widget - dieselben Farben wie die Preisbaender
+// im Strompreis-Chart (guenstig = Akzent/gruen, mittel = grau, teuer = rot); die Einstufung kommt vom Backend
+// (priceLevel, dieselben Schwellen wie der Chart). WICHTIG: als Inline-Style setzen - die CSS-Klasse
+// .energyFlowLabel legt fill fest und ueberstimmt ein fill-Attribut (der Preis blieb deshalb immer dunkelblau).
+function energyFlowPriceColor(level) {
+    if (level === 'hoch') return 'var(--color-error)';
+    if (level === 'niedrig') return 'var(--color-accent)';
+    return 'var(--color-text-secondary)';
+}
 
 function svgEl(tag, attrs = {}, children = []) {
     const el = document.createElementNS(SVG_NS, tag);
@@ -8584,6 +10204,14 @@ function withStaleness(valueText, updatedAtIso, thresholdMinutes) {
 // Fluss-Groessen der vier "rechten"/"unteren" Verbraucher (Waermepumpe/Auto/Sonstiges Geraet/
 // Haushaltsstrom) - von Desktop- UND Mobil-Layout gemeinsam genutzt (siehe buildEnergyFlowSvgDesktop/
 // buildEnergyFlowWidgetMobile), da beide dieselbe Logik brauchen, nur mit unterschiedlicher Geometrie.
+// Mit aktivem Heizstab (data.heatpump.isRod, siehe compute_energy_flow_data) zeigt das Dashboard an der Stelle der Waermepumpe den Heizstab.
+function heatDeviceImage(data) {
+    return data.heatpump && data.heatpump.isRod ? 'assets/heating-rod.svg' : 'assets/heatpump.jpg';
+}
+function heatDeviceName(data) {
+    return data.heatpump && data.heatpump.isRod ? 'Heizstab' : 'Wärmepumpe';
+}
+
 function computeEnergyFlowKw(data) {
     const heatpumpOn = !!(data.heatpump && data.heatpump.configured && data.heatpump.on);
     const carCharging = !!(data.car && data.car.configured && data.car.state === 'charging');
@@ -8663,7 +10291,7 @@ function buildEnergyFlowSvgDesktop(data) {
         if (line) svg.appendChild(line);
         // Feste Farben statt der theme-abhaengigen --color-error/--color-text-secondary - das
         // Widget bleibt immer hell (siehe .energyFlowWidget), Dark-Mode-Toene waeren hier blass.
-        const priceColor = data.grid.priceLevel === 'hoch' ? '#e74c3c' : data.grid.priceLevel === 'niedrig' ? 'var(--color-accent)' : '#5b6b8c';
+        const priceColor = energyFlowPriceColor(data.grid.priceLevel);
         const priceText = data.grid.priceCent !== null ? `${data.grid.priceCent.toLocaleString('de-DE')} Cent` : '';
         // kW-Wert mittig ueber der Leitung (horizontaler Fluss -> Beschriftung ueber der Leitung),
         // Mittelpunkt der Strecke Mast->Haus. Der Strompreis bleibt dagegen wie urspruenglich ueber
@@ -8674,7 +10302,7 @@ function buildEnergyFlowSvgDesktop(data) {
         if (priceText) {
             // Kein Zeitstempel hier - der Strompreis kommt nicht direkt aus HA (siehe
             // _read_current_price_info in app.py), sondern aus dem shyft-Cache.
-            svg.appendChild(svgEl('text', {x: pylonCx, y: pylonCy - 54, 'text-anchor': 'middle', class: 'energyFlowLabel', fill: priceColor}, [document.createTextNode(priceText)]));
+            svg.appendChild(svgEl('text', {x: pylonCx, y: pylonCy - 54, 'text-anchor': 'middle', class: 'energyFlowLabel', style: `fill:${priceColor}`}, [document.createTextNode(priceText)]));
         }
     }
     if (data.pv && data.pv.configured) {
@@ -8773,15 +10401,15 @@ function buildEnergyFlowSvgDesktop(data) {
         // laeuft - sonst wirkt es so, als flösse Strom zu einem ausgeschalteten Geraet.
         const line = buildFlowLineFromPath(buildFlowPath(busX, rowY, consumerAnchorX, rowY), heatpumpFlowKw);
         if (line) svg.appendChild(line);
-        const hp = buildFlowImage('assets/heatpump.jpg', columnX, rowY, 499, 492, 80);
+        const hp = buildFlowImage(heatDeviceImage(data), columnX, rowY, 499, 492, 80);
         if (data.heatpump.on) hp.setAttribute('class', 'energyFlowPulse');
         svg.appendChild(hp);
         const statusLines = [
-            withStaleness(data.heatpump.on === null ? 'Wärmepumpe' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES),
+            withStaleness(data.heatpump.on === null ? heatDeviceName(data) : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES),
             data.heatpump.targetTempC !== null ? `Soll (aktuell): ${formatTemp(data.heatpump.targetTempC)}` : null,
-            data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
+            !data.heatpump.isRod && data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
             data.heatpump.dhwTankTempC !== null ? `WW-Speicher: ${formatTemp(data.heatpump.dhwTankTempC)}` : null,
-            (data.heatpump.heatingOn !== null || data.heatpump.supplyTempC !== null)
+            (!data.heatpump.isRod && (data.heatpump.heatingOn !== null || data.heatpump.supplyTempC !== null))
                 ? `Heizung: ${data.heatpump.heatingOn ? 'An' : 'Aus'}` + (data.heatpump.supplyTempC !== null ? ` (${formatTemp(data.heatpump.supplyTempC)})` : '')
                 : null,
         ].filter(Boolean);
@@ -8945,14 +10573,14 @@ function buildEnergyFlowSvgMobile(data) {
         svg.appendChild(buildPylonIcon(pylonCx, pylonCy));
         const line = buildFlowLine(pylonCx + 24, pylonCy, houseX, houseCy, data.grid.kw, {reversed: (data.grid.kw || 0) < 0, thresholdKw: 0.1});
         if (line) svg.appendChild(line);
-        const priceColor = data.grid.priceLevel === 'hoch' ? '#e74c3c' : data.grid.priceLevel === 'niedrig' ? 'var(--color-accent)' : '#5b6b8c';
+        const priceColor = energyFlowPriceColor(data.grid.priceLevel);
         const priceText = data.grid.priceCent !== null ? `${data.grid.priceCent.toLocaleString('de-DE')} Cent` : '';
         const gridLabelX = (pylonCx + 24 + houseX) / 2;
         const pylonTopY = pylonCy - 44;
         const gridLabelY = pylonTopY - 16;
         svg.appendChild(buildEnergyFlowLabel(gridLabelX, gridLabelY, [withStaleness(formatKwValue(data.grid.kw), data.grid.updatedAt, INVERTER_STALE_MINUTES)], {anchor: 'middle', noWrap: true}));
         if (priceText) {
-            svg.appendChild(svgEl('text', {x: pylonCx, y: gridLabelY - 26, 'text-anchor': 'middle', class: 'energyFlowLabel', fill: priceColor}, [document.createTextNode(priceText)]));
+            svg.appendChild(svgEl('text', {x: pylonCx, y: gridLabelY - 26, 'text-anchor': 'middle', class: 'energyFlowLabel', style: `fill:${priceColor}`}, [document.createTextNode(priceText)]));
         }
     }
 
@@ -9038,13 +10666,13 @@ function buildEnergyFlowSvgMobile(data) {
                 const iconHalfH = 35;
                 const drop = buildFlowLineFromPath(`M ${colX},${busY} V ${rowY - iconHalfH}`, flows.heatpumpFlowKw);
                 if (drop) svg.appendChild(drop);
-                const hp = buildFlowImage('assets/heatpump.jpg', colX, rowY, 499, 492, 70);
+                const hp = buildFlowImage(heatDeviceImage(data), colX, rowY, 499, 492, 70);
                 if (data.heatpump.on) hp.setAttribute('class', 'energyFlowPulse');
                 svg.appendChild(hp);
                 deviceDetailBlocks.push({colX, type, lines: [
-                    `Wärmepumpe: ${withStaleness(data.heatpump.on === null ? '–' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES)}`,
+                    `${heatDeviceName(data)}: ${withStaleness(data.heatpump.on === null ? '–' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES)}`,
                     data.heatpump.targetTempC !== null ? `Soll (aktuell): ${formatTemp(data.heatpump.targetTempC)}` : null,
-                    data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
+                    !data.heatpump.isRod && data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
                     // Label und Wert auf zwei Zeilen statt einer zu langen - "WW-Speicher: 36,5 °C"
                     // war bei der groesseren Mobil-Schrift die tatsaechlich breiteste Zeile im ganzen
                     // Block (breiter als "Wärmepumpe: An"), lief also trotz der Heizung-Aufteilung
@@ -9054,7 +10682,7 @@ function buildEnergyFlowSvgMobile(data) {
                     // Heizungsstatus und Vorlauftemperatur auf zwei Zeilen statt einer zu langen -
                     // "Heizung: An (45,2 °C)" lief bei der groesseren Mobil-Schrift leicht in die
                     // Nachbarspalte (dasselbe Problem wie zuvor bei Ladestand/Reichweite des Autos).
-                    data.heatpump.heatingOn !== null ? `Heizung: ${data.heatpump.heatingOn ? 'An' : 'Aus'}` : null,
+                    !data.heatpump.isRod && data.heatpump.heatingOn !== null ? `Heizung: ${data.heatpump.heatingOn ? 'An' : 'Aus'}` : null,
                     data.heatpump.supplyTempC !== null ? `(${formatTemp(data.heatpump.supplyTempC)})` : null,
                 ].filter(Boolean)});
             } else if (type === 'car') {
@@ -9372,7 +11000,52 @@ async function loadDashboard() {
         } catch (err) {
             console.log(err);
         }
-        updateOrAppendDashboardWidget(container, 'strompreis', buildLineChart('Strompreis', 'Cent/kWh', strompreisLabels, strompreisValues, {
+        // Ist-Verbrauch in 5-Minuten-Schritten (best-effort, siehe /dashboard/usage-fine) - auch fuer die
+        // optionale Stromverbrauch-Linie im Strompreis-Chart (Legenden-Eintrag, standardmaessig aus).
+        let usageFinePoints = [], usageFineBinMs = 300000;
+        try {
+            const usageFine = await getJson(insideHomeAssistant + '/dashboard/usage-fine');
+            if (usageFine.status === 'success') {
+                usageFinePoints = usageFine.points.map(([t, v]) => [new Date(t).getTime(), v]);
+                usageFineBinMs = (usageFine.binMinutes || 5) * 60000;
+            }
+        } catch (err) {
+            console.log(err);
+        }
+        // Netzbezug (nur Bezug, keine Einspeisung) fuer die optionale Linie im Strompreis-Chart
+        let gridFinePoints = [];
+        try {
+            const gridFine = await getJson(insideHomeAssistant + '/dashboard/usage-fine?source=grid');
+            if (gridFine.status === 'success') {
+                gridFinePoints = gridFine.points.map(([t, v]) => [new Date(t).getTime(), v]);
+            }
+        } catch (err) {
+            console.log(err);
+        }
+        const buildStrompreisChart = () => {
+            const showUsage = true;  // ob die Netzbezug-Kurve sichtbar ist, steuert die Legende (chartKey 'strompreis')
+            let secondSeries = null;
+            if (showUsage && strompreisLabels.length > 0 && (gridFinePoints.length > 0 || (data.comparison_opt_grid_import || []).length > 0)) {
+                const labelMs = strompreisLabels.map(l => new Date(l).getTime());
+                const lastFineMs = gridFinePoints.length ? gridFinePoints[gridFinePoints.length - 1][0] : -Infinity;
+                const optByMs = new Map((data.comparison_labels || []).map((l, k) => [new Date(l).getTime(), (data.comparison_opt_grid_import || [])[k]]));
+                // Stundenwerte fuer Tooltip/Skalierung: Ist = Mittel der 5-Minuten-Schritte der Stunde (fuer die
+                // laufende und vergangene Stunden), Prognose = Shyft-Plan fuer die Stunden danach.
+                const actual = labelMs.map(ms => {
+                    const bins = gridFinePoints.filter(p => p[0] >= ms && p[0] < ms + 3600000);
+                    return bins.length ? bins.reduce((a, p) => a + p[1], 0) / bins.length : null;
+                });
+                const forecast = labelMs.map((ms, k) => (actual[k] === null && ms > lastFineMs && Number.isFinite(optByMs.get(ms)) ? optByMs.get(ms) : null));
+                secondSeries = {
+                    label: 'Netzbezug', unit: 'kW', decimals: 1, color: 'var(--color-text-secondary)',
+                    actual, forecast, fine: gridFinePoints.length >= 2 ? gridFinePoints : null, binMs: usageFineBinMs, zeroBased: true,
+                };
+            }
+            return buildLineChart('Strompreis', 'Cent/kWh', strompreisLabels, strompreisValues, {
+                chartKey: 'strompreis',
+                curveLegend: true,
+                primaryLabel: 'Strompreis',
+                secondSeries,
             subtitle: 'Bezug',
             stepped: true,
             valueScale: 100,
@@ -9383,7 +11056,9 @@ async function loadDashboard() {
             // Nutzer-Vorgabe: alle veroeffentlichten Awattar-Werte durchgezogen zeichnen (auch in der
             // Zukunft - die sind bekannt, keine Prognose), erst danach gestrichelt.
             dashedFromIndex: strompreisDashedFromIndex,
-        }));
+        });
+        };
+        updateOrAppendDashboardWidget(container, 'strompreis', buildStrompreisChart());
         let aussentemperaturLabels = data.labels, aussentemperaturValues = data.temperature;
         try {
             const aussentemperaturData = await getJson(insideHomeAssistant + '/dashboard/aussentemperatur');
@@ -9411,7 +11086,7 @@ async function loadDashboard() {
         try {
             const pvComparison = await getJson(insideHomeAssistant + '/dashboard/pv-forecast-vs-actual');
             if (pvComparison.status === 'success' && pvComparison.labels.length > 0) {
-                updateOrAppendDashboardWidget(container, 'pvLeistung', buildPvForecastActualChart(pvComparison.labels, pvComparison.forecast, pvComparison.actual));
+                updateOrAppendDashboardWidget(container, 'pvLeistung', buildPvForecastActualChart(pvComparison.labels, pvComparison.forecast, pvComparison.actual, pvComparison.actualFine));
                 pvChartRendered = true;
             }
         } catch (err) {
@@ -9426,27 +11101,52 @@ async function loadDashboard() {
         // "Innenraum" (Zweitkurve): Ist aus der echten Sensorhistorie statt der bisher gezeigten,
         // vom Optimierer nur SIMULIERTEN Innentemperatur (Nutzer-Vorgabe) - best-effort wie bei den
         // anderen Prognose-vs-Ist-Charts, faellt bei einem Fehler auf die reine Simulationskurve zurueck.
-        let raumtemperaturSecondSeries = {values: data.t_i, label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2};
+        let raumtemperaturLabels = data.output_labels, raumtemperaturValues = data.t_i_target, raumtemperaturDashedFromIndex = null, raumtemperaturOverlay = null, raumtemperaturFine = null;
+        let raumtemperaturSecondSeries = {values: data.t_i, label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2, integerTicks: true, band: 'upper'};
         try {
             const raumtemperaturComparison = await getJson(insideHomeAssistant + '/dashboard/raumtemperatur-forecast-vs-actual');
             if (raumtemperaturComparison.status === 'success' && raumtemperaturComparison.labels.length > 0) {
-                raumtemperaturSecondSeries = {
-                    actual: raumtemperaturComparison.actual, forecast: raumtemperaturComparison.forecast,
-                    label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2,
-                    slopeColors: TEMPERATURE_SLOPE_COLORS,
-                };
+                // Beide Kurven laufen ab 0 Uhr (Historie des heutigen Tages + Prognose, wie bei Ladestand Auto):
+                // "Heizung-Soll" = Verlauf der Solltemperatur-Entitaet bis jetzt, danach (gestrichelt) der Plan des
+                // Optimierers; "Innenraum" = Sensorhistorie + Prognose. Luecken der Hauptkurve (Hauptreihe kann keine
+                // Luecken zeichnen) werden mit dem jeweils letzten bekannten Wert (am Anfang dem ersten) gefuellt.
+                const targetActual = raumtemperaturComparison.targetActual || [];
+                const targetForecast = raumtemperaturComparison.targetForecast || [];
+                const target = raumtemperaturComparison.labels.map((_, i) => (targetActual[i] ?? targetForecast[i] ?? null));
+                const firstKnownTarget = target.find(v => v !== null && v !== undefined);
+                if (firstKnownTarget !== undefined) {
+                    let lastKnownTarget = firstKnownTarget;
+                    raumtemperaturLabels = raumtemperaturComparison.labels;
+                    raumtemperaturValues = target.map(v => { if (v !== null && v !== undefined) lastKnownTarget = v; return lastKnownTarget; });
+                    const actualCount = targetActual.filter(v => v !== null && v !== undefined).length;
+                    raumtemperaturDashedFromIndex = actualCount > 0 ? actualCount : null;
+                    // Plan der vergangenen Stunden (gestrichelt ueber dem Ist-Verlauf, wie bei den anderen Charts) - nur wo gespeichert
+                    raumtemperaturFine = raumtemperaturComparison.targetActualFine || null;
+                    raumtemperaturOverlay = raumtemperaturDashedFromIndex !== null && targetForecast.some(v => v !== null && v !== undefined) ? targetForecast : null;
+                    raumtemperaturSecondSeries = {
+                        actual: raumtemperaturComparison.actual, forecast: raumtemperaturComparison.forecast,
+                        label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2,
+                        slopeColors: TEMPERATURE_SLOPE_COLORS, integerTicks: true, band: 'upper',
+                        actualFine: raumtemperaturComparison.actualFine || null,
+                    };
+                }
             }
         } catch (err) {
             console.log(err);
         }
-        updateOrAppendDashboardWidget(container, 'raumtemperatur', buildLineChart('Raumtemperatur', '°C', data.output_labels, data.t_i_target, {
+        updateOrAppendDashboardWidget(container, 'raumtemperatur', buildLineChart('Raumtemperatur', '°C', raumtemperaturLabels, raumtemperaturValues, {
             // Kein subtitle mehr (Nutzer-Vorgabe: Titel bleibt schlicht "Raumtemperatur (°C)"),
             // primaryLabel beschriftet stattdessen nur die Legende darunter.
             primaryLabel: 'Heizung-Soll',
+            chartKey: 'raumtemperatur',
+            bandPrimary: 'lower',
             stepped: true,
             round: true,
             decimals: 0,
             secondSeries: raumtemperaturSecondSeries,
+            dashedFromIndex: raumtemperaturDashedFromIndex,
+            overlayForecast: raumtemperaturOverlay,
+            primaryFine: raumtemperaturFine,
             // Solange "Heizung aktiviert?" (heatpump_heating_activated) explizit auf Aus steht,
             // berechnet das Addon keine Heizungs-Aktionen mehr (siehe compute_heizung_actions in
             // app.py) - der Chart bleibt technisch bestehen, wird aber bewusst als "gerade nicht
@@ -9459,7 +11159,7 @@ async function loadDashboard() {
         try {
             const warmwasserComparison = await getJson(insideHomeAssistant + '/dashboard/warmwasser-forecast-vs-actual');
             if (warmwasserComparison.status === 'success' && warmwasserComparison.labels.length > 0) {
-                updateOrAppendDashboardWidget(container, 'warmwasser', buildWarmwasserForecastActualChart(warmwasserComparison.labels, warmwasserComparison.forecast, warmwasserComparison.actual, warmwasserComparison.actionHours));
+                updateOrAppendDashboardWidget(container, 'warmwasser', buildWarmwasserForecastActualChart(warmwasserComparison.labels, warmwasserComparison.forecast, warmwasserComparison.actual, warmwasserComparison.actionHours, warmwasserComparison.actualFine));
                 warmwasserChartRendered = true;
             }
         } catch (err) {
@@ -9467,7 +11167,7 @@ async function loadDashboard() {
         }
         if (!warmwasserChartRendered) {
             updateOrAppendDashboardWidget(container, 'warmwasser', buildLineChart('Warmwasser', '°C', data.output_labels, data.t_hw, {
-                slopeBands: TEMPERATURE_SLOPE_COLORS,
+                slopeBands: WARMWASSER_SLOPE_COLORS,
             }));
         }
         // Ist-Teil (0 Uhr bis jetzt) aus der echten Sensorhistorie statt aus der Optimierer-Prognose
@@ -9477,7 +11177,7 @@ async function loadDashboard() {
         try {
             const batterySocComparison = await getJson(insideHomeAssistant + '/dashboard/battery-soc-forecast-vs-actual');
             if (batterySocComparison.status === 'success' && batterySocComparison.labels.length > 0) {
-                updateOrAppendDashboardWidget(container, 'ladestandHeimspeicher', buildBatterySocForecastActualChart(batterySocComparison.labels, batterySocComparison.forecast, batterySocComparison.actual, batterySocComparison.actionHours, batterySocComparison.plannedHistory));
+                updateOrAppendDashboardWidget(container, 'ladestandHeimspeicher', buildBatterySocForecastActualChart(batterySocComparison.labels, batterySocComparison.forecast, batterySocComparison.actual, batterySocComparison.actionHours, batterySocComparison.plannedHistory, batterySocComparison.actualFine));
                 batterySocChartRendered = true;
             }
         } catch (err) {
@@ -9495,7 +11195,7 @@ async function loadDashboard() {
         // Bleibt bei buildLineChart (nicht buildForecastActualChart) wegen der Anwesenheitsprognose-
         // Leiste/Verbrauchsprognose-Details darunter, die dort nicht existieren.
         let ladestandAutoLabels = data.output_labels, ladestandAutoValues = data.soc_ev, ladestandAutoValueScale = 100;
-        let ladestandAutoDashedFromIndex = null, ladestandAutoActionHours = null;
+        let ladestandAutoDashedFromIndex = null, ladestandAutoActionHours = null, ladestandAutoOverlayForecast = null, ladestandAutoFine = null;
         try {
             const ladestandAutoComparison = await getJson(insideHomeAssistant + '/dashboard/ladestand-auto-forecast-vs-actual');
             if (ladestandAutoComparison.status === 'success' && ladestandAutoComparison.labels.length > 0) {
@@ -9504,6 +11204,8 @@ async function loadDashboard() {
                 ladestandAutoValueScale = 1;
                 ladestandAutoDashedFromIndex = ladestandAutoComparison.actual.filter(v => v !== null && v !== undefined).length;
                 ladestandAutoActionHours = ladestandAutoComparison.actionHours;
+                ladestandAutoOverlayForecast = ladestandAutoComparison.forecast;
+                ladestandAutoFine = ladestandAutoComparison.actualFine || null;
             }
         } catch (err) {
             console.log(err);
@@ -9525,7 +11227,7 @@ async function loadDashboard() {
                     };
                 });
                 presenceForecast = {byLabel};
-                consumptionForecast = {labels: presenceData.labels, consumptionKwh: presenceData.consumptionKwh, consumptionBasis: presenceData.consumptionBasis};
+                consumptionForecast = {labels: presenceData.labels, consumptionKwh: presenceData.consumptionKwh, consumptionBasis: presenceData.consumptionBasis, simulatedHours: presenceData.simulatedHours || []};
             }
         } catch (err) {
             console.log(err);
@@ -9543,13 +11245,16 @@ async function loadDashboard() {
             dashedFromIndex: ladestandAutoDashedFromIndex,
             actionHours: ladestandAutoActionHours,
             presenceForecast,
+            overlayForecast: ladestandAutoOverlayForecast,
+            primaryFine: ladestandAutoFine,
+            chartKey: 'ladestandAuto',
         });
         if (presenceForecast) {
             ladestandAutoChart.appendChild(buildPresenceForecastHeading());
         }
         if (consumptionForecast) {
             const consumptionDetails = buildCarConsumptionForecastDetails(
-                consumptionForecast.labels, consumptionForecast.consumptionKwh, consumptionForecast.consumptionBasis, presenceForecast);
+                consumptionForecast.labels, consumptionForecast.consumptionKwh, consumptionForecast.consumptionBasis, presenceForecast, consumptionForecast.simulatedHours);
             // updateOrAppendDashboardWidget ERSETZT das komplette 'ladestandAuto'-Widget bei jedem
             // periodischen Refresh (alle 30s, siehe refreshDashboard) - ein frisches <details>-
             // Element ist dabei immer zu (Nutzer-Feedback: ein manuell aufgeklapptes Element fiel
@@ -9585,10 +11290,11 @@ async function loadDashboard() {
         if ((data.comparison_base_cost && data.comparison_base_cost.length) || (data.comparison_opt_cost && data.comparison_opt_cost.length)) {
             updateOrAppendDashboardWidget(container, 'kostenVergleich', buildComparisonChart(
                 'Deine Stromkosten / -erträge', '€', data.comparison_labels, data.comparison_opt_cost || [], data.comparison_base_cost || [],
-                {decimals: 2, summary: data.cost_summary, badgeLabel: 'Ersparnis', highlightPositive: true, actualValues: data.actual_cost || []}));
+                {decimals: 2, summary: data.cost_summary, badgeLabel: 'Ersparnis', highlightPositive: true, actualValues: data.actual_cost || [], chartKey: 'kostenVergleich'}));
             updateOrAppendDashboardWidget(container, 'verbrauchVergleich', buildComparisonChart(
                 'Dein Stromverbrauch', 'kWh', data.comparison_labels, data.comparison_opt_usage || [], data.comparison_base_usage || [],
-                {decimals: 1, summary: data.usage_summary, badgeLabel: 'Differenz', actualValues: data.actual_usage || []}));
+                {decimals: 1, summary: data.usage_summary, badgeLabel: 'Differenz', actualValues: data.actual_usage || [], chartKey: 'verbrauchVergleich',
+                 actualFine: usageFinePoints.map(([ms, v]) => [new Date(ms).toISOString(), v])}));
         }
     } catch (err) {
         console.log(err);
@@ -9774,6 +11480,7 @@ async function loadAnalyse() {
 }
 
 function setupTabs() {
+    setupControlTogglesAutoHide();
     const buttons = document.querySelectorAll('.tabButton');
     for (const button of buttons) {
         button.addEventListener('click', () => {
@@ -9786,6 +11493,7 @@ function setupTabs() {
             }
             document.getElementById('tab-' + button.dataset.tab).classList.add('active');
             if (button.dataset.tab === 'geraetesteuerung') {
+                if (window.showControlToggles) window.showControlToggles();
                 requestShyftActionsAutoScroll();
             }
             if (button.dataset.tab === 'analyse') {
@@ -9819,6 +11527,75 @@ function syncTopBarHeightVar() {
     document.documentElement.style.setProperty('--topbar-height', topBar.offsetHeight + 'px');
 }
 
+// Vollbild: das Add-on laeuft in einem iframe der Home-Assistant-Seite (gleiche Adresse, daher Zugriff auf
+// window.top). Im Vollbild wird dieser iframe ueber das ganze Fenster gelegt (verdeckt Home-Assistant-Seitenleiste
+// und -Kopfzeile) und, wo der Browser es erlaubt, zusaetzlich der echte Browser-Vollbildmodus eingeschaltet.
+// Relative Zugriffe auf window.top - funktioniert lokal, ueber Cloudflare/Nabu Casa und mobil gleichermassen.
+const FULLSCREEN_ICON_ENTER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+const FULLSCREEN_ICON_EXIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+function setupFullscreenToggle() {
+    const button = document.getElementById('fullscreenToggle');
+    if (!button) return;
+    let frame;
+    let topDocument;
+    try {
+        frame = window.frameElement;
+        topDocument = window.top.document;
+        if (!frame || !topDocument) return;
+    } catch (e) {
+        return;
+    }
+
+    const savedStyles = {};
+    const OVERLAY_STYLES = {position: 'fixed', top: '0', left: '0', width: '100vw', height: '100vh', 'max-width': 'none', 'z-index': '2147483647', border: '0', margin: '0'};
+    let active = false;
+    let usedBrowserFullscreen = false;
+
+    function render() {
+        const label = active ? 'Vollbildmodus verlassen' : 'Vollbildmodus';
+        button.innerHTML = active ? FULLSCREEN_ICON_EXIT : FULLSCREEN_ICON_ENTER;
+        button.title = label;
+        button.setAttribute('aria-label', label);
+    }
+
+    function enter() {
+        for (const [property, value] of Object.entries(OVERLAY_STYLES)) {
+            savedStyles[property] = [frame.style.getPropertyValue(property), frame.style.getPropertyPriority(property)];
+            frame.style.setProperty(property, value, 'important');
+        }
+        active = true;
+        try {
+            if (topDocument.documentElement.requestFullscreen) {
+                topDocument.documentElement.requestFullscreen().then(() => { usedBrowserFullscreen = true; }).catch(() => {});
+            }
+        } catch (e) { /* kein Browser-Vollbild verfuegbar (z. B. App/iOS) - das Overlay genuegt */ }
+        render();
+    }
+
+    function leave() {
+        for (const [property, [value, priority]] of Object.entries(savedStyles)) {
+            if (value) frame.style.setProperty(property, value, priority);
+            else frame.style.removeProperty(property);
+        }
+        active = false;
+        if (usedBrowserFullscreen && topDocument.fullscreenElement) {
+            topDocument.exitFullscreen().catch(() => {});
+        }
+        usedBrowserFullscreen = false;
+        render();
+    }
+
+    button.addEventListener('click', () => (active ? leave() : enter()));
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && active) leave(); });
+    // Esc im Browser-Vollbild beendet auch das Overlay
+    topDocument.addEventListener('fullscreenchange', () => {
+        if (active && usedBrowserFullscreen && !topDocument.fullscreenElement) leave();
+    });
+    render();
+    button.hidden = false;
+}
+
 // loadShyftActions waits for loadConfiguration so the action cards' brand icons (getActionIconUrl)
 // have integrationsData/currentIntegrationSelections available on the very first render
 if (document.readyState === 'complete') {
@@ -9826,6 +11603,7 @@ if (document.readyState === 'complete') {
     loadDashboard();
     setupTabs();
     syncTopBarHeightVar();
+    setupFullscreenToggle();
     applyAnalyseTabVisibility();
     applyAssistantWidget();
     renderUpdateBanner();
@@ -9836,6 +11614,7 @@ if (document.readyState === 'complete') {
         loadDashboard();
         setupTabs();
         syncTopBarHeightVar();
+        setupFullscreenToggle();
         applyAnalyseTabVisibility();
         applyAssistantWidget();
         renderUpdateBanner();
