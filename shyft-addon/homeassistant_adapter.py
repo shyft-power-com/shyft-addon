@@ -397,7 +397,10 @@ class HomeAssistantAdapter:
         headers = {"Authorization": f"Bearer {self._token()}"}
         completeUri = self.homeassistant_uri + path
         response = requests.delete(completeUri, headers=headers)
-        if not response.ok and response.status_code != 404:
+        # Home Assistant antwortet beim Loeschen einer nicht vorhandenen Config (z.B. Skript) mit
+        # 400 "Resource not found" statt 404 - beides heisst: ist schon weg.
+        already_gone = response.status_code == 404 or (response.status_code == 400 and "Resource not found" in response.text)
+        if not response.ok and not already_gone:
             raise Exception(f"DELETE {path} failed: {response.status_code} {response.text}")
 
     def put_script_config(self, script_id, config):

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.300
+
+* **Kein Fehler mehr beim Speichern der Konfiguration, wenn ein Hilfsskript schon fehlt.** Home Assistant antwortet beim Löschen eines nicht vorhandenen Skripts mit „400 Resource not found“ statt 404; das Add-on wertete das als Fehler („Failed to sync heating_target_temp script“) und meldete ihn bei jedem Speichern. Es gilt jetzt – wie 404 – als „ist schon weg“.
+
 ## 0.0.45.299
 
 * **Vollbildmodus ohne Zusatz-Plugin.** Das Vollbild-Symbol rechts in der Kopfzeile legt das Add-on jetzt direkt über das ganze Fenster (Home-Assistant-Seitenleiste und -Kopfzeile sind verdeckt) und schaltet, wo der Browser es erlaubt, zusätzlich den echten Browser-Vollbildmodus ein. Das „X“ (oder die Escape-Taste) stellt die normale Ansicht wieder her. Das Kiosk-Dashboard `/shyft-kiosk`, dessen automatisches Anlegen, das Plugin „Kiosk Mode“ und der zugehörige Hinweis entfallen (der Zugriff über ein Dashboard scheiterte am Ingress-Zugang mit 401). Funktioniert lokal, über Cloudflare/Nabu Casa und mobil.
