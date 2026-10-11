@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.45.294
+
+* **Heizstab-Kachel überarbeitet.**
+  * **Schalter „Heizstab steuern“** steht jetzt immer direkt unter der Überschrift – auch bei eingeklappter Kachel und noch ohne gewähltes Gerät. Die Beschriftung „Wärmepumpe steuern“ bei ausgeschaltetem Schalter entfällt. Schaltest du ihn ein und der Heizstab ist noch nicht vollständig eingerichtet, klappt die Kachel auf. Der Zustand wird als `heatingRodControl` gespeichert; bestehende Konfigurationen behalten ihr bisheriges Verhalten (Heizstab aktiv, sobald ein Heizstab-Gerät gewählt ist).
+  * **Max. Leistung als freie Eingabe:** statt der Stufen-Auswahl trägst du die elektrische Leistung des Heizstabs jetzt frei ein (0 bis 30 kW, in 0,1-kW-Schritten). Eine frühere Stufen-Auswahl wird als Startwert übernommen (z. B. „mittel (6 kW)“ → 6 kW). Der Wert geht als `heating_rod_power_kw` an shyft-power; zusätzlich bekommt `HP - Max. Power` weiterhin die nächstliegende alte Stufe, damit ein noch nicht aktualisierter Server weiterrechnet (dort gilt dann höchstens die größte Stufe).
+  * **„Temperatur Obergrenze“ auch beim Heizstab:** neues Feld mit Standard 95 °C, getrennt von der Wärmepumpe. Im Heizstab-Betrieb geht es als `HP - Max Supply Temp` raus und begrenzt auch die Warmwasser-Zieltemperatur der Aktionen. Das bisherige Feld „Max. Vorlauftemperatur“ der Wärmepumpe heißt jetzt ebenfalls „Temperatur Obergrenze“ (Wert und Standard 55 °C unverändert).
+  * `heating_rod` (`yes`/`no`) geht wie bisher in der `staticConfig` an shyft-power.
+
 ## 0.0.45.293
 
 * **Vollbildmodus.** Rechts in der Kopfzeile gibt es ein Vollbild-Symbol (Tooltip „Vollbildmodus“). Es öffnet das Add-on im Kiosk-Dashboard `/shyft-kiosk` von Home Assistant, also ohne dessen Kopfzeile und Seitenleiste. Dort zeigt das Symbol ein „X“ („Vollbildmodus verlassen“) und führt zur zuvor geöffneten Seite zurück. Die Adressen sind relativ und funktionieren daher lokal, über Cloudflare/Nabu Casa und mobil. Voraussetzung: das Dashboard `shyft-kiosk` mit dem HACS-Plugin Kiosk Mode existiert; ohne iframe (z. B. direkter Aufruf) bleibt das Symbol ausgeblendet.

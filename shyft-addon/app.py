@@ -1,4 +1,4 @@
-from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active
+from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c
 from homeassistant_adapter import HomeAssistantAdapter, EntityState
 from shyft_adapter import ShyftAdapter
 from live_entity_watcher import LiveEntityWatcher
@@ -2871,7 +2871,7 @@ def _read_entity_max_temperature(entity_id):
 
 
 def _max_supply_temp_above_entity_max_warning(config):
-    """Die Konfiguration "Max. Vorlauftemperatur" liegt ueber dem Maximum, das die zugeordnete Warmwasser-
+    """Die Konfiguration "Temperatur Obergrenze" liegt ueber dem Maximum, das die zugeordnete Warmwasser-
     Solltemperatur-Entitaet selbst annimmt: der Optimierer plant dann Zieltemperaturen, die die Waermepumpe
     ablehnt (Home Assistant antwortet mit einem Fehler) - die "Warmwasser"-Aktion schlaegt fehl. Nur die
     Warmwasser-Entitaet wird verglichen; die Heizungs-Solltemperatur ist eine Raumtemperatur und hat mit der
@@ -2890,7 +2890,7 @@ def _max_supply_temp_above_entity_max_warning(config):
         "sectionKey": "waermepumpe",
         "fieldId": "hp_max_supply_temp",
         "fieldHint": f"Die Warmwasser-Solltemperatur-Entität {entity_id} nimmt höchstens {entity_max:g} °C an.",
-        "message": (f"Max. Vorlauftemperatur ({configured:g} °C) liegt über dem Maximum der Warmwasser-Solltemperatur-Entität "
+        "message": (f"Temperatur Obergrenze ({configured:g} °C) liegt über dem Maximum der Warmwasser-Solltemperatur-Entität "
                     f"({entity_max:g} °C, {entity_id}) - Solltemperaturen darüber lehnt die Wärmepumpe ab, die Aktion „Warmwasser“ "
                     f"schlägt dann fehl. Bitte den Wert auf höchstens {entity_max:g} °C senken."),
     }
@@ -6003,12 +6003,6 @@ def execute_heating_rod(on, config, retry_timeout_seconds=HEATING_ROD_RETRY_TIME
     detail = {}
     if not _set_heating_rod_and_verify(entity_id, on, retry_timeout_seconds, detail):
         raise Exception(f"Der Heizstab konnte nicht {'eingeschaltet' if on else 'ausgeschaltet'} werden ({detail.get('reason', 'Ursache unbekannt')})")
-
-
-def heating_rod_power_kw(config):
-    "Leistung des Heizstabs in kW aus der Option 'Heizstab max. Leistung' (z.B. 'klein (4 kW)' -> 4.0), None wenn nicht lesbar."
-    match = re.search(r"\((\d+(?:[.,]\d+)?)\s*kW\)", str(config.get("heatingRodMaxPower") or ""))
-    return float(match.group(1).replace(",", ".")) if match else None
 
 
 DHW_ACTIVATION_TEST_POLL_INTERVAL_SECONDS = 5
@@ -9217,7 +9211,7 @@ def _convert_ev_charge_action_to_pv_surplus_fallback(action, config):
 DHW_ACTION_NAME = "Warmwasser"
 DHW_ID_PREFIX = "warmwasser"
 HP_HW_TRIGGER_KW = 0.2
-# Default wie im Konfigurationsfeld "Max. Vorlauftemperatur (°C)" (hpMaxSupplyTempC, www/app.js).
+# Default wie im Konfigurationsfeld "Temperatur Obergrenze (°C)" (hpMaxSupplyTempC, www/app.js).
 HP_MAX_SUPPLY_TEMP_DEFAULT_C = 55
 
 
@@ -9258,8 +9252,8 @@ def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id
         t_hw = _safe_float(output_row.get("T_HW"))
         next_row = output_rows[i + 1] if i + 1 < len(output_rows) else output_row
         target_t_hw = float(next_row.get("T_HW") or t_hw)
-        # Nie ueber die in der Konfiguration hinterlegte Max. Vorlauftemperatur hinaus.
-        target_t_hw = min(target_t_hw, float(config.get("hpMaxSupplyTempC") or HP_MAX_SUPPLY_TEMP_DEFAULT_C))
+        # Nie ueber die Temperatur-Obergrenze des aktiven Geraets (Heizstab bzw. Waermepumpe) hinaus.
+        target_t_hw = min(target_t_hw, dhw_max_temp_c(config))
 
         date_start_ms = int(datetime.now(timezone.utc).timestamp() * 1000) if is_current_hour else int(hour_start.timestamp() * 1000)
         date_end_ms = int((hour_start + timedelta(hours=1)).timestamp() * 1000)

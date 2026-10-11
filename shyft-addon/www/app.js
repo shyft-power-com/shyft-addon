@@ -993,8 +993,10 @@ async function saveConfigurationNow() {
         "electricitySellCent": configData["electricitySellCent"] ?? null,
         "feedInLimitEnabled": configData["feedInLimitEnabled"] === true,
         "feedInLimitKw": configData["feedInLimitKw"] ?? null,
-        "heatingRodEnabled": configData["heatingRodEnabled"] !== false,
-        "heatingRodMaxPower": configData["heatingRodMaxPower"] ?? 'klein (4 kW)',
+        "heatingRodControl": isHeatingRodToggleOn(),
+        "heatingRodMaxPowerKw": configData["heatingRodMaxPowerKw"] ?? null,
+        "heatingRodMaxPower": configData["heatingRodMaxPower"] ?? null,  // Altbestand (Stufen-Auswahl), nur noch Quelle fuer den Default von heatingRodMaxPowerKw
+        "heatingRodMaxTempC": configData["heatingRodMaxTempC"] ?? 95,
         // Konfig-Keys, die der Nutzer bewusst geaendert/bestaetigt hat (siehe markConfigFieldTouched) -
         // steuert den roten Rahmen um unbestaetigte Default-Felder und das Aufklappen der Kachel.
         "touchedFields": configData["touchedFields"] || [],
@@ -2066,11 +2068,21 @@ document.addEventListener('mousedown', (event) => {
     }
 });
 
-// Heizstab-Betrieb: die Kachel "Heizstab" hat ein Geraet UND der Schalter "Heizstab steuern" (heatingRodEnabled, Standard an) ist an.
+// Schalter "Heizstab steuern" (heatingRodControl). Der Schalter ist auch ohne Geraet sichtbar und schaltbar. Ohne gespeicherten Wert
+// (Altbestand) galt frueher heatingRodEnabled, Standard an - aber nur mit Heizstab-Geraet.
+function heatingRodDeviceIds() {
+    return currentIntegrationSelections['heizstab'] ?? ((configData['integrationMappings'] || {})['heizstab'] || []);
+}
+
+function isHeatingRodToggleOn() {
+    if (typeof configData['heatingRodControl'] === 'boolean') return configData['heatingRodControl'];
+    return heatingRodDeviceIds().length > 0 && configData['heatingRodEnabled'] !== false;
+}
+
+// Heizstab-Betrieb: die Kachel "Heizstab" hat ein Geraet UND der Schalter "Heizstab steuern" ist an.
 // Dann erwaermt der Heizstab das Brauchwasser und die Waermepumpe ist deaktiviert (Spiegel von heating_rod_active in sync_service.py).
 function isHeatingRodActive() {
-    const ids = currentIntegrationSelections['heizstab'] ?? ((configData['integrationMappings'] || {})['heizstab'] || []);
-    return ids.length > 0 && configData['heatingRodEnabled'] !== false;
+    return heatingRodDeviceIds().length > 0 && isHeatingRodToggleOn();
 }
 
 // Hinweis hinter der Kachel-Ueberschrift, wenn die Kachel gerade deaktiviert ist (leer = aktiv): die Waermepumpe bei aktivem
@@ -3204,8 +3216,9 @@ function renderIntegrationSections() {
         });
 
         sectionDiv.appendChild(heading);
-        // Schalter oben in der Heizstab-Kachel: "Heizstab steuern" (an) bzw. "Wärmepumpe steuern" (aus) - siehe buildHeatingRodModeToggle.
-        if (section.key === 'heizstab' && currentIds.length > 0) sectionDiv.appendChild(buildHeatingRodModeToggle());
+        // Schalter "Heizstab steuern" direkt unter der Ueberschrift - auch bei eingeklappter Kachel und ohne gewaehltes Geraet sichtbar
+        // (siehe buildHeatingRodModeToggle).
+        if (section.key === 'heizstab') sectionDiv.appendChild(buildHeatingRodModeToggle());
         sectionDiv.appendChild(showDetailsButton);
         sectionDiv.appendChild(bodyDiv);
 
@@ -3655,6 +3668,7 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, sectionHelpInformation(section), VALUE_POSTFIX, key => sensorDatalistIds[key], true));
         if (section.key === 'heizstab') {
             bodyDiv.appendChild(buildHeatingRodMaxPowerField());
+            bodyDiv.appendChild(buildHeatingRodMaxTempField());
         }
 
         if (section.key === 'wechselrichter') {
@@ -3798,15 +3812,16 @@ function renderSectionBody(bodyDiv, section, entryIds) {
     }
 }
 
-// Schalter oben in der Heizstab-Kachel: an = "Heizstab steuern" (Shyft steuert den Heizstab, die Waermepumpe ist deaktiviert),
-// aus = "Wärmepumpe steuern" (saisonaler Wechsel zurueck zur Waermepumpe). Es geht nichts verloren: alle Werte beider Geraete bleiben
-// gespeichert. Ein Wechsel baut alle Kacheln neu auf (siehe rerenderIntegrationSectionsKeepingScroll).
+// Schalter "Heizstab steuern" unter der Ueberschrift der Heizstab-Kachel: an = Shyft steuert den Heizstab und die Waermepumpe ist
+// deaktiviert, aus = saisonaler Wechsel zurueck zur Waermepumpe (Beschriftung bleibt immer "Heizstab steuern"). Es geht nichts verloren:
+// alle Werte beider Geraete bleiben gespeichert. Ein Wechsel baut alle Kacheln neu auf (siehe rerenderIntegrationSectionsKeepingScroll);
+// dabei klappt die Heizstab-Kachel auf, wenn sie noch nicht vollstaendig eingerichtet ist (isSectionComplete).
 function buildHeatingRodModeToggle() {
-    const active = isHeatingRodActive();
+    const active = isHeatingRodToggleOn();
     const row = document.createElement('div');
     row.className = 'autoActionTitle heatingRodModeRow';
     const label = document.createElement('span');
-    label.textContent = active ? 'Heizstab steuern' : 'Wärmepumpe steuern';
+    label.textContent = 'Heizstab steuern';
     row.appendChild(label);
     row.appendChild(buildTooltip('Mit diesem Schalter wechselst du zwischen Heizstab und Wärmepumpe, z. B. saisonal. Ist er an, steuert Shyft den Heizstab und die Wärmepumpe ist deaktiviert; ist er aus, steuert Shyft die Wärmepumpe. Alle hinterlegten Werte bleiben erhalten, du musst nichts neu eingeben.'));
     const toggle = buildBareToggleSwitch(active);
@@ -3814,7 +3829,7 @@ function buildHeatingRodModeToggle() {
     input.id = 'heating_rod_enabled';
     input.addEventListener('change', async () => {
         input.disabled = true;
-        configData['heatingRodEnabled'] = input.checked;
+        configData['heatingRodControl'] = input.checked;
         try {
             await autoSave();
         } finally {
@@ -4169,16 +4184,38 @@ function buildHpDhwTankSizeField() {
     });
 }
 
-// "Heizstab max. Leistung": dieselben Leistungsstufen wie bei der Waermepumpe (die Optionsliste der Optimierung) - geht im Hintergrund als
-// "HP - Max. Power" an den Optimierer, solange der Heizstab aktiv ist (siehe collect_static_config in sync_service.py).
+// "Heizstab max. Leistung": freie Zahleneingabe in kW (0 bis 30). Geht als "heating_rod_power_kw" (und fuer aeltere Server zusaetzlich als
+// naechstliegende Stufe in "HP - Max. Power") an den Optimierer, solange der Heizstab aktiv ist (siehe collect_static_config in sync_service.py).
+// Default: die Zahl der frueheren Stufen-Auswahl (z.B. 'mittel (6 kW)' -> 6), sonst 4 kW.
 function buildHeatingRodMaxPowerField() {
-    return buildConfigSelectField({
+    const legacy = /\((\d+(?:[.,]\d+)?)\s*kW\)/.exec(String(configData['heatingRodMaxPower'] || ''));
+    return buildConfigNumberField({
         label: 'Heizstab max. Leistung',
-        tooltip: 'Maximale elektrische Leistung deines Heizstabs. Wähle die nächstliegende Stufe.',
+        tooltip: 'Maximale elektrische Leistung deines Heizstabs in kW (frei wählbar zwischen 0 und 30 kW).',
         id: 'heating_rod_max_power',
-        configKey: 'heatingRodMaxPower',
-        options: ['klein (4 kW)', 'mittel (6 kW)', 'groß (8 kW)', 'sehr groß (12 kW)'].map(v => [v, v]),
-        defaultValue: 'klein (4 kW)',
+        configKey: 'heatingRodMaxPowerKw',
+        placeholder: 'z.B. 4',
+        defaultValue: legacy ? parseFloat(legacy[1].replace(',', '.')) : 4,
+        step: '0.1',
+        min: '0',
+        max: '30',
+        unit: 'kW',
+    });
+}
+
+// "Temperatur Obergrenze" des Heizstabs: hoechste Temperatur, auf die Shyft das Warmwasser erwaermen darf (eigener Wert, unabhaengig von
+// der Waermepumpe). Geht als "HP - Max Supply Temp" an den Optimierer, solange der Heizstab aktiv ist.
+function buildHeatingRodMaxTempField() {
+    return buildConfigNumberField({
+        label: 'Temperatur Obergrenze (°C)',
+        tooltip: 'Höchste Temperatur, auf die Shyft das Warmwasser mit dem Heizstab erwärmen darf (maximale Speichertemperatur).',
+        id: 'heating_rod_max_temp',
+        configKey: 'heatingRodMaxTempC',
+        placeholder: 'z.B. 95',
+        defaultValue: 95,
+        step: '1',
+        max: '95',
+        unit: '°C',
     });
 }
 
@@ -4237,8 +4274,8 @@ function buildHpHeatingBufferField() {
 
 function buildHpMaxSupplyTempField() {
     return buildConfigNumberField({
-        label: 'Max. Vorlauftemperatur (°C)',
-        tooltip: 'Vorlauftemperatur, auf die Shyft Warmwasser maximal erwärmen soll / maximale Systemtemperatur.',
+        label: 'Temperatur Obergrenze (°C)',
+        tooltip: 'Höchste Temperatur, auf die Shyft das Warmwasser erwärmen darf / maximale Systemtemperatur.',
         id: 'hp_max_supply_temp',
         configKey: 'hpMaxSupplyTempC',
         placeholder: 'z.B. 55',

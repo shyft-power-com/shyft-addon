@@ -4,6 +4,7 @@ from constants import CONFIG_PATH
 
 import json
 import math
+import re
 from datetime import datetime, timedelta
 
 LIST_OF_SENSORS = {
@@ -193,12 +194,50 @@ HEATING_ROD_SECTION_KEY = "heizstab"
 
 
 def heating_rod_active(config):
-    """Heizstab-Betrieb: die Kachel "Heizstab" hat ein Geraet UND der Schalter "Heizstab steuern" (heatingRodEnabled, Standard an)
-    steht auf an. Dann uebernimmt der Heizstab die Warmwasserbereitung und die Waermepumpe ist deaktiviert (ihre hinterlegten Werte
-    bleiben erhalten). Der Schalter erlaubt den saisonalen Wechsel zurueck zur Waermepumpe, ohne etwas neu einzugeben."""
+    """Heizstab-Betrieb: die Kachel "Heizstab" hat ein Geraet UND der Schalter "Heizstab steuern" (heatingRodControl) steht auf an.
+    Dann uebernimmt der Heizstab die Warmwasserbereitung und die Waermepumpe ist deaktiviert (ihre hinterlegten Werte bleiben
+    erhalten). Der Schalter erlaubt den saisonalen Wechsel zurueck zur Waermepumpe, ohne etwas neu einzugeben. Ohne gespeicherten
+    Schalter (Altbestand) gilt der fruehere Schluessel heatingRodEnabled, Standard an."""
     if not (config.get("integrationMappings", {}) or {}).get(HEATING_ROD_SECTION_KEY):
         return False
+    control = config.get("heatingRodControl")
+    if isinstance(control, bool):
+        return control
     return config.get("heatingRodEnabled", True) is not False
+
+
+HEATING_ROD_MAX_POWER_KW_DEFAULT = 4.0
+HEATING_ROD_MAX_POWER_KW_LIMIT = 30.0
+HEATING_ROD_MAX_TEMP_DEFAULT_C = 95
+HP_MAX_SUPPLY_TEMP_DEFAULT_C = 55
+# Aeltere shyft-Server kennen fuer "HP - Max. Power" nur diese Stufen (elektrische kW -> Optionstext).
+_LEGACY_HP_POWER_LABELS = {2: "klein (4 kW)", 3: "mittel (6 kW)", 4: "groß (8 kW)", 6: "sehr groß (12 kW)"}
+
+
+def heating_rod_power_kw(config):
+    """Maximale elektrische Leistung des Heizstabs in kW (freie Eingabe 0 bis 30 kW, Schluessel heatingRodMaxPowerKw). Aeltere
+    Konfigurationen hatten die Stufen-Auswahl heatingRodMaxPower (z.B. 'klein (4 kW)') - dann zaehlt deren Zahl. None, wenn nichts lesbar ist."""
+    value = config.get("heatingRodMaxPowerKw")
+    if value is None or value == "":
+        match = re.search(r"\((\d+(?:[.,]\d+)?)\s*kW\)", str(config.get("heatingRodMaxPower") or ""))
+        value = match.group(1).replace(",", ".") if match else None
+    try:
+        kw = float(value)
+    except (TypeError, ValueError):
+        return None
+    return min(max(kw, 0.0), HEATING_ROD_MAX_POWER_KW_LIMIT)
+
+
+def legacy_hp_power_label(kw):
+    "Naechstliegende alte Leistungsstufe (Optionstext) fuer 'HP - Max. Power' - nur fuer shyft-Server, die die freie Heizstab-Leistung noch nicht kennen."
+    return _LEGACY_HP_POWER_LABELS[min(_LEGACY_HP_POWER_LABELS, key=lambda electric_kw: abs(electric_kw - kw))]
+
+
+def dhw_max_temp_c(config):
+    "Temperatur-Obergrenze fuer die Warmwasserbereitung (°C) des gerade aktiven Geraets: Heizstab (Standard 95) bzw. Waermepumpe (Standard 55)."
+    if heating_rod_active(config):
+        return float(config.get("heatingRodMaxTempC") or HEATING_ROD_MAX_TEMP_DEFAULT_C)
+    return float(config.get("hpMaxSupplyTempC") or HP_MAX_SUPPLY_TEMP_DEFAULT_C)
 
 
 def feed_in_limit_kw(config):
@@ -340,9 +379,13 @@ class SyncService:
         rod_active = heating_rod_active(data)
         static_config["heating_rod"] = "yes" if rod_active else "no"
         if rod_active:
-            rod_power = data.get("heatingRodMaxPower")
-            if rod_power is not None and rod_power != "":
-                static_config["HP - Max. Power"] = rod_power
+            # Leistung in kW (freie Eingabe) als eigener Schluessel; "HP - Max. Power" bekommt zusaetzlich die naechstliegende alte Stufe,
+            # damit auch aeltere Server noch rechnen koennen. Die Temperatur-Obergrenze des Heizstabs ersetzt "HP - Max Supply Temp".
+            rod_power_kw = heating_rod_power_kw(data)
+            if rod_power_kw is not None:
+                static_config["heating_rod_power_kw"] = rod_power_kw
+                static_config["HP - Max. Power"] = legacy_hp_power_label(rod_power_kw)
+            static_config["HP - Max Supply Temp"] = dhw_max_temp_c(data)
 
         return static_config
 
