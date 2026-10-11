@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.45.295
+## 0.0.45.296
 
 * **Vollbild-Dashboard wird automatisch angelegt.** Beim ersten erfolgreichen Start legt das Add-on in Home Assistant das Dashboard „Shyft“ (`/shyft-kiosk`) selbst an – eine Vollbild-Ansicht mit dem Add-on, auf die das Vollbild-Symbol in der Kopfzeile verweist. Ein bereits vorhandenes Dashboard mit diesem Namen wird nie verändert, und ein später vom Nutzer gelöschtes wird nicht wieder angelegt. Schlägt das Anlegen fehl, steht der Grund im Add-on-Log und der nächste Start versucht es erneut. Header und Seitenleiste werden nur ausgeblendet, wenn das HACS-Plugin „Kiosk Mode“ installiert ist; ohne das Plugin läuft das Dashboard trotzdem.
 
