@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.291
+
+* **Optimierung nur bei Bedarf.** Der stündliche Lauf fordert keine neue Optimierung mehr an, solange der letzte Plan noch zur Wirklichkeit passt. Verglichen wird der aktuelle Messwert mit dem geplanten Wert zum jetzigen Zeitpunkt: Batterie-Ladestand ±10 Prozentpunkte, Warmwassertemperatur ±5 Grad, Auto-Ladestand ±5 Prozentpunkte, Innenraumtemperatur ±0,2 Grad (wie im Chart „Raumtemperatur“ auf die gemessene Raumluft hochgerechnet). Geprüft werden nur Geräte, die es gibt und deren Sensor einen Wert liefert; ist nichts vergleichbar, wird optimiert. Spätestens nach 4 Stunden (bzw. beim letzten Lauf davor, damit es nicht länger als 4 Stunden dauert) wird auf jeden Fall neu optimiert, ebenso wenn die letzte Anfrage ohne Ergebnis blieb. Andere Auslöser (Verbindung testen, Auto eingesteckt, Fahrt geplant) optimieren weiter wie bisher. Der Grund steht im Add-on-Log.
+* **Dashboard „Berechnet um …“ bleibt grün**, wenn die Optimierung deshalb übersprungen wurde: Der Plan zählt dann ab der letzten Prüfung („Berechnet um 07:00 Uhr (um 09:55 Uhr geprüft: passt noch)“) und wird erst gelb bzw. rot, wenn die Prüfung selbst ausbleibt.
+
 ## 0.0.45.290
 
 * **Neues Gerät „Heizstab“.** Über der Wärmepumpe gibt es eine neue Kachel „Heizstab“ (Info-Symbol mit Erklärung). Wer sein Brauchwasser ausschließlich über einen Heizstab erwärmt, richtet ihn hier ein: Gerät auswählen, dann „Temperatur Warmwassertank“, „Warmwasser-Speichergröße“, „Warmwasser: Solltemperatur“, „Heizstab aktiviert“ (der bisherige Sensor „Warmwasser gerade erwärmt?“, gleiche Logik) und „Heizstab max. Leistung“. Die Berechnungen zum Warmwasserbedarf bleiben unverändert.

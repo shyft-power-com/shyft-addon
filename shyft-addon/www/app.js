@@ -7615,9 +7615,13 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
 
     const legend = document.createElement('div');
     legend.className = 'einsatzplanLegend';
-    const ageMs = Date.now() - einsatzplan.creation_date;
+    // validated_at: der Plan wurde zuletzt geprueft und "passt noch" (die stuendliche Optimierung wurde deshalb uebersprungen, siehe
+    // skip_hourly_optimization_if_plan_fits in app.py) - dann zaehlt dieser Zeitpunkt fuer die Farbe, nicht das Alter der Berechnung.
+    const validatedAt = einsatzplan.validated_at && einsatzplan.validated_at > einsatzplan.creation_date ? einsatzplan.validated_at : null;
+    const ageMs = Date.now() - (validatedAt || einsatzplan.creation_date);
     const timeSpan = document.createElement('span');
     timeSpan.textContent = `Berechnet um ${formatShyftTime(einsatzplan.creation_date)} Uhr`;
+    if (validatedAt) timeSpan.textContent += ` (um ${formatShyftTime(validatedAt)} Uhr geprüft: passt noch)`;
     if (ageMs >= EINSATZPLAN_STALE_ERROR_MS) {
         timeSpan.className = 'einsatzplanLegendStaleError';
         timeSpan.textContent += '!';

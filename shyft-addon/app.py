@@ -1789,6 +1789,9 @@ def readDashboardChartData():
     usage_summary = {"opt": _series_day_split(opt_usage, start), "base": _series_day_split(base_usage, start)}
 
     einsatzplan = _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, start)
+    if isinstance(einsatzplan, dict):
+        # Wann der Plan zuletzt als "passt noch" bestaetigt wurde (Optimierung uebersprungen) - das Dashboard faerbt "Berechnet um ..." danach.
+        einsatzplan["validated_at"] = _plan_validated_at_ms(creation_date_ms)
 
     # Die Charts sollen mit der aktuellen Stunde beginnen, nicht mit der Stunde des letzten
     # Cache-Schreibens (siehe Nutzer-Beobachtung: um 8:56 Uhr zeigten die Charts noch 7:00 als
@@ -11612,8 +11615,170 @@ def _handle_optimizer_wait_exhausted(submitted_at, optimizer_period, attempt):
     )
 
 
+# ============================================================================
+# Optimierung nur bei Bedarf: der stuendliche Lauf (Cron, Minute 55) fordert KEINE neue Optimierung an, solange der letzte Plan noch zur
+# Wirklichkeit passt. Verglichen wird der aktuelle Messwert mit dem geplanten Wert zum jetzigen Zeitpunkt (zwischen zwei Plan-Stunden
+# linear interpoliert) - nur Geraete, die es gibt und deren Sensor einen Wert liefert:
+#   Batterie-Ladestand +-10 %-Punkte, Warmwasser-Temperatur +-5 Grad, Auto-Ladestand +-5 %-Punkte, Innenraumtemperatur +-0,2 Grad.
+# Spaetestens nach OPTIMIZATION_SKIP_MAX_AGE_HOURS wird trotzdem neu optimiert (Horizont nicht zu stark einschraenken). Andere Ausloeser
+# (Verbindung testen, Auto eingesteckt, Fahrt geplant, ...) rufen sync_site_data direkt auf und sind davon nicht betroffen.
+# Hat der Plan "noch gepasst", wird das gespeichert (OPTIMIZATION_CHECK_PATH) - das Dashboard zeigt "Berechnet um ..." dann gruen
+# (siehe buildEinsatzplanCard), statt wegen des Alters auf gelb/rot zu gehen.
+# ============================================================================
+OPTIMIZATION_SKIP_MAX_AGE_HOURS = 4
+# Der Cron-Job laeuft stuendlich: ein Plan, der beim naechsten Lauf ueber dem Hoechstalter laege, wird schon jetzt erneuert (sonst
+# kaeme die neue Optimierung bis zu eine Stunde NACH den 4 Stunden).
+OPTIMIZATION_SKIP_AGE_MARGIN_MINUTES = 10
+OPTIMIZATION_UNANSWERED_REQUEST_GRACE_MINUTES = 15
+OPTIMIZATION_SKIP_BATTERY_SOC_TOLERANCE_PCT = 10
+OPTIMIZATION_SKIP_DHW_TEMP_TOLERANCE_C = 5
+OPTIMIZATION_SKIP_EV_SOC_TOLERANCE_PCT = 5
+OPTIMIZATION_SKIP_INDOOR_TEMP_TOLERANCE_C = 0.2
+OPTIMIZATION_CHECK_PATH = "/data/optimization_check.json"
+
+
+def _read_cached_plan():
+    "(creation_ms, output_rows) des gecachten Optimierungslaufs - (None, []) ohne lesbaren Cache."
+    try:
+        with open(DASHBOARD_CACHE_PATH, "r") as f:
+            cache = json.load(f)
+        creation_ms = cache.get("creation_date")
+        output_csv = cache.get("output_csv")
+        if creation_ms is None or not output_csv:
+            return None, []
+        return int(creation_ms), list(csv.DictReader(io.StringIO(output_csv)))
+    except Exception:
+        return None, []
+
+
+def _plan_value_at(rows, creation_ms, column, now_utc):
+    "Geplanter Wert einer output_csv-Spalte zum Zeitpunkt now_utc (Zeile i = Stunde i ab Beginn der Erstellungsstunde, dazwischen linear interpoliert), None wenn nicht vorhanden."
+    start = datetime.fromtimestamp(creation_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+    elapsed_hours = (now_utc - start).total_seconds() / 3600.0
+    index = int(elapsed_hours // 1)
+    if index < 0 or index >= len(rows):
+        return None
+    try:
+        first = float(rows[index].get(column))
+    except (TypeError, ValueError):
+        return None
+    if index + 1 < len(rows):
+        try:
+            second = float(rows[index + 1].get(column))
+            return first + (second - first) * (elapsed_hours - index)
+        except (TypeError, ValueError):
+            pass
+    return first
+
+
+def evaluate_optimization_plan_fit(config, now_utc=None):
+    """Passt der letzte Optimierungsplan noch? -> {"fits": bool, "reason": Klartext, "creation_ms": int|None}. fits=True nur, wenn der Plan
+    juenger als das Hoechstalter ist, keine Anfrage unbeantwortet blieb, mindestens ein Messwert vergleichbar ist und KEINER ausserhalb
+    seiner Toleranz liegt (siehe Modulkommentar oben)."""
+    now_utc = now_utc or datetime.now(timezone.utc)
+    creation_ms, rows = _read_cached_plan()
+    if creation_ms is None or not rows:
+        return {"fits": False, "reason": "noch kein gespeicherter Optimierungsplan", "creation_ms": None}
+    created = datetime.fromtimestamp(creation_ms / 1000, tz=timezone.utc)
+    age_minutes = (now_utc - created).total_seconds() / 60.0
+    max_minutes = OPTIMIZATION_SKIP_MAX_AGE_HOURS * 60 - OPTIMIZATION_SKIP_AGE_MARGIN_MINUTES
+    if age_minutes >= max_minutes:
+        return {"fits": False, "reason": f"der Plan ist {age_minutes / 60:.1f} Stunden alt (Höchstalter {OPTIMIZATION_SKIP_MAX_AGE_HOURS} Stunden)", "creation_ms": creation_ms}
+    submitted = _last_site_data_submit["at"]
+    if submitted is not None and submitted > created + timedelta(minutes=OPTIMIZATION_UNANSWERED_REQUEST_GRACE_MINUTES):
+        return {"fits": False, "reason": "die letzte Anfrage hat noch kein Ergebnis geliefert", "creation_ms": creation_ms}
+
+    comparisons = []  # (Bezeichnung, aktuell, geplant, Toleranz, Einheit)
+
+    def live_and_plan(sensor_key, column, scale=1.0):
+        if not (config.get("sensorMappings", {}) or {}).get(sensor_key) or is_demo_sensor(config, sensor_key):
+            return None, None
+        live = _read_mapped_numeric(config, sensor_key)
+        plan = _plan_value_at(rows, creation_ms, column, now_utc)
+        return live, (plan * scale if plan is not None else None)
+
+    integration_mappings = config.get("integrationMappings", {}) or {}
+    if integration_mappings.get("batterie"):
+        live, plan = live_and_plan("battery_state_of_charge", "SOC_B")
+        comparisons.append(("Batterie-Ladestand", live, plan, OPTIMIZATION_SKIP_BATTERY_SOC_TOLERANCE_PCT, "%"))
+    if _is_hot_water_device_configured(config):
+        live, plan = live_and_plan("heatpump_dhw_tank_temp", "T_HW")
+        comparisons.append(("Warmwassertemperatur", live, plan, OPTIMIZATION_SKIP_DHW_TEMP_TOLERANCE_C, "°C"))
+    if integration_mappings.get("auto"):
+        live, plan = live_and_plan("electronicvehicle_state_of_charge", "SOC_EV", 100.0)
+        comparisons.append(("Auto-Ladestand", live, plan, OPTIMIZATION_SKIP_EV_SOC_TOLERANCE_PCT, "%"))
+    if _is_heatpump_configured(config):
+        state = _read_mapped_entity_state(config, "heatpump_temp_indoor_measured")
+        fresh = state is not None and state.last_updated is not None and 0 <= (now_utc - state.last_updated).total_seconds() <= INDOOR_TEMP_STALE_SECONDS
+        live, plan = live_and_plan("heatpump_temp_indoor_measured", "T_i") if fresh else (None, None)
+        if plan is not None:
+            # Wie im Chart "Raumtemperatur": die simulierte Innentemperatur wird auf die gemessene Raumluft hochgerechnet (siehe
+            # INDOOR_TEMP_SIM_CORRECTION_FACTOR), erst dann ist sie mit dem Messwert vergleichbar.
+            try:
+                comfort_min = float(config.get("hpHeatingTargetTempMin") or INDOOR_TEMP_MIN_DEFAULT_C)
+            except (TypeError, ValueError):
+                comfort_min = INDOOR_TEMP_MIN_DEFAULT_C
+            plan = comfort_min + INDOOR_TEMP_SIM_CORRECTION_FACTOR * (plan - comfort_min)
+        comparisons.append(("Innenraumtemperatur", live, plan, OPTIMIZATION_SKIP_INDOOR_TEMP_TOLERANCE_C, "°C"))
+
+    comparable = [c for c in comparisons if c[1] is not None and c[2] is not None]
+    if not comparable:
+        return {"fits": False, "reason": "kein Messwert ist mit dem Plan vergleichbar", "creation_ms": creation_ms}
+    for label, live, plan, tolerance, unit in comparable:
+        if abs(live - plan) > tolerance:
+            return {"fits": False, "creation_ms": creation_ms,
+                    "reason": f"{label} weicht ab ({live:.1f} {unit} gemessen, {plan:.1f} {unit} geplant, erlaubt ±{tolerance:g})"}
+    summary = ", ".join(f"{label} {live:.1f} {unit} (Plan {plan:.1f})" for label, live, plan, _tol, unit in comparable)
+    return {"fits": True, "creation_ms": creation_ms, "reason": f"der Plan passt noch: {summary}"}
+
+
+def _write_optimization_check(creation_ms, now_utc, reason):
+    try:
+        tmp_path = OPTIMIZATION_CHECK_PATH + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump({"checkedAtMs": int(now_utc.timestamp() * 1000), "runCreationMs": creation_ms, "reason": reason}, f)
+        os.replace(tmp_path, OPTIMIZATION_CHECK_PATH)
+    except Exception as e:
+        print("[Shyft] Plan-Pruefung konnte nicht gespeichert werden:", repr(e))
+
+
+def _plan_validated_at_ms(creation_ms):
+    "Zeitpunkt (Unix-ms), zu dem der Plan des Laufs creation_ms zuletzt als 'passt noch' bestaetigt wurde (die Optimierung wurde deshalb uebersprungen) - None, wenn nie bzw. fuer einen aelteren Lauf."
+    try:
+        with open(OPTIMIZATION_CHECK_PATH, "r") as f:
+            stored = json.load(f)
+        if stored.get("runCreationMs") == creation_ms:
+            return int(stored.get("checkedAtMs") or 0) or None
+    except Exception:
+        pass
+    return None
+
+
+def skip_hourly_optimization_if_plan_fits():
+    "True, wenn der stuendliche Lauf keine neue Optimierung anfordern soll, weil der letzte Plan noch passt (siehe Modulkommentar oben); bei jedem Zweifel/Fehler False (dann wird normal optimiert)."
+    if is_demo_mode():
+        return False
+    try:
+        config = _read_current_config()
+        if config.get("optimizationSkipEnabled", True) is False:
+            return False
+        now_utc = datetime.now(timezone.utc)
+        result = evaluate_optimization_plan_fit(config, now_utc)
+    except Exception as e:
+        print("[Shyft] Plan-Pruefung fehlgeschlagen, optimiere normal:", repr(e))
+        return False
+    if not result["fits"]:
+        print(f"[Shyft] Neue Optimierung wird angefordert: {result['reason']}.")
+        return False
+    _write_optimization_check(result["creation_ms"], now_utc, result["reason"])
+    print(f"[Shyft] Optimierung übersprungen: {result['reason']}.")
+    return True
+
+
 def sync_sensors_periodically():
     with app.app_context():
+        if skip_hourly_optimization_if_plan_fits():
+            return
         sync_site_data()
 
 def sync_pv_history_periodically():
