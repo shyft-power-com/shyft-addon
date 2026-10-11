@@ -11492,6 +11492,46 @@ function syncTopBarHeightVar() {
     document.documentElement.style.setProperty('--topbar-height', topBar.offsetHeight + 'px');
 }
 
+const KIOSK_DASHBOARD_PATH = '/shyft-kiosk';
+const KIOSK_RETURN_STORAGE_KEY = 'shyftKioskReturnPath';
+const FULLSCREEN_ICON_ENTER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+const FULLSCREEN_ICON_EXIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+// Vollbild = das Add-on im Kiosk-Dashboard (/shyft-kiosk, ohne Home-Assistant-Kopfzeile und Sidebar).
+// Es laeuft in einem iframe derselben Home-Assistant-Adresse, daher reichen relative Pfade auf
+// window.top - das funktioniert lokal, ueber Cloudflare/Nabu Casa und mobil gleichermassen.
+function setupFullscreenToggle() {
+    const button = document.getElementById('fullscreenToggle');
+    if (!button) return;
+    let topWindow;
+    let inKiosk;
+    try {
+        if (window.top === window) return;
+        topWindow = window.top;
+        inKiosk = topWindow.location.pathname.startsWith(KIOSK_DASHBOARD_PATH);
+    } catch (e) {
+        return;
+    }
+    const label = inKiosk ? 'Vollbildmodus verlassen' : 'Vollbildmodus';
+    button.innerHTML = inKiosk ? FULLSCREEN_ICON_EXIT : FULLSCREEN_ICON_ENTER;
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.hidden = false;
+    button.addEventListener('click', () => {
+        try {
+            if (inKiosk) {
+                const returnPath = localStorage.getItem(KIOSK_RETURN_STORAGE_KEY);
+                topWindow.location.href = returnPath || '/';
+            } else {
+                localStorage.setItem(KIOSK_RETURN_STORAGE_KEY, topWindow.location.pathname + topWindow.location.search);
+                topWindow.location.href = KIOSK_DASHBOARD_PATH;
+            }
+        } catch (e) {
+            console.warn('Vollbildmodus nicht verfuegbar:', e);
+        }
+    });
+}
+
 // loadShyftActions waits for loadConfiguration so the action cards' brand icons (getActionIconUrl)
 // have integrationsData/currentIntegrationSelections available on the very first render
 if (document.readyState === 'complete') {
@@ -11499,6 +11539,7 @@ if (document.readyState === 'complete') {
     loadDashboard();
     setupTabs();
     syncTopBarHeightVar();
+    setupFullscreenToggle();
     applyAnalyseTabVisibility();
     applyAssistantWidget();
     renderUpdateBanner();
@@ -11509,6 +11550,7 @@ if (document.readyState === 'complete') {
         loadDashboard();
         setupTabs();
         syncTopBarHeightVar();
+        setupFullscreenToggle();
         applyAnalyseTabVisibility();
         applyAssistantWidget();
         renderUpdateBanner();

@@ -1183,6 +1183,33 @@
             width: auto;
             display: block;
         }
+        .topBarIconButton {
+            margin-left: auto;
+            flex: 0 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.2em;
+            height: 2.2em;
+            padding: 0;
+            background: none;
+            border: none;
+            border-radius: 6px;
+            color: var(--color-text-secondary);
+            cursor: pointer;
+        }
+        .topBarIconButton[hidden] {
+            display: none;
+        }
+        .topBarIconButton:hover {
+            color: var(--color-text);
+            background: var(--color-border);
+        }
+        .topBarIconButton svg {
+            width: 1.3em;
+            height: 1.3em;
+            display: block;
+        }
         .tabBar {
             display: flex;
             gap: 0.5em;
@@ -2722,6 +2749,7 @@
         <button type="button" class="tabButton" data-tab="analyse" id="analyseTabButton" hidden>Analyse</button>
         <button type="button" class="tabButton" data-tab="konfiguration">Konfiguration</button>
     </div>
+    <button type="button" id="fullscreenToggle" class="topBarIconButton" hidden></button>
 </div>
 
 <div id="tab-dashboard" class="tabPanel active">

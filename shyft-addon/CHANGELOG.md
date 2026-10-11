@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.293
+
+* **Vollbildmodus.** Rechts in der Kopfzeile gibt es ein Vollbild-Symbol (Tooltip „Vollbildmodus“). Es öffnet das Add-on im Kiosk-Dashboard `/shyft-kiosk` von Home Assistant, also ohne dessen Kopfzeile und Seitenleiste. Dort zeigt das Symbol ein „X“ („Vollbildmodus verlassen“) und führt zur zuvor geöffneten Seite zurück. Die Adressen sind relativ und funktionieren daher lokal, über Cloudflare/Nabu Casa und mobil. Voraussetzung: das Dashboard `shyft-kiosk` mit dem HACS-Plugin Kiosk Mode existiert; ohne iframe (z. B. direkter Aufruf) bleibt das Symbol ausgeblendet.
+
 ## 0.0.45.292
 
 * **Ausnahme für neue Day-ahead-Preise.** Bei dynamischen Tarifen fragen die stündlichen Läufe um 13:55, 14:55 und 15:55 Uhr (also rund um 14, 15 und 16 Uhr) Awattar in jedem Fall neu ab, ohne den Zwischenspeicher, solange der letzte Optimierungslauf noch keine Preise des Folgetags kannte. Liefert Awattar neue Preise, werden sie übernommen und sofort eine neue Optimierung angestoßen – auch wenn der Plan sonst noch gepasst hätte. Gibt es noch keine neuen Preise, gilt die normale Prüfung („Optimierung nur bei Bedarf“).
