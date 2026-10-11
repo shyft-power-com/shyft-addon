@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.298
+
+* **Heizstab: „Heizstab aktiviert“ entfällt als Sensorfeld.** Der Status (an/aus) kommt jetzt direkt aus dem Schalter der Steuerung „Heizstab ein-/ausschalten“ – das ist ohnehin dieselbe Entität. Im Heizstab-Betrieb liest das Addon überall (Sync an shyft-power, Dashboard) diesen Schalter; eine Zuordnung der Wärmepumpe unter demselben Schlüssel wird dann nicht mehr benutzt und bleibt gespeichert. Die Kachel muss dafür nichts mehr abfragen, ein Pflichtfeld weniger.
+
 ## 0.0.45.297
 
 * **Hinweis, wenn das Plugin „Kiosk Mode“ fehlt.** Beim Klick auf das Vollbild-Symbol prüft das Add-on, ob das HACS-Plugin Kiosk Mode in Home Assistant installiert ist. Fehlt es, erscheint zuerst ein Hinweis mit Anleitung und Links (direkt zu HACS und zur GitHub-Seite des Plugins); mit „Trotzdem öffnen“ lässt sich das Dashboard dennoch aufrufen. Lässt sich der Status nicht ermitteln, öffnet der Vollbildmodus wie bisher direkt.

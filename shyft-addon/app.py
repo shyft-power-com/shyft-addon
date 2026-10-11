@@ -1,4 +1,4 @@
-from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c
+from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id
 from homeassistant_adapter import HomeAssistantAdapter, EntityState
 from shyft_adapter import ShyftAdapter
 from live_entity_watcher import LiveEntityWatcher
@@ -4720,7 +4720,7 @@ def _read_mapped_entity_state(config, sensor_key):
         if state is None:
             return None
         return EntityState(state, unit or "", datetime.now(timezone.utc))
-    entity_id = config.get("sensorMappings", {}).get(sensor_key, "")
+    entity_id = mapped_entity_id(config, sensor_key)
     if not entity_id:
         return None
     try:

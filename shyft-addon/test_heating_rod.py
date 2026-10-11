@@ -56,3 +56,15 @@ def test_electric_power_is_sent_one_to_one_for_the_rod_and_halved_thermal_power_
     assert hp_max_power_electric_kw(heat_pump) == 3.0                 # Wärmepumpe: Hälfte der thermischen Leistung
     assert hp_max_power_electric_kw({"integrationMappings": {}, "hpMaxPower": "groß (8 kW)"}) == 4.0
     assert hp_max_power_electric_kw({"integrationMappings": {}}) is None
+
+
+def test_rod_status_comes_from_the_control_switch_not_from_a_sensor_field():
+    from sync_service import mapped_entity_id
+    mappings = {"heatpump_dhw_on_off": "binary_sensor.waermepumpe_ww", "heating_rod_switch": "switch.heizstab"}
+    rod = _config(heatingRodControl=True, sensorMappings=mappings)
+    assert mapped_entity_id(rod, "heatpump_dhw_on_off") == "switch.heizstab"
+    heat_pump = _config(heatingRodControl=False, sensorMappings=mappings)
+    assert mapped_entity_id(heat_pump, "heatpump_dhw_on_off") == "binary_sensor.waermepumpe_ww"
+    # ohne zugeordneten Schalter bleibt es bei der bisherigen Zuordnung; andere Sensoren sind nie betroffen
+    assert mapped_entity_id(_config(heatingRodControl=True, sensorMappings={"heatpump_dhw_on_off": "x"}), "heatpump_dhw_on_off") == "x"
+    assert mapped_entity_id(rod, "heatpump_dhw_tank_temp") == ""

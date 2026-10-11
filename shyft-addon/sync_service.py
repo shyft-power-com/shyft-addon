@@ -206,6 +206,21 @@ def heating_rod_active(config):
     return config.get("heatingRodEnabled", True) is not False
 
 
+HEATING_ROD_SWITCH_SENSOR_KEY = "heating_rod_switch"
+
+
+def mapped_entity_id(config, sensor_key):
+    """Zugeordnete Home-Assistant-Entitaet eines Sensors (leer, wenn nicht zugeordnet). Im Heizstab-Betrieb liefert "heatpump_dhw_on_off"
+    ("Heizstab aktiviert") den Schalter aus der Steuerung "Heizstab ein-/ausschalten": das ist dieselbe Entitaet, die Kachel hat dafuer
+    kein eigenes Sensorfeld mehr (und eine Zuordnung der Waermepumpe unter demselben Schluessel wird dann nicht benutzt)."""
+    mappings = config.get("sensorMappings", {}) or {}
+    if sensor_key == "heatpump_dhw_on_off" and heating_rod_active(config):
+        switch_entity = mappings.get(HEATING_ROD_SWITCH_SENSOR_KEY)
+        if switch_entity:
+            return switch_entity
+    return mappings.get(sensor_key, "")
+
+
 HEATING_ROD_MAX_POWER_KW_DEFAULT = 4.0
 HEATING_ROD_MAX_POWER_KW_LIMIT = 30.0
 HEATING_ROD_MAX_TEMP_DEFAULT_C = 95
@@ -449,7 +464,7 @@ class SyncService:
                 "unit": unit,
                 "sensor": bubbleSensorIdentifier
             }
-        sensorId = data["sensorMappings"][key]
+        sensorId = mapped_entity_id(data, key) or data["sensorMappings"][key]
         try:
             sensorValue = self.homeassistant_adapter.load_entity_state(sensorId)
             state, unit = convert_to_expected_unit(key, sensorValue.state, sensorValue.unit)

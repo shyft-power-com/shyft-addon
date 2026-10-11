@@ -145,10 +145,6 @@ const heatingRodHelpInformation = {
         label: 'Warmwasser: Solltemperatur (°C)',
         description: ' Die Home-Assistant-Entity (number oder climate), an der die Ziel-/Solltemperatur des Warmwassers eingestellt ist. Daraus leitet Shyft die Untergrenze für die Warmwasserplanung ab.'
     },
-    'heatpump_dhw_on_off': {
-        label: 'Heizstab aktiviert',
-        description: ' An/Aus, je nachdem ob dein Heizstab gerade heizt.'
-    },
     [HEATING_ROD_SWITCH_KEY]: {
         label: 'Heizstab ein-/ausschalten',
         description: ' Die An-/Aus-Entität (z. B. ein Schalter oder Relais) aus deinem Heizstab-Gerät, über die Shyft den Heizstab ein- und ausschaltet.'
@@ -316,7 +312,9 @@ const INTEGRATION_SECTIONS = [
         label: 'Heizstab',
         // Dieselben Sensor-Schluessel wie bei der Waermepumpe (Tank-Temperatur, Solltemperatur, "Heizstab aktiviert" = bisheriges
         // "Warmwasser gerade erwaermt?") - dadurch bleiben die Werte beim saisonalen Wechsel erhalten. Dazu die An-/Aus-Entitaet.
-        sensors: ['heatpump_dhw_tank_temp', 'heatpump_dhw_target_temp', 'heatpump_dhw_on_off', HEATING_ROD_SWITCH_KEY],
+        // "Heizstab aktiviert" (heatpump_dhw_on_off) gibt es hier nicht als Sensorfeld: der Status kommt aus dem Schalter der Steuerung
+        // "Heizstab ein-/ausschalten" (siehe mapped_entity_id in sync_service.py).
+        sensors: ['heatpump_dhw_tank_temp', 'heatpump_dhw_target_temp', HEATING_ROD_SWITCH_KEY],
         actions: [],
         requiresDeviceClass: 'temperature',
         description: 'Wenn du dein Brauchwasser ausschließlich über den Heizstab erwärmst, statt über die Wärmepumpe, dann richte ihn hier ein. Shyft steuert den Stab dann vorausschauend, je nach Warmwasserbedarf.\nWenn du den Heizstab zusätzlich zu einer anderweitig bestehenden Heizung nutzt, dann richte ihn weiter unten als "Sonstigen Verbraucher" ein. Dort wird der Heizstab rein preisgesteuert zugeschaltet.'
