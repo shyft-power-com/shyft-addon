@@ -1317,7 +1317,7 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         # Mitternacht - mit nur optimizer_period Stunden ab heute 0:00 fehlt dem Optimizer sonst
         # das letzte Stueck seines Horizonts (er haelt dann den letzten Wert konstant). 24 h Puffer
         # decken jede Tageszeit ab. Der open-meteo-Cache reicht dafuer (siehe OPEN_METEO_FORECAST_DAYS).
-        weather_fields = pv_forecast.compute_site_weather_fields(optimizer_period + 24, _pv_sensor_configured(config))
+        weather_fields = pv_forecast.compute_site_weather_fields(optimizer_period + 24, _pv_sensor_configured(config), log_anomalies=True)
     except Exception as e:
         print("[Shyft] Wetter-/PV-Prognosefelder konnten nicht gebaut werden:", repr(e))
     # "Einspeisung drosseln" aktiv, aber ohne Einspeiseleistung: ein Lauf ohne die gewollte Grenze waere irrefuehrend - nichts senden
@@ -10705,6 +10705,28 @@ def _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms):
     # solche schon eingefrorenen Stunden bei jedem weiteren Sync aus dem Snapshot herausfallen, statt
     # (wie beabsichtigt) dauerhaft erhalten zu bleiben - sie kommen in `rows` schlicht nie wieder vor.
     merged = dict(existing_by_label)
+    # Diagnose (siehe pv_forecast.log_anomaly): was kam im input_csv an? Ein Wert > 3 kW, der mehr als doppelt so hoch ist wie die Vorstunde, und/oder
+    # ein Sprung gegenueber dem bisher fuer dieselbe Stunde gespeicherten Wert (anderer Lauf) wird mit allen Details geloggt.
+    try:
+        pv_values = [_safe_float(r.get("PV_generation")) for r in rows]
+        logged_anomalies = 0
+        for i, value in enumerate(pv_values):
+            row_dt_utc = start_utc + timedelta(hours=i)
+            if row_dt_utc.astimezone(get_ha_timezone()) < now_hour_local or logged_anomalies >= pv_forecast.PV_ANOMALY_MAX_ENTRIES_PER_CALL:
+                continue
+            label = row_dt_utc.isoformat()
+            previous_value = pv_values[i - 1] if i > 0 else None
+            stored_value = existing_by_label.get(label)
+            spike = pv_forecast.is_pv_spike(value, previous_value)
+            run_jump = stored_value is not None and value > pv_forecast.PV_ANOMALY_MIN_KW and value > pv_forecast.PV_ANOMALY_RATIO * stored_value
+            if spike or run_jump:
+                pv_forecast.log_anomaly("input_csv", {
+                    "hour": label, "kw": round(value, 3), "row_index": i, "prev_row_kw": previous_value, "stored_value_same_hour": stored_value,
+                    "spike_vs_prev_hour": spike, "jump_vs_stored": run_jump, "run_creation_ms": creation_date_ms,
+                    "next_row_kw": pv_values[i + 1] if i + 1 < len(pv_values) else None})
+                logged_anomalies += 1
+    except Exception as e:
+        print("[Shyft] PV-Prognose-Diagnose (input_csv) fehlgeschlagen:", repr(e))
     for i, row in enumerate(rows):
         row_dt_utc = start_utc + timedelta(hours=i)
         row_dt_local = row_dt_utc.astimezone(get_ha_timezone())

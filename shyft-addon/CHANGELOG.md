@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.301
+
+* **Diagnose-Log für auffällige PV-Prognosen.** Damit sich ein Ausreißer wie der Spitzenwert von 8,9 kW um 12 Uhr nachvollziehen lässt, schreibt das Add-on jetzt einen Log-Eintrag („PV-Prognose-Auffälligkeit“, im Add-on-Log und in `/data/pv_forecast_anomalies.jsonl`), wenn der Prognosewert einer Stunde über 3 kW liegt und mehr als doppelt so hoch ist wie in der Vorstunde. Der Eintrag enthält alle Eingangswerte: Einstrahlung der Mittelungsstunden, die genutzte Fläche (m², auch ob das Standardprofil galt), die rechnerisch nötige Einstrahlung, Wettercode/Bewölkung sowie Stand von Wetter-Cache und Kalibrierung. Dasselbe gilt für den Wert, der im Optimierungs-Input ankommt (inklusive Sprüngen gegenüber dem für dieselbe Stunde gespeicherten Wert), und für die Wetterdaten selbst (Einstrahlung über 1.000 W/m² oder eine einzelne Spitze). Die Prognose selbst bleibt unverändert.
+
 ## 0.0.45.300
 
 * **Kein Fehler mehr beim Speichern der Konfiguration, wenn ein Hilfsskript schon fehlt.** Home Assistant antwortet beim Löschen eines nicht vorhandenen Skripts mit „400 Resource not found“ statt 404; das Add-on wertete das als Fehler („Failed to sync heating_target_temp script“) und meldete ihn bei jedem Speichern. Es gilt jetzt – wie 404 – als „ist schon weg“.
