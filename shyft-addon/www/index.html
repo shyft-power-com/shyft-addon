@@ -230,6 +230,13 @@
         .clearInputButton:hover {
             color: var(--color-text);
         }
+        /* Textfeld ohne Dropdown-Pfeil: "×" ganz rechts */
+        .clearableInput.noDropdownArrow .clearInputButton {
+            right: 0.5em;
+        }
+        .clearableInput.noDropdownArrow .sensorInput {
+            padding-right: 2.2em;
+        }
 
         /* Ersatz fuer die native list=-Vorschlagsliste (siehe attachEntityDropdown in app.js) - kein
            Browser kann darin eine Kopfzeile anzeigen, ein eigenes Panel schon. Optisch an
@@ -713,6 +720,19 @@
         .branchFieldsGroup {
             margin-left: 1.2em;
             margin-top: 0.3em;
+        }
+        /* Block je Zweig (Befehl + Felder) unter der Stufen-Beschriftung, siehe buildBranchStage */
+        .carChargeBranchBlock {
+            margin-left: 1.2em;
+            margin-top: 0.4em;
+            margin-bottom: 0.4em;
+        }
+        .carChargeStage > .carChargeBranchBlock:last-child {
+            margin-bottom: 0;
+        }
+        /* gleiche Beschriftungsbreite in allen Tabellen eines Blocks, damit die Eingabefelder untereinander fluchten */
+        .carChargeBranchBlock td:first-child {
+            min-width: 10em;
         }
 
         .integrationSection {

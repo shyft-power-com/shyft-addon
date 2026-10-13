@@ -40,6 +40,18 @@ PV_CALIBRATION_PATH = "/data/pv_calibration.json"
 WEATHER_LOG_PATH = "/data/weather_forecast_log.jsonl"
 WEATHER_LOG_RETENTION_DAYS = 30
 
+# Diagnose-Log fuer auffaellige PV-Prognosewerte (siehe log_anomaly): wird ein Wert > PV_ANOMALY_MIN_KW UND mehr als doppelt so hoch wie der
+# der Vorstunde, gibt es einen Log-Eintrag mit allen Eingangswerten (Einstrahlung, m2, Wetter-Cache-Stand), damit sich spaeter nachvollziehen
+# laesst, woher ein Ausreisser kam. Zusaetzlich fuer die Wetterdaten selbst (> GTI_ANOMALY_MAX_WM2 bzw. einzelne Spitze) - dort das Rohdaten-Log.
+PV_ANOMALY_LOG_PATH = "/data/pv_forecast_anomalies.jsonl"
+PV_ANOMALY_MIN_KW = 3.0
+PV_ANOMALY_RATIO = 2.0
+PV_ANOMALY_MAX_ENTRIES_PER_CALL = 3
+PV_ANOMALY_LOG_MAX_BYTES = 200_000
+GTI_ANOMALY_MAX_WM2 = 1000
+GTI_SPIKE_MIN_WM2 = 400
+GTI_SPIKE_RATIO = 2.5
+
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 # Feste Annahme statt Nutzer-Konfiguration: 35 Grad Neigung, Suedausrichtung (open-meteo:
 # azimuth 0 = Sued). global_tilted_irradiance liefert damit direkt die Strahlung in der Modulebene.
@@ -81,6 +93,42 @@ CALIBRATION_SETUP_DAYS = 7
 # Grobes Startprofil, bevor kalibriert wurde: ~50 m^2 in den Tagesstunden, 0 nachts. Zusammen mit
 # der echten Einstrahlungsprognose ergibt das am Tag 1 schon eine plausible Glockenkurve.
 DEFAULT_M2_PROFILE = [0.0] * 4 + [50.0] * 18 + [0.0] * 2  # Stunden 4..21 = 50
+
+
+_logged_anomalies = set()
+
+
+def is_pv_spike(kw, previous_kw):
+    "True, wenn kw ueber PV_ANOMALY_MIN_KW liegt und mehr als PV_ANOMALY_RATIO mal so hoch ist wie der Wert der Vorstunde."
+    return kw is not None and previous_kw is not None and kw > PV_ANOMALY_MIN_KW and kw > PV_ANOMALY_RATIO * previous_kw
+
+
+def log_anomaly(kind, entry):
+    """Eine Auffaelligkeit ins Add-on-Log (print) UND an PV_ANOMALY_LOG_PATH (JSON Lines, auf PV_ANOMALY_LOG_MAX_BYTES begrenzt) schreiben.
+    Gleiche Auffaelligkeit (Art + Stunde + Wert) pro Tag nur einmal, damit stuendliche Laeufe das Log nicht fluten."""
+    now_local = datetime.now().astimezone()
+    key = (kind, entry.get("hour"), round(float(entry.get("kw") or 0), 1), now_local.date().isoformat())
+    if key in _logged_anomalies:
+        return
+    if len(_logged_anomalies) > 500:
+        _logged_anomalies.clear()
+    _logged_anomalies.add(key)
+    record = {"at": now_local.isoformat(timespec="seconds"), "kind": kind, **entry}
+    line = json.dumps(record, ensure_ascii=False)
+    print(f"[Shyft] PV-Prognose-Auffälligkeit ({kind}): {line}")
+    try:
+        try:
+            with open(PV_ANOMALY_LOG_PATH, "r") as f:
+                kept = f.readlines()
+        except FileNotFoundError:
+            kept = []
+        kept.append(line + "\n")
+        while sum(len(x) for x in kept) > PV_ANOMALY_LOG_MAX_BYTES and len(kept) > 1:
+            kept.pop(0)
+        with open(PV_ANOMALY_LOG_PATH, "w") as f:
+            f.writelines(kept)
+    except Exception as e:
+        print("[Shyft] PV-Auffälligkeits-Log konnte nicht geschrieben werden:", repr(e))
 
 
 def _read_json(path):
@@ -151,7 +199,44 @@ def fetch_weather(latitude, longitude):
         return None
     _write_json(WEATHER_CACHE_PATH, cache)
     log_weather_fetch(cache)
+    try:
+        _check_gti_anomalies(cache)
+    except Exception as e:
+        print("[Shyft] Einstrahlungs-Pruefung fehlgeschlagen:", repr(e))
     return cache
+
+
+def _check_gti_anomalies(cache):
+    """Prueft die frisch geholten Einstrahlungswerte ab heute 0:00: > GTI_ANOMALY_MAX_WM2 (kaum erreichbar) oder eine einzelne Spitze (mehr als
+    GTI_SPIKE_RATIO mal so hoch wie BEIDE Nachbarstunden, mindestens GTI_SPIKE_MIN_WM2) wird mit den Nachbarwerten geloggt."""
+    gti = cache.get("gti") or []
+    times = cache.get("time") or []
+    start = _cache_index_for(cache, _local_midnight_today())
+    if start is None:
+        return
+    logged = 0
+    for i in range(start, len(gti)):
+        value = gti[i]
+        if value is None:
+            continue
+        prev_value = gti[i - 1] if i > 0 and gti[i - 1] is not None else None
+        next_value = gti[i + 1] if i + 1 < len(gti) and gti[i + 1] is not None else None
+        kind = None
+        if value > GTI_ANOMALY_MAX_WM2:
+            kind = "gti_over_max"
+        elif (value >= GTI_SPIKE_MIN_WM2 and prev_value is not None and next_value is not None
+              and value > GTI_SPIKE_RATIO * prev_value and value > GTI_SPIKE_RATIO * next_value):
+            kind = "gti_spike"
+        if kind is None:
+            continue
+        hour = datetime.fromtimestamp(times[i], tz=timezone.utc).isoformat() if i < len(times) else None
+        log_anomaly(kind, {"hour": hour, "kw": value, "gti": value, "gti_prev": prev_value, "gti_next": next_value,
+                           "weather_code": (cache.get("weather_code") or [None] * (i + 1))[i] if i < len(cache.get("weather_code") or []) else None,
+                           "cloud_cover": (cache.get("cloud_cover") or [None] * (i + 1))[i] if i < len(cache.get("cloud_cover") or []) else None,
+                           "cache_fetched_at": cache.get("fetched_at")})
+        logged += 1
+        if logged >= PV_ANOMALY_MAX_ENTRIES_PER_CALL:
+            break
 
 
 def log_weather_fetch(cache):
@@ -284,7 +369,36 @@ def _pv_kw_series(gti, m2, count):
     return result
 
 
-def compute_site_weather_fields(period, pv_sensor_configured):
+def _check_pv_anomalies(cache, start, gti, m2, pv_kw, midnight):
+    """Loggt zukuenftige Stunden (ab der laufenden), deren Prognose > PV_ANOMALY_MIN_KW und mehr als doppelt so hoch wie die Vorstunde ist - samt
+    Eingangswerten: Einstrahlung der beiden Mittelungsstunden, genutzte Flaeche (m2, auch ob das Standardprofil galt), die rechnerisch noetige
+    Einstrahlung und Stand/Alter von Wetter-Cache und Kalibrierung."""
+    now_index = datetime.now().astimezone().hour
+    _m2_unused, calibrated_on = _read_calibration()
+    logged = 0
+    for i in range(max(1, now_index), len(pv_kw)):
+        if not is_pv_spike(pv_kw[i], pv_kw[i - 1]):
+            continue
+        m2_hour = m2[i % 24]
+        needed_gti = ((pv_kw[i] + SAFETY_OFFSET_KW) / SAFETY_FACTOR / (PV_EFFICIENCY * m2_hour) * 1000) if m2_hour > 0 else None
+        codes = cache.get("weather_code") or []
+        clouds = cache.get("cloud_cover") or []
+        log_anomaly("pv_forecast", {
+            "hour": (midnight + timedelta(hours=i)).isoformat(), "kw": round(pv_kw[i], 3), "prev_kw": round(pv_kw[i - 1], 3),
+            "gti_this": gti[i] if i < len(gti) else None, "gti_next": gti[i + 1] if i + 1 < len(gti) else None,
+            "gti_prev": gti[i - 1] if 0 < i <= len(gti) else None,
+            "m2": round(m2_hour, 2), "m2_prev": round(m2[(i - 1) % 24], 2), "m2_default_profile": calibrated_on is None, "calibrated_on": calibrated_on,
+            "gti_needed_for_kw": round(needed_gti) if needed_gti is not None else None,
+            "weather_code": codes[start + i] if start + i < len(codes) else None,
+            "cloud_cover": clouds[start + i] if start + i < len(clouds) else None,
+            "cache_fetched_at": cache.get("fetched_at"), "cache_time_at_hour": (cache.get("time") or [None] * (start + i + 1))[start + i] if start + i < len(cache.get("time") or []) else None,
+        })
+        logged += 1
+        if logged >= PV_ANOMALY_MAX_ENTRIES_PER_CALL:
+            break
+
+
+def compute_site_weather_fields(period, pv_sensor_configured, log_anomalies=False):
     """Baut die drei neuen Site-Felder (siehe update_site_addon-Endpunkt):
       - datetimeWeatherMs: `period` Unix-ms-Timestamps ab heute 0:00 lokal (immer, auch ohne Cache)
       - temperature:      komma-separierte `period` Grad-C-Werte (0, wenn kein Cache)
@@ -317,6 +431,11 @@ def compute_site_weather_fields(period, pv_sensor_configured):
     if pv_sensor_configured:
         m2, _ = _read_calibration()
         pv_kw = _pv_kw_series(gti, m2, period)
+        if log_anomalies:
+            try:
+                _check_pv_anomalies(cache, start, gti, m2, pv_kw, midnight)
+            except Exception as e:
+                print("[Shyft] PV-Prognose-Pruefung fehlgeschlagen:", repr(e))
     else:
         pv_kw = [0.0] * period
 

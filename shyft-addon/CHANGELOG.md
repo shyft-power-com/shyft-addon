@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.0.45.306
+
+* **Diagramme: feste Skala beim Zoomen und Verschieben.** Die senkrechte Skala (auch die rechte Achse der zweiten Kurve, z. B. beim Innenraum) richtet sich jetzt immer nach dem gesamten Zeitraum des Diagramms statt nach dem gerade sichtbaren Ausschnitt. Beim Hineinzoomen und Verschieben bleiben die Achsenwerte dadurch unverändert, und Kurven lassen sich über verschiedene Zeitfenster hinweg vergleichen. Gilt für alle Diagramme mit Zoom (Linien-, Prognose-/Ist- und Vergleichsdiagramme).
+
+## 0.0.45.305
+
+* **Auto laden: „×“ zum Löschen in allen Eingabefeldern.** In den drei Stufen (Phasenanzahl, Ampere, Ladevorgang) haben der Befehl, die Entität und freie Textfelder jetzt wie die übrigen Entitätsfelder das kleine „×“, mit dem sich eine Eingabe mit einem Klick löschen lässt.
+
+## 0.0.45.304
+
+* **Heizstab-Kachel einklappbar wie die anderen Kacheln.** Der Aufklapp-Pfeil und der Link „Details einblenden“ sind jetzt auch beim Heizstab immer aktiv. Der Geräte-Dropdown (auch „nicht vorhanden“) liegt im aufklappbaren Bereich; im eingeklappten Zustand bleibt nur der Schalter „Heizstab steuern“ sichtbar.
+
+## 0.0.45.303
+
+* **Auto laden: eigener Befehl je Zweig.** Die Stufen „Phasenanzahl setzen“ und „Ladevorgang steuern“ haben jetzt für jeden Zweig („Mit 1 Phase laden“ / „Mit 3 Phasen laden“ bzw. „Ladevorgang starten“ / „beenden“) einen eigenen Block mit Befehl und Feldern. So lässt sich z. B. `select.select_option` mit je eigener Option einrichten (go-e: Phasenmodus und „Laden erzwingen“) oder `switch.turn_on` zum Starten und `switch.turn_off` zum Beenden. Bei einer Select-Entität zeigt das Feld „Option“ ein Dropdown mit den Optionen der Entität. Ist der zweite Zweig noch leer, übernimmt er Befehl und Entität des ersten (Optionen und Werte nicht). Die Ampere-Stufe bleibt unverändert; bestehende Konfigurationen (z. B. Easee) werden beim Laden automatisch umgewandelt und weiter ausgeführt.
+* **Test „Laden starten und beenden“ prüft jetzt auch das Beenden.** Nach dem Stopp-Befehl wartet der Test bis zu 60 s, ob die Ladeleistung der Wallbox unter 0,5 kW fällt. Lädt sie weiter, gilt der Test als fehlgeschlagen (Hinweis im Protokoll: bei go-e bedeutet der Wert „Neutral“ nicht „Nicht laden“). Ist der Sensor „Wallbox: Ladestrom“ nicht zugeordnet oder nicht lesbar, bleibt es bei der bisherigen Bewertung ohne Prüfung.
+
+## 0.0.45.301
+
+* **Diagnose-Log für auffällige PV-Prognosen.** Damit sich ein Ausreißer wie der Spitzenwert von 8,9 kW um 12 Uhr nachvollziehen lässt, schreibt das Add-on jetzt einen Log-Eintrag („PV-Prognose-Auffälligkeit“, im Add-on-Log und in `/data/pv_forecast_anomalies.jsonl`), wenn der Prognosewert einer Stunde über 3 kW liegt und mehr als doppelt so hoch ist wie in der Vorstunde. Der Eintrag enthält alle Eingangswerte: Einstrahlung der Mittelungsstunden, die genutzte Fläche (m², auch ob das Standardprofil galt), die rechnerisch nötige Einstrahlung, Wettercode/Bewölkung sowie Stand von Wetter-Cache und Kalibrierung. Dasselbe gilt für den Wert, der im Optimierungs-Input ankommt (inklusive Sprüngen gegenüber dem für dieselbe Stunde gespeicherten Wert), und für die Wetterdaten selbst (Einstrahlung über 1.000 W/m² oder eine einzelne Spitze). Die Prognose selbst bleibt unverändert.
+
+## 0.0.45.300
+
+* **Kein Fehler mehr beim Speichern der Konfiguration, wenn ein Hilfsskript schon fehlt.** Home Assistant antwortet beim Löschen eines nicht vorhandenen Skripts mit „400 Resource not found“ statt 404; das Add-on wertete das als Fehler („Failed to sync heating_target_temp script“) und meldete ihn bei jedem Speichern. Es gilt jetzt – wie 404 – als „ist schon weg“.
+
 ## 0.0.45.299
 
 * **Vollbildmodus ohne Zusatz-Plugin.** Das Vollbild-Symbol rechts in der Kopfzeile legt das Add-on jetzt direkt über das ganze Fenster (Home-Assistant-Seitenleiste und -Kopfzeile sind verdeckt) und schaltet, wo der Browser es erlaubt, zusätzlich den echten Browser-Vollbildmodus ein. Das „X“ (oder die Escape-Taste) stellt die normale Ansicht wieder her. Das Kiosk-Dashboard `/shyft-kiosk`, dessen automatisches Anlegen, das Plugin „Kiosk Mode“ und der zugehörige Hinweis entfallen (der Zugriff über ein Dashboard scheiterte am Ingress-Zugang mit 401). Funktioniert lokal, über Cloudflare/Nabu Casa und mobil.

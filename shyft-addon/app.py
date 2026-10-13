@@ -1317,7 +1317,7 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         # Mitternacht - mit nur optimizer_period Stunden ab heute 0:00 fehlt dem Optimizer sonst
         # das letzte Stueck seines Horizonts (er haelt dann den letzten Wert konstant). 24 h Puffer
         # decken jede Tageszeit ab. Der open-meteo-Cache reicht dafuer (siehe OPEN_METEO_FORECAST_DAYS).
-        weather_fields = pv_forecast.compute_site_weather_fields(optimizer_period + 24, _pv_sensor_configured(config))
+        weather_fields = pv_forecast.compute_site_weather_fields(optimizer_period + 24, _pv_sensor_configured(config), log_anomalies=True)
     except Exception as e:
         print("[Shyft] Wetter-/PV-Prognosefelder konnten nicht gebaut werden:", repr(e))
     # "Einspeisung drosseln" aktiv, aber ohne Einspeiseleistung: ein Lauf ohne die gewollte Grenze waere irrefuehrend - nichts senden
@@ -4440,7 +4440,12 @@ def call_recipe_stage(stage, branch_key=None, extra_data=None, integration_key="
     also has a time_to_live) and only some of them mean "current". integration_key picks which
     integration's device to fall back to for an empty device_id (see integration_key below).
     """
-    service = (stage or {}).get("service", "")
+    stage = stage or {}
+    if "branches" in stage:
+        # Format "Befehl je Zweig" (0.0.45.303): jeder Zweig hat seinen eigenen Befehl samt Feldern
+        stage = (stage.get("branches") or {}).get(branch_key) or {}
+        branch_key = None
+    service = stage.get("service", "")
     if not service or "." not in service:
         raise Exception("Kein Befehl (Service) konfiguriert")
     domain, service_name = service.split(".", 1)
@@ -6058,6 +6063,14 @@ def _action_ready_key(action_name, config=None):
     return key if key not in ("pv_feed_in_limit", "consumption_limit_14a") else None
 
 
+def _branch_stage_complete(stage, branch_keys):
+    "Stufe mit Zweigen vollstaendig? Jeder Zweig braucht einen Befehl (aelteres Format: der eine Befehl der Stufe) - Gegenstueck zu isBranchStageComplete in app.js."
+    stage = stage or {}
+    if "branches" in stage:
+        return all(((stage["branches"] or {}).get(key) or {}).get("service") for key in branch_keys)
+    return bool(stage.get("service"))
+
+
 def _action_type_config_state(config, ready_key):
     """Die fuer diesen Aktionstyp ausfuehrungsrelevante Konfig-Teilmenge (portiert aus
     isSectionComplete in www/app.js). {'flags': {..bools..}, 'fp': {..alles inkl. Varianten..}} -
@@ -6073,9 +6086,9 @@ def _action_type_config_state(config, ready_key):
         if recipe.get("type") == "ha_automation":
             recipe_ok = bool(recipe.get("haAutomationEntityId"))
         else:
-            recipe_ok = bool(recipe.get("type") == "three_stage" and (recipe.get("phaseCount", {}) or {}).get("service")
+            recipe_ok = bool(recipe.get("type") == "three_stage" and _branch_stage_complete(recipe.get("phaseCount"), ("1", "3"))
                              and amp.get("service") and (amp.get("amountFields") or [])
-                             and (recipe.get("control", {}) or {}).get("service"))
+                             and _branch_stage_complete(recipe.get("control"), ("start", "stop")))
         return {"flags": {"auto": bool(im.get("auto")), "wallbox": bool(im.get("wallbox")), "recipe": recipe_ok},
                 "fp": {"auto": bool(im.get("auto")), "wallbox": bool(im.get("wallbox")),
                        "recipe": recipe_ok, "recipeType": recipe.get("type")}}
@@ -6524,6 +6537,21 @@ def readServices():
     return jsonify(result)
 
 
+@app.route("/entity-select-options", methods=["GET"])
+def readEntitySelectOptions():
+    "Optionen einer select-Entitaet (Attribut 'options') - fuer das Dropdown 'Option' bei select.select_option in der Auto-laden-Konfiguration (siehe wireSelectEntityOptions in app.js). Leere Liste bei Fehler/keiner Select-Entitaet."
+    entity_id = (request.args.get("entity_id") or "").strip()
+    if not re.match(r"^select\.[a-z0-9_]+$", entity_id):
+        return jsonify([])
+    try:
+        state = homeassistant_adapter.get_from_homeassistant(f"/api/states/{entity_id}")
+        options = (state.get("attributes") or {}).get("options") or []
+        return jsonify([str(option) for option in options])
+    except Exception as e:
+        print(f"[Shyft] Optionen von {entity_id} nicht lesbar:", repr(e))
+        return jsonify([])
+
+
 # Der Lade-Test prueft nach dem Start-Befehl, ob die Wallbox wirklich laedt: der Befehl kann von Home Assistant
 # fehlerfrei angenommen und trotzdem von Wallbox/Integration ignoriert werden (Auto nicht eingesteckt/ladebereit,
 # Freigabe ausstehend, Lastmanagement ...) - Nutzer-Meldung: Ampere geaendert, Laden nicht gestartet, Test trotzdem
@@ -6560,6 +6588,62 @@ def _verify_car_charging_started(config):
         test_sleep(CAR_CHARGE_TEST_VERIFY_INTERVAL_SECONDS)
     test_log("Die Wallbox lädt nicht." if last_kw is not None else "Die Ladeleistung war nie lesbar.", "error")
     return ("not_charging" if last_kw is not None else "unverifiable"), last_kw
+
+
+# Nach dem Stopp-Befehl pruefen wir umgekehrt, ob die Ladeleistung wirklich faellt: ein Befehl kann fehlerfrei angenommen und von der
+# Wallbox trotzdem ignoriert werden (z.B. go-e: "frc"-Wert "Neutral" statt "Nicht laden" laesst die Wallbox einfach weiterladen).
+CAR_CHARGE_TEST_STOPPED_BELOW_KW = 0.5
+
+
+def _verify_car_charging_stopped(config):
+    """Wartet bis CAR_CHARGE_TEST_VERIFY_TIMEOUT_SECONDS darauf, dass die Wallbox-Ladeleistung unter CAR_CHARGE_TEST_STOPPED_BELOW_KW faellt.
+    Rueckgabe (status, letzter kW-Wert): 'stopped', 'still_charging' (Sensor lesbar, Leistung bleibt hoch) oder 'unverifiable'
+    (kein Sensor zugeordnet bzw. nie lesbar - dann bleibt es bei der Bewertung ohne Pruefung)."""
+    if not (config.get("sensorMappings") or {}).get("wallbox_current_charging_power"):
+        test_log("Kein Sensor „Wallbox: Ladestrom“ zugeordnet – ob das Laden beendet wurde, kann nicht geprüft werden.", "warn")
+        return "unverifiable", None
+    test_log(f"Prüfe bis zu {CAR_CHARGE_TEST_VERIFY_TIMEOUT_SECONDS} s, ob das Laden wirklich beendet wurde (Ladeleistung < {CAR_CHARGE_TEST_STOPPED_BELOW_KW} kW) …", "wait")
+    state_log = _TestStateLog("Wallbox-Ladeleistung")
+    deadline = time.time() + CAR_CHARGE_TEST_VERIFY_TIMEOUT_SECONDS
+    last_kw = None
+    while True:
+        kw = _read_mapped_numeric(config, "wallbox_current_charging_power")
+        if kw is not None:
+            last_kw = kw
+            state_log(f"{kw} kW")
+            if kw < CAR_CHARGE_TEST_STOPPED_BELOW_KW:
+                test_log(f"Das Laden wurde beendet (Ladeleistung {kw} kW).", "ok")
+                return "stopped", kw
+        else:
+            state_log("nicht lesbar")
+        if time.time() >= deadline:
+            break
+        test_sleep(CAR_CHARGE_TEST_VERIFY_INTERVAL_SECONDS)
+    if last_kw is None:
+        test_log("Die Ladeleistung war nie lesbar.", "error")
+        return "unverifiable", None
+    test_log(f"Die Wallbox lädt weiter (Ladeleistung {last_kw} kW).", "error")
+    return "still_charging", last_kw
+
+
+def _car_charge_stop_verification_response(config):
+    """Antwort des Stopp-Tests nach gesendetem Stopp-Befehl: Erfolg nur, wenn die Ladeleistung nachweislich faellt (oder nicht pruefbar ist).
+    Ein Abbruch durch den Nutzer waehrend der Pruefung zaehlt nicht als Fehler (verified=False)."""
+    try:
+        status, kw = _verify_car_charging_stopped(config)
+    except _TestCancelled:
+        test_log("Prüfung abgebrochen – bitte in der Wallbox-App kontrollieren, ob das Laden beendet ist.", "warn")
+        return jsonify({"success": True, "verified": False})
+    if status == "still_charging":
+        kw_text = f"{kw:.1f}".replace(".", ",")
+        return jsonify({"success": False, "commandsSent": True, "verified": False,
+                        "message": (f"Home Assistant hat den Stopp-Befehl angenommen, die Wallbox lädt aber weiter (Ladeleistung {kw_text} kW "
+                                    f"nach {CAR_CHARGE_TEST_VERIFY_TIMEOUT_SECONDS} s). Bitte das Laden in der Wallbox-App beenden und den Befehl "
+                                    f"„Ladevorgang beenden“ prüfen (bei manchen Wallboxen heißt der Wert „Neutral“ nicht „Nicht laden“).")}), 500
+    body = {"success": True, "verified": status == "stopped"}
+    if kw is not None:
+        body["chargingKw"] = kw
+    return jsonify(body)
 
 
 def _car_charge_verification_response(config, extra=None):
@@ -6654,19 +6738,13 @@ def testCarChargeStop():
     config = _read_current_config()
     recipe = config.get("carChargeRecipe", {})
     test_log("Beende das Laden …")
-    if recipe.get("type") == "ha_automation":
-        try:
+    try:
+        if recipe.get("type") == "ha_automation":
             trigger_ha_automation_recipe(recipe, "stop", None)
             test_log("Automation (Phase: stop) ausgelöst.", "ok")
-            return jsonify({"success": True})
-        except Exception as e:
-            test_log(f"Auslösen fehlgeschlagen: {e}", "error")
-            log_error_to_shyft("car_charge_stop_test", classify_error(str(e)), str(e))
-            return jsonify({"success": False, "message": str(e)}), 500
-    try:
-        call_recipe_stage(recipe.get("control", {}), branch_key="stop")
-        test_log("Stopp-Befehl gesendet.", "ok")
-        return jsonify({"success": True})
+        else:
+            call_recipe_stage(recipe.get("control", {}), branch_key="stop")
+            test_log("Stopp-Befehl gesendet.", "ok")
     except RecipeCallError as e:
         log_error_to_shyft("car_charge_stop_test", "service_call_failed", str(e), service_called=e.service, data_sent=e.data)
         return jsonify({"success": False, "message": str(e)}), 500
@@ -6674,6 +6752,8 @@ def testCarChargeStop():
         test_log(f"Fehler: {e}", "error")
         log_error_to_shyft("car_charge_stop_test", classify_error(str(e)), str(e))
         return jsonify({"success": False, "message": str(e)}), 500
+    # Der Befehl wurde angenommen - jetzt pruefen, ob die Wallbox wirklich aufgehoert hat zu laden
+    return _car_charge_stop_verification_response(config)
 
 
 _ENTITY_ID_IN_DISPLAY_LABEL = re.compile(r"\(([a-z0-9_]+\.[a-z0-9_]+),")
@@ -10705,6 +10785,28 @@ def _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms):
     # solche schon eingefrorenen Stunden bei jedem weiteren Sync aus dem Snapshot herausfallen, statt
     # (wie beabsichtigt) dauerhaft erhalten zu bleiben - sie kommen in `rows` schlicht nie wieder vor.
     merged = dict(existing_by_label)
+    # Diagnose (siehe pv_forecast.log_anomaly): was kam im input_csv an? Ein Wert > 3 kW, der mehr als doppelt so hoch ist wie die Vorstunde, und/oder
+    # ein Sprung gegenueber dem bisher fuer dieselbe Stunde gespeicherten Wert (anderer Lauf) wird mit allen Details geloggt.
+    try:
+        pv_values = [_safe_float(r.get("PV_generation")) for r in rows]
+        logged_anomalies = 0
+        for i, value in enumerate(pv_values):
+            row_dt_utc = start_utc + timedelta(hours=i)
+            if row_dt_utc.astimezone(get_ha_timezone()) < now_hour_local or logged_anomalies >= pv_forecast.PV_ANOMALY_MAX_ENTRIES_PER_CALL:
+                continue
+            label = row_dt_utc.isoformat()
+            previous_value = pv_values[i - 1] if i > 0 else None
+            stored_value = existing_by_label.get(label)
+            spike = pv_forecast.is_pv_spike(value, previous_value)
+            run_jump = stored_value is not None and value > pv_forecast.PV_ANOMALY_MIN_KW and value > pv_forecast.PV_ANOMALY_RATIO * stored_value
+            if spike or run_jump:
+                pv_forecast.log_anomaly("input_csv", {
+                    "hour": label, "kw": round(value, 3), "row_index": i, "prev_row_kw": previous_value, "stored_value_same_hour": stored_value,
+                    "spike_vs_prev_hour": spike, "jump_vs_stored": run_jump, "run_creation_ms": creation_date_ms,
+                    "next_row_kw": pv_values[i + 1] if i + 1 < len(pv_values) else None})
+                logged_anomalies += 1
+    except Exception as e:
+        print("[Shyft] PV-Prognose-Diagnose (input_csv) fehlgeschlagen:", repr(e))
     for i, row in enumerate(rows):
         row_dt_utc = start_utc + timedelta(hours=i)
         row_dt_local = row_dt_utc.astimezone(get_ha_timezone())
