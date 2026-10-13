@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.304
+
+* **Heizstab-Kachel einklappbar wie die anderen Kacheln.** Der Aufklapp-Pfeil und der Link „Details einblenden“ sind jetzt auch beim Heizstab immer aktiv. Der Geräte-Dropdown (auch „nicht vorhanden“) liegt im aufklappbaren Bereich; im eingeklappten Zustand bleibt nur der Schalter „Heizstab steuern“ sichtbar.
+
 ## 0.0.45.303
 
 * **Auto laden: eigener Befehl je Zweig.** Die Stufen „Phasenanzahl setzen“ und „Ladevorgang steuern“ haben jetzt für jeden Zweig („Mit 1 Phase laden“ / „Mit 3 Phasen laden“ bzw. „Ladevorgang starten“ / „beenden“) einen eigenen Block mit Befehl und Feldern. So lässt sich z. B. `select.select_option` mit je eigener Option einrichten (go-e: Phasenmodus und „Laden erzwingen“) oder `switch.turn_on` zum Starten und `switch.turn_off` zum Beenden. Bei einer Select-Entität zeigt das Feld „Option“ ein Dropdown mit den Optionen der Entität. Ist der zweite Zweig noch leer, übernimmt er Befehl und Entität des ersten (Optionen und Werte nicht). Die Ampere-Stufe bleibt unverändert; bestehende Konfigurationen (z. B. Easee) werden beim Laden automatisch umgewandelt und weiter ausgeführt.

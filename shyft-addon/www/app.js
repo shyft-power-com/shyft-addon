@@ -3215,7 +3215,8 @@ function renderIntegrationSections() {
                 autoSave();
             }
         });
-        heading.appendChild(picker);
+        // Heizstab: Dropdown steht im aufklappbaren Bereich unter dem Schalter (siehe unten), nicht in der Ueberschrift.
+        if (section.key !== 'heizstab') heading.appendChild(picker);
 
         // Der Aufklapp-Pfeil (toggleButton) allein ist zu unauffaellig, um als Einblenden-Aktion
         // gefunden zu werden - dieser zusaetzliche, deutlich sichtbarere Text-Button uebernimmt das
@@ -3242,7 +3243,17 @@ function renderIntegrationSections() {
             // "Details einblenden" - ohne diese Ausnahme koennte man dort nie ein Geraet auswaehlen).
             // Deaktivierte Waermepumpe: keine Details und keine Geraeteauswahl; der deaktivierte Heizstab behaelt seine Geraeteauswahl
             // (zum Entfernen) und den Schalter "Wärmepumpe steuern" darueber.
-            picker.style.display = sectionDisabled ? (section.key === 'heizstab' ? '' : 'none') : ((expanded || !hasSelection) ? '' : 'none');
+            // Heizstab-Kachel: eingeklappt bleibt nur der Schalter "Heizstab steuern" sichtbar; der Geraete-Dropdown
+            // (auch "nicht vorhanden") liegt im aufklappbaren Bereich, Pfeil und "Details einblenden" sind immer aktiv.
+            const isRodSection = section.key === 'heizstab';
+            if (isRodSection) {
+                picker.style.display = expanded ? '' : 'none';
+                toggleButton.classList.toggle('collapsed', !expanded);
+                toggleButton.disabled = false;
+                showDetailsButton.style.display = expanded ? 'none' : '';
+                return;
+            }
+            picker.style.display = sectionDisabled ? 'none' : ((expanded || !hasSelection) ? '' : 'none');
             toggleButton.classList.toggle('collapsed', !expanded);
             toggleButton.disabled = !hasSelection || sectionDisabled;
             showDetailsButton.style.display = (hasSelection && !expanded && !sectionDisabled) ? '' : 'none';
@@ -3266,6 +3277,7 @@ function renderIntegrationSections() {
         // (siehe buildHeatingRodModeToggle).
         if (section.key === 'heizstab') sectionDiv.appendChild(buildHeatingRodModeToggle());
         sectionDiv.appendChild(showDetailsButton);
+        if (section.key === 'heizstab') sectionDiv.appendChild(picker);
         sectionDiv.appendChild(bodyDiv);
 
         container.appendChild(sectionDiv);
