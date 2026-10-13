@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.305
+
+* **Auto laden: „×“ zum Löschen in allen Eingabefeldern.** In den drei Stufen (Phasenanzahl, Ampere, Ladevorgang) haben der Befehl, die Entität und freie Textfelder jetzt wie die übrigen Entitätsfelder das kleine „×“, mit dem sich eine Eingabe mit einem Klick löschen lässt.
+
 ## 0.0.45.304
 
 * **Heizstab-Kachel einklappbar wie die anderen Kacheln.** Der Aufklapp-Pfeil und der Link „Details einblenden“ sind jetzt auch beim Heizstab immer aktiv. Der Geräte-Dropdown (auch „nicht vorhanden“) liegt im aufklappbaren Bereich; im eingeklappten Zustand bleibt nur der Schalter „Heizstab steuern“ sichtbar.

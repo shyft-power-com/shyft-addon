@@ -230,6 +230,13 @@
         .clearInputButton:hover {
             color: var(--color-text);
         }
+        /* Textfeld ohne Dropdown-Pfeil: "×" ganz rechts */
+        .clearableInput.noDropdownArrow .clearInputButton {
+            right: 0.5em;
+        }
+        .clearableInput.noDropdownArrow .sensorInput {
+            padding-right: 2.2em;
+        }
 
         /* Ersatz fuer die native list=-Vorschlagsliste (siehe attachEntityDropdown in app.js) - kein
            Browser kann darin eine Kopfzeile anzeigen, ein eigenes Panel schon. Optisch an

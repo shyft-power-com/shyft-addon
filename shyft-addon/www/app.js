@@ -5524,7 +5524,7 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
     // wird vom Browser selbst bestimmt und erschien in der HA-Ingress-Umgebung teils NEBEN statt
     // UNTER dem Feld (Nutzer-Feedback); mit dem eigenen Panel bestimmen wir die Position per CSS
     // selbst, wie bei jedem anderen Entitaets-Dropdown in diesem Addon.
-    serviceValueCell.appendChild(attachEntityDropdown(serviceInput, {datalistId: serviceDatalistId, headerText: 'Befehl'}));
+    serviceValueCell.appendChild(wrapEntityInputWithClear(attachEntityDropdown(serviceInput, {datalistId: serviceDatalistId, headerText: 'Befehl'}), serviceInput));
     serviceRow.appendChild(serviceLabelCell);
     serviceRow.appendChild(serviceValueCell);
     serviceTbody.appendChild(serviceRow);
@@ -5638,6 +5638,13 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
                     inputEl = attachEntityDropdown(input, {datalistId: entityDatalistId, headerText: 'Home-Assistant-Entität'});
                 }
                 input.addEventListener('change', autoSave);
+                // "×" zum Loeschen der Eingabe: bei Entitaetsfeldern mit Dropdown-Pfeil, bei Textfeldern ohne. Nicht beim Feld
+                // "option" von select.select_option - das wird bei einer Select-Entitaet durch ein Dropdown ersetzt (wireSelectEntityOptions).
+                if (field.isEntity) {
+                    inputEl = wrapEntityInputWithClear(inputEl, input);
+                } else if (!(inline && serviceInput.value === 'select.select_option' && field.name === 'option')) {
+                    inputEl = wrapEntityInputWithClear(inputEl, input, false);
+                }
                 valueCell.appendChild(inputEl);
                 row.appendChild(keyCell);
                 row.appendChild(valueCell);
@@ -6849,9 +6856,9 @@ function buildTooltip(description) {
 // "×"-Loeschknopf und dem dekorativen Dropdown-Pfeil (siehe .clearableInput/.clearInputButton/
 // .inputDropdownArrow in index.html). Gemeinsam genutzt von buildMappingRow (Sensor-/Aktor-
 // Zuordnung) und den direkten Entitaets-Steuerungsfeldern (buildBatteryCoupledEntityField).
-function wrapEntityInputWithClear(dropdownEl, input) {
+function wrapEntityInputWithClear(dropdownEl, input, showArrow = true) {
     const wrapper = document.createElement('div');
-    wrapper.className = 'clearableInput';
+    wrapper.className = showArrow ? 'clearableInput' : 'clearableInput noDropdownArrow';
     wrapper.appendChild(dropdownEl);
 
     const clearButton = document.createElement('button');
@@ -6865,6 +6872,8 @@ function wrapEntityInputWithClear(dropdownEl, input) {
         input.focus();
     });
     wrapper.appendChild(clearButton);
+
+    if (!showArrow) return wrapper;
 
     // Rein dekorativ, pointer-events:none reicht Klicks ans Input darunter durch.
     const dropdownArrow = document.createElement('span');
