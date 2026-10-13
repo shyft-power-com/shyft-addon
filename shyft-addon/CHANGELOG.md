@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.303
+
+* **Auto laden: eigener Befehl je Zweig.** Die Stufen „Phasenanzahl setzen“ und „Ladevorgang steuern“ haben jetzt für jeden Zweig („Mit 1 Phase laden“ / „Mit 3 Phasen laden“ bzw. „Ladevorgang starten“ / „beenden“) einen eigenen Block mit Befehl und Feldern. So lässt sich z. B. `select.select_option` mit je eigener Option einrichten (go-e: Phasenmodus und „Laden erzwingen“) oder `switch.turn_on` zum Starten und `switch.turn_off` zum Beenden. Bei einer Select-Entität zeigt das Feld „Option“ ein Dropdown mit den Optionen der Entität. Ist der zweite Zweig noch leer, übernimmt er Befehl und Entität des ersten (Optionen und Werte nicht). Die Ampere-Stufe bleibt unverändert; bestehende Konfigurationen (z. B. Easee) werden beim Laden automatisch umgewandelt und weiter ausgeführt.
+* **Test „Laden starten und beenden“ prüft jetzt auch das Beenden.** Nach dem Stopp-Befehl wartet der Test bis zu 60 s, ob die Ladeleistung der Wallbox unter 0,5 kW fällt. Lädt sie weiter, gilt der Test als fehlgeschlagen (Hinweis im Protokoll: bei go-e bedeutet der Wert „Neutral“ nicht „Nicht laden“). Ist der Sensor „Wallbox: Ladestrom“ nicht zugeordnet oder nicht lesbar, bleibt es bei der bisherigen Bewertung ohne Prüfung.
+
 ## 0.0.45.301
 
 * **Diagnose-Log für auffällige PV-Prognosen.** Damit sich ein Ausreißer wie der Spitzenwert von 8,9 kW um 12 Uhr nachvollziehen lässt, schreibt das Add-on jetzt einen Log-Eintrag („PV-Prognose-Auffälligkeit“, im Add-on-Log und in `/data/pv_forecast_anomalies.jsonl`), wenn der Prognosewert einer Stunde über 3 kW liegt und mehr als doppelt so hoch ist wie in der Vorstunde. Der Eintrag enthält alle Eingangswerte: Einstrahlung der Mittelungsstunden, die genutzte Fläche (m², auch ob das Standardprofil galt), die rechnerisch nötige Einstrahlung, Wettercode/Bewölkung sowie Stand von Wetter-Cache und Kalibrierung. Dasselbe gilt für den Wert, der im Optimierungs-Input ankommt (inklusive Sprüngen gegenüber dem für dieselbe Stunde gespeicherten Wert), und für die Wetterdaten selbst (Einstrahlung über 1.000 W/m² oder eine einzelne Spitze). Die Prognose selbst bleibt unverändert.

@@ -714,6 +714,19 @@
             margin-left: 1.2em;
             margin-top: 0.3em;
         }
+        /* Block je Zweig (Befehl + Felder) unter der Stufen-Beschriftung, siehe buildBranchStage */
+        .carChargeBranchBlock {
+            margin-left: 1.2em;
+            margin-top: 0.4em;
+            margin-bottom: 0.4em;
+        }
+        .carChargeStage > .carChargeBranchBlock:last-child {
+            margin-bottom: 0;
+        }
+        /* gleiche Beschriftungsbreite in allen Tabellen eines Blocks, damit die Eingabefelder untereinander fluchten */
+        .carChargeBranchBlock td:first-child {
+            min-width: 10em;
+        }
 
         .integrationSection {
             position: relative;

@@ -702,11 +702,41 @@ function dropForbiddenHotWaterService() {
 // buildBranchedStageFields) - phaseCount by computed phase count, control by start vs. stop.
 // amperage has no branches: its Ampere value is always the same computed number regardless of
 // outcome, so it gets one or more auto-filled fields instead (see amountFields).
+//
+// Stufen mit Zweigen (phaseCount, control) speichern je Zweig einen eigenen Befehl samt Feldern:
+// {branches: {'1': {service, sharedFields}, '3': {...}}} - so kann "starten" z.B. switch.turn_on und
+// "beenden" switch.turn_off sein (siehe buildBranchStage). Aelteres Format (ein Befehl fuer die ganze
+// Stufe + branchFields) wird beim Laden umgewandelt (siehe stageToBranches); app.py versteht beide.
 const CAR_CHARGE_STAGE_BRANCHES = {
     phaseCount: {keys: ['1', '3'], labels: ['Mit 1 Phase laden', 'Mit 3 Phasen laden']},
     amperage: {keys: [], labels: [], amountUnit: 'A'},
     control: {keys: ['start', 'stop'], labels: ['Ladevorgang starten', 'Ladevorgang beenden']},
 };
+
+// Wandelt eine gespeicherte Stufe in das Format "Befehl je Zweig" um: Stufen im alten Format (ein Befehl,
+// gemeinsame Felder + branchFields) geben jedem Zweig den bisherigen Befehl mit gemeinsamen und Zweig-Feldern.
+function stageToBranches(stage, branchKeys) {
+    const result = {};
+    const source = stage || {};
+    for (const key of branchKeys) {
+        if (source.branches) {
+            result[key] = source.branches[key] || {service: '', sharedFields: {}};
+        } else {
+            result[key] = {
+                service: source.service || '',
+                sharedFields: {...(source.sharedFields || {}), ...((source.branchFields || {})[key] || {})},
+            };
+        }
+    }
+    return {branches: result};
+}
+
+// Stufe mit Zweigen vollstaendig? Jeder Zweig braucht einen Befehl (altes Format: der eine Befehl der Stufe).
+function isBranchStageComplete(stage, branchKeys) {
+    if (!stage) return false;
+    if (stage.branches) return branchKeys.every(key => !!(stage.branches[key] || {}).service);
+    return !!stage.service;
+}
 
 // actorMappings keys that get an on/off "nur simulieren" toggle. battery_action_stop/car_charge_stop
 // are shared stop-actors for an already-toggled type and don't get their own toggle.
@@ -768,7 +798,7 @@ let currentIntegrationSelections = {};
 // the single-stage "Warmwasserbereitung" recipe, since both are built from the same picker.
 // previousSharedFields carries forward whatever was already saved for a field that's no longer
 // rendered (see the isNumber branch below), so it isn't silently wiped out on the next save.
-function readStageFromDom(idPrefix, stageKey, integrationKey, amountUnit, branchKeys, previousSharedFields) {
+function readStageFromDom(idPrefix, stageKey, integrationKey, amountUnit, branchKeys, previousSharedFields, inlineEnum = false) {
     const serviceElement = document.getElementById(idPrefix + stageKey + '_service');
     if (!serviceElement) return null;
     const stage = {service: serviceElement.value, sharedFields: {}, branchFields: {}, amountFields: []};
@@ -781,7 +811,8 @@ function readStageFromDom(idPrefix, stageKey, integrationKey, amountUnit, branch
         // verwechseln - das ist dann immer das Mengenfeld, auch ohne Einheitstreffer.
         const numberFieldsInMatch = match.fields.filter(f => f.isNumber && f.options.length === 0);
         for (const field of match.fields) {
-            if (field.options.length === 0) {
+            // inlineEnum (Befehl je Zweig): auch Felder mit festen Auswahlwerten stehen als normales Feld im Block
+            if (field.options.length === 0 || inlineEnum) {
                 if (field.isDevice) {
                     // never shown in the UI - always the already-selected integration's own device
                     const devices = getIntegrationDevices(integrationKey);
@@ -916,6 +947,23 @@ async function saveConfigurationNow() {
     }
     for (const stageKey of Object.keys(CAR_CHARGE_STAGE_BRANCHES)) {
         const branch = CAR_CHARGE_STAGE_BRANCHES[stageKey];
+        if (branch.keys.length > 0) {
+            // Stufe mit Zweigen: je Zweig ein eigener Befehl samt Feldern (siehe buildBranchStage)
+            const previousBranches = stageToBranches(carChargeRecipe[stageKey], branch.keys).branches;
+            const branches = {};
+            let anyBlock = false;
+            for (const key of branch.keys) {
+                const block = readStageFromDom('car_charge_', stageKey + '_' + key, 'wallbox', undefined, [], (previousBranches[key] || {}).sharedFields, true);
+                if (block) {
+                    anyBlock = true;
+                    branches[key] = {service: block.service, sharedFields: block.sharedFields};
+                } else {
+                    branches[key] = previousBranches[key];
+                }
+            }
+            if (anyBlock) carChargeRecipe[stageKey] = {branches};
+            continue;
+        }
         const stage = readStageFromDom('car_charge_', stageKey, 'wallbox', branch.amountUnit, branch.keys, (carChargeRecipe[stageKey] || {}).sharedFields);
         if (stage) carChargeRecipe[stageKey] = stage;
     }
@@ -2196,8 +2244,8 @@ function isSectionComplete(section, currentIds) {
     if (section.actions.some(k => CAR_CHARGE_ACTION_KEYS.has(k)) && !isActionToggleOff('car_charge_start')) {
         const recipe = configData['carChargeRecipe'] || {};
         const amperageStage = recipe.amperage || {};
-        const isThreeStageComplete = recipe.type === 'three_stage' && (recipe.phaseCount || {}).service
-            && amperageStage.service && (amperageStage.amountFields || []).length > 0 && (recipe.control || {}).service;
+        const isThreeStageComplete = recipe.type === 'three_stage' && isBranchStageComplete(recipe.phaseCount, CAR_CHARGE_STAGE_BRANCHES.phaseCount.keys)
+            && amperageStage.service && (amperageStage.amountFields || []).length > 0 && isBranchStageComplete(recipe.control, CAR_CHARGE_STAGE_BRANCHES.control.keys);
         const isHaAutomationComplete = recipe.type === 'ha_automation' && !!recipe.haAutomationEntityId;
         if (!(isThreeStageComplete || isHaAutomationComplete)) {
             return false;
@@ -2296,8 +2344,8 @@ function computeMissingRequiredFieldsWarnings() {
         if (section.actions.some(k => CAR_CHARGE_ACTION_KEYS.has(k)) && !isActionToggleOff('car_charge_start')) {
             const recipe = configData['carChargeRecipe'] || {};
             const amperageStage = recipe.amperage || {};
-            const isThreeStageComplete = recipe.type === 'three_stage' && (recipe.phaseCount || {}).service
-                && amperageStage.service && (amperageStage.amountFields || []).length > 0 && (recipe.control || {}).service;
+            const isThreeStageComplete = recipe.type === 'three_stage' && isBranchStageComplete(recipe.phaseCount, CAR_CHARGE_STAGE_BRANCHES.phaseCount.keys)
+                && amperageStage.service && (amperageStage.amountFields || []).length > 0 && isBranchStageComplete(recipe.control, CAR_CHARGE_STAGE_BRANCHES.control.keys);
             const isHaAutomationComplete = recipe.type === 'ha_automation' && !!recipe.haAutomationEntityId;
             if (!(isThreeStageComplete || isHaAutomationComplete)) {
                 missing.push({label: 'Auto laden (Ladesteuerung)', fieldId: recipe.type === 'ha_automation' ? 'car_charge_ha_automation_entity' : null});
@@ -5402,9 +5450,13 @@ function getIntegrationEntityIds(integrationKey) {
 // exactly the kind of field that differs between the two - the user never has to know or type the
 // raw values, and the addon assembles the actual service-call data at runtime (see
 // call_recipe_stage in app.py).
-function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateServices, stageData, branchKeys, branchLabels, placeholderExample, amountUnit, showDot = true, integrationKey = null) {
+// inline=true (Befehl je Zweig, siehe buildBranchStage): der Block ist EIN Zweig - Befehl und alle seine Felder (auch
+// die mit festen Auswahlwerten, als Dropdown) stehen direkt darunter; stageData ist {service, sharedFields}.
+function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateServices, stageData, branchKeys, branchLabels, placeholderExample, amountUnit, showDot = true, integrationKey = null, inline = false) {
     const wrapper = document.createElement('div');
-    wrapper.className = 'carChargeStage';
+    wrapper.className = inline ? 'carChargeStage carChargeBranchBlock' : 'carChargeStage';
+    // Aktuelle Feldwerte dieses Blocks (Startwerte aus der Konfiguration; applyState setzt sie fuer die Vorbelegung neu)
+    let fieldValues = {...(stageData.sharedFields || {})};
 
     // marks this step on the continuous vertical line running down .carChargeStages (see CSS).
     // Single-stage recipes (e.g. "Warmwasserbereitung") aren't wrapped in .carChargeStages and
@@ -5447,7 +5499,7 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
     const serviceLabelCell = document.createElement('td');
     serviceLabelCell.className = 'carChargeStageLabelCell';
     serviceLabelCell.textContent = label;
-    serviceLabelCell.appendChild(buildTooltip(tooltip));
+    if (tooltip) serviceLabelCell.appendChild(buildTooltip(tooltip));
     if (stageDot) serviceLabelCell.appendChild(stageDot);
     const serviceValueCell = document.createElement('td');
     const serviceInput = document.createElement('input');
@@ -5474,8 +5526,8 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
         fieldsContainer.innerHTML = '';
         const match = allServiceOptions.find(s => s.service === serviceInput.value);
         if (!match) return;
-        const staticFields = match.fields.filter(f => f.options.length === 0);
-        const enumFields = match.fields.filter(f => f.options.length > 0);
+        const staticFields = inline ? match.fields : match.fields.filter(f => f.options.length === 0);
+        const enumFields = inline ? [] : match.fields.filter(f => f.options.length > 0);
 
         // device-selector fields (e.g. device_id) are never shown at all - there's exactly one
         // device to mean (the already-selected integration's own), so saveConfigurationNow fills
@@ -5496,11 +5548,31 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
                 keyCell.textContent = field.label;
                 const valueCell = document.createElement('td');
 
+                if (field.options.length > 0) {
+                    // Feld mit festen Auswahlwerten (z.B. easee.action_command) - im Block je Zweig ein Dropdown
+                    const select = document.createElement('select');
+                    select.id = idPrefix + stageKey + '_field_' + field.name;
+                    select.className = 'sensorInput';
+                    for (const opt of field.options) {
+                        const optionEl = document.createElement('option');
+                        optionEl.value = opt.value;
+                        optionEl.textContent = String(opt.label) === String(opt.value) ? opt.label : `${opt.label} (${opt.value})`;
+                        select.appendChild(optionEl);
+                    }
+                    if (fieldValues[field.name] !== undefined) select.value = fieldValues[field.name];
+                    select.addEventListener('change', autoSave);
+                    valueCell.appendChild(select);
+                    row.appendChild(keyCell);
+                    row.appendChild(valueCell);
+                    staticTbody.appendChild(row);
+                    continue;
+                }
+
                 const input = document.createElement('input');
                 input.id = idPrefix + stageKey + '_field_' + field.name;
                 input.className = 'sensorInput';
                 input.setAttribute('autocomplete', 'off');
-                input.value = (stageData.sharedFields || {})[field.name] || '';
+                input.value = fieldValues[field.name] || '';
                 let inputEl = input;
                 if (field.isEntity) {
                     // an "entity_id" target selector (e.g. number.set_value) has no fixed
@@ -5561,6 +5633,11 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
             }
             staticTable.appendChild(staticTbody);
             fieldsContainer.appendChild(staticTable);
+            if (inline && serviceInput.value === 'select.select_option') {
+                // im eigenen Container suchen - beim ersten Aufbau haengt der Block noch nicht im Dokument
+                wireSelectEntityOptions(fieldsContainer.querySelector('[id="' + idPrefix + stageKey + '_field_entity_id"]'),
+                    fieldsContainer.querySelector('[id="' + idPrefix + stageKey + '_field_option"]'));
+            }
         }
 
         if (enumFields.length > 0) {
@@ -5608,6 +5685,139 @@ function buildBranchedStageFields(idPrefix, stageKey, label, tooltip, candidateS
     });
     renderFields();
 
+    // Fuer die Vorbelegung des zweiten Zweigs (siehe buildBranchStage): Befehl + Feldwerte auslesen bzw. setzen.
+    // Kopiert wird nur der Befehl und die Entitaet - alle anderen Felder (Dropdowns, Optionen, Werte) sollen je Zweig verschieden sein.
+    wrapper.getState = () => {
+        const state = {service: serviceInput.value, fields: {}};
+        const match = allServiceOptions.find(s => s.service === serviceInput.value);
+        if (match) {
+            for (const field of match.fields) {
+                if (!(field.isEntity || field.name === 'entity_id')) continue;
+                const el = document.getElementById(idPrefix + stageKey + '_field_' + field.name);
+                if (el) state.fields[field.name] = el.value;
+            }
+        }
+        return state;
+    };
+    wrapper.applyState = (state) => {
+        serviceInput.value = state.service;
+        fieldValues = {...state.fields};
+        renderFields();
+    };
+
+    return wrapper;
+}
+
+// Zu einem select.select_option-Block: sobald eine Select-Entitaet gewaehlt ist, wird das Feld "option" zu einem
+// Dropdown mit den Optionen dieser Entitaet (Attribut "options", siehe /entity-select-options in app.py) - der Nutzer
+// muss den genauen Text nicht kennen. Ohne Treffer (Entitaet unbekannt/leer, Abruf fehlgeschlagen) bleibt das Textfeld.
+function wireSelectEntityOptions(entityInput, optionInput) {
+    if (!entityInput || !optionInput) return;
+    const textInput = optionInput;
+    let currentField = textInput;
+    let requestToken = 0;
+    let firstRun = true;
+
+    function useTextInput() {
+        if (currentField === textInput) return;
+        textInput.value = currentField.value;
+        currentField.replaceWith(textInput);
+        currentField = textInput;
+    }
+
+    async function refresh() {
+        const entityId = entityInput.value.trim();
+        const token = ++requestToken;
+        if (!/^select\.[a-z0-9_]+$/.test(entityId)) {
+            useTextInput();
+            return;
+        }
+        let options = [];
+        try {
+            options = await getJson(insideHomeAssistant + '/entity-select-options?entity_id=' + encodeURIComponent(entityId));
+        } catch (err) {
+            options = [];
+        }
+        if (token !== requestToken) return;
+        if (!Array.isArray(options) || options.length === 0) {
+            useTextInput();
+            return;
+        }
+        const select = document.createElement('select');
+        select.id = textInput.id;
+        select.className = 'sensorInput';
+        // Beim ersten Aufbau bleibt der gespeicherte Wert; wechselt der Nutzer die Entitaet, gilt der alte Wert nur, wenn die neue ihn auch kennt
+        let previous = currentField.value;
+        const wasFirstRun = firstRun;
+        if (!firstRun && !options.includes(previous)) previous = '';
+        firstRun = false;
+        const values = options.slice();
+        if (previous && !values.includes(previous)) values.unshift(previous);
+        for (const value of values) {
+            const optionEl = document.createElement('option');
+            optionEl.value = value;
+            optionEl.textContent = value;
+            select.appendChild(optionEl);
+        }
+        select.value = previous && values.includes(previous) ? previous : values[0];
+        select.addEventListener('change', autoSave);
+        currentField.replaceWith(select);
+        currentField = select;
+        // Dropdown zeigt sofort einen Wert (den ersten) - der muss auch gespeichert werden, nicht nur angezeigt
+        if (!previous && !wasFirstRun) autoSave();
+    }
+
+    entityInput.addEventListener('change', refresh);
+    refresh();
+}
+
+// Stufe mit Zweigen ("1. Phasenanzahl setzen", "3. Ladevorgang steuern"): Kopfzeile mit Stufen-Beschriftung, darunter je Zweig
+// ein eigener Block mit Befehl + dessen Feldern (siehe buildBranchedStageFields mit inline=true) - so darf jeder Zweig einen
+// anderen Befehl haben (z.B. switch.turn_on / switch.turn_off) oder denselben mit anderen Werten (z.B. easee.action_command).
+// Vorbelegung: Ist der letzte Zweig noch leer, uebernimmt er Befehl und Entitaet des ersten, solange der
+// Nutzer ihn nicht selbst angefasst hat.
+function buildBranchStage(idPrefix, stageKey, label, tooltip, candidateServices, stageData, branchKeys, branchLabels, placeholderExample, integrationKey) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'carChargeStage';
+
+    const headerTable = document.createElement('table');
+    const headerTbody = document.createElement('tbody');
+    const headerRow = document.createElement('tr');
+    const headerCell = document.createElement('td');
+    headerCell.className = 'carChargeStageLabelCell';
+    headerCell.textContent = label;
+    headerCell.appendChild(buildTooltip(tooltip));
+    const stageDot = document.createElement('span');
+    stageDot.className = 'carChargeStageDot';
+    headerCell.appendChild(stageDot);
+    headerRow.appendChild(headerCell);
+    headerTbody.appendChild(headerRow);
+    headerTable.appendChild(headerTbody);
+    wrapper.appendChild(headerTable);
+
+    const branches = stageToBranches(stageData, branchKeys).branches;
+    const blocks = branchKeys.map((key, i) => {
+        const block = buildBranchedStageFields(idPrefix, stageKey + '_' + key, branchLabels[i], '', candidateServices,
+            branches[key], [], [], placeholderExample, undefined, false, integrationKey, true);
+        wrapper.appendChild(block);
+        return block;
+    });
+
+    if (blocks.length > 1) {
+        const first = blocks[0];
+        const last = blocks[blocks.length - 1];
+        let following = !branches[branchKeys[branchKeys.length - 1]].service;
+        last.addEventListener('change', () => {
+            following = false;
+        });
+        first.addEventListener('change', () => {
+            if (!following) return;
+            const state = first.getState();
+            if (!state.service) return;
+            last.applyState(state);
+            autoSave();
+        });
+    }
     return wrapper;
 }
 
@@ -5625,8 +5835,8 @@ function buildCarChargeControl() {
     const phaseCountStage = recipe.phaseCount || {};
     const amperageStage = recipe.amperage || {};
     const controlStage = recipe.control || {};
-    const isThreeStageComplete = recipe.type === 'three_stage' && phaseCountStage.service
-        && amperageStage.service && (amperageStage.amountFields || []).length > 0 && controlStage.service;
+    const isThreeStageComplete = recipe.type === 'three_stage' && isBranchStageComplete(phaseCountStage, CAR_CHARGE_STAGE_BRANCHES.phaseCount.keys)
+        && amperageStage.service && (amperageStage.amountFields || []).length > 0 && isBranchStageComplete(controlStage, CAR_CHARGE_STAGE_BRANCHES.control.keys);
     const isHaAutomationComplete = recipe.type === 'ha_automation' && !!recipe.haAutomationEntityId;
     const carChargeConfigured = isThreeStageComplete || isHaAutomationComplete;
     const carChargeHint = buildTestGateHint();
@@ -5669,21 +5879,21 @@ function buildCarChargeControl() {
     // a single continuous line (border-left on stagesWrapper itself, see .carChargeStages)
     // now runs alongside all three numbered steps, with a dot marking each one (see the
     // "stageDot" appended inside buildBranchedStageFields) - replaces the old per-gap connector
-    stagesWrapper.appendChild(buildBranchedStageFields('car_charge_', 'phaseCount', '1. Phasenanzahl setzen',
-        'Befehl, mit dem die Phasenzahl an deiner Wallbox eingestellt wird.',
+    stagesWrapper.appendChild(buildBranchStage('car_charge_', 'phaseCount', '1. Phasenanzahl setzen',
+        'Befehl, mit dem die Phasenzahl an deiner Wallbox eingestellt wird - getrennt für 1 und 3 Phasen (z.B. dieselbe Select-Entität mit unterschiedlicher Option, oder zwei verschiedene Befehle).',
         candidateServices, phaseCountStage,
         CAR_CHARGE_STAGE_BRANCHES.phaseCount.keys, CAR_CHARGE_STAGE_BRANCHES.phaseCount.labels,
-        'z.B. set_charger_phase_mode', undefined, true, 'wallbox'));
+        'z.B. set_charger_phase_mode', 'wallbox'));
     stagesWrapper.appendChild(buildBranchedStageFields('car_charge_', 'amperage', '2. Amperezahl setzen',
         'Befehl, mit dem die Ladestromstärke (Ampere) an deiner Wallbox eingestellt wird. Wähle die Entität, die den Ladestrom entgegennimmt (meist eine number-Entität mit Einheit "A") - das Addon berechnet die passende Amperezahl aus dem Ziel-kW-Wert von shyft-power und sendet sie automatisch.',
         candidateServices, amperageStage,
         CAR_CHARGE_STAGE_BRANCHES.amperage.keys, CAR_CHARGE_STAGE_BRANCHES.amperage.labels,
         'z.B. set_value', CAR_CHARGE_STAGE_BRANCHES.amperage.amountUnit, true, 'wallbox'));
-    stagesWrapper.appendChild(buildBranchedStageFields('car_charge_', 'control', '3. Ladevorgang steuern',
-        'Befehl, mit dem der Ladevorgang gestartet bzw. beendet wird.',
+    stagesWrapper.appendChild(buildBranchStage('car_charge_', 'control', '3. Ladevorgang steuern',
+        'Befehl, mit dem der Ladevorgang gestartet bzw. beendet wird - getrennt für Starten und Beenden (z.B. switch.turn_on / switch.turn_off, oder derselbe Befehl mit unterschiedlicher Option).',
         candidateServices, controlStage,
         CAR_CHARGE_STAGE_BRANCHES.control.keys, CAR_CHARGE_STAGE_BRANCHES.control.labels,
-        'z.B. action_command', undefined, true, 'wallbox'));
+        'z.B. action_command', 'wallbox'));
     stagesWrapper.style.display = recipeSelect.value === 'three_stage' ? '' : 'none';
     wrapper.appendChild(stagesWrapper);
 
@@ -5781,6 +5991,7 @@ function buildCarChargeControl() {
         let cancelled = false;
         let failMessage = '';
         let unverifiedSteps = 0;
+        let unverifiedStop = false;
         try {
             for (const targetKw of [2.3, 6.9]) {
                 const kwLabel = targetKw.toFixed(1).replace('.', ',');
@@ -5832,17 +6043,19 @@ function buildCarChargeControl() {
                 if (!stopResult.success) {
                     ok = false;
                     failMessage = failMessage || ('Fehler beim Beenden: ' + (stopResult.message || 'unbekannt'));
+                } else if (stopResult.verified === false) {
+                    unverifiedStop = true;
                 }
             }
             if (!cancelled) markActionTested('car_charge_start', ok);
             applyTestGate('car_charge_start', checkmark, carChargeHint, true);
             if (cancelled) {
-                status.textContent = 'Test abgebrochen' + (startedCharging ? ' - das Laden wurde beendet. Bitte prüfe kurz in deiner Wallbox-App, ob die Wallbox nicht mehr lädt.' : '.');
+                status.textContent = 'Test abgebrochen' + (startedCharging ? ' - der Stopp-Befehl wurde gesendet. Bitte prüfe kurz in deiner Wallbox-App, ob die Wallbox nicht mehr lädt.' : '.');
                 status.className = 'autoActionStatus';
                 wallboxStatusDisplay.className = 'autoActionValue';
             } else if (ok) {
                 status.textContent = 'Erfolgreich: 2,3 kW → 6,9 kW → Laden beendet.'
-                    + (unverifiedSteps > 0 ? ' (Ladeleistung konnte nicht geprüft werden - Sensor "Wallbox: Ladestrom" nicht lesbar.)' : ' Die Wallbox hat erfolgreich geladen. Bitte prüfe kurz in deiner Wallbox-App, ob das Laden auch erfolgreich beendet wurde.');
+                    + (unverifiedSteps > 0 || unverifiedStop ? ' (Ladeleistung konnte nicht geprüft werden - Sensor "Wallbox: Ladestrom" nicht lesbar.)' : ' Die Wallbox hat erfolgreich geladen und das Laden wurde nachweislich beendet.');
                 status.className = 'autoActionStatus status-ok';
                 wallboxStatusDisplay.className = 'autoActionValue testSuccess';
             } else {
