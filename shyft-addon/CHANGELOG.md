@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.306
+
+* **Diagramme: feste Skala beim Zoomen und Verschieben.** Die senkrechte Skala (auch die rechte Achse der zweiten Kurve, z. B. beim Innenraum) richtet sich jetzt immer nach dem gesamten Zeitraum des Diagramms statt nach dem gerade sichtbaren Ausschnitt. Beim Hineinzoomen und Verschieben bleiben die Achsenwerte dadurch unverändert, und Kurven lassen sich über verschiedene Zeitfenster hinweg vergleichen. Gilt für alle Diagramme mit Zoom (Linien-, Prognose-/Ist- und Vergleichsdiagramme).
+
 ## 0.0.45.305
 
 * **Auto laden: „×“ zum Löschen in allen Eingabefeldern.** In den drei Stufen (Phasenanzahl, Ampere, Ladevorgang) haben der Befehl, die Entität und freie Textfelder jetzt wie die übrigen Entitätsfelder das kleine „×“, mit dem sich eine Eingabe mit einem Klick löschen lässt.

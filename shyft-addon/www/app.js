@@ -8098,6 +8098,18 @@ function chartWindowIndices(labels, view) {
 
 const sliceChartSeries = (series, w) => (Array.isArray(series) ? series.slice(w.i0, w.i1 + 1) : series);
 
+// Y-Skala beim Zoomen/Verschieben (Nutzer-Vorgabe): bleibt fuer den ganzen Zeitraum gleich, statt sich an das sichtbare Fenster anzupassen.
+// Die Chart-Funktionen veroeffentlichen ihre Skala nach dem Berechnen in ctx.scale und uebernehmen eine vorgegebene aus ctx.fixedScale.
+// Hier wird sie einmal je Chart aus einem Probe-Bau mit dem vollen Zeitraum gewonnen (holder merkt sie sich fuer alle weiteren Fenster).
+function applyFullRangeScale(ctx, holder, buildFull) {
+    if (!holder.scale) {
+        const probe = {hidden: ctx.hidden, toggle: null};
+        buildFull(probe);
+        holder.scale = probe.scale || null;
+    }
+    ctx.fixedScale = holder.scale;
+}
+
 // Touch-Bedienung der Charts (Handy), zentral statt je Chart:
 //   Antippen             - Tooltip an dieser Stelle FESTSETZEN (bleibt stehen, auch nach Neuzeichnen/30-s-Refresh); erneut dieselbe
 //                          Stelle antippen blendet ihn aus, eine andere Stelle (auch in einem anderen Chart) versetzt ihn
@@ -8455,9 +8467,11 @@ function computeNiceTicks(min, max, targetCount = 4) {
 }
 
 function buildLineChart(title, unit, labels, values, options = {}) {
+    const scaleHolder = {};
     return makeToggleableChart(options.chartKey, ctx => {
         const w = chartWindowIndices(labels, ctx.view);
         if (w.full) return buildLineChartImpl(title, unit, labels, values, options, ctx);
+        applyFullRangeScale(ctx, scaleHolder, probe => buildLineChartImpl(title, unit, labels, values, options, probe));
         const sliced = {...options};
         if (options.dashedFromIndex !== null && options.dashedFromIndex !== undefined) sliced.dashedFromIndex = Math.max(0, options.dashedFromIndex - w.i0);
         if (options.overlayForecast) sliced.overlayForecast = sliceChartSeries(options.overlayForecast, w);
@@ -8572,6 +8586,9 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         const totalRange = ((yMax - yMin) || 1) / CHART_BAND_FRACTION;
         if (bandPrimary === 'upper') yMin = yMax - totalRange; else yMax = yMin + totalRange;
     }
+    // Zoom/Verschieben: Skala des ganzen Zeitraums statt des sichtbaren Fensters (siehe applyFullRangeScale)
+    if (ctx.fixedScale) { yMin = ctx.fixedScale.yMin; yMax = ctx.fixedScale.yMax; }
+    ctx.scale = {yMin, yMax};
     const yRange = (yMax - yMin) || 1;
     const lastIndex = scaledValues.length - 1 || 1;
 
@@ -8615,6 +8632,9 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
             yMax2 = Math.ceil(yMax2);
             if (yMax2 === yMin2) yMax2 = yMin2 + 1;
         }
+        if (ctx.fixedScale && ctx.fixedScale.yMin2 !== undefined) { yMin2 = ctx.fixedScale.yMin2; yMax2 = ctx.fixedScale.yMax2; }
+        ctx.scale.yMin2 = yMin2;
+        ctx.scale.yMax2 = yMax2;
         yRange2 = yMax2 - yMin2;
         points2 = merged2.map((v, i) => (v === null || v === undefined ? null : [
             paddingLeft + (i / lastIndex) * plotWidth,
@@ -9137,9 +9157,11 @@ function buildAussentemperaturForecastActualChart(labels, temperature) {
 const ACTION_BAND_OPACITY = 0.32;
 
 function buildForecastActualChart(title, unit, labels, forecast, actual, options = {}) {
+    const scaleHolder = {};
     return makeToggleableChart(options.chartKey, ctx => {
         const w = chartWindowIndices(labels, ctx.view);
         if (w.full) return buildForecastActualChartImpl(title, unit, labels, forecast, actual, options, ctx);
+        applyFullRangeScale(ctx, scaleHolder, probe => buildForecastActualChartImpl(title, unit, labels, forecast, actual, options, probe));
         // summaryLabels/summaryForecast: die PV-Ertragssumme (Heute | Morgen) bezieht sich immer auf den vollen Zeitraum
         const windowLabels = sliceChartSeries(labels, w);
         const sliced = {...options, plannedHistory: sliceChartSeries(options.plannedHistory, w), actionHours: sliceChartSeries(options.actionHours, w),
@@ -9228,6 +9250,9 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
         yMin = Math.max(0, rawMin - valueRange * 0.1);
         yMax = rawMax + valueRange * 0.1;
     }
+    // Zoom/Verschieben: Skala des ganzen Zeitraums statt des sichtbaren Fensters (siehe applyFullRangeScale)
+    if (ctx.fixedScale) { yMin = ctx.fixedScale.yMin; yMax = ctx.fixedScale.yMax; }
+    ctx.scale = {yMin, yMax};
     const yRange = (yMax - yMin) || 1;
     const lastIndex = labels.length - 1 || 1;
 
@@ -9437,9 +9462,11 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
 // gemeinsamer Stundenachse. Bewusst eigene Funktion (wie buildPvForecastActualChart): zwei Reihen
 // ohne Luecken, Summen in der Legende, "(Beta)" im Titel.
 function buildComparisonChart(title, unit, labels, optValues, baseValues, options = {}) {
+    const scaleHolder = {};
     return makeToggleableChart(options.chartKey, ctx => {
         const w = chartWindowIndices(labels, ctx.view);
         if (w.full) return buildComparisonChartImpl(title, unit, labels, optValues, baseValues, options, ctx);
+        applyFullRangeScale(ctx, scaleHolder, probe => buildComparisonChartImpl(title, unit, labels, optValues, baseValues, options, probe));
         const windowLabels = sliceChartSeries(labels, w);
         const fromMs = new Date(windowLabels[0]).getTime() - 3600000, toMs = new Date(windowLabels[windowLabels.length - 1]).getTime() + 3600000;
         const sliced = {...options, actualValues: sliceChartSeries(options.actualValues, w),
@@ -9532,8 +9559,11 @@ function buildComparisonChartImpl(title, unit, labels, optValues, baseValues, {d
     const rawMin = Math.min(...defined, 0);
     const rawMax = Math.max(...defined, 0);
     const range = (rawMax - rawMin) || 1;
-    const yMin = rawMin - range * 0.08;
-    const yMax = rawMax + range * 0.08;
+    let yMin = rawMin - range * 0.08;
+    let yMax = rawMax + range * 0.08;
+    // Zoom/Verschieben: Skala des ganzen Zeitraums statt des sichtbaren Fensters (siehe applyFullRangeScale)
+    if (ctx.fixedScale) { yMin = ctx.fixedScale.yMin; yMax = ctx.fixedScale.yMax; }
+    ctx.scale = {yMin, yMax};
     const yRange = (yMax - yMin) || 1;
     const lastIndex = n - 1 || 1;
 
