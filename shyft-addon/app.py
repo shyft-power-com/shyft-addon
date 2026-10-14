@@ -10427,6 +10427,30 @@ def _find_next_hour_action(group, current):
     return next((a for a in group if a.get("Date Start") == date_end and (a.get("Status") or "").lower() == "geplant"), None)
 
 
+def _extend_into_next_hour(group, current):
+    """Verlaengerung statt Beenden+Neustart: hat die Aktion der unmittelbar folgenden Stunde (siehe _find_next_hour_action) denselben Target
+    Value wie die ablaufende current, wird current um deren Zeitfenster verlaengert (Energie, Kosten und Ersparnis summiert) und die Folgeaktion
+    zurueckgegeben (der Aufrufer entfernt sie aus dem Store) - kein erneutes Triggern eines Geraets, das ohnehin schon mit demselben Zielwert
+    laeuft. Ohne passende Folgeaktion None (current bleibt unveraendert). Gemeinsam genutzt vom Stundenwechsel (run_hourly_action_transition) und
+    vom 15-Minuten-Poll (process_shyft_actions): beide laufen um :00 gleichzeitig - ohne dieselbe Verlaengerung im Poll beendete er (und stoppte
+    damit z.B. die Wallbox) eine Aktion, die der Stundenwechsel Sekunden spaeter noch verlaengert haette."""
+    next_action = _find_next_hour_action(group, current)
+    if next_action is None or next_action.get("Target Value") != current.get("Target Value"):
+        return None
+    current["Date End"] = next_action.get("Date End")
+    current["Energy (electr)"] = (current.get("Energy (electr)") or 0) + (next_action.get("Energy (electr)") or 0)
+    # costsopt/costsbase nur summieren, wenn mindestens eine der beiden Stunden sie tatsaechlich gesetzt hatte - sonst wuerden hier faelschlich
+    # "0 + 0"-Werte fuer Aktionstypen entstehen, die (siehe _battery_preservation_value) bewusst GAR KEIN Kosten-Paar fuehren, nur "Savings". Das
+    # Frontend zeigte dann fuer diese Aktionen widerspruechlich "0,00 € / Ersparnis X € / 0,00 €" an (Nutzer-Meldung), obwohl die Ersparnis in
+    # Wahrheit aus einer ganz anderen, unabhaengigen Kennzahl stammt.
+    if current.get("costsopt") is not None or next_action.get("costsopt") is not None:
+        current["costsopt"] = (current.get("costsopt") or 0) + (next_action.get("costsopt") or 0)
+    if current.get("costsbase") is not None or next_action.get("costsbase") is not None:
+        current["costsbase"] = (current.get("costsbase") or 0) + (next_action.get("costsbase") or 0)
+    current["Savings"] = (current.get("Savings") or 0) + (next_action.get("Savings") or 0)
+    return next_action
+
+
 # "Abgeloest" statt "beendet": Wird eine Aktion durch eine andere ihrer Familie abgeloest, die im selben Moment startet
 # (Batterie: Netzladen / Entladen verschieben / Laden verschieben untereinander; Heizung: neue Solltemperatur), wird die
 # alte NICHT beendet - Beenden wuerde Modus/Limits bzw. die Solltemperatur auf den Ruhewert zuruecksetzen, nur damit der
@@ -10533,21 +10557,8 @@ def _run_hourly_action_transition_unlocked():
                     if (a.get("Status") or "").lower().startswith("aktiv")
                     and a.get("Date End") is not None and a["Date End"] <= now_ms]
         for current in expiring:
-            next_action = _find_next_hour_action(group, current)
-            if next_action is not None and next_action.get("Target Value") == current.get("Target Value"):
-                current["Date End"] = next_action.get("Date End")
-                current["Energy (electr)"] = (current.get("Energy (electr)") or 0) + (next_action.get("Energy (electr)") or 0)
-                # costsopt/costsbase nur summieren, wenn mindestens eine der beiden Stunden sie
-                # tatsaechlich gesetzt hatte - sonst wuerden hier faelschlich "0 + 0"-Werte fuer
-                # Aktionstypen entstehen, die (siehe _battery_preservation_value) bewusst GAR KEIN
-                # Kosten-Paar fuehren, nur "Savings". Das Frontend zeigte dann fuer diese Aktionen
-                # widerspruechlich "0,00 € / Ersparnis X € / 0,00 €" an (Nutzer-Meldung), obwohl die
-                # Ersparnis in Wahrheit aus einer ganz anderen, unabhaengigen Kennzahl stammt.
-                if current.get("costsopt") is not None or next_action.get("costsopt") is not None:
-                    current["costsopt"] = (current.get("costsopt") or 0) + (next_action.get("costsopt") or 0)
-                if current.get("costsbase") is not None or next_action.get("costsbase") is not None:
-                    current["costsbase"] = (current.get("costsbase") or 0) + (next_action.get("costsbase") or 0)
-                current["Savings"] = (current.get("Savings") or 0) + (next_action.get("Savings") or 0)
+            next_action = _extend_into_next_hour(group, current)
+            if next_action is not None:
                 to_remove_ids.add(next_action.get("_id"))
                 changed = True
                 continue
@@ -10652,13 +10663,29 @@ def _process_shyft_actions_unlocked():
 
     # Zwei Durchlaeufe: zuerst alle Enden, dann alle Starts (siehe run_hourly_action_transition - sonst kann das
     # Beenden einer alten Batterie-Aktion den Start der neuen im selben Poll wieder ueberschreiben).
-    for action in actions:
+    absorbed_ids = set()  # in eine Vorgaengeraktion verlaengerte Folgeaktionen (siehe _extend_into_next_hour), nicht mehr zu verarbeiten
+    for action in list(actions):
         action_id = action.get("_id")
+        if action_id in absorbed_ids:
+            continue
         if action_id:
             seen_ids.add(action_id)
 
         date_end = action.get("Date End")
         end_passed = date_end is not None and date_end <= now_ms
+        if end_passed and action_id and action_id not in ended_ids and (action.get("Status") or "").lower().startswith("aktiv"):
+            # Wie im Stundenwechsel (siehe _extend_into_next_hour): geht die Aktion mit demselben Zielwert in der Folgestunde weiter, wird sie
+            # verlaengert statt beendet - sonst haengt es an der Reihenfolge der beiden um :00 gleichzeitig laufenden Jobs, ob die Wallbox
+            # kurz nach dem Stundenwechsel gestoppt wird und die (danach doch noch verlaengerte) Aktion nie wieder startet.
+            same_type = [a for a in actions if a.get("Action Name") == action.get("Action Name")]
+            absorbed = _extend_into_next_hour(same_type, action)
+            if absorbed is not None:
+                _update_computed_action(action)
+                _write_computed_actions([a for a in _read_computed_actions() if a.get("_id") != absorbed.get("_id")])
+                if absorbed in actions:
+                    actions.remove(absorbed)
+                absorbed_ids.add(absorbed.get("_id"))
+                continue
         if end_passed and action_id and action_id not in ended_ids:
             superseding = _find_superseding(action, actions, now_ms, config)
             if superseding is not None:

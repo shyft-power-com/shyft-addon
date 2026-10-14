@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.308
+
+* **Fix: Auto-Laden wurde beim Stundenwechsel zu früh beendet.** Um :00 laufen der 15-Minuten-Poll und der Stundenwechsel gleichzeitig. Ging eine Aktion mit demselben Zielwert in der Folgestunde weiter (z. B. Laden mit 11 kW von 13:42 bis 15:00 Uhr), verlängert der Stundenwechsel sie ohne Stopp – der Poll kannte diese Verlängerung nicht. Lief er zuerst, beendete er die Aktion um 14:00 Uhr und stoppte die Wallbox, die danach nicht wieder startete; die Aktion stand trotzdem bis 15:00 Uhr als laufend da. Jetzt verlängert auch der Poll eine auslaufende Aktion in die Folgestunde mit gleichem Zielwert (gemeinsame Funktion für beide Jobs), die Reihenfolge der Jobs spielt keine Rolle mehr. Gilt für alle Aktionstypen mit aufeinanderfolgenden Stunden.
+
 ## 0.0.45.307
 
 * **Strompreis im Energiefluss einheitlich mit dem Strompreis-Chart.** Der Preis über dem Strommast kam bisher aus der Eingabe des gecachten Optimierungslaufs und zeigte dadurch einen anderen (meist niedrigeren) Wert als der Chart, z. B. 18,6 Cent statt 32 Cent. Jetzt wird derselbe Brutto-Preis wie im Chart verwendet: Börsenpreis inklusive Aufschlag bzw. Netzentgelten, oder der feste bzw. HT/NT-Tarif aus der Konfiguration. Die Farbe (günstig/mittel/teuer) richtet sich nach diesem Preis. Nur wenn der Tarif nicht konfiguriert ist oder keine Preise vorliegen, gilt weiter der Preis aus dem Optimierungslauf.
