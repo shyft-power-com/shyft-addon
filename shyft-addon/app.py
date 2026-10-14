@@ -5001,8 +5001,38 @@ PRICE_HIGH_THRESHOLD_CENT = 35
 PRICE_LOW_THRESHOLD_CENT = 25
 
 
-def _read_current_price_info():
-    "Aktueller Strompreis (Cent/kWh) + Einstufung, aus dem stuendlich gecachten dashboard_cache.json (siehe sync_dashboard_chart_data) - dieselbe Quelle und dieselben Schwellen wie der Strompreis-Chart, kein zusaetzlicher shyft-Call. None, wenn noch kein Cache vorhanden oder die aktuelle Stunde darin nicht abgedeckt ist."
+def _current_gross_buy_price_eur(config):
+    """Brutto-Einkaufspreis der aktuellen Stunde (EUR/kWh) - exakt der Wert, den der Strompreis-Chart (readStrompreis) fuer diese Stunde zeigt: Boersenpreis inkl. Aufschlag/Netzentgelt bzw. fester/HT-NT-Tarif aus der Konfiguration (siehe compute_price_buy_array). None, wenn der Tarif nicht (ausreichend) konfiguriert ist oder keine Preise vorliegen."""
+    midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
+    now_hour_utc = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    prices = compute_price_buy_array(config, midnight_utc, MIDNIGHT_ANCHORED_CHART_HOURS) or []
+    index = int((now_hour_utc - midnight_utc).total_seconds() // 3600)
+    if index < 0 or index >= len(prices):
+        return None
+    return prices[index]
+
+
+def _price_level(price_cent):
+    "Einstufung des Strompreises - Grenzen wie im Strompreis-Chart (colorBands in www/app.js: ab Schwelle teuer, bis Schwelle guenstig - jeweils inklusive)."
+    if price_cent >= PRICE_HIGH_THRESHOLD_CENT:
+        return "hoch"
+    if price_cent <= PRICE_LOW_THRESHOLD_CENT:
+        return "niedrig"
+    return "mittel"
+
+
+def _read_current_price_info(config=None):
+    """Aktueller Strompreis (Cent/kWh) + Einstufung fuers Energiefluss-Widget. Bevorzugt der Brutto-Preis aus der Tarif-Konfiguration (wie im
+    Strompreis-Chart, inkl. Aufschlaegen/Netzentgelten - siehe _current_gross_buy_price_eur); nur wenn der nicht verfuegbar ist (Tarif nicht
+    konfiguriert, keine Preise), der Preis aus dem stuendlich gecachten dashboard_cache.json (siehe sync_dashboard_chart_data), dort ohne
+    zusaetzlichen shyft-Call. None, wenn auch dort nichts vorliegt oder die aktuelle Stunde nicht abgedeckt ist."""
+    try:
+        gross_eur = _current_gross_buy_price_eur(config if config is not None else _read_current_config())
+        if gross_eur is not None:
+            price_cent = round(float(gross_eur) * 100, 1)
+            return {"cent": price_cent, "level": _price_level(price_cent)}
+    except Exception as e:
+        print("[Shyft] Brutto-Strompreis fuers Energiefluss-Widget nicht berechenbar, nehme den Cache-Preis:", repr(e))
     try:
         with open(DASHBOARD_CACHE_PATH, "r") as f:
             cache = json.load(f)
@@ -5025,14 +5055,7 @@ def _read_current_price_info():
         price_cent = round(_safe_float(rows[index].get("p_buy")) * 100, 1)
     except (TypeError, ValueError):
         return None
-    # Grenzen wie im Strompreis-Chart (colorBands in www/app.js: ab Schwelle teuer, bis Schwelle guenstig - jeweils inklusive)
-    if price_cent >= PRICE_HIGH_THRESHOLD_CENT:
-        level = "hoch"
-    elif price_cent <= PRICE_LOW_THRESHOLD_CENT:
-        level = "niedrig"
-    else:
-        level = "mittel"
-    return {"cent": price_cent, "level": level}
+    return {"cent": price_cent, "level": _price_level(price_cent)}
 
 
 # Sicherheitsmarge auf den guenstigsten noch bevorstehenden Strompreis - siehe compute_wb_p_min.
@@ -5121,7 +5144,7 @@ def compute_energy_flow_data():
     # die NICHT direkt aus HA kommen (z.B. der Strompreis aus _read_current_price_info, der aus dem
     # shyft-Cache stammt), bekommen bewusst keinen Zeitstempel.
     pv_configured = configured("wechselrichter")
-    price_info = _read_current_price_info() if pv_configured else None
+    price_info = _read_current_price_info(config) if pv_configured else None
     # Netzleistung: wie im Rest des Addons (read_grid_power_kw) der zuletzt aktualisierte Wert aus
     # Wechselrichter-Sensor UND den 'Strom'-Kachel-Sensoren (z.B. Tibber Pulse, sekundenaktuell) -
     # nicht mehr nur der Wechselrichter-Sensor, der bei manchen Geraeten nur alle paar Minuten/Stunden

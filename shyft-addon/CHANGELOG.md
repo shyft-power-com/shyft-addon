@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.307
+
+* **Strompreis im Energiefluss einheitlich mit dem Strompreis-Chart.** Der Preis über dem Strommast kam bisher aus der Eingabe des gecachten Optimierungslaufs und zeigte dadurch einen anderen (meist niedrigeren) Wert als der Chart, z. B. 18,6 Cent statt 32 Cent. Jetzt wird derselbe Brutto-Preis wie im Chart verwendet: Börsenpreis inklusive Aufschlag bzw. Netzentgelten, oder der feste bzw. HT/NT-Tarif aus der Konfiguration. Die Farbe (günstig/mittel/teuer) richtet sich nach diesem Preis. Nur wenn der Tarif nicht konfiguriert ist oder keine Preise vorliegen, gilt weiter der Preis aus dem Optimierungslauf.
+
 ## 0.0.45.306
 
 * **Diagramme: feste Skala beim Zoomen und Verschieben.** Die senkrechte Skala (auch die rechte Achse der zweiten Kurve, z. B. beim Innenraum) richtet sich jetzt immer nach dem gesamten Zeitraum des Diagramms statt nach dem gerade sichtbaren Ausschnitt. Beim Hineinzoomen und Verschieben bleiben die Achsenwerte dadurch unverändert, und Kurven lassen sich über verschiedene Zeitfenster hinweg vergleichen. Gilt für alle Diagramme mit Zoom (Linien-, Prognose-/Ist- und Vergleichsdiagramme).
