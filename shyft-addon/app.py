@@ -5001,8 +5001,38 @@ PRICE_HIGH_THRESHOLD_CENT = 35
 PRICE_LOW_THRESHOLD_CENT = 25
 
 
-def _read_current_price_info():
-    "Aktueller Strompreis (Cent/kWh) + Einstufung, aus dem stuendlich gecachten dashboard_cache.json (siehe sync_dashboard_chart_data) - dieselbe Quelle und dieselben Schwellen wie der Strompreis-Chart, kein zusaetzlicher shyft-Call. None, wenn noch kein Cache vorhanden oder die aktuelle Stunde darin nicht abgedeckt ist."
+def _current_gross_buy_price_eur(config):
+    """Brutto-Einkaufspreis der aktuellen Stunde (EUR/kWh) - exakt der Wert, den der Strompreis-Chart (readStrompreis) fuer diese Stunde zeigt: Boersenpreis inkl. Aufschlag/Netzentgelt bzw. fester/HT-NT-Tarif aus der Konfiguration (siehe compute_price_buy_array). None, wenn der Tarif nicht (ausreichend) konfiguriert ist oder keine Preise vorliegen."""
+    midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
+    now_hour_utc = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    prices = compute_price_buy_array(config, midnight_utc, MIDNIGHT_ANCHORED_CHART_HOURS) or []
+    index = int((now_hour_utc - midnight_utc).total_seconds() // 3600)
+    if index < 0 or index >= len(prices):
+        return None
+    return prices[index]
+
+
+def _price_level(price_cent):
+    "Einstufung des Strompreises - Grenzen wie im Strompreis-Chart (colorBands in www/app.js: ab Schwelle teuer, bis Schwelle guenstig - jeweils inklusive)."
+    if price_cent >= PRICE_HIGH_THRESHOLD_CENT:
+        return "hoch"
+    if price_cent <= PRICE_LOW_THRESHOLD_CENT:
+        return "niedrig"
+    return "mittel"
+
+
+def _read_current_price_info(config=None):
+    """Aktueller Strompreis (Cent/kWh) + Einstufung fuers Energiefluss-Widget. Bevorzugt der Brutto-Preis aus der Tarif-Konfiguration (wie im
+    Strompreis-Chart, inkl. Aufschlaegen/Netzentgelten - siehe _current_gross_buy_price_eur); nur wenn der nicht verfuegbar ist (Tarif nicht
+    konfiguriert, keine Preise), der Preis aus dem stuendlich gecachten dashboard_cache.json (siehe sync_dashboard_chart_data), dort ohne
+    zusaetzlichen shyft-Call. None, wenn auch dort nichts vorliegt oder die aktuelle Stunde nicht abgedeckt ist."""
+    try:
+        gross_eur = _current_gross_buy_price_eur(config if config is not None else _read_current_config())
+        if gross_eur is not None:
+            price_cent = round(float(gross_eur) * 100, 1)
+            return {"cent": price_cent, "level": _price_level(price_cent)}
+    except Exception as e:
+        print("[Shyft] Brutto-Strompreis fuers Energiefluss-Widget nicht berechenbar, nehme den Cache-Preis:", repr(e))
     try:
         with open(DASHBOARD_CACHE_PATH, "r") as f:
             cache = json.load(f)
@@ -5025,14 +5055,7 @@ def _read_current_price_info():
         price_cent = round(_safe_float(rows[index].get("p_buy")) * 100, 1)
     except (TypeError, ValueError):
         return None
-    # Grenzen wie im Strompreis-Chart (colorBands in www/app.js: ab Schwelle teuer, bis Schwelle guenstig - jeweils inklusive)
-    if price_cent >= PRICE_HIGH_THRESHOLD_CENT:
-        level = "hoch"
-    elif price_cent <= PRICE_LOW_THRESHOLD_CENT:
-        level = "niedrig"
-    else:
-        level = "mittel"
-    return {"cent": price_cent, "level": level}
+    return {"cent": price_cent, "level": _price_level(price_cent)}
 
 
 # Sicherheitsmarge auf den guenstigsten noch bevorstehenden Strompreis - siehe compute_wb_p_min.
@@ -5121,7 +5144,7 @@ def compute_energy_flow_data():
     # die NICHT direkt aus HA kommen (z.B. der Strompreis aus _read_current_price_info, der aus dem
     # shyft-Cache stammt), bekommen bewusst keinen Zeitstempel.
     pv_configured = configured("wechselrichter")
-    price_info = _read_current_price_info() if pv_configured else None
+    price_info = _read_current_price_info(config) if pv_configured else None
     # Netzleistung: wie im Rest des Addons (read_grid_power_kw) der zuletzt aktualisierte Wert aus
     # Wechselrichter-Sensor UND den 'Strom'-Kachel-Sensoren (z.B. Tibber Pulse, sekundenaktuell) -
     # nicht mehr nur der Wechselrichter-Sensor, der bei manchen Geraeten nur alle paar Minuten/Stunden
@@ -10404,6 +10427,30 @@ def _find_next_hour_action(group, current):
     return next((a for a in group if a.get("Date Start") == date_end and (a.get("Status") or "").lower() == "geplant"), None)
 
 
+def _extend_into_next_hour(group, current):
+    """Verlaengerung statt Beenden+Neustart: hat die Aktion der unmittelbar folgenden Stunde (siehe _find_next_hour_action) denselben Target
+    Value wie die ablaufende current, wird current um deren Zeitfenster verlaengert (Energie, Kosten und Ersparnis summiert) und die Folgeaktion
+    zurueckgegeben (der Aufrufer entfernt sie aus dem Store) - kein erneutes Triggern eines Geraets, das ohnehin schon mit demselben Zielwert
+    laeuft. Ohne passende Folgeaktion None (current bleibt unveraendert). Gemeinsam genutzt vom Stundenwechsel (run_hourly_action_transition) und
+    vom 15-Minuten-Poll (process_shyft_actions): beide laufen um :00 gleichzeitig - ohne dieselbe Verlaengerung im Poll beendete er (und stoppte
+    damit z.B. die Wallbox) eine Aktion, die der Stundenwechsel Sekunden spaeter noch verlaengert haette."""
+    next_action = _find_next_hour_action(group, current)
+    if next_action is None or next_action.get("Target Value") != current.get("Target Value"):
+        return None
+    current["Date End"] = next_action.get("Date End")
+    current["Energy (electr)"] = (current.get("Energy (electr)") or 0) + (next_action.get("Energy (electr)") or 0)
+    # costsopt/costsbase nur summieren, wenn mindestens eine der beiden Stunden sie tatsaechlich gesetzt hatte - sonst wuerden hier faelschlich
+    # "0 + 0"-Werte fuer Aktionstypen entstehen, die (siehe _battery_preservation_value) bewusst GAR KEIN Kosten-Paar fuehren, nur "Savings". Das
+    # Frontend zeigte dann fuer diese Aktionen widerspruechlich "0,00 € / Ersparnis X € / 0,00 €" an (Nutzer-Meldung), obwohl die Ersparnis in
+    # Wahrheit aus einer ganz anderen, unabhaengigen Kennzahl stammt.
+    if current.get("costsopt") is not None or next_action.get("costsopt") is not None:
+        current["costsopt"] = (current.get("costsopt") or 0) + (next_action.get("costsopt") or 0)
+    if current.get("costsbase") is not None or next_action.get("costsbase") is not None:
+        current["costsbase"] = (current.get("costsbase") or 0) + (next_action.get("costsbase") or 0)
+    current["Savings"] = (current.get("Savings") or 0) + (next_action.get("Savings") or 0)
+    return next_action
+
+
 # "Abgeloest" statt "beendet": Wird eine Aktion durch eine andere ihrer Familie abgeloest, die im selben Moment startet
 # (Batterie: Netzladen / Entladen verschieben / Laden verschieben untereinander; Heizung: neue Solltemperatur), wird die
 # alte NICHT beendet - Beenden wuerde Modus/Limits bzw. die Solltemperatur auf den Ruhewert zuruecksetzen, nur damit der
@@ -10510,21 +10557,8 @@ def _run_hourly_action_transition_unlocked():
                     if (a.get("Status") or "").lower().startswith("aktiv")
                     and a.get("Date End") is not None and a["Date End"] <= now_ms]
         for current in expiring:
-            next_action = _find_next_hour_action(group, current)
-            if next_action is not None and next_action.get("Target Value") == current.get("Target Value"):
-                current["Date End"] = next_action.get("Date End")
-                current["Energy (electr)"] = (current.get("Energy (electr)") or 0) + (next_action.get("Energy (electr)") or 0)
-                # costsopt/costsbase nur summieren, wenn mindestens eine der beiden Stunden sie
-                # tatsaechlich gesetzt hatte - sonst wuerden hier faelschlich "0 + 0"-Werte fuer
-                # Aktionstypen entstehen, die (siehe _battery_preservation_value) bewusst GAR KEIN
-                # Kosten-Paar fuehren, nur "Savings". Das Frontend zeigte dann fuer diese Aktionen
-                # widerspruechlich "0,00 € / Ersparnis X € / 0,00 €" an (Nutzer-Meldung), obwohl die
-                # Ersparnis in Wahrheit aus einer ganz anderen, unabhaengigen Kennzahl stammt.
-                if current.get("costsopt") is not None or next_action.get("costsopt") is not None:
-                    current["costsopt"] = (current.get("costsopt") or 0) + (next_action.get("costsopt") or 0)
-                if current.get("costsbase") is not None or next_action.get("costsbase") is not None:
-                    current["costsbase"] = (current.get("costsbase") or 0) + (next_action.get("costsbase") or 0)
-                current["Savings"] = (current.get("Savings") or 0) + (next_action.get("Savings") or 0)
+            next_action = _extend_into_next_hour(group, current)
+            if next_action is not None:
                 to_remove_ids.add(next_action.get("_id"))
                 changed = True
                 continue
@@ -10629,13 +10663,29 @@ def _process_shyft_actions_unlocked():
 
     # Zwei Durchlaeufe: zuerst alle Enden, dann alle Starts (siehe run_hourly_action_transition - sonst kann das
     # Beenden einer alten Batterie-Aktion den Start der neuen im selben Poll wieder ueberschreiben).
-    for action in actions:
+    absorbed_ids = set()  # in eine Vorgaengeraktion verlaengerte Folgeaktionen (siehe _extend_into_next_hour), nicht mehr zu verarbeiten
+    for action in list(actions):
         action_id = action.get("_id")
+        if action_id in absorbed_ids:
+            continue
         if action_id:
             seen_ids.add(action_id)
 
         date_end = action.get("Date End")
         end_passed = date_end is not None and date_end <= now_ms
+        if end_passed and action_id and action_id not in ended_ids and (action.get("Status") or "").lower().startswith("aktiv"):
+            # Wie im Stundenwechsel (siehe _extend_into_next_hour): geht die Aktion mit demselben Zielwert in der Folgestunde weiter, wird sie
+            # verlaengert statt beendet - sonst haengt es an der Reihenfolge der beiden um :00 gleichzeitig laufenden Jobs, ob die Wallbox
+            # kurz nach dem Stundenwechsel gestoppt wird und die (danach doch noch verlaengerte) Aktion nie wieder startet.
+            same_type = [a for a in actions if a.get("Action Name") == action.get("Action Name")]
+            absorbed = _extend_into_next_hour(same_type, action)
+            if absorbed is not None:
+                _update_computed_action(action)
+                _write_computed_actions([a for a in _read_computed_actions() if a.get("_id") != absorbed.get("_id")])
+                if absorbed in actions:
+                    actions.remove(absorbed)
+                absorbed_ids.add(absorbed.get("_id"))
+                continue
         if end_passed and action_id and action_id not in ended_ids:
             superseding = _find_superseding(action, actions, now_ms, config)
             if superseding is not None:
