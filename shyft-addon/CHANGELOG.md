@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.311
+
+* **Fix: gestartete Aktionen verschwinden nicht mehr aus der Gerätesteuerung.** Bisher wurde eine laufende Aktion samt Eintrag gelöscht, wenn ein neuer Optimierungslauf sie nicht mehr enthielt – besonders häufig, wenn das Ergebnis des stündlichen Laufs kurz vor dem Stundenwechsel (nach :55) eintraf. Die Aktion wurde dann ein paar Minuten zu früh beendet, verschwand aus der Liste und fehlte in der Auswertung, obwohl sie gelaufen war (z. B. „Batterie netzladen“ in der Nacht). Jetzt gilt:
+  * Nach Minute :55 legt ein neuer Lauf **keine neue Aktion** für die laufende Stunde mehr an und ersetzt eine laufende nicht mehr durch eine neue. Beenden (Plan will sie nicht mehr) und das Anpassen des Zielwerts bleiben möglich; die Folgestunde wird weiterhin neu geplant.
+  * Eine **gestartete Aktion bleibt immer erhalten**: Wird sie vorzeitig beendet oder durch eine Aktion mit anderem Zielwert abgelöst, steht sie mit dem tatsächlichen Ende und dem Status „beendet“ bzw. „abgelöst“ weiter in der Liste (mit eigener ID, damit eine neue Aktion derselben Stunde nicht kollidiert) und ist in der Auswertung. Nur geplante, nie gestartete Aktionen fallen bei einer geänderten Planung weiter weg.
+
 ## 0.0.45.310
 
 * **Diagnose-Log für den Zielwert von „Batterie netzladen“.** Damit nachvollziehbar ist, woher z. B. 1,2 kW kommen, schreibt das Add-on beim Berechnen der Aktion für die laufende und die nächste Stunde eine Log-Zeile („Netzladen-Zielwert …“): Netzanteil `GR_B`, PV-Anteil `PV_B`, den daraus gebildeten Wert, den 95-%-Deckel bei Sonnenprognose, die Obergrenzen (Max-Ladeleistung, Live-Limit), den Ziel-Wert sowie die vom Plan vorgesehene Ladestand-Änderung (SOC von → auf, in kWh). Die Berechnung selbst ist unverändert.

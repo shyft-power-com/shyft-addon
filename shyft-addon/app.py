@@ -10114,7 +10114,29 @@ TARGET_VALUE_UNIT_BY_ACTION_NAME = {
 }
 
 
-def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour, start, hour_window, replace_running=False, deferred_ends=None):
+def _retire_running_action(action, now_ms, was_really_started, status="beendet", taken_ids=()):
+    """Behaelt eine laufende (aktive) Aktion in der Geraetesteuerung, wenn ein neuer Optimierungslauf sie vorzeitig beendet oder durch eine andere
+    (z.B. mit anderem Zielwert) abloest, statt sie aus dem Store zu loeschen: Enddatum = jetzt, Status "beendet" bzw. "abgelöst" und eine eigene
+    "_id" - die urspruengliche haengt am Stundenbeginn und gehoert danach einer evtl. neu geplanten Aktion derselben Stunde. Wirklich gelaufene
+    Aktionen kommen zusaetzlich in die Auswertung (wie beim normalen Ende zum Stundenwechsel). Gibt die neue _id zurueck
+    (taken_ids: bereits vergebene IDs, damit sie sicher eindeutig bleibt)."""
+    action["Date End"] = min(action.get("Date End") or int(now_ms), int(now_ms))
+    action["Status"] = status
+    new_id = base_id = f"{action.get('_id')}_ended{int(now_ms)}"
+    counter = 1
+    while new_id in taken_ids:
+        counter += 1
+        new_id = f"{base_id}_{counter}"
+    action["_id"] = new_id
+    if was_really_started:
+        try:
+            energy_archive.archive_completed_action(action)
+        except Exception as e:
+            print("[Shyft] Energie-Archiv: Aktion konnte nicht archiviert werden:", repr(e))
+    return action["_id"]
+
+
+def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour, start, hour_window, replace_running=False, deferred_ends=None, late=None):
     """Ersetzt alle vorhandenen Aktionen vom Typ action_name im lokalen Store, deren Stundenfenster
     zum aktuellen Lauf gehoert (Stunden 0..hour_window-1 ab start), durch die frisch berechneten
     (computed_by_hour, siehe compute_ev_charge_actions) - mit Sonderbehandlung fuer die laufende
@@ -10129,15 +10151,23 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
         Stundenbeginn gebunden - die ID wird dafuer aus startedShyftActionIds entfernt, damit
         process_shyft_actions den Ersatz nicht faelschlich schon als "gestartet" behandelt und
         dessen eigenen Start-Aufruf uebergeht, siehe process_shyft_actions' Docstring zu
-        "abgeloesten" Aktionen).
-      - existiert dort schon eine Aktion, soll laut computed_by_hour aber keine mehr existieren
+        "abgeloesten" Aktionen). Die abgeloeste Aktion bleibt mit Enddatum jetzt, Status "abgelöst"
+        und eigener "_id" in der Geraetesteuerung erhalten (siehe _retire_running_action).
+      - existiert dort schon eine laufende Aktion, soll laut computed_by_hour aber keine mehr existieren
         (Bedingung nicht mehr gegeben): sofort beenden (handle_shyft_action_end), nicht bis zum
-        naechsten process_shyft_actions-Poll warten.
+        naechsten process_shyft_actions-Poll warten - und als "beendet" mit tatsaechlichem Ende in der
+        Geraetesteuerung behalten statt zu loeschen. Eine nur geplante, nie gestartete Aktion faellt dagegen weg.
+      - late (Default: jetzt in den letzten NEAR_HOUR_BOUNDARY_MINUTES der Stunde, siehe _is_near_hour_boundary):
+        es wird KEINE neue Aktion fuer die laufende Stunde angelegt, und eine laufende wird nicht mehr durch eine
+        neu berechnete ersetzt (replace_running) - Beenden und Zielwert-Anpassung bleiben moeglich.
     Stunden 1..hour_window-1: immer vollstaendig ersetzt - sie sind noch nicht gestartet (Status
     "geplant"), koennen also gefahrlos verworfen und aus dem aktuellen Lauf neu aufgebaut werden.
     Aktionen ausserhalb dieses Stundenfensters (z.B. eine gerade zu Ende gegangene Stunde) bleiben
     unangetastet - der Stundenwechsel selbst gehoert zum spaeteren, allgemeinen Start/Ende/
     Verlaengern-Mechanismus."""
+    if late is None:
+        late = _is_near_hour_boundary(start)
+    now_ms = int(time.time() * 1000)
     all_actions = _read_computed_actions()
     run_ids = {f"{id_prefix}_{int((start + timedelta(hours=i)).timestamp() * 1000)}" for i in range(hour_window)}
 
@@ -10146,28 +10176,39 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
 
     hour0_id = f"{id_prefix}_{int(start.timestamp() * 1000)}"
     hour0_existing = existing_in_window.get(hour0_id)
-    config_changed = False
+    started_ids = set(config.get("startedShyftActionIds", []))
+    ended_ids = set(config.get("endedShyftActionIds", []))
+    ids_before = (set(started_ids), set(ended_ids))
 
     if 0 in computed_by_hour:
         if hour0_existing and replace_running:
-            was_really_started = hour0_existing.get("Execution Status") == "yes, started"
-            replacement = computed_by_hour[0]
-            if was_really_started and is_action_type_enabled(config, action_name):
-                # Die neu berechnete Aktion loest die laufende AB: kein Beenden (das wuerde Modus/Limits zuruecksetzen, um
-                # sie sofort wieder zu setzen), der Start der neuen Aktion ueberschreibt die Werte direkt.
-                # Kein Log-Eintrag: ein reibungsloses Abloesen ist der Normalfall, der Status "abgeloest" der alten Aktion zeigt es schon.
-                replacement["_supersedes"] = action_name
+            if late:
+                kept.append(hour0_existing)  # spaet: keine neue Aktion, die laufende bleibt bis zum Stundenwechsel unveraendert
             else:
-                try:
-                    handle_shyft_action_end(hour0_existing, was_really_started, config)
-                except Exception as e:
-                    print(f"[Shyft] Abloesen (Beenden) von '{action_name}' fehlgeschlagen:", repr(e))
-            started_ids = set(config.get("startedShyftActionIds", []))
-            if hour0_existing.get("_id") in started_ids:
-                started_ids.discard(hour0_existing.get("_id"))
-                config["startedShyftActionIds"] = sorted(started_ids)
-                config_changed = True
-            kept.append(replacement)
+                was_really_started = hour0_existing.get("Execution Status") == "yes, started"
+                keep_old = (hour0_existing.get("Status") or "").lower().startswith("aktiv")
+                replacement = computed_by_hour[0]
+                old_status = "beendet"
+                if was_really_started and is_action_type_enabled(config, action_name):
+                    # Die neu berechnete Aktion loest die laufende AB: kein Beenden (das wuerde Modus/Limits zuruecksetzen, um
+                    # sie sofort wieder zu setzen), der Start der neuen Aktion ueberschreibt die Werte direkt.
+                    # Kein Log-Eintrag: ein reibungsloses Abloesen ist der Normalfall, der Status "abgelöst" der alten Aktion zeigt es schon.
+                    replacement["_supersedes"] = action_name
+                    hour0_existing["Execution Status"] = "yes, finished"
+                    old_status = SUPERSEDED_STATUS
+                else:
+                    try:
+                        handle_shyft_action_end(hour0_existing, was_really_started, config)
+                    except Exception as e:
+                        print(f"[Shyft] Abloesen (Beenden) von '{action_name}' fehlgeschlagen:", repr(e))
+                old_id = hour0_existing.get("_id")
+                if keep_old:
+                    retired_id = _retire_running_action(hour0_existing, now_ms, was_really_started, old_status, {a.get("_id") for a in all_actions})
+                    kept.append(hour0_existing)
+                    if hour0_existing.get("Execution Status") != "yes, not finished":
+                        ended_ids.add(retired_id)
+                started_ids.discard(old_id)
+                kept.append(replacement)
         elif hour0_existing:
             new_target = computed_by_hour[0]["Target Value"]
             if hour0_existing.get("Target Value") != new_target:
@@ -10177,8 +10218,9 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
                 hour0_existing["Log"] = (hour0_existing.get("Log") + "\n" + note) if hour0_existing.get("Log") else note
                 hour0_existing["Target Value"] = new_target
             kept.append(hour0_existing)
-        else:
+        elif not late:
             kept.append(computed_by_hour[0])
+        # sonst (spaet, keine laufende Aktion): keine neue Aktion fuer die laufende Stunde
     elif hour0_existing and hour0_existing.get("_convertedToPvSurplusFallback"):
         # Bereits an die PV-Ueberschussladen-Fallback-Session uebergeben (siehe
         # _convert_ev_charge_action_to_pv_surplus_fallback) - wird hier NICHT nochmal beendet, das
@@ -10190,6 +10232,9 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
         # der Aktionstyp koennte zwischen Start und jetzt deaktiviert worden sein, ohne dass die
         # tatsaechlich laufende Steuerung das mitbekommen haette - dann muss trotzdem echt beendet werden.
         was_really_started = hour0_existing.get("Execution Status") == "yes, started"
+        keep_record = (hour0_existing.get("Status") or "").lower().startswith("aktiv")
+        old_id = hour0_existing.get("_id")
+        end_failed = False
         if deferred_ends is not None and action_name in BATTERY_ACTION_NAMES:
             # Erst nach allen Batterie-Abgleichen entscheiden: startet im selben Lauf eine andere Batterie-Aktion, loest sie
             # diese ab (kein Beenden), sonst wird wirklich beendet (siehe _resolve_deferred_battery_ends).
@@ -10199,36 +10244,42 @@ def _reconcile_computed_actions(config, action_name, id_prefix, computed_by_hour
                 handle_shyft_action_end(hour0_existing, was_really_started, config)
             except Exception as e:
                 print(f"[Shyft] Sofortiges Beenden von '{action_name}' fehlgeschlagen:", repr(e))
+            end_failed = hour0_existing.get("Execution Status") == "yes, not finished"
+        if keep_record:
+            # Eine einmal angezeigte laufende Aktion bleibt erhalten (Enddatum = jetzt, eigene _id), siehe _retire_running_action.
+            retired_id = _retire_running_action(hour0_existing, now_ms, was_really_started, taken_ids={a.get("_id") for a in all_actions})
+            kept.append(hour0_existing)
+            if not end_failed:
+                ended_ids.add(retired_id)
         # Die ID haengt am Stundenbeginn: legt ein spaeterer Lauf in derselben Stunde die Aktion neu an
         # (Bedingung wieder erfuellt), muss process_shyft_actions sie als frische Aktion starten UND
         # beenden - sonst gilt sie wegen der alten IDs als "schon gestartet"/"schon beendet", steht
         # auf "aktiv", steuert aber nichts (wie beim replace_running-Zweig oben).
-        started_ids = set(config.get("startedShyftActionIds", []))
-        ended_ids = set(config.get("endedShyftActionIds", []))
-        if hour0_existing.get("_id") in started_ids or hour0_existing.get("_id") in ended_ids:
-            started_ids.discard(hour0_existing.get("_id"))
-            ended_ids.discard(hour0_existing.get("_id"))
-            config["startedShyftActionIds"] = sorted(started_ids)
-            config["endedShyftActionIds"] = sorted(ended_ids)
-            config_changed = True
-        # nicht wieder aufgenommen - die Aktion ist beendet und faellt aus dem Store
+        started_ids.discard(old_id)
+        ended_ids.discard(old_id)
 
     for i in range(1, hour_window):
         if i in computed_by_hour:
             kept.append(computed_by_hour[i])
 
     _write_computed_actions(kept)
-    if config_changed:
+    if (started_ids, ended_ids) != ids_before:
+        config["startedShyftActionIds"] = sorted(started_ids)
+        config["endedShyftActionIds"] = sorted(ended_ids)
         _write_current_config(config)
 
 
-# Wie nah am Ende der aktuellen Stunde eine neu berechnete "laufende" Aktion (Stunde 0, Date Start =
-# jetzt) noch angelegt werden darf - siehe _suppress_near_boundary_singleton.
+
+# Ab dieser Restzeit der Stunde ("spaet", ab Minute :55) erzeugt ein neuer Optimierungslauf KEINE neue Aktion fuer die laufende Stunde mehr -
+# ein Geraet fuer 1-5 Minuten anzusteuern ist selten sinnvoll, und ein Plan, der erst jetzt eintrifft, kann sich bis zum Stundenwechsel noch
+# aendern (beobachtet als "Batterie netzladen", die um 13:59 startete und um 14:00 wieder endete). Bestehende laufende Aktionen werden dagegen
+# weiter behandelt: beenden (Plan will sie nicht mehr), Zielwert anpassen bzw. (am Stundenwechsel) verlaengern - siehe _reconcile_computed_actions.
 NEAR_HOUR_BOUNDARY_MINUTES = 5
-# Toleranz (kW) fuer den "1:1 fortgesetzt"-Vergleich in _suppress_near_boundary_singleton - die
-# Zielwerte sind bereits auf eine Nachkommastelle gerundet, eine kleine Toleranz faengt trotzdem
-# Rundungs-/Gleitkommaunschaerfen ab, ohne echte Unterschiede (z.B. 3.0 vs. 5.5 kW) durchzulassen.
-NEAR_HOUR_BOUNDARY_CONTINUATION_TOLERANCE_KW = 0.05
+
+
+def _is_near_hour_boundary(start):
+    "True, wenn jetzt (UTC) schon in den letzten NEAR_HOUR_BOUNDARY_MINUTES Minuten der Stunde liegt, die bei start beginnt."
+    return datetime.now(timezone.utc) >= start + timedelta(hours=1) - timedelta(minutes=NEAR_HOUR_BOUNDARY_MINUTES)
 
 
 def _skip_elapsed_hours(start, input_rows, output_rows):
@@ -10254,44 +10305,6 @@ def _drop_empty_window_actions(result):
               if a.get("Date Start") is not None and a.get("Date End") is not None and a["Date End"] <= a["Date Start"]]:
         print(f"[Shyft] Aktion '{result[i].get('Action Name')}' mit leerem Zeitfenster verworfen (Date Start={result[i]['Date Start']}, Date End={result[i]['Date End']}).")
         del result[i]
-    return result
-
-
-def _suppress_near_boundary_singleton(result, start):
-    """Verhindert ein Ergebnis wie "13:59 - 14:00": laeuft der Optimierungslauf (bzw. das Warten auf
-    dessen Ergebnis, siehe schedule_optimizer_result_wait) so spaet ab, dass "jetzt" schon in den
-    letzten NEAR_HOUR_BOUNDARY_MINUTES Minuten der Stunde liegt, waere das fuer Stunde 0 berechnete
-    Aktionsfenster (Date Start = jetzt, Date End = Stundenende) nur noch wenige Minuten breit - ein
-    Geraet fuer 1-5 Minuten anzusteuern ist selten sinnvoll.
-
-    Nur unterdrueckt, wenn NICHT sichergestellt ist, dass dieselbe Aktion 1:1 (derselbe Target-Wert,
-    Toleranz siehe NEAR_HOUR_BOUNDARY_CONTINUATION_TOLERANCE_KW) auch fuer die unmittelbar folgende
-    Stunde vorgesehen ist - eine reine "existiert ueberhaupt irgendeine Aktion dieses Typs in
-    Stunde 1"-Pruefung reicht NICHT (fruehere Fassung dieser Funktion): die Prognose fuer Stunde 1
-    kann sich bis zum tatsaechlichen Stundenwechsel wieder aendern, z.B. weil ein frischer
-    Optimierungslauf mit aktuelleren Live-Daten eintrifft, bevor die alte Stunde-1-Prognose zur
-    neuen Stunde 0 wird - beobachtet als eine "Batterie netzladen"-Aktion, die um 13:59 startete und
-    bereits um 14:00 wieder endete, obwohl zum Berechnungszeitpunkt ebenfalls eine (letztlich nicht
-    eingetretene) Aktion fuer die Folgestunde vorlag. Bei tatsaechlicher 1:1-Fortsetzung wird das
-    kurze Startfenster ohnehin gleich beim naechsten stuendlichen Uebergang
-    (run_hourly_action_transition) auf eine volle Stunde ausgedehnt und ist unproblematisch.
-
-    Verwirft vorab ausserdem jede Aktion mit leerem Zeitfenster (siehe _drop_empty_window_actions)."""
-    result = _drop_empty_window_actions(result)
-    if 0 not in result:
-        return result
-    hour_end = start + timedelta(hours=1)
-    now = datetime.now(timezone.utc)
-    if now < hour_end - timedelta(minutes=NEAR_HOUR_BOUNDARY_MINUTES):
-        return result
-    next_hour_action = result.get(1)
-    continues_1to1 = (
-        next_hour_action is not None
-        and abs(_safe_float(next_hour_action.get("Target Value")) - _safe_float(result[0].get("Target Value")))
-        < NEAR_HOUR_BOUNDARY_CONTINUATION_TOLERANCE_KW
-    )
-    if not continues_1to1:
-        del result[0]
     return result
 
 
@@ -10382,6 +10395,9 @@ def _resolve_deferred_battery_ends(deferred, config):
         if successor is not None and was_really_started:
             successor["_supersedes"] = old.get("Action Name")
             _update_computed_action(successor)
+            old["Status"] = SUPERSEDED_STATUS  # die entfallene Aktion bleibt (siehe _retire_running_action) als "abgelöst" in der Liste
+            old["Execution Status"] = "yes, finished"
+            _update_computed_action(old)
             continue
         try:
             handle_shyft_action_end(old, was_really_started, config)
@@ -10421,13 +10437,13 @@ def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms
         # begrenzt sich selbst wieder auf GERAETESTEUERUNG_DISPLAY_HOUR_WINDOW (siehe readShyftActions),
         # Charts lesen weiterhin den vollen Store.
         full_hour_window = len(output_rows)
-        ev_actions = _suppress_near_boundary_singleton(compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
+        ev_actions = _drop_empty_window_actions(compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total))
         _reconcile_computed_actions(config, EV_CHARGE_ACTION_NAME, EV_CHARGE_ID_PREFIX, ev_actions, start, hour_window=full_hour_window)
-        dhw_actions = _suppress_near_boundary_singleton(compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
+        dhw_actions = _drop_empty_window_actions(compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total))
         _reconcile_computed_actions(config, DHW_ACTION_NAME, DHW_ID_PREFIX, dhw_actions, start, hour_window=full_hour_window)
-        heizung_actions = _suppress_near_boundary_singleton(compute_heizung_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
+        heizung_actions = _drop_empty_window_actions(compute_heizung_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total))
         _reconcile_computed_actions(config, HEIZUNG_ACTION_NAME, HEIZUNG_ID_PREFIX, heizung_actions, start, hour_window=full_hour_window)
-        od_actions = _suppress_near_boundary_singleton(compute_od_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total), start)
+        od_actions = _drop_empty_window_actions(compute_od_actions(config, output_rows, input_rows, start, optimizer_run_id, net_profit_base, net_profit_opt, x_sum_total))
         _reconcile_computed_actions(config, OD_ACTION_NAME, OD_ID_PREFIX, od_actions, start, hour_window=full_hour_window)
         # VOR "Batterie netzladen" berechnen+reconcilen: dessen Vorrang-Check
         # (_discharge_shift_reserved_for_hour) liest den Store und braucht deshalb den frischen
@@ -10435,11 +10451,11 @@ def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms
         # (compute_battery_discharge_shift_actions gibt "Batterie netzladen" Vorrang) rechnet GR_B
         # direkt aus output_csv nach, ist also unabhaengig von der Reihenfolge hier korrekt.
         deferred_battery_ends = []
-        battery_discharge_shift_actions = _suppress_near_boundary_singleton(compute_battery_discharge_shift_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
+        battery_discharge_shift_actions = _drop_empty_window_actions(compute_battery_discharge_shift_actions(config, output_rows, input_rows, start, optimizer_run_id))
         _reconcile_computed_actions(config, BATTERY_DISCHARGE_SHIFT_ACTION_NAME, BATTERY_DISCHARGE_SHIFT_ID_PREFIX, battery_discharge_shift_actions, start, hour_window=full_hour_window, deferred_ends=deferred_battery_ends)
-        battery_grid_charge_actions = _suppress_near_boundary_singleton(compute_battery_grid_charge_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
+        battery_grid_charge_actions = _drop_empty_window_actions(compute_battery_grid_charge_actions(config, output_rows, input_rows, start, optimizer_run_id))
         _reconcile_computed_actions(config, BATTERY_GRID_CHARGE_ACTION_NAME, BATTERY_GRID_CHARGE_ID_PREFIX, battery_grid_charge_actions, start, hour_window=full_hour_window, replace_running=True, deferred_ends=deferred_battery_ends)
-        battery_charge_shift_actions = _suppress_near_boundary_singleton(compute_battery_charge_shift_actions(config, output_rows, input_rows, start, optimizer_run_id), start)
+        battery_charge_shift_actions = _drop_empty_window_actions(compute_battery_charge_shift_actions(config, output_rows, input_rows, start, optimizer_run_id))
         _reconcile_computed_actions(config, BATTERY_CHARGE_SHIFT_ACTION_NAME, BATTERY_CHARGE_SHIFT_ID_PREFIX, battery_charge_shift_actions, start, hour_window=full_hour_window, deferred_ends=deferred_battery_ends)
         _resolve_deferred_battery_ends(deferred_battery_ends, config)
     except Exception as e:
