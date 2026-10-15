@@ -9655,15 +9655,18 @@ def compute_battery_grid_charge_actions(config, output_rows, input_rows, start, 
 
         pv_b = _safe_float(output_row.get("PV_B"))
         energy = gr_b + BATTERY_GRID_CHARGE_PV_WEIGHT * pv_b
+        energy_before_caps = energy  # nur fuer den Diagnose-Log unten
         soc_now = _safe_float(output_row.get("SOC_B"))
 
         pv_sum_forecast = _safe_float(output_row.get("PV_sum_44"))
+        sunshine_cap_kw = None
         if pv_sum_forecast > 0:
             if soc_now >= BATTERY_SUNSHINE_SOC_CAP_PCT:
                 continue  # Ausnahme: SOC ist bei Sonnenschein bereits am 95%-Deckel, keine Aktion
             if battery_capacity_kwh:
                 max_kwh_this_hour = (BATTERY_SUNSHINE_SOC_CAP_PCT - soc_now) / 100 * battery_capacity_kwh
-                energy = min(energy, max(0.0, max_kwh_this_hour))
+                sunshine_cap_kw = max(0.0, max_kwh_this_hour)
+                energy = min(energy, sunshine_cap_kw)
 
         # Sicherheitshalber immer zusaetzlich gedeckelt - sowohl auf den statisch konfigurierten
         # Wert (batteryMaxChargeKw, siehe compute_battery_grid_charge_actions-Docstring: der
@@ -9681,6 +9684,19 @@ def compute_battery_grid_charge_actions(config, output_rows, input_rows, start, 
         next_row = output_rows[i + 1] if i + 1 < len(output_rows) else None
         soc_next = _safe_float(next_row.get("SOC_B")) if next_row is not None else soc_now
         target_value = round(energy, 1)
+
+        # Diagnose-Log (nur laufende und naechste Stunde, sonst zu viele Zeilen je Lauf): woraus sich der Zielwert zusammensetzt - Netzanteil
+        # (GR_B), PV-Anteil (PV_B), welche Deckel greifen - und was der Plan fuer die Stunde insgesamt an Ladestand-Aenderung vorsieht (die
+        # Zielleistung ist ein Limit fuer die GESAMTE Ladeleistung, siehe Nutzer-Frage "Netzladen mit 1,2 kW trotz 2,6 kW PV-Prognose").
+        if i <= 1:
+            planned_kwh = (soc_next - soc_now) / 100 * battery_capacity_kwh if battery_capacity_kwh else None
+            planned_text = f"{planned_kwh:.2f}" if planned_kwh is not None else "?"
+            sunshine_text = f"{sunshine_cap_kw:.2f}" if sunshine_cap_kw is not None else "kein Deckel"
+            print(f"[Shyft] Netzladen-Zielwert {hour_start.isoformat()} (Stunde {i}): GR_B={gr_b:.2f} kW, PV_B={pv_b:.2f} kW, "
+                  f"GR_B+{BATTERY_GRID_CHARGE_PV_WEIGHT}*PV_B={energy_before_caps:.2f} kW, Sonnen-Deckel 95 %={sunshine_text}, "
+                  f"Max-Ladeleistung={static_max_charge_kw!r}, Live-Limit={live_max_charge_kw!r} -> Ziel {target_value:.1f} kW; "
+                  f"SOC_B {soc_now:.1f} -> {soc_next:.1f} % (geplante Ladung insgesamt {planned_text} kWh), "
+                  f"PV_sum_44={pv_sum_forecast:.2f}, Optimierungslauf {optimizer_run_id!r}")
 
         action = {
             "_id": _battery_grid_charge_action_id(hour_start),

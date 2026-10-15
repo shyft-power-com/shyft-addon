@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.310
+
+* **Diagnose-Log für den Zielwert von „Batterie netzladen“.** Damit nachvollziehbar ist, woher z. B. 1,2 kW kommen, schreibt das Add-on beim Berechnen der Aktion für die laufende und die nächste Stunde eine Log-Zeile („Netzladen-Zielwert …“): Netzanteil `GR_B`, PV-Anteil `PV_B`, den daraus gebildeten Wert, den 95-%-Deckel bei Sonnenprognose, die Obergrenzen (Max-Ladeleistung, Live-Limit), den Ziel-Wert sowie die vom Plan vorgesehene Ladestand-Änderung (SOC von → auf, in kWh). Die Berechnung selbst ist unverändert.
+
 ## 0.0.45.309
 
 * **Fix: falsche Meldung „Batterie-Ladeleistungslimit (PV-Überschuss) weicht ab“.** Haben „Batterie netzladen“ und die PV-Überschuss-Begrenzung dieselbe Entität (z. B. SolarEdge hat nur ein „Storage Charge Limit“), prüfte das Add-on zwei getrennte Erwartungswerte für dieselbe Zahl. Während „Batterie netzladen“ z. B. 1,2 kW setzte, erwartete die PV-Überschuss-Prüfung (dort läuft keine Aktion) den Ruhewert 5 kW und meldete dauerhaft „Limit ist bei 1,2 kW, erwartet 5 kW“. Bei einer gemeinsamen Entität gibt es jetzt nur einen erwarteten Wert: den Zielwert der gerade laufenden Aktion (Netzladen oder PV-Überschuss), sonst den Ruhewert. Laufen beide gleichzeitig, wird nicht verglichen. Eine bereits angezeigte Meldung dieser Art verschwindet beim nächsten Poll. Echte Abweichungen werden weiter erkannt; bei getrennten Entitäten bleibt alles wie bisher.
