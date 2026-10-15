@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.309
+
+* **Fix: falsche Meldung „Batterie-Ladeleistungslimit (PV-Überschuss) weicht ab“.** Haben „Batterie netzladen“ und die PV-Überschuss-Begrenzung dieselbe Entität (z. B. SolarEdge hat nur ein „Storage Charge Limit“), prüfte das Add-on zwei getrennte Erwartungswerte für dieselbe Zahl. Während „Batterie netzladen“ z. B. 1,2 kW setzte, erwartete die PV-Überschuss-Prüfung (dort läuft keine Aktion) den Ruhewert 5 kW und meldete dauerhaft „Limit ist bei 1,2 kW, erwartet 5 kW“. Bei einer gemeinsamen Entität gibt es jetzt nur einen erwarteten Wert: den Zielwert der gerade laufenden Aktion (Netzladen oder PV-Überschuss), sonst den Ruhewert. Laufen beide gleichzeitig, wird nicht verglichen. Eine bereits angezeigte Meldung dieser Art verschwindet beim nächsten Poll. Echte Abweichungen werden weiter erkannt; bei getrennten Entitäten bleibt alles wie bisher.
+
 ## 0.0.45.308
 
 * **Fix: Auto-Laden wurde beim Stundenwechsel zu früh beendet.** Um :00 laufen der 15-Minuten-Poll und der Stundenwechsel gleichzeitig. Ging eine Aktion mit demselben Zielwert in der Folgestunde weiter (z. B. Laden mit 11 kW von 13:42 bis 15:00 Uhr), verlängert der Stundenwechsel sie ohne Stopp – der Poll kannte diese Verlängerung nicht. Lief er zuerst, beendete er die Aktion um 14:00 Uhr und stoppte die Wallbox, die danach nicht wieder startete; die Aktion stand trotzdem bis 15:00 Uhr als laufend da. Jetzt verlängert auch der Poll eine auslaufende Aktion in die Folgestunde mit gleichem Zielwert (gemeinsame Funktion für beide Jobs), die Reihenfolge der Jobs spielt keine Rolle mehr. Gilt für alle Aktionstypen mit aufeinanderfolgenden Stunden.
