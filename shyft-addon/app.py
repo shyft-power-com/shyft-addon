@@ -1,4 +1,4 @@
-from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id
+from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id, resolve_dhw_activated
 from homeassistant_adapter import HomeAssistantAdapter, EntityState
 from shyft_adapter import ShyftAdapter
 from live_entity_watcher import LiveEntityWatcher
@@ -3794,12 +3794,15 @@ def build_hot_water_optimizer_fields(config, optimizer_period=48):
 
     active_hour_count = HOT_WATER_END_HOUR - HOT_WATER_START_HOUR
     kwh_per_active_hour = HOT_WATER_DEFAULT_KWH_PER_DAY / active_hour_count
+    # "Warmwassermodus aktiviert?" = aus: kein Warmwasserbedarf an den Optimierer (alle Stunden 0, keine Verbrauchsstunden) - dann plant er kein Warmwasser,
+    # ohne dass am Optimierer etwas geaendert werden muss. Der Wert ist optional (nicht zugeordnet = an), bei "unknown" gilt der letzte bekannte Zustand.
+    dhw_activated = resolve_dhw_activated(config, homeassistant_adapter)
 
     usage_hours_zero_based = []
     hotwaterkwh_values = []
     for i in range(hours):
         hour_of_day = (start + timedelta(hours=i)).hour
-        if HOT_WATER_START_HOUR <= hour_of_day < HOT_WATER_END_HOUR:
+        if dhw_activated and HOT_WATER_START_HOUR <= hour_of_day < HOT_WATER_END_HOUR:
             usage_hours_zero_based.append(i)
             hotwaterkwh_values.append(kwh_per_active_hour)
         else:
@@ -9359,6 +9362,10 @@ def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id
     net_profit_base/net_profit_opt/x_sum_total (siehe _action_energy_savings)."""
     result = {}
     if not _is_hot_water_device_configured(config):
+        return result
+    # Warmwasserbereitung an der Waermepumpe ausgeschaltet ("Warmwassermodus aktiviert?" = aus): keine Warmwasser-Aktionen (auch nicht, falls der
+    # Optimierer trotz Bedarf 0 z.B. fuer die Mindesttemperatur noch Leistung einplant).
+    if not resolve_dhw_activated(config, homeassistant_adapter):
         return result
 
     row_count = len(output_rows)

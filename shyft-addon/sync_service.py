@@ -208,6 +208,54 @@ def heating_rod_active(config):
 
 HEATING_ROD_SWITCH_SENSOR_KEY = "heating_rod_switch"
 
+# Letzter bekannter An/Aus-Zustand von "Warmwassermodus aktiviert?" (heatpump_dhw_activated) - bei "unknown"/"unavailable" gilt dieser Wert
+# weiter, nicht automatisch "aus" (siehe resolve_dhw_activated).
+DHW_ACTIVATED_LAST_STATE_PATH = "/data/dhw_activated_last_state.json"
+
+
+def _read_last_dhw_activated():
+    "Zuletzt gesehener Zustand (True/False), None wenn noch nie einer gesehen wurde."
+    try:
+        with open(DHW_ACTIVATED_LAST_STATE_PATH, "r") as f:
+            value = json.load(f).get("activated")
+        return value if isinstance(value, bool) else None
+    except Exception:
+        return None
+
+
+def _write_last_dhw_activated(value):
+    try:
+        if _read_last_dhw_activated() == value:
+            return
+        with open(DHW_ACTIVATED_LAST_STATE_PATH, "w") as f:
+            json.dump({"activated": value}, f)
+    except Exception as e:
+        print("[Shyft] Letzter Warmwassermodus-Zustand konnte nicht gespeichert werden:", repr(e))
+
+
+def resolve_dhw_activated(config, homeassistant_adapter):
+    """Ist die Warmwasserbereitung an der Waermepumpe aktiviert? Der Sensor "Warmwassermodus aktiviert?" (heatpump_dhw_activated) ist optional:
+    nicht zugeordnet (oder noch nie ein Zustand gesehen) = True. "on" = True, "off" = False (jeweils als letzter bekannter Zustand gemerkt);
+    "unknown"/"unavailable"/nicht lesbar = der zuletzt gesehene Zustand, nicht automatisch "aus". Mit aktivem Heizstab (uebernimmt das Warmwasser) und
+    im Demo-Modus immer True."""
+    if heating_rod_active(config) or is_demo_sensor(config, "heatpump_dhw_activated"):
+        return True
+    entity_id = mapped_entity_id(config, "heatpump_dhw_activated")
+    if not entity_id:
+        return True
+    try:
+        state = str(homeassistant_adapter.load_entity_state(entity_id).state).strip().lower()
+    except Exception:
+        state = ""
+    if state == "on":
+        _write_last_dhw_activated(True)
+        return True
+    if state == "off":
+        _write_last_dhw_activated(False)
+        return False
+    last = _read_last_dhw_activated()
+    return True if last is None else last
+
 
 def mapped_entity_id(config, sensor_key):
     """Zugeordnete Home-Assistant-Entitaet eines Sensors (leer, wenn nicht zugeordnet). Im Heizstab-Betrieb liefert "heatpump_dhw_on_off"
@@ -451,6 +499,12 @@ class SyncService:
         # Mit aktivem Heizstab ist die Waermepumpen-Heizung deaktiviert: "Heizung aktiviert?" geht immer als "off" an shyft-power.
         if heating_rod_active(data):
             live_values[LIST_OF_SENSORS["heatpump_heating_activated"]] = "off"
+        # "Warmwassermodus aktiviert?" ist optional (Standard: an) und kennt nur an/aus - ein "unknown"/"unavailable" gilt als der zuletzt
+        # gesehene Zustand (siehe resolve_dhw_activated). Immer explizit "on"/"off" senden, sobald ein Geraet fuer Warmwasser eingerichtet ist -
+        # fehlt der Wert, faellt der Server auf "aus" zurueck.
+        integration_mappings = data.get("integrationMappings", {}) or {}
+        if integration_mappings.get("waermepumpe") or integration_mappings.get(HEATING_ROD_SECTION_KEY):
+            live_values[LIST_OF_SENSORS["heatpump_dhw_activated"]] = "on" if resolve_dhw_activated(data, self.homeassistant_adapter) else "off"
         return live_values
 
     def _load_sensor_value(self, key, bubbleSensorIdentifier, data):

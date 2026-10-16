@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.312
+
+* **„Warmwassermodus aktiviert? An/Aus“ ist jetzt optional und steuert die Warmwasserplanung.** Das Feld ist kein Pflichtfeld mehr; ist nichts hinterlegt, gilt „An“. Steht der Sensor auf „On“, läuft alles wie bisher. Steht er auf „Off“, sendet das Add-on keinen Warmwasserbedarf an den Optimierer (`hotwaterkwh` in allen Stunden 0, keine Verbrauchsstunden in `hw_usage_h`) – der Optimierer plant dann kein Warmwasser, ohne dass am Optimierer etwas geändert werden muss – und es werden keine „Warmwasser“-Aktionen angezeigt oder ausgeführt. Bei „unknown“/„unavailable“ (z. B. kurzer Ausfall) gilt der zuletzt gesehene Zustand, nicht automatisch „Aus“. Der Zustand geht außerdem immer explizit als „on“/„off“ an shyft-power (bisher fehlte der Wert, wenn kein Sensor hinterlegt war, und der Server nahm „aus“ an). Mit aktivem Heizstab bleibt der Sensor ohne Wirkung. Der Info-Text des Felds ist entsprechend angepasst.
+
 ## 0.0.45.311
 
 * **Fix: gestartete Aktionen verschwinden nicht mehr aus der Gerätesteuerung.** Bisher wurde eine laufende Aktion samt Eintrag gelöscht, wenn ein neuer Optimierungslauf sie nicht mehr enthielt – besonders häufig, wenn das Ergebnis des stündlichen Laufs kurz vor dem Stundenwechsel (nach :55) eintraf. Die Aktion wurde dann ein paar Minuten zu früh beendet, verschwand aus der Liste und fehlte in der Auswertung, obwohl sie gelaufen war (z. B. „Batterie netzladen“ in der Nacht). Jetzt gilt:

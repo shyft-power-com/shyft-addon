@@ -83,7 +83,7 @@ const helpinformation = {
     },
     'heatpump_dhw_activated': {
         label: 'Warmwassermodus aktiviert? An/Aus',
-        description: ' je nachdem ob an deiner Wärmepumpe die Warmwasserbereitung aktiviert ist oder nicht.'
+        description: ' Optional. Steht der Sensor auf "On", werden Aktionen zur Warmwasserbereitung berechnet. Bei "Off" berechnet Shyft keine Warmwasseraktionen. Ist nichts hinterlegt, gilt "On"; bei "unknown"/"unavailable" gilt der zuletzt gemeldete Wert.'
     },
     'heatpump_dhw_on_off': {
         label: 'Warmwasser gerade erwärmt? An / Aus',
@@ -2270,7 +2270,7 @@ function isSectionComplete(section, currentIds) {
 // blockiert ohne Zuordnung nichts (compute_heizung_actions/collect_live_values in app.py bzw.
 // sync_service.py behandeln nicht-zugeordnet wie "an", nicht wie "aus"), und die Vorlauftemperatur
 // ist rein informativ, kein Pflichtfeld (Nutzer-Vorgabe).
-const REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS = new Set(['heatpump_current_power_elect', 'heatpump_temp_indoor_measured', 'heatpump_heating_activated', 'heatpump_supply_temp_hp']);
+const REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS = new Set(['heatpump_current_power_elect', 'heatpump_temp_indoor_measured', 'heatpump_heating_activated', 'heatpump_supply_temp_hp', 'heatpump_dhw_activated']);
 const REQUIRED_FIELD_OPTIONAL_ACTION_KEYS = new Set(['consumption_limit_14a', 'pv_feed_in_limit']);
 
 // Ausfuehrlichere Schwester von isSectionComplete oben: statt nur true/false liefert das hier je
