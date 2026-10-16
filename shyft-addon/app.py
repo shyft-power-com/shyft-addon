@@ -9363,11 +9363,6 @@ def compute_dhw_actions(config, output_rows, input_rows, start, optimizer_run_id
     result = {}
     if not _is_hot_water_device_configured(config):
         return result
-    # Warmwasserbereitung an der Waermepumpe ausgeschaltet ("Warmwassermodus aktiviert?" = aus): keine Warmwasser-Aktionen (auch nicht, falls der
-    # Optimierer trotz Bedarf 0 z.B. fuer die Mindesttemperatur noch Leistung einplant).
-    if not resolve_dhw_activated(config, homeassistant_adapter):
-        return result
-
     row_count = len(output_rows)
     for i in range(row_count):
         output_row = output_rows[i]
