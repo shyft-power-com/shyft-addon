@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.0.45.313
+
+* **„Warmwassermodus aktiviert?“ = Off unterdrückt keine Warmwasser-Aktionen mehr im Add-on.** Bei „Off“ sendet das Add-on weiterhin keinen Warmwasserbedarf an den Optimierer (`hotwaterkwh` überall 0, `hw_usage_h` leer); der Optimierer plant dann kein Warmwasser. Das Add-on filtert die Aktionen aber nicht zusätzlich selbst heraus, damit die Fehlersuche einfach bleibt – angezeigt und ausgeführt wird, was der Optimierer liefert. (Die Aussage „keine Warmwasser-Aktionen“ im Eintrag zu 0.0.45.312 gilt damit nicht mehr.)
+
+## 0.0.45.312
+
+* **„Warmwassermodus aktiviert? An/Aus“ ist jetzt optional und steuert die Warmwasserplanung.** Das Feld ist kein Pflichtfeld mehr; ist nichts hinterlegt, gilt „An“. Steht der Sensor auf „On“, läuft alles wie bisher. Steht er auf „Off“, sendet das Add-on keinen Warmwasserbedarf an den Optimierer (`hotwaterkwh` in allen Stunden 0, keine Verbrauchsstunden in `hw_usage_h`) – der Optimierer plant dann kein Warmwasser, ohne dass am Optimierer etwas geändert werden muss – und es werden keine „Warmwasser“-Aktionen angezeigt oder ausgeführt. Bei „unknown“/„unavailable“ (z. B. kurzer Ausfall) gilt der zuletzt gesehene Zustand, nicht automatisch „Aus“. Der Zustand geht außerdem immer explizit als „on“/„off“ an shyft-power (bisher fehlte der Wert, wenn kein Sensor hinterlegt war, und der Server nahm „aus“ an). Mit aktivem Heizstab bleibt der Sensor ohne Wirkung. Der Info-Text des Felds ist entsprechend angepasst.
+
+## 0.0.45.311
+
+* **Fix: gestartete Aktionen verschwinden nicht mehr aus der Gerätesteuerung.** Bisher wurde eine laufende Aktion samt Eintrag gelöscht, wenn ein neuer Optimierungslauf sie nicht mehr enthielt – besonders häufig, wenn das Ergebnis des stündlichen Laufs kurz vor dem Stundenwechsel (nach :55) eintraf. Die Aktion wurde dann ein paar Minuten zu früh beendet, verschwand aus der Liste und fehlte in der Auswertung, obwohl sie gelaufen war (z. B. „Batterie netzladen“ in der Nacht). Jetzt gilt:
+  * Nach Minute :55 legt ein neuer Lauf **keine neue Aktion** für die laufende Stunde mehr an und ersetzt eine laufende nicht mehr durch eine neue. Beenden (Plan will sie nicht mehr) und das Anpassen des Zielwerts bleiben möglich; die Folgestunde wird weiterhin neu geplant.
+  * Eine **gestartete Aktion bleibt immer erhalten**: Wird sie vorzeitig beendet oder durch eine Aktion mit anderem Zielwert abgelöst, steht sie mit dem tatsächlichen Ende und dem Status „beendet“ bzw. „abgelöst“ weiter in der Liste (mit eigener ID, damit eine neue Aktion derselben Stunde nicht kollidiert) und ist in der Auswertung. Nur geplante, nie gestartete Aktionen fallen bei einer geänderten Planung weiter weg.
+
+## 0.0.45.310
+
+* **Diagnose-Log für den Zielwert von „Batterie netzladen“.** Damit nachvollziehbar ist, woher z. B. 1,2 kW kommen, schreibt das Add-on beim Berechnen der Aktion für die laufende und die nächste Stunde eine Log-Zeile („Netzladen-Zielwert …“): Netzanteil `GR_B`, PV-Anteil `PV_B`, den daraus gebildeten Wert, den 95-%-Deckel bei Sonnenprognose, die Obergrenzen (Max-Ladeleistung, Live-Limit), den Ziel-Wert sowie die vom Plan vorgesehene Ladestand-Änderung (SOC von → auf, in kWh). Die Berechnung selbst ist unverändert.
+
+## 0.0.45.309
+
+* **Fix: falsche Meldung „Batterie-Ladeleistungslimit (PV-Überschuss) weicht ab“.** Haben „Batterie netzladen“ und die PV-Überschuss-Begrenzung dieselbe Entität (z. B. SolarEdge hat nur ein „Storage Charge Limit“), prüfte das Add-on zwei getrennte Erwartungswerte für dieselbe Zahl. Während „Batterie netzladen“ z. B. 1,2 kW setzte, erwartete die PV-Überschuss-Prüfung (dort läuft keine Aktion) den Ruhewert 5 kW und meldete dauerhaft „Limit ist bei 1,2 kW, erwartet 5 kW“. Bei einer gemeinsamen Entität gibt es jetzt nur einen erwarteten Wert: den Zielwert der gerade laufenden Aktion (Netzladen oder PV-Überschuss), sonst den Ruhewert. Laufen beide gleichzeitig, wird nicht verglichen. Eine bereits angezeigte Meldung dieser Art verschwindet beim nächsten Poll. Echte Abweichungen werden weiter erkannt; bei getrennten Entitäten bleibt alles wie bisher.
+
 ## 0.0.45.308
 
 * **Fix: Auto-Laden wurde beim Stundenwechsel zu früh beendet.** Um :00 laufen der 15-Minuten-Poll und der Stundenwechsel gleichzeitig. Ging eine Aktion mit demselben Zielwert in der Folgestunde weiter (z. B. Laden mit 11 kW von 13:42 bis 15:00 Uhr), verlängert der Stundenwechsel sie ohne Stopp – der Poll kannte diese Verlängerung nicht. Lief er zuerst, beendete er die Aktion um 14:00 Uhr und stoppte die Wallbox, die danach nicht wieder startete; die Aktion stand trotzdem bis 15:00 Uhr als laufend da. Jetzt verlängert auch der Poll eine auslaufende Aktion in die Folgestunde mit gleichem Zielwert (gemeinsame Funktion für beide Jobs), die Reihenfolge der Jobs spielt keine Rolle mehr. Gilt für alle Aktionstypen mit aufeinanderfolgenden Stunden.
