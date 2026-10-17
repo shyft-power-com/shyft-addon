@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.315
+
+* **`WB - p_min`: Schwelle für den PV-Überschuss gilt jetzt pro Tag.** Bisher schaltete `p_min` (Endwert des Stroms im Auto im Optimierer) auf die Einspeisevergütung als Basis um, sobald `PV_GR` + `PV_EV` im letzten Plan über den gesamten Zeitraum mehr als 5 kWh ergaben – unabhängig davon, wie lang der Optimierungszeitraum ist. Jetzt sind es 5 kWh **pro Tag**, auf den tatsächlichen Zeitraum hochgerechnet: 5 / 24 kWh je Stunde mal Stunden des Laufs (48 h → 10 kWh, 24 h → 5 kWh, 72 h → 15 kWh). Alles andere bleibt: darüber gilt die Einspeisevergütung plus 2 Cent, sonst der niedrigste kommende Preis plus 2 Cent. Der Diagnose-Log „WB p_min=…“ nennt die Schwelle jetzt als „10,0 kWh = 5,0 kWh/Tag x 48 h“.
+
 ## 0.0.45.314
 
 * **PV-Prognose: Summe für Übermorgen ab 21 Uhr.** Unter dem PV-Chart steht ab 21:00 Uhr zusätzlich „| Übermorgen: XX kWh“. Vorher ist die Summe bewusst ausgeblendet, weil das 48-Stunden-Fenster den Tag erst am späten Abend nahezu vollständig abdeckt (die Prüfung, dass die PV-Erzeugung am Abend auf 0 gefallen ist, gilt wie bei Morgen).
