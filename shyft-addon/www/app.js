@@ -7799,9 +7799,8 @@ function showShyftActionsError(container) {
 // Kalendertag (lokale Zeit), summiert aus den stündlichen kW-Werten (ein kW-Wert über eine Stunde
 // ist per Definition eine kWh). "Heute" zählt nur noch nicht vergangene Stunden.
 //
-// "Übermorgen" wird bewusst nicht mehr ausgewiesen (nur Heute/Morgen) - ein 48h-Fenster deckt
-// diesen Tag rechnerisch nie vollstaendig ab (Heute + Morgen allein verbrauchen schon mindestens
-// 24h davon), die Summe wirkte dadurch irrefuehrend unvollstaendig. "Vollstaendig" heißt hier
+// "Übermorgen" wird erst ab 21 Uhr ausgewiesen (siehe computePvEnergySummary) - vorher deckt das
+// 48h-Fenster diesen Tag nicht vollstaendig ab, die Summe wirkte irrefuehrend unvollstaendig. "Vollstaendig" heißt hier
 // ohnehin nicht "Mitternacht bis Mitternacht", sondern "die PV-Erzeugung ist erkennbar auf 0
 // gefallen": sobald ab PV_COMPLETE_CHECK_FROM_HOUR (17 Uhr - spätestens 21 Uhr wäre auch im
 // Hochsommer sicher, im Winter geht die Sonne aber teils schon um 17 Uhr unter) ein Wert nahe 0
@@ -7919,25 +7918,25 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
 // stand dort vorher ohne erkennbaren Bezug zum Chart direkt neben der (inhaltlich anderen)
 // Einsatzplan-Karte und wurde faelschlich fuer deren "Stromverbrauch"-Kennzahl gehalten.
 //
-// Nur Heute/Morgen - "Übermorgen" wird bewusst nicht ausgewiesen, das 48h-Fenster deckt diesen
-// Tag ohnehin nie vollstaendig ab (siehe reachedZeroInEvening-Kommentar unten), die Summe wirkte
-// dadurch irrefuehrend unvollstaendig.
+// Heute/Morgen immer, "Übermorgen" erst ab PV_DAY_AFTER_TOMORROW_FROM_HOUR Uhr (21 Uhr): das 48h-Fenster deckt diesen Tag
+// erst dann (nahezu) vollstaendig ab - frueher wirkte die Summe irrefuehrend unvollstaendig.
 function computePvEnergySummary(labels, values) {
     const PV_ZERO_THRESHOLD_KW = 0.05;
     const PV_COMPLETE_CHECK_FROM_HOUR = 17;
+    const PV_DAY_AFTER_TOMORROW_FROM_HOUR = 21;
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const currentHourStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours());
-    const dayLabels = ['Heute', 'Morgen'];
-    const sums = [0, 0];
-    const hasData = [false, false];
-    const reachedZeroInEvening = [false, false];
+    const dayLabels = ['Heute', 'Morgen', 'Übermorgen'];
+    const sums = [0, 0, 0];
+    const hasData = [false, false, false];
+    const reachedZeroInEvening = [false, false, false];
 
     for (let i = 0; i < labels.length; i++) {
         const d = new Date(labels[i]);
         const startOfThatDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
         const dayOffset = Math.round((startOfThatDay - startOfToday) / (24 * 60 * 60 * 1000));
-        if (dayOffset < 0 || dayOffset > 1) continue;
+        if (dayOffset < 0 || dayOffset > 2) continue;
         if (dayOffset === 0 && d < currentHourStart) continue; // schon vergangene Stunde
         sums[dayOffset] += values[i];
         hasData[dayOffset] = true;
@@ -7946,12 +7945,13 @@ function computePvEnergySummary(labels, values) {
         }
     }
 
-    // offset 0 = Heute (neben der "Jetzt"-Linie), offset 1 = Morgen (neben der 1. Tagesgrenze) -
+    // offset 0 = Heute (neben der "Jetzt"-Linie), offset 1 = Morgen (neben der 1. Tagesgrenze), offset 2 = Übermorgen -
     // der Aufrufer (buildPvForecastActualChart) ordnet ueber offset den passenden x-Koordinaten zu.
     const result = [];
-    for (let offset = 0; offset < 2; offset++) {
+    for (let offset = 0; offset < 3; offset++) {
         if (!hasData[offset]) continue;
         if (offset > 0 && !reachedZeroInEvening[offset]) continue;
+        if (offset === 2 && now.getHours() < PV_DAY_AFTER_TOMORROW_FROM_HOUR) continue;
         result.push({offset, label: dayLabels[offset], kwh: Math.round(sums[offset])});
     }
     return result;
@@ -9395,7 +9395,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
         </svg>`;
     wrapper.appendChild(chartContainer);
 
-    // PV-Ertrag Heute|Morgen (siehe computePvEnergySummary) als schlichter Text UNTER diesem Chart -
+    // PV-Ertrag Heute|Morgen (ab 21 Uhr auch Übermorgen, siehe computePvEnergySummary) als schlichter Text UNTER diesem Chart -
     // ein Versuch, die Werte stattdessen platzsparend IN den Chart einzuzeichnen (neben "Jetzt"-Linie/
     // Tagesgrenze) wirkte trotz Kollisionsvermeidung nicht sauber genug. Direkt hier (statt weiter
     // unten separat im Dashboard-Flow) verankert, damit der Bezug zu DIESEM Chart eindeutig bleibt.

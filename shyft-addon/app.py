@@ -5070,22 +5070,26 @@ WB_P_MIN_MARGIN_EUR = 0.02
 WB_P_MIN_PSELL_SWITCH_KWH = 5.0
 
 
-def _wb_p_min_price_column():
-    """'p_buy' (Normalfall) oder 'p_sell', je nach der letzten output.csv im Dashboard-Cache:
-    uebersteigt die Summe aus PV_GR + PV_EV ueber alle Stunden WB_P_MIN_PSELL_SWITCH_KWH (deutlich
-    PV-Ueberschuss vorhanden), wird 'p_sell' gewaehlt. 'p_buy' als Rueckfall, wenn keine
-    output.csv vorliegt oder sie nicht lesbar ist."""
+def _wb_p_min_basis():
+    """(Preisspalte, PV-Ueberschuss-Summe in kWh oder None): 'p_buy' (Normalfall) oder 'p_sell', je nach der letzten output.csv im
+    Dashboard-Cache: uebersteigt die Summe aus PV_GR + PV_EV ueber alle Stunden WB_P_MIN_PSELL_SWITCH_KWH (deutlich PV-Ueberschuss
+    vorhanden), wird 'p_sell' gewaehlt. 'p_buy' als Rueckfall (Summe None), wenn keine output.csv vorliegt oder sie nicht lesbar ist."""
     try:
         with open(DASHBOARD_CACHE_PATH, "r") as f:
             cache = json.load(f)
         output_csv = cache.get("output_csv")
         if not output_csv:
-            return "p_buy"
+            return "p_buy", None
         out_rows = list(csv.DictReader(io.StringIO(output_csv)))
         pv_surplus = sum(_safe_float(r.get("PV_GR")) + _safe_float(r.get("PV_EV")) for r in out_rows)
-        return "p_sell" if pv_surplus > WB_P_MIN_PSELL_SWITCH_KWH else "p_buy"
+        return ("p_sell" if pv_surplus > WB_P_MIN_PSELL_SWITCH_KWH else "p_buy"), pv_surplus
     except Exception:
-        return "p_buy"
+        return "p_buy", None
+
+
+def _wb_p_min_price_column():
+    "'p_buy' oder 'p_sell' - siehe _wb_p_min_basis."
+    return _wb_p_min_basis()[0]
 
 
 def compute_wb_p_min():
@@ -5113,7 +5117,7 @@ def compute_wb_p_min():
         rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
     except Exception:
         return None
-    price_column = _wb_p_min_price_column()
+    price_column, pv_surplus_kwh = _wb_p_min_basis()
     upcoming_prices = []
     for i, row in enumerate(rows):
         if i < current_index:
@@ -5124,7 +5128,22 @@ def compute_wb_p_min():
             continue
     if not upcoming_prices:
         return None
-    return round(min(upcoming_prices) + WB_P_MIN_MARGIN_EUR, 4)
+    p_min = round(min(upcoming_prices) + WB_P_MIN_MARGIN_EUR, 4)
+    # Diagnose-Log: der Wert ist der Endwert des Stroms im Auto im Optimierer (Laden lohnt sich nur in Stunden mit p_buy < p_min) und haengt
+    # davon ab, ob der LETZTE Plan einen PV-Ueberschuss ueber der Schwelle hatte (dann p_sell-Basis) - kann also von Lauf zu Lauf wechseln.
+    surplus_text = f"{pv_surplus_kwh:.1f} kWh" if pv_surplus_kwh is not None else "unbekannt (keine output.csv)"
+    p_buy_prices = []
+    for i, row in enumerate(rows):
+        if i >= current_index:
+            try:
+                p_buy_prices.append(_safe_float(row.get("p_buy")))
+            except (TypeError, ValueError):
+                pass
+    cheapest_p_buy = f"{min(p_buy_prices):.4f}" if p_buy_prices else "?"
+    print(f"[Shyft] WB p_min={p_min} EUR/kWh: Basis {price_column} (PV_GR+PV_EV des letzten Plans {surplus_text}, Schwelle {WB_P_MIN_PSELL_SWITCH_KWH} kWh), "
+          f"niedrigster kommender {price_column} {min(upcoming_prices):.4f} + Marge {WB_P_MIN_MARGIN_EUR}; niedrigster kommender p_buy {cheapest_p_buy}; "
+          f"Cache-Lauf {start.isoformat()}")
+    return p_min
 
 
 def compute_energy_flow_data():

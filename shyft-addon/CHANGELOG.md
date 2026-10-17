@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.314
+
+* **PV-Prognose: Summe für Übermorgen ab 21 Uhr.** Unter dem PV-Chart steht ab 21:00 Uhr zusätzlich „| Übermorgen: XX kWh“. Vorher ist die Summe bewusst ausgeblendet, weil das 48-Stunden-Fenster den Tag erst am späten Abend nahezu vollständig abdeckt (die Prüfung, dass die PV-Erzeugung am Abend auf 0 gefallen ist, gilt wie bei Morgen).
+* **Diagnose-Log für `WB - p_min`.** Beim Berechnen von `p_min` (Endwert des Stroms im Auto im Optimierer: Laden lohnt sich nur in Stunden mit `p_buy` unter `p_min`) schreibt das Add-on eine Log-Zeile „WB p_min=…“: den Wert, die gewählte Basis (`p_buy` oder `p_sell`), die PV-Überschuss-Summe (`PV_GR`+`PV_EV`) des letzten Plans samt Schwelle, den niedrigsten kommenden Preis der Basis, die Marge, den niedrigsten kommenden `p_buy` zum Vergleich und den verwendeten Cache-Lauf. Die Berechnung ist unverändert.
+
 ## 0.0.45.313
 
 * **„Warmwassermodus aktiviert?“ = Off unterdrückt keine Warmwasser-Aktionen mehr im Add-on.** Bei „Off“ sendet das Add-on weiterhin keinen Warmwasserbedarf an den Optimierer (`hotwaterkwh` überall 0, `hw_usage_h` leer); der Optimierer plant dann kein Warmwasser. Das Add-on filtert die Aktionen aber nicht zusätzlich selbst heraus, damit die Fehlersuche einfach bleibt – angezeigt und ausgeführt wird, was der Optimierer liefert. (Die Aussage „keine Warmwasser-Aktionen“ im Eintrag zu 0.0.45.312 gilt damit nicht mehr.)
