@@ -7628,35 +7628,62 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
 // (2/3). Der Marker existiert IMMER (auch waehrend eine Aktion aktiv laeuft, siehe dort), anders als
 // die fruehere Ziel-Auswahl ueber ".is-active"-Karten, die bei "gerade nichts aktiv" leer lief.
 //
-// shyftActionsScrollPending: "beim naechsten fertigen Render dieses Tabs einmal scrollen" - wird von
-// requestShyftActionsAutoScroll() (Tab-Klick, siehe setupTabs) gesetzt. maybeAutoScrollToActiveShyftActions
-// wird zusaetzlich nach JEDEM Rendern der Aktionsliste aufgerufen (Erstladen UND der 30-Sekunden-
-// Auto-Refresh, siehe refreshShyftActions) - ohne gesetztes Pending-Flag ist das dort ein no-op,
-// daher stoert der periodische Hintergrund-Refresh die Scrollposition nicht. Das Flag wird erst
-// verbraucht, sobald die Liste tatsaechlich befuellt ist (container.children.length > 0) - vorher
-// koennte ein Klick kurz vor Abschluss des ersten Ladevorgangs sonst die einzige Scroll-Chance
-// verpassen, weil der Marker noch gar nicht im DOM steht.
-let shyftActionsScrollPending = false;
+// shyftActionsScrollRequestedAt: "beim naechsten fertigen Render dieses Tabs einmal scrollen" - wird von requestShyftActionsAutoScroll()
+// (Tab-Klick, siehe setupTabs) gesetzt. maybeAutoScrollToActiveShyftActions wird nach JEDEM Rendern der Aktionsliste aufgerufen (Erstladen UND
+// der 30-Sekunden-Auto-Refresh, siehe refreshShyftActions) - ohne offenen Wunsch ist das dort ein no-op, daher stoert der periodische
+// Hintergrund-Refresh die Scrollposition nicht.
+// Zuverlaessigkeit (Nutzer-Meldung "funktioniert nicht zuverlaessig"): frueher scrollte schon der Tab-Klick selbst sofort auf die noch
+// VORHANDENE (alte) Liste, danach ersetzte das Neuladen (refreshActiveTabNow) die Karten - die Position stimmte dann nicht mehr, und das
+// Pending-Flag war schon verbraucht. Ausserdem verbrauchte der Klick es auch, wenn der Container nur eine Fehlermeldung enthielt, und
+// nachladende Bilder in den Karten verschoben den Marker nach dem Scrollen. Jetzt:
+//  - der Tab-Klick merkt sich den Wunsch nur (mit Ablaufzeit), gescrollt wird erst nach dem Rendern der FRISCH geladenen Liste (der Klick loest
+//    ohnehin ein Neuladen aus), und nur, wenn der Marker wirklich im DOM steht;
+//  - nach dem Scrollen wird die Position noch kurz nachgefuehrt (nachladende Bilder, Layout), solange der Nutzer nicht selbst scrollt/tippt.
+let shyftActionsScrollRequestedAt = 0;
+const SHYFT_ACTIONS_SCROLL_REQUEST_TTL_MS = 15000;
+const SHYFT_ACTIONS_SCROLL_SETTLE_MS = 2500;
+let shyftLastUserInputAt = 0;
+let shyftActionsAutoScrollRunId = 0;
+['wheel', 'touchstart', 'touchmove', 'keydown', 'mousedown'].forEach(type => {
+    window.addEventListener(type, () => { shyftLastUserInputAt = Date.now(); }, {passive: true, capture: true});
+});
+
 function requestShyftActionsAutoScroll() {
-    shyftActionsScrollPending = true;
-    maybeAutoScrollToActiveShyftActions();
+    shyftActionsScrollRequestedAt = Date.now();
 }
+
+function scrollShyftNowMarkerIntoPlace(marker) {
+    // bei einem Drittel der Bildschirmhoehe von oben (siehe oben); relativ zur aktuellen Position, daher beliebig oft wiederholbar
+    const delta = marker.getBoundingClientRect().top - window.innerHeight / 3;
+    if (Math.abs(delta) > 2) window.scrollBy({top: delta, behavior: 'auto'});
+}
+
 function maybeAutoScrollToActiveShyftActions() {
-    if (!shyftActionsScrollPending) return;
+    if (!shyftActionsScrollRequestedAt) return;
+    if (Date.now() - shyftActionsScrollRequestedAt > SHYFT_ACTIONS_SCROLL_REQUEST_TTL_MS) {
+        shyftActionsScrollRequestedAt = 0;  // abgelaufen (z.B. Laden fehlgeschlagen) - ein spaeterer Refresh soll nicht ungefragt scrollen
+        return;
+    }
     const panel = document.getElementById('tab-geraetesteuerung');
     if (!panel || !panel.classList.contains('active')) return;
     const container = document.getElementById('shyftActionsBody');
-    if (!container || container.children.length === 0) return; // Daten noch nicht geladen - Pending bleibt gesetzt
-    shyftActionsScrollPending = false; // ab hier: genau ein Versuch pro Tab-Oeffnen, egal ob der Marker gefunden wird
     const marker = document.getElementById('shyftNowMarker');
-    if (!marker) return;
-    // rAF, damit Layout (inkl. evtl. noch nicht geladener Icon-Bilder) sicher steht, bevor die
-    // Position gemessen wird.
-    requestAnimationFrame(() => {
-        const rect = marker.getBoundingClientRect();
-        const targetOffsetFromTop = window.innerHeight / 3;
-        window.scrollBy({top: rect.top - targetOffsetFromTop, behavior: 'auto'});
-    });
+    if (!container || !marker) return; // Liste (noch) nicht gerendert - der Wunsch bleibt bis zum naechsten Rendern/zum Ablauf bestehen
+    shyftActionsScrollRequestedAt = 0;
+    const runId = ++shyftActionsAutoScrollRunId;
+    const startedAt = Date.now();
+    const settle = () => {
+        // abgebrochen, wenn inzwischen neu gerendert (Marker ausgetauscht), ein neuer Lauf gestartet wurde oder der Nutzer selbst bedient hat
+        if (runId !== shyftActionsAutoScrollRunId || !marker.isConnected || shyftLastUserInputAt > startedAt) return;
+        scrollShyftNowMarkerIntoPlace(marker);
+    };
+    // rAF, damit das Layout steht, bevor die Position gemessen wird; danach nachfuehren (Bilder laden nach, siehe oben)
+    requestAnimationFrame(settle);
+    setTimeout(settle, 250);
+    setTimeout(settle, 900);
+    const onImageLoad = () => settle();
+    container.addEventListener('load', onImageLoad, true);
+    setTimeout(() => container.removeEventListener('load', onImageLoad, true), SHYFT_ACTIONS_SCROLL_SETTLE_MS);
 }
 
 // --- Gerätesteuerung: Schalter "Steuerung aktivieren/deaktivieren" je Aktionstyp --------------------------
@@ -11182,6 +11209,9 @@ function updateOrAppendDashboardWidget(container, key, newEl) {
     if (existing) {
         existing.replaceWith(newEl);
     } else {
+        // erstes Widget da: "Diagramme werden geladen ..." (siehe loadDashboard) ist nicht mehr noetig
+        const loadingNotice = container.querySelector('.dashboardLoadingNotice');
+        if (loadingNotice) loadingNotice.remove();
         container.appendChild(newEl);
     }
 }
@@ -11194,9 +11224,11 @@ function updateOrAppendDashboardWidget(container, key, newEl) {
 let dashboardChartLoadFailureCount = 0;
 const DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD = 3;
 
-function showDashboardChartLoadError(container, message) {
+// immediate=true: der Erstaufbau hat seine automatischen Wiederholungen schon hinter sich (siehe loadDashboard) - dann sofort anzeigen,
+// statt erneut auf DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD Fehlschlaege zu warten.
+function showDashboardChartLoadError(container, message, immediate = false) {
     dashboardChartLoadFailureCount++;
-    if (dashboardChartLoadFailureCount < DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD) {
+    if (!immediate && dashboardChartLoadFailureCount < DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD) {
         console.log(`[Shyft] Dashboard-Chart-Laden fehlgeschlagen (Versuch ${dashboardChartLoadFailureCount}/${DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD}), noch keine Anzeige: ${message}`);
         return;
     }
@@ -11205,18 +11237,72 @@ function showDashboardChartLoadError(container, message) {
     error.className = 'shyftActionsError';
     error.textContent = message;
     container.appendChild(error);
+    const retryButton = document.createElement('button');
+    retryButton.type = 'button';
+    retryButton.textContent = 'Erneut versuchen';
+    retryButton.addEventListener('click', () => {
+        dashboardChartLoadFailureCount = 0;
+        loadDashboard();
+    });
+    container.appendChild(retryButton);
 }
+
+// Hinweis "wird geladen" (neutral, kein Fehler) solange noch kein Widget steht - z.B. direkt nach dem Klick auf "Dashboard" oder wenn der
+// Server (Home Assistant Ingress, frisch gestartetes Add-on) einige Sekunden zum Antworten braucht. Wird vom ersten angehaengten Widget entfernt
+// (siehe updateOrAppendDashboardWidget).
+function showDashboardLoadingNotice(container, text) {
+    let notice = container.querySelector('.dashboardLoadingNotice');
+    if (!notice) {
+        container.querySelectorAll('.shyftActionsError').forEach(el => el.remove());
+        notice = document.createElement('p');
+        notice.className = 'shyftActionsEmpty dashboardLoadingNotice';
+        container.appendChild(notice);
+    }
+    notice.textContent = text;
+}
+
+// Automatische Wiederholungen des allerersten Ladens (Pause vor dem 2., 3., ... Versuch) - erst danach gilt es als Fehler.
+const DASHBOARD_INITIAL_LOAD_RETRY_DELAYS_MS = [2000, 4000, 8000, 15000];
+let dashboardLoadInFlight = null;
 
 // Baut/aktualisiert alle Dashboard-Widgets - sowohl beim ersten Seitenaufruf (container ist leer,
 // jedes updateOrAppendDashboardWidget haengt einfach an) als auch bei jedem periodischen Refresh
 // (siehe refreshDashboard unten): dann wird JEDES Widget einzeln an seinem bestehenden Platz
 // ausgetauscht, ohne die Seite als Ganzes neu aufzubauen.
-async function loadDashboard() {
+// Ein Aufruf zur Zeit: Klick auf den Tab, 30-s-Refresh und "Tab wieder sichtbar" koennen gleichzeitig laden - mehrere parallele (langsame) Aufrufe
+// zaehlten sonst ihre Fehlschlaege zusammen und zeigten die Fehlermeldung, obwohl der naechste Versuch geklappt haette.
+function loadDashboard() {
+    if (!dashboardLoadInFlight) {
+        dashboardLoadInFlight = loadDashboardImpl().finally(() => { dashboardLoadInFlight = null; });
+    }
+    return dashboardLoadInFlight;
+}
+
+async function loadDashboardImpl() {
     const container = document.getElementById('dashboardBody');
     if (!container) return;
+    // Noch kein Widget (erster Aufruf): "wird geladen" zeigen und bei Fehlern automatisch wiederholen, statt sofort eine Fehlermeldung.
+    const isInitialLoad = !container.querySelector('[data-dashboard-widget-key]');
+    if (isInitialLoad) showDashboardLoadingNotice(container, 'Diagramme werden geladen …');
     try {
-        const data = await getJson(insideHomeAssistant + '/dashboard/chart-data');
+        let data;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                data = await getJson(insideHomeAssistant + '/dashboard/chart-data');
+                break;
+            } catch (err) {
+                if (!isInitialLoad || attempt >= DASHBOARD_INITIAL_LOAD_RETRY_DELAYS_MS.length) throw err;
+                console.log(`[Shyft] Dashboard-Daten noch nicht erreichbar (Versuch ${attempt + 1}), neuer Versuch in ${DASHBOARD_INITIAL_LOAD_RETRY_DELAYS_MS[attempt]} ms:`, err);
+                showDashboardLoadingNotice(container, 'Diagramme werden geladen … (der Server antwortet gerade langsam, neuer Versuch)');
+                await new Promise(resolve => setTimeout(resolve, DASHBOARD_INITIAL_LOAD_RETRY_DELAYS_MS[attempt]));
+            }
+        }
         if (data.status !== 'success') {
+            if (isInitialLoad) {
+                // Server antwortet, hat aber (noch) keine Daten - z.B. nach einer Neuinstallation vor der ersten Optimierung: Hinweis, kein Fehler.
+                showDashboardLoadingNotice(container, data.message || 'Noch keine Diagrammdaten vorhanden.');
+                return;
+            }
             showDashboardChartLoadError(container, data.message || 'Diagrammdaten konnten nicht geladen werden.');
             return;
         }
@@ -11562,7 +11648,7 @@ async function loadDashboard() {
         }
     } catch (err) {
         console.log(err);
-        showDashboardChartLoadError(container, 'Diagrammdaten konnten nicht geladen werden.');
+        showDashboardChartLoadError(container, 'Diagrammdaten konnten nicht geladen werden.', isInitialLoad);
     }
 }
 
