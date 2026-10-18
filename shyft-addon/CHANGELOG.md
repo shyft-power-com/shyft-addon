@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.319
+
+* **Strompreisprognose: Fehler am Ende der echten Day-ahead-Preise wird auf die Prognose übertragen.** Die Prognose (Bubble/energyforecast.de) liegt erfahrungsgemäß über Stunden bis Tage auf derselben Seite des echten Preises (z. B. am Tageswechsel zu niedrig → auch danach zu niedrig), und zwischen der Veröffentlichung der Day-ahead-Preise (ca. 14 Uhr) und dem nächsten Bubble-Lauf beruht sie noch auf dem Stand davor. Das Add-on misst deshalb bei jeder Preisberechnung die Differenz zwischen dem letzten echten Day-ahead-Preis (Awattar) und der Prognose für genau diese Stunde (beides netto) und schlägt sie auf die Prognose der Folgestunden auf. Die Korrektur schmilzt je Stunde um 0,1 Cent/kWh (netto) ab und endet bei 0 (bei einer Differenz von 3,4 Cent nach etwa 34 Stunden). Ist Bubbles Prognose für diese Stunde schon identisch mit dem echten Preis, passiert nichts. Die Abschwächung der Extreme in der Prognose bleibt bewusst unverändert. Das Log nennt bei jeder Änderung der Differenz den letzten echten Preis, die Prognose dafür, die Differenz und die Abschmelzdauer („Prognose-Korrektur: …“). Wirkt auf den Strompreis-Chart, den Strompreis im Energiefluss und `p_buy_addon` für den Optimierer.
+
 ## 0.0.45.318
 
 * **Strompreisprognose-Abruf ohne Wiederholungen.** Die Wiederholungen alle 5 Minuten aus 0.0.45.317 entfallen: Ist Bubbles Prognose beim Abruf unverändert oder schlägt der Abruf fehl, fällt der Lauf einfach aus (es gilt der letzte Stand) und der nächste Abruf folgt zur nächsten festen Zeit, 12 Stunden später (06:05 und 18:05 Uhr, Europe/Berlin). Der Cache bleibt als Sicherheitsnetz bis zu 14 Stunden gültig.

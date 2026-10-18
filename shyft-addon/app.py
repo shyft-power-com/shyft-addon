@@ -930,15 +930,57 @@ def _fetch_bubble_price_prediction():
     return prices
 
 
-def _resolve_fallback_price(h, by_hour, bubble_by_hour):
+# Fehler der Prognose halten erfahrungsgemaess ueber Stunden bis Tage an (gleiches Vorzeichen, z.B. Prognose am Tageswechsel zu niedrig -> auch in den
+# Folgestunden zu niedrig). Deshalb wird die Differenz am Ende der echten Day-ahead-Preise (letzter veroeffentlichter Awattar-Preis minus Prognose fuer
+# genau diese Stunde, beides netto) auf die Prognose der Folgestunden aufgeschlagen und schmilzt je Stunde um BUBBLE_BIAS_MELT_PER_HOUR_EUR ab.
+BUBBLE_BIAS_MELT_PER_HOUR_EUR = 0.001  # 0,1 Cent/kWh netto je Stunde
+_last_logged_bubble_bias = None
+
+
+def _bubble_bias(by_hour, bubble_by_hour):
+    """(letzte Stunde mit echtem Awattar-Preis, Differenz echter Preis minus Bubble-Prognose dieser Stunde, beides netto in EUR/kWh) - None, wenn es keinen
+    echten Preis oder keine Prognose fuer diese Stunde gibt. Ist Bubbles Stand aktuell genug, dass er dort schon den echten Preis enthaelt, ist die Differenz 0."""
+    global _last_logged_bubble_bias
+    if not by_hour:
+        return None
+    last = max(by_hour)
+    forecast_net = bubble_by_hour.get(last)
+    if forecast_net is None:
+        return None
+    actual_net = by_hour[last] / AWATTAR_VAT_FACTOR
+    delta = actual_net - forecast_net
+    marker = (last, round(delta, 5))
+    if marker != _last_logged_bubble_bias:
+        _last_logged_bubble_bias = marker
+        melt_hours = int(abs(delta) / BUBBLE_BIAS_MELT_PER_HOUR_EUR)
+        print(f"[Shyft] Prognose-Korrektur: letzter echter Day-ahead-Preis {last.isoformat()} netto {actual_net:.4f}, Bubble-Prognose dafuer {forecast_net:.4f} -> "
+              f"Differenz {delta:+.4f} EUR/kWh, wird auf die Prognose danach aufgeschlagen und schmilzt um {BUBBLE_BIAS_MELT_PER_HOUR_EUR * 100:.1f} ct/h ab "
+              f"(nach etwa {melt_hours} Stunden weg).")
+    return last, delta
+
+
+def _bubble_bias_offset(h, bias):
+    "Aufschlag (EUR/kWh netto) auf die Bubble-Prognose der Stunde h: die Differenz am Ende der echten Preise, je Stunde danach um BUBBLE_BIAS_MELT_PER_HOUR_EUR kleiner (nie ueber 0 hinaus)."
+    if not bias:
+        return 0.0
+    last, delta = bias
+    steps = (h - last) / timedelta(hours=1)
+    if steps < 1:
+        return 0.0
+    remaining = abs(delta) - BUBBLE_BIAS_MELT_PER_HOUR_EUR * steps
+    return math.copysign(remaining, delta) if remaining > 0 else 0.0
+
+
+def _resolve_fallback_price(h, by_hour, bubble_by_hour, bias=None):
     """Brutto-Preis (EUR/kWh) fuer eine Stunde jenseits des echten Awattar-Fensters: zuerst Bubbles
     eigene Strompreisprognose (_fetch_bubble_price_prediction, netto -> brutto konvertiert - deckt
-    i.d.R. den gesamten Optimierungszeitraum ab), sonst als letzter Rueckfall ein echter
+    i.d.R. den gesamten Optimierungszeitraum ab; mit abschmelzender Korrektur um den Fehler am Ende der
+    echten Preise, siehe _bubble_bias), sonst als letzter Rueckfall ein echter
     Awattar-Preis derselben Uhrzeit bis zu PRICE_FALLBACK_MAX_DAYS_BACK Tage zurueck. None, wenn
     beides fehlschlaegt - der Aufrufer faellt dann selbst auf den zuletzt aufgeloesten Wert zurueck."""
     bubble_price = bubble_by_hour.get(h)
     if bubble_price is not None:
-        return round(bubble_price * AWATTAR_VAT_FACTOR, 5)
+        return round((bubble_price + _bubble_bias_offset(h, bias)) * AWATTAR_VAT_FACTOR, 5)
     for days_back in range(1, PRICE_FALLBACK_MAX_DAYS_BACK + 1):
         price = by_hour.get(h - timedelta(days=days_back))
         if price is not None:
@@ -1032,12 +1074,13 @@ def compute_price_buy_array(config, base_time_utc, hours):
         # echte, tagesspezifische Prognose statt eines wiederverwendeten aelteren Tagesprofils. Nur
         # wenn die ebenfalls fehlt, auf den letzten Tag mit echten Awattar-Daten zurueckfallen (bis
         # zu PRICE_FALLBACK_MAX_DAYS_BACK Tage), zuletzt auf den vorherigen Wert.
+        bias = _bubble_bias(by_hour, bubble_by_hour)
         out = []
         for i in range(hours):
             h = (base_time_utc + timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
             price = by_hour.get(h)
             if price is None:
-                price = _resolve_fallback_price(h, by_hour, bubble_by_hour)
+                price = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias)
             if price is None:
                 price = out[-1] - surcharge if out else 0.0
             out.append(round(price + surcharge, 5))
@@ -1059,6 +1102,7 @@ def compute_price_buy_array(config, base_time_utc, hours):
         bubble_by_hour = {}
         for ts_ms, price in _fetch_bubble_price_prediction().items():
             bubble_by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
+        bias = _bubble_bias(by_hour, bubble_by_hour)
         out = []
         prev_raw_price = None
         for i in range(hours):
@@ -1069,7 +1113,7 @@ def compute_price_buy_array(config, base_time_utc, hours):
                 # echter Awattar-Preis eines frueheren Tages, zuletzt der vorherige Wert (Notnagel -
                 # erzeugte ohne den Bubble-Fallback einen eingefrorenen Preisverlauf, siehe
                 # CHANGELOG 0.0.45.88).
-                raw_price = _resolve_fallback_price(h, by_hour, bubble_by_hour)
+                raw_price = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias)
             if raw_price is None:
                 raw_price = prev_raw_price if prev_raw_price is not None else 0.0
             tariff = _netzentgelt_tariff_for_hour(h.astimezone(get_ha_timezone()), windows, quarters)
