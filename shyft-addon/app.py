@@ -834,9 +834,6 @@ BUBBLE_PRICE_PREDICTION_CACHE_PATH = "/data/bubble_price_prediction_cache.json"
 BUBBLE_PRICE_PREDICTION_CACHE_TTL_SECONDS = 14 * 3600
 BUBBLE_PRICE_PREDICTION_REFRESH_TIMEZONE = "Europe/Berlin"
 BUBBLE_PRICE_PREDICTION_REFRESH_TIMES = ((6, 5), (18, 5))  # (Stunde, Minute): einige Minuten nach Bubbles Laeufen um 05:59 / 17:59
-# Hat sich die Prognose beim Abruf nicht geaendert (Bubble noch nicht fertig) oder schlug der Abruf fehl, wird in diesem Abstand erneut versucht.
-BUBBLE_PRICE_PREDICTION_RETRY_DELAY_MINUTES = 5
-BUBBLE_PRICE_PREDICTION_MAX_RETRIES = 3
 
 
 def _request_bubble_price_prediction():
@@ -864,46 +861,39 @@ def _write_bubble_price_prediction_cache(prices):
         print("[Shyft] Bubble-Preisprognose-Cache konnte nicht geschrieben werden:", repr(e))
 
 
-def refresh_bubble_price_prediction(attempt=1):
+def refresh_bubble_price_prediction():
     """Holt Bubbles Strompreisprognose unabhaengig vom Cache neu und schreibt sie in den Cache (zweimal taeglich kurz nach Bubbles Laeufen, siehe
-    BUBBLE_PRICE_PREDICTION_REFRESH_TIMES). Ist die Prognose unveraendert (Bubble noch nicht fertig) oder schlug der Abruf fehl, wird bis zu
-    BUBBLE_PRICE_PREDICTION_MAX_RETRIES Mal im Abstand von BUBBLE_PRICE_PREDICTION_RETRY_DELAY_MINUTES erneut versucht. True, wenn sich Werte geaendert haben."""
+    BUBBLE_PRICE_PREDICTION_REFRESH_TIMES). Keine Wiederholungen: ist die Prognose unveraendert oder schlaegt der Abruf fehl, faellt der Lauf aus
+    (es gilt der letzte Stand) und der naechste Abruf folgt zur naechsten festen Zeit, 12 Stunden spaeter. True, wenn sich Werte geaendert haben."""
     try:
         with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "r") as f:
             old_prices = (json.load(f).get("prices") or {})
     except Exception:
         old_prices = {}
-    reason = None
     try:
         prices = _request_bubble_price_prediction()
-        if not prices:
-            reason = "keine Prognose erhalten"
-        else:
-            new_prices = {str(k): v for k, v in prices.items()}
-            changed = sum(1 for k, v in new_prices.items() if old_prices.get(k) != v)
-            first = datetime.fromtimestamp(min(prices) / 1000, tz=timezone.utc).isoformat()
-            last = datetime.fromtimestamp(max(prices) / 1000, tz=timezone.utc).isoformat()
-            _write_bubble_price_prediction_cache(prices)
-            print(f"[Shyft] Bubble-Strompreisprognose aktualisiert (Versuch {attempt}): {len(prices)} Stunden ({first} bis {last}), {changed} Werte gegenueber dem letzten Stand geaendert.")
-            if changed:
-                return True
-            reason = "Prognose unveraendert (Bubble evtl. noch nicht fertig)"
     except Exception as e:
-        reason = f"Abruf fehlgeschlagen: {e!r}"
-    if attempt <= BUBBLE_PRICE_PREDICTION_MAX_RETRIES:
-        print(f"[Shyft] Bubble-Strompreisprognose: {reason} - neuer Versuch in {BUBBLE_PRICE_PREDICTION_RETRY_DELAY_MINUTES} Minuten ({attempt}/{BUBBLE_PRICE_PREDICTION_MAX_RETRIES}).")
-        scheduler.add_job(refresh_bubble_price_prediction_periodically, "date",
-                          run_date=datetime.now(timezone.utc) + timedelta(minutes=BUBBLE_PRICE_PREDICTION_RETRY_DELAY_MINUTES),
-                          kwargs={"attempt": attempt + 1})
-    else:
-        print(f"[Shyft] Bubble-Strompreisprognose: {reason} - keine weiteren Versuche, es gilt der letzte bekannte Stand.")
-    return False
+        print(f"[Shyft] Bubble-Strompreisprognose: Abruf fehlgeschlagen ({e!r}) - es gilt der letzte bekannte Stand, naechster Abruf zur naechsten festen Zeit.")
+        return False
+    if not prices:
+        print("[Shyft] Bubble-Strompreisprognose: keine Prognose erhalten - es gilt der letzte bekannte Stand, naechster Abruf zur naechsten festen Zeit.")
+        return False
+    new_prices = {str(k): v for k, v in prices.items()}
+    changed = sum(1 for k, v in new_prices.items() if old_prices.get(k) != v)
+    first = datetime.fromtimestamp(min(prices) / 1000, tz=timezone.utc).isoformat()
+    last = datetime.fromtimestamp(max(prices) / 1000, tz=timezone.utc).isoformat()
+    _write_bubble_price_prediction_cache(prices)
+    if changed == 0:
+        print(f"[Shyft] Bubble-Strompreisprognose unveraendert ({len(prices)} Stunden, {first} bis {last}) - Bubble evtl. noch nicht fertig; naechster Abruf zur naechsten festen Zeit.")
+        return False
+    print(f"[Shyft] Bubble-Strompreisprognose aktualisiert: {len(prices)} Stunden ({first} bis {last}), {changed} Werte gegenueber dem letzten Stand geaendert.")
+    return True
 
 
-def refresh_bubble_price_prediction_periodically(attempt=1):
+def refresh_bubble_price_prediction_periodically():
     with app.app_context():
         try:
-            refresh_bubble_price_prediction(attempt)
+            refresh_bubble_price_prediction()
         except Exception as e:
             print("[Shyft] Bubble-Strompreisprognose-Abruf fehlgeschlagen:", repr(e))
 
@@ -12334,8 +12324,8 @@ scheduler.add_job(calibrate_pv_forecast_periodically, 'cron', hour="22", minute=
 # 3-stuendlichen Wetter-Abrufen stundenaktuell - der State soll immer die JETZT laufende Stunde
 # zeigen, nicht bis zu 3h alt sein.
 scheduler.add_job(push_pv_forecast_sensor_periodically, 'cron', minute="0")
-# Bubbles Strompreisprognose wird dort um 05:59 und 17:59 (Europe/Berlin) aktualisiert - das Add-on holt sie einige Minuten danach (mit Wiederholung,
-# falls sie noch unveraendert ist), damit es zweimal taeglich den aktuellsten Stand hat (siehe refresh_bubble_price_prediction).
+# Bubbles Strompreisprognose wird dort um 05:59 und 17:59 (Europe/Berlin) aktualisiert - das Add-on holt sie einige Minuten danach (ohne Wiederholung:
+# ist sie unveraendert, faellt der Lauf aus), damit es zweimal taeglich den aktuellsten Stand hat (siehe refresh_bubble_price_prediction).
 for _refresh_hour, _refresh_minute in BUBBLE_PRICE_PREDICTION_REFRESH_TIMES:
     scheduler.add_job(refresh_bubble_price_prediction_periodically, 'cron', hour=_refresh_hour, minute=_refresh_minute,
                       timezone=BUBBLE_PRICE_PREDICTION_REFRESH_TIMEZONE)

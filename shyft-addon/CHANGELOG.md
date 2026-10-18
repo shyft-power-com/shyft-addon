@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.318
+
+* **Strompreisprognose-Abruf ohne Wiederholungen.** Die Wiederholungen alle 5 Minuten aus 0.0.45.317 entfallen: Ist Bubbles Prognose beim Abruf unverändert oder schlägt der Abruf fehl, fällt der Lauf einfach aus (es gilt der letzte Stand) und der nächste Abruf folgt zur nächsten festen Zeit, 12 Stunden später (06:05 und 18:05 Uhr, Europe/Berlin). Der Cache bleibt als Sicherheitsnetz bis zu 14 Stunden gültig.
+
 ## 0.0.45.317
 
 * **Bubbles Strompreisprognose wird zweimal täglich passend zu Bubbles Läufen abgerufen.** Bubble aktualisiert seine Prognose um 05:59 und 17:59 Uhr (Europe/Berlin); das Add-on holt sie jetzt um 06:05 und 18:05 Uhr und nutzt dazwischen den zwischengespeicherten Stand (bisher wurde alle 30 Minuten neu geholt, und der Cache lief unabhängig von Bubbles Läufen ab). Ist die Prognose beim Abruf noch unverändert (Bubble noch nicht fertig) oder schlägt der Abruf fehl, wird bis zu dreimal im Abstand von 5 Minuten wiederholt. Der Cache gilt maximal 14 Stunden als Sicherheitsnetz (z. B. nach einem Neustart ohne Cache). Das Log nennt je Abruf Stundenanzahl, Zeitraum und wie viele Werte sich gegenüber dem letzten Stand geändert haben.
