@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.323
+
+* **Einspeisung: neue Option „Direktvermarktung (Börsenstrompreis)“.** Unter „Strom“ → „Einspeisung“ wählst du per Radiobutton zwischen „Einspeisevergütung (brutto)“ und „Direktvermarktung (Börsenstrompreis)“. Die Einspeisevergütung funktioniert wie bisher, der eingetragene Satz gilt auch für Bestandskunden unverändert weiter (ohne gespeicherte Auswahl ist sie vorausgewählt). Bei „Direktvermarktung“ erscheint das Feld „Kostenabzug pro kWh“ (ct/kWh): Du erhältst für jede eingespeiste kWh den aktuellen Börsenstrompreis abzüglich dieser Kosten des Direktvermarkters. Das Add-on berechnet daraus für den gesamten Optimierungszeitraum einen stündlichen Einspeisepreis: Börsenpreis (netto, EPEX Day-Ahead ohne Mehrwertsteuer – so wird er ausgezahlt) minus Kostenabzug; für die Stunden, für die noch keine Day-Ahead-Preise vorliegen, gilt wie beim dynamischen Stromtarif Bubbles Preisprognose samt Fehlerkorrektur. Der Einspeisepreis kann dabei bei negativen Börsenpreisen negativ werden. Er geht als neues Feld `p_sell_array_addon` (Stundenwerte wie `p_buy_addon`) an den Server, der Mittelwert zusätzlich als flacher `p_sell_addon` für einen Server ohne Stundenwerte. **Braucht den Server ab 0.46.27.0** (liest `p_sell_array_addon`); ein älterer Server rechnet mit dem flachen Mittelwert. Fehlt bei Direktvermarktung der Kostenabzug, wird – wie bei der Einspeisevergütung – keine Optimierung gestartet und die Konfigurationsseite weist darauf hin.
+
 ## 0.0.45.322
 
 * **Strompreis-Chart: Rot erst ab 40 Cent.** Die Grenze, ab der der Strompreis im Strompreis-Chart rot eingefärbt wird, steigt von 35 auf 40 Cent/kWh. Dieselbe Grenze gilt für die Einstufung „hoch“ beim Strompreis über dem Strommast im Energiefluss, damit beide Darstellungen übereinstimmen. Grün (bis 25 Cent) und Lila (ab 80 Cent) bleiben unverändert.

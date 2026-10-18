@@ -1037,6 +1037,8 @@ async function saveConfigurationNow() {
         "electricityNetzentgeltWindows": configData["electricityNetzentgeltWindows"] ?? [],
         "electricityNetzentgeltQuarters": configData["electricityNetzentgeltQuarters"] ?? [],
         "electricitySellCent": configData["electricitySellCent"] ?? null,
+        "electricitySellMode": configData["electricitySellMode"] ?? 'feed_in_tariff',
+        "electricityDirectMarketingCostCent": configData["electricityDirectMarketingCostCent"] ?? null,
         "feedInLimitEnabled": configData["feedInLimitEnabled"] === true,
         "feedInLimitKw": configData["feedInLimitKw"] ?? null,
         "heatingRodControl": isHeatingRodToggleOn(),
@@ -2405,7 +2407,8 @@ function isElectricityConfigComplete() {
     else if (mode === 'ht_nt') tariffOk = has('electricityHtCent') && has('electricityNtCent');
     else if (mode === 'dynamic') tariffOk = has('electricityDynamicSurchargeCent');
     else if (mode === 'dynamic_variable') tariffOk = has('electricityNetzentgeltHtCent') && has('electricityNetzentgeltNtCent') && has('electricityNetzentgeltStandardCent');
-    return tariffOk && has('electricitySellCent');
+    const sellOk = configData['electricitySellMode'] === 'direct_marketing' ? has('electricityDirectMarketingCostCent') : has('electricitySellCent');
+    return tariffOk && sellOk;
 }
 
 function renderGeneralConfigSection() {
@@ -2457,7 +2460,7 @@ function renderGeneralConfigSection() {
     bodyDiv.appendChild(buildElectricityTariffControl());
 
     bodyDiv.appendChild(buildElectricitySubheading('Einspeisung'));
-    bodyDiv.appendChild(buildElectricityPriceSellField());
+    bodyDiv.appendChild(buildElectricitySellControl());
 
     // Optional: zusaetzliche(r) Netzleistungs-Sensor(en) unabhaengig vom (ebenfalls optionalen)
     // Wechselrichter-Sensor "photovoltaic_powerflow_grid" - siehe read_grid_power_kw in app.py, das
@@ -4487,6 +4490,65 @@ function buildOptimizationPeriodsField() {
         defaultValue: 48,
         step: '1',
     });
+}
+
+// Einspeisung: Radiobuttons "Einspeisevergütung (brutto)" (fester Satz, bisheriges Feld electricitySellCent - Bestandskunden bleiben unverändert dabei)
+// oder "Direktvermarktung (Börsenstrompreis)" (Börsenpreis minus Kostenabzug des Direktvermarkters, siehe compute_price_sell_array in app.py).
+// electricitySellMode fehlt bei Bestandskunden = Einspeisevergütung; es wird bewusst nicht vorab in configData geschrieben.
+function buildElectricitySellControl() {
+    const wrap = document.createElement('div');
+    const current = configData['electricitySellMode'] === 'direct_marketing' ? 'direct_marketing' : 'feed_in_tariff';
+
+    const radioGroup = document.createElement('div');
+    radioGroup.className = 'electricityRadioGroup';
+    radioGroup.setAttribute('role', 'radiogroup');
+    const panel = document.createElement('div');
+
+    function renderPanel(mode) {
+        panel.innerHTML = '';
+        if (mode === 'direct_marketing') {
+            panel.appendChild(buildConfigNumberField({
+                label: 'Kostenabzug pro kWh',
+                tooltip: 'Was dein Direktvermarkter dir pro eingespeister Kilowattstunde vom Börsenstrompreis abzieht.',
+                id: 'electricity_direct_marketing_cost_cent',
+                configKey: 'electricityDirectMarketingCostCent',
+                placeholder: 'z.B. 0.4',
+                step: '0.1',
+                min: '0',
+                unit: 'ct/kWh',
+            }));
+            const note = document.createElement('p');
+            note.className = 'electricityHint';
+            note.textContent = 'Du erhältst für deine eingespeisten kWh Strom den aktuellen Börsenstrompreis, abzüglich dieser Kosten des Direktvermarkters.';
+            panel.appendChild(note);
+        } else {
+            panel.appendChild(buildElectricityPriceSellField());
+        }
+    }
+
+    for (const [value, label] of [['feed_in_tariff', 'Einspeisevergütung (brutto)'], ['direct_marketing', 'Direktvermarktung (Börsenstrompreis)']]) {
+        const option = document.createElement('label');
+        option.className = 'electricityRadioOption';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'electricity_sell_mode';
+        input.value = value;
+        input.checked = value === current;
+        input.addEventListener('change', () => {
+            if (!input.checked) return;
+            configData['electricitySellMode'] = value;
+            markConfigFieldTouched('electricitySellMode');
+            renderPanel(value);
+            autoSave();
+        });
+        option.appendChild(input);
+        option.appendChild(document.createTextNode(label));
+        radioGroup.appendChild(option);
+    }
+    wrap.appendChild(radioGroup);
+    wrap.appendChild(panel);
+    renderPanel(current);
+    return wrap;
 }
 
 function buildElectricityPriceSellField() {

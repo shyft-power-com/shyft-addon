@@ -784,6 +784,23 @@
         .electricityTariffPanels {
             margin-top: 0.75em;
         }
+        /* Einspeisung: Radiobuttons (Einspeisevergütung / Direktvermarktung) */
+        .electricityRadioGroup {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4em;
+            margin-bottom: 0.6em;
+        }
+        .electricityRadioOption {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+            cursor: pointer;
+        }
+        .electricityRadioOption input[type="radio"] {
+            accent-color: var(--color-accent);
+            margin: 0;
+        }
         .segmentedControl {
             display: inline-flex;
             flex-wrap: wrap;

@@ -1125,6 +1125,67 @@ def compute_price_buy_array(config, base_time_utc, hours):
     return None
 
 
+# Einspeisung: entweder fester Verguetungssatz (electricitySellCent, bisheriges Verhalten - auch fuer Bestandskunden ohne electricitySellMode) oder
+# Direktvermarktung (Boersenpreis minus Kostenabzug des Direktvermarkters, stuendlich wechselnd).
+ELECTRICITY_SELL_MODE_FEED_IN = "feed_in_tariff"
+ELECTRICITY_SELL_MODE_DIRECT_MARKETING = "direct_marketing"
+
+
+def electricity_sell_mode(config):
+    "'direct_marketing' oder 'feed_in_tariff' - ohne (oder mit unbekanntem) electricitySellMode gilt der feste Verguetungssatz wie bisher."
+    return ELECTRICITY_SELL_MODE_DIRECT_MARKETING if config.get("electricitySellMode") == ELECTRICITY_SELL_MODE_DIRECT_MARKETING else ELECTRICITY_SELL_MODE_FEED_IN
+
+
+def _direct_marketing_cost_eur(config):
+    "Kostenabzug pro kWh der Direktvermarktung in EUR (Feld in Cent), None wenn nicht eingetragen."
+    value = config.get("electricityDirectMarketingCostCent")
+    try:
+        return float(value) / 100.0 if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def compute_price_sell_array(config, base_time_utc, hours):
+    """Stuendlicher Einspeisepreis (EUR/kWh) ab base_time_utc fuer 'hours' Stunden bei Direktvermarktung: Boersenpreis (netto, EPEX Day-Ahead - ohne
+    Mehrwertsteuer, so wird er ausgezahlt) minus Kostenabzug des Direktvermarkters. Die Boersenpreise kommen wie beim dynamischen Stromtarif aus Awattar
+    (veroeffentlichtes Fenster) und danach aus Bubbles Preisprognose samt abschmelzender Fehlerkorrektur (siehe _resolve_fallback_price) - der Preis kann
+    also negativ werden. None, wenn nicht Direktvermarktung gewaehlt ist, der Kostenabzug fehlt oder keine Boersenpreise vorliegen."""
+    if electricity_sell_mode(config) != ELECTRICITY_SELL_MODE_DIRECT_MARKETING:
+        return None
+    cost = _direct_marketing_cost_eur(config)
+    if cost is None:
+        return None
+    spot = _fetch_awattar_prices()  # {epoch_ms: EUR/kWh brutto}
+    if not spot:
+        return None
+    by_hour = {}
+    for ts_ms, price in spot.items():
+        by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
+    bubble_by_hour = {}
+    for ts_ms, price in _fetch_bubble_price_prediction().items():
+        bubble_by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
+    bias = _bubble_bias(by_hour, bubble_by_hour)
+    out = []
+    prev_gross = None
+    for i in range(hours):
+        h = (base_time_utc + timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
+        gross = by_hour.get(h)
+        if gross is None:
+            gross = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias)
+        if gross is None:
+            gross = prev_gross if prev_gross is not None else 0.0
+        out.append(round(gross / AWATTAR_VAT_FACTOR - cost, 5))
+        prev_gross = gross
+    return out
+
+
+def describe_missing_sell_price(config):
+    "Klartext, warum bei Direktvermarktung kein Einspeisepreis berechnet werden konnte."
+    if _direct_marketing_cost_eur(config) is None:
+        return "Der Kostenabzug der Direktvermarktung ist nicht eingetragen. Trage ihn auf der Konfigurationsseite unter „Strom“ ein."
+    return "Der Einspeisepreis (Direktvermarktung) fehlt: die Börsenpreise von Awattar konnten nicht geladen werden. Das Add-on versucht es mit dem nächsten Sync erneut."
+
+
 @app.route("/electricity/price-preview", methods=["GET"])
 def electricity_price_preview():
     """Pruefzeile im dynamischen Stromtarif: der Gesamt-Einkaufspreis (Boersen-Brutto + fixer
@@ -1373,7 +1434,17 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         # Einspeiseverguetung als Skalar (EUR/kWh) - ebenfalls neues Feld, damit der Server vom
         # bisherigen "Electricity Price Sell"-Dropdown darauf umstellen kann.
         sell_cent = config.get("electricitySellCent")
-        if sell_cent not in (None, ""):
+        if electricity_sell_mode(config) == ELECTRICITY_SELL_MODE_DIRECT_MARKETING:
+            # Direktvermarktung: stuendlicher Einspeisepreis (Boersenpreis minus Kostenabzug) als Array fuer den Server (p_sell_array_addon, gleiche
+            # Stunden wie p_buy_addon). p_sell_addon bleibt als flacher Rueckfall (Mittelwert) - fuer einen Server ohne Array-Unterstuetzung.
+            sell_arr = compute_price_sell_array(config, price_base, optimizer_period + 24)
+            if sell_arr:
+                live_values["p_sell_array_addon"] = ";".join(f"{v:.5f}" for v in sell_arr)
+                live_values["p_sell_addon"] = round(sum(sell_arr) / len(sell_arr), 5)
+                live_values.setdefault("baseTime", price_base.isoformat())
+            elif _pv_sensor_configured(config):
+                missing_required.append(describe_missing_sell_price(config))
+        elif sell_cent not in (None, ""):
             live_values["p_sell_addon"] = round(float(sell_cent) / 100.0, 5)
         elif _pv_sensor_configured(config):
             # Ohne PV-Anlage gibt es nichts einzuspeisen - dort ist ein leerer Wert (= 0) in Ordnung.
