@@ -8493,6 +8493,14 @@ function computeNiceTicks(min, max, targetCount = 4) {
     return ticks.length ? ticks : [min];
 }
 
+// "Jetzt"-Markierung in den Charts: Punkt auf der Kurve mit einem zweiten, halbtransparenten Ring in Shyft-Gruen (kein senkrechter Strich mehr -
+// der wurde mit den Tageswechsel-Linien verwechselt). Ring zuerst, damit der Punkt darueber liegt. Eigene Klassen (nicht dashboardChartMarker), damit
+// der verschiebbare Hover-Punkt nicht mit diesem verwechselt wird (er wird per querySelector gesucht).
+function nowDotSvg(cx, cy) {
+    const x = Number(cx).toFixed(1), y = Number(cy).toFixed(1);
+    return `<circle class="dashboardChartNowRing" r="9" cx="${x}" cy="${y}" /><circle class="dashboardChartNowDot" r="4.5" cx="${x}" cy="${y}" />`;
+}
+
 function buildLineChart(title, unit, labels, values, options = {}) {
     const scaleHolder = {};
     return makeToggleableChart(options.chartKey, ctx => {
@@ -8933,13 +8941,9 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     const firstLabelMs = new Date(labels[0]).getTime();
     const nowIndex = Math.round((nowMs - firstLabelMs) / 3600000);
     if (nowIndex >= 0 && nowIndex <= lastIndex) {
-        const x = (paddingLeft + (nowIndex / lastIndex) * plotWidth).toFixed(1);
-        nowMarkup = `<line x1="${x}" y1="${paddingTop}" x2="${x}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
-        // Zusaetzlich ein dauerhaft sichtbarer Punkt auf der Linie (der Strich allein ist zu unauffaellig) - gleiches
-        // Aussehen wie der Punkt beim Mouse-over (dashboardChartMarker), aber eigene Klasse, damit er nicht mit dem
-        // verschiebbaren Hover-Punkt verwechselt wird (der per querySelector gesucht wird).
+        // Dauerhaft sichtbarer Punkt mit Ring auf der Kurve (siehe nowDotSvg) - kein senkrechter Strich mehr.
         for (const p of [hidePrimarySeg(nowIndex) ? null : points[nowIndex], hideSecond ? null : (points2 && points2[nowIndex])]) {
-            if (p) nowMarkup += `<circle class="dashboardChartNowDot" r="4.5" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" />`;
+            if (p) nowMarkup += nowDotSvg(p[0], p[1]);
         }
     }
 
@@ -9340,21 +9344,16 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
         return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="end">${v.toFixed(decimals)}</text>`;
     }).join('');
 
-    // "Jetzt"-Markierung: Trennlinie zwischen den bereits vergangenen Stunden (mit Ist-Werten) und
-    // der Zukunft (nur noch Prognose) - der letzte Index, an dem ein Ist-Wert vorliegt.
+    // "Jetzt"-Markierung: nur noch ein Punkt mit Ring auf der Kurve (siehe nowDotSvg), kein senkrechter Strich mehr - der wurde mit den
+    // Tageswechsel-Linien verwechselt. "jetzt" = der letzte Index, an dem ein Ist-Wert vorliegt. nowMarkup bleibt (leer) fuer den SVG-Aufbau unten.
     let nowMarkup = '';
     const lastActualIndex = actual.reduce((last, v, i) => (v !== null && v !== undefined ? i : last), -1);
-    if (lastActualIndex >= 0 && lastActualIndex < labels.length - 1) {
-        const x = xFor(lastActualIndex).toFixed(1);
-        nowMarkup = `<line x1="${x}" y1="${paddingTop}" x2="${x}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
-    }
-    // Dauerhaft sichtbarer Punkt auf der Linie bei "jetzt" (der Strich allein ist zu unauffaellig) - wird UEBER den
-    // Linien gezeichnet (siehe nowDotMarkup im SVG unten), nicht wie der Strich darunter.
+    // Wird UEBER den Linien gezeichnet (siehe nowDotMarkup im SVG unten).
     let nowDotMarkup = '';
     if (lastActualIndex >= 0 && showActual) {
         const nowDotValue = actual[lastActualIndex] ?? prognose[lastActualIndex];
         if (nowDotValue !== null && nowDotValue !== undefined) {
-            nowDotMarkup = `<circle class="dashboardChartNowDot" r="4.5" cx="${xFor(lastActualIndex).toFixed(1)}" cy="${yFor(nowDotValue).toFixed(1)}" />`;
+            nowDotMarkup = nowDotSvg(xFor(lastActualIndex), yFor(nowDotValue));
         }
     }
     if (useFineActual) {
@@ -9362,10 +9361,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
         const [lastMs, lastValue] = fineActual[fineActual.length - 1];
         const nowX = xOfMs(lastMs + 150000);
         if (nowX >= paddingLeft && nowX <= width - paddingRight) {
-            nowDotMarkup = `<circle class="dashboardChartNowDot" r="4.5" cx="${nowX.toFixed(1)}" cy="${yFor(lastValue).toFixed(1)}" />`;
-            if (lastActualIndex < labels.length - 1) {
-                nowMarkup = `<line x1="${nowX.toFixed(1)}" y1="${paddingTop}" x2="${nowX.toFixed(1)}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
-            }
+            nowDotMarkup = nowDotSvg(nowX, yFor(lastValue));
         }
     }
 
