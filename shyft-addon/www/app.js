@@ -11404,8 +11404,8 @@ async function loadDashboardImpl() {
             valueScale: 100,
             decimals: 0,
             // extremeThreshold/-Color: Nutzer-Vorgabe, sehr teure Stunden (>80 Cent) zusaetzlich
-            // zum normalen "teuer"-Rot (>35 Cent) farblich abheben, statt gleich auszusehen.
-            colorBands: {extremeThreshold: 80, extremeColor: '#8e24aa', highThreshold: 35, highColor: 'var(--color-error)', lowThreshold: 25, lowColor: 'var(--color-accent)', midColor: 'var(--color-text-secondary)'},
+            // zum normalen "teuer"-Rot (>40 Cent) farblich abheben, statt gleich auszusehen.
+            colorBands: {extremeThreshold: 80, extremeColor: '#8e24aa', highThreshold: 40, highColor: 'var(--color-error)', lowThreshold: 25, lowColor: 'var(--color-accent)', midColor: 'var(--color-text-secondary)'},
             // Nutzer-Vorgabe: alle veroeffentlichten Awattar-Werte durchgezogen zeichnen (auch in der
             // Zukunft - die sind bekannt, keine Prognose), erst danach gestrichelt.
             dashedFromIndex: strompreisDashedFromIndex,

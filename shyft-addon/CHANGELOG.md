@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.322
+
+* **Strompreis-Chart: Rot erst ab 40 Cent.** Die Grenze, ab der der Strompreis im Strompreis-Chart rot eingefärbt wird, steigt von 35 auf 40 Cent/kWh. Dieselbe Grenze gilt für die Einstufung „hoch“ beim Strompreis über dem Strommast im Energiefluss, damit beide Darstellungen übereinstimmen. Grün (bis 25 Cent) und Lila (ab 80 Cent) bleiben unverändert.
+
 ## 0.0.45.321
 
 * **Dashboard: Warmwasser-Chart wird bei deaktiviertem Warmwasser ausgeblendet.** Steht „Warmwassermodus aktiviert?“ auf Aus, bekommt der Optimierer keinen Warmwasserbedarf mehr, und die „Prognose“-Linie (simulierte Tanktemperatur, zuletzt 53–59 °C bei echten 26 °C) ist dann bedeutungslos. Der Chart wird deshalb wie „Raumtemperatur“ bei deaktivierter Heizung geblurrt und mit „Warmwasser deaktiviert - keine Warmwasser-Aktionen“ beschriftet. Gleiche Logik wie beim Optimierer: nicht zugeordnet = aktiv, bei „unknown“ gilt der letzte bekannte Zustand; mit Heizstab wird nichts ausgeblendet.

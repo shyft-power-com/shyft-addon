@@ -5097,7 +5097,7 @@ def _normalized_battery_kw(config, raw_kw):
     return raw_kw  # Default/"raw_positive_is_charging": roh uebernehmen, solange nichts erkannt/uebersteuert wurde
 
 
-PRICE_HIGH_THRESHOLD_CENT = 35
+PRICE_HIGH_THRESHOLD_CENT = 40
 PRICE_LOW_THRESHOLD_CENT = 25
 
 
