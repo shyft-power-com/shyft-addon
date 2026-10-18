@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.317
+
+* **Bubbles Strompreisprognose wird zweimal täglich passend zu Bubbles Läufen abgerufen.** Bubble aktualisiert seine Prognose um 05:59 und 17:59 Uhr (Europe/Berlin); das Add-on holt sie jetzt um 06:05 und 18:05 Uhr und nutzt dazwischen den zwischengespeicherten Stand (bisher wurde alle 30 Minuten neu geholt, und der Cache lief unabhängig von Bubbles Läufen ab). Ist die Prognose beim Abruf noch unverändert (Bubble noch nicht fertig) oder schlägt der Abruf fehl, wird bis zu dreimal im Abstand von 5 Minuten wiederholt. Der Cache gilt maximal 14 Stunden als Sicherheitsnetz (z. B. nach einem Neustart ohne Cache). Das Log nennt je Abruf Stundenanzahl, Zeitraum und wie viele Werte sich gegenüber dem letzten Stand geändert haben.
+
 ## 0.0.45.316
 
 * **Dashboard: „wird geladen“ statt sofort „Diagrammdaten konnten nicht geladen werden“.** Beim Öffnen des Dashboards zeigt die Seite jetzt „Diagramme werden geladen …“, solange noch nichts da ist. Antwortet der Server (z. B. direkt nach einem Add-on-Start) nicht sofort, wird der Abruf automatisch bis zu viermal wiederholt (nach 2, 4, 8 und 15 s) und dabei „… der Server antwortet gerade langsam, neuer Versuch“ gezeigt. Erst wenn auch das nicht klappt, erscheint die Fehlermeldung, jetzt mit einem Knopf „Erneut versuchen“. Antwortet der Server mit „noch keine Daten“ (z. B. vor der ersten Optimierung), ist das ein neutraler Hinweis und keine Fehlermeldung. Außerdem läuft das Laden nur noch einmal gleichzeitig: Tab-Klick, 30-s-Refresh und „Tab wieder sichtbar“ zählten Fehlschläge bisher gemeinsam und lösten die Fehlermeldung zu früh aus.

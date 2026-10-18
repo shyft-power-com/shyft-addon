@@ -828,7 +828,84 @@ def _fetch_awattar_prices(force_refresh=False):
 
 
 BUBBLE_PRICE_PREDICTION_CACHE_PATH = "/data/bubble_price_prediction_cache.json"
-BUBBLE_PRICE_PREDICTION_CACHE_TTL_SECONDS = 1800  # gleiche Kadenz wie AWATTAR_CACHE_TTL_SECONDS
+# Bubble aktualisiert seine Strompreisprognose zweimal taeglich (05:59 und 17:59, Europe/Berlin); das Add-on holt sie kurz danach
+# (refresh_bubble_price_prediction, siehe Scheduler unten) und nutzt zwischendurch den Cache. Der TTL ist deshalb laenger als der Abstand der
+# beiden Laeufe (12 h): er greift nur als Sicherheitsnetz (Neustart ohne Cache, verpasster Abruf), nicht mehr als Takt.
+BUBBLE_PRICE_PREDICTION_CACHE_TTL_SECONDS = 14 * 3600
+BUBBLE_PRICE_PREDICTION_REFRESH_TIMEZONE = "Europe/Berlin"
+BUBBLE_PRICE_PREDICTION_REFRESH_TIMES = ((6, 5), (18, 5))  # (Stunde, Minute): einige Minuten nach Bubbles Laeufen um 05:59 / 17:59
+# Hat sich die Prognose beim Abruf nicht geaendert (Bubble noch nicht fertig) oder schlug der Abruf fehl, wird in diesem Abstand erneut versucht.
+BUBBLE_PRICE_PREDICTION_RETRY_DELAY_MINUTES = 5
+BUBBLE_PRICE_PREDICTION_MAX_RETRIES = 3
+
+
+def _request_bubble_price_prediction():
+    "Ruft Bubbles Strompreisprognose ab (provide_input_output_csv) und gibt {hour_start_epoch_ms: EUR/kWh netto} zurueck ({} ohne Zugangstoken/Nutzer). Wirft bei Fehlern."
+    user_id = extract_shyft_user_id(shyft_adapter.bubble_token)
+    if not user_id:
+        return {}
+    result = shyft_adapter.get_input_output_csv(user_id)
+    prediction = (result.get("response") or {}).get("price_prediction") or {}
+    datetimes_ms = prediction.get("Datetime Array") or []
+    price_text = prediction.get("Price (text)") or ""
+    price_values = [float(p.replace(",", ".")) for p in price_text.split(";") if p != ""]
+    prices = {}
+    for ts_ms, price in zip(datetimes_ms, price_values):
+        hour = datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+        prices[int(hour.timestamp() * 1000)] = price
+    return prices
+
+
+def _write_bubble_price_prediction_cache(prices):
+    try:
+        with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "w") as f:
+            json.dump({"fetched_at": time.time(), "prices": {str(k): v for k, v in prices.items()}}, f)
+    except Exception as e:
+        print("[Shyft] Bubble-Preisprognose-Cache konnte nicht geschrieben werden:", repr(e))
+
+
+def refresh_bubble_price_prediction(attempt=1):
+    """Holt Bubbles Strompreisprognose unabhaengig vom Cache neu und schreibt sie in den Cache (zweimal taeglich kurz nach Bubbles Laeufen, siehe
+    BUBBLE_PRICE_PREDICTION_REFRESH_TIMES). Ist die Prognose unveraendert (Bubble noch nicht fertig) oder schlug der Abruf fehl, wird bis zu
+    BUBBLE_PRICE_PREDICTION_MAX_RETRIES Mal im Abstand von BUBBLE_PRICE_PREDICTION_RETRY_DELAY_MINUTES erneut versucht. True, wenn sich Werte geaendert haben."""
+    try:
+        with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "r") as f:
+            old_prices = (json.load(f).get("prices") or {})
+    except Exception:
+        old_prices = {}
+    reason = None
+    try:
+        prices = _request_bubble_price_prediction()
+        if not prices:
+            reason = "keine Prognose erhalten"
+        else:
+            new_prices = {str(k): v for k, v in prices.items()}
+            changed = sum(1 for k, v in new_prices.items() if old_prices.get(k) != v)
+            first = datetime.fromtimestamp(min(prices) / 1000, tz=timezone.utc).isoformat()
+            last = datetime.fromtimestamp(max(prices) / 1000, tz=timezone.utc).isoformat()
+            _write_bubble_price_prediction_cache(prices)
+            print(f"[Shyft] Bubble-Strompreisprognose aktualisiert (Versuch {attempt}): {len(prices)} Stunden ({first} bis {last}), {changed} Werte gegenueber dem letzten Stand geaendert.")
+            if changed:
+                return True
+            reason = "Prognose unveraendert (Bubble evtl. noch nicht fertig)"
+    except Exception as e:
+        reason = f"Abruf fehlgeschlagen: {e!r}"
+    if attempt <= BUBBLE_PRICE_PREDICTION_MAX_RETRIES:
+        print(f"[Shyft] Bubble-Strompreisprognose: {reason} - neuer Versuch in {BUBBLE_PRICE_PREDICTION_RETRY_DELAY_MINUTES} Minuten ({attempt}/{BUBBLE_PRICE_PREDICTION_MAX_RETRIES}).")
+        scheduler.add_job(refresh_bubble_price_prediction_periodically, "date",
+                          run_date=datetime.now(timezone.utc) + timedelta(minutes=BUBBLE_PRICE_PREDICTION_RETRY_DELAY_MINUTES),
+                          kwargs={"attempt": attempt + 1})
+    else:
+        print(f"[Shyft] Bubble-Strompreisprognose: {reason} - keine weiteren Versuche, es gilt der letzte bekannte Stand.")
+    return False
+
+
+def refresh_bubble_price_prediction_periodically(attempt=1):
+    with app.app_context():
+        try:
+            refresh_bubble_price_prediction(attempt)
+        except Exception as e:
+            print("[Shyft] Bubble-Strompreisprognose-Abruf fehlgeschlagen:", repr(e))
 
 
 def _fetch_bubble_price_prediction():
@@ -842,7 +919,8 @@ def _fetch_bubble_price_prediction():
     Gleiches Datei-Cache-Muster wie _fetch_awattar_prices (return {} bei Fehler/leer, faellt bei
     einem fehlgeschlagenen Abruf auf den letzten Cache-Stand zurueck) - sonst wuerde jeder
     sync_site_data-Lauf einen vollen provide_input_output_csv-Request (inkl. Optimizer-CSV) ausloesen,
-    nur um den Preis-Teil der Antwort zu nutzen."""
+    nur um den Preis-Teil der Antwort zu nutzen. Neu geholt wird zweimal taeglich kurz nach Bubbles Aktualisierung
+    (refresh_bubble_price_prediction); hier nur, wenn noch gar kein (oder ein sehr alter) Cache existiert."""
     try:
         with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "r") as f:
             cached = json.load(f)
@@ -850,30 +928,15 @@ def _fetch_bubble_price_prediction():
         cached = None
     if cached and time.time() - cached.get("fetched_at", 0) < BUBBLE_PRICE_PREDICTION_CACHE_TTL_SECONDS and cached.get("prices"):
         return {int(k): v for k, v in cached["prices"].items()}
-    user_id = extract_shyft_user_id(shyft_adapter.bubble_token)
-    if not user_id:
-        return {}
     try:
-        result = shyft_adapter.get_input_output_csv(user_id)
-        prediction = (result.get("response") or {}).get("price_prediction") or {}
-        datetimes_ms = prediction.get("Datetime Array") or []
-        price_text = prediction.get("Price (text)") or ""
-        price_values = [float(p.replace(",", ".")) for p in price_text.split(";") if p != ""]
-        prices = {}
-        for ts_ms, price in zip(datetimes_ms, price_values):
-            hour = datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
-            prices[int(hour.timestamp() * 1000)] = price
+        prices = _request_bubble_price_prediction()
     except Exception as e:
         print("[Shyft] Bubble-Strompreisprognose konnte nicht geladen werden:", repr(e))
         if cached and cached.get("prices"):
             return {int(k): v for k, v in cached["prices"].items()}
         return {}
     if prices:
-        try:
-            with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "w") as f:
-                json.dump({"fetched_at": time.time(), "prices": {str(k): v for k, v in prices.items()}}, f)
-        except Exception as e:
-            print("[Shyft] Bubble-Preisprognose-Cache konnte nicht geschrieben werden:", repr(e))
+        _write_bubble_price_prediction_cache(prices)
     return prices
 
 
@@ -12271,6 +12334,11 @@ scheduler.add_job(calibrate_pv_forecast_periodically, 'cron', hour="22", minute=
 # 3-stuendlichen Wetter-Abrufen stundenaktuell - der State soll immer die JETZT laufende Stunde
 # zeigen, nicht bis zu 3h alt sein.
 scheduler.add_job(push_pv_forecast_sensor_periodically, 'cron', minute="0")
+# Bubbles Strompreisprognose wird dort um 05:59 und 17:59 (Europe/Berlin) aktualisiert - das Add-on holt sie einige Minuten danach (mit Wiederholung,
+# falls sie noch unveraendert ist), damit es zweimal taeglich den aktuellsten Stand hat (siehe refresh_bubble_price_prediction).
+for _refresh_hour, _refresh_minute in BUBBLE_PRICE_PREDICTION_REFRESH_TIMES:
+    scheduler.add_job(refresh_bubble_price_prediction_periodically, 'cron', hour=_refresh_hour, minute=_refresh_minute,
+                      timezone=BUBBLE_PRICE_PREDICTION_REFRESH_TIMEZONE)
 scheduler.start()
 
 
