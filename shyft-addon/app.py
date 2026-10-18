@@ -5344,6 +5344,9 @@ def compute_energy_flow_data():
             "isRod": False,
             "on": _read_mapped_bool_on(config, "heatpump_on_off", anything_but_off=True) if heatpump_configured else None,
             "heatingOn": _read_mapped_bool_on(config, "heatpump_heating_activated", anything_but_off=True) if heatpump_configured else None,
+            # "Warmwassermodus aktiviert?" (gleiche Logik wie beim Optimierer: nicht zugeordnet = an, bei unknown der letzte bekannte Zustand) - bei False wird der
+            # Warmwasser-Chart ausgeblendet (kein Bedarf an den Optimierer, die Prognose waere bedeutungslos).
+            "dhwActivated": resolve_dhw_activated(config, homeassistant_adapter) if heatpump_configured else None,
             "supplyTempC": _read_mapped_numeric(config, "heatpump_supply_temp_hp") if heatpump_configured else None,
             "dhwTankTempC": _read_mapped_numeric(config, "heatpump_dhw_tank_temp") if heatpump_configured else None,
             "targetTempC": _read_mapped_numeric(config, "heatpump_heating_target_temp_normal") if heatpump_configured else None,

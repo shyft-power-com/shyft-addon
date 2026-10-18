@@ -9155,8 +9155,8 @@ function buildBatterySocForecastActualChart(labels, forecast, actual, actionHour
     });
 }
 
-function buildWarmwasserForecastActualChart(labels, forecast, actual, actionHours, actualFine = null) {
-    return buildForecastActualChart('Warmwasser', '°C', labels, forecast, actual, {decimals: 1, actionHours, slopeColors: WARMWASSER_SLOPE_COLORS, chartKey: 'warmwasser', actualFine});
+function buildWarmwasserForecastActualChart(labels, forecast, actual, actionHours, actualFine = null, blurredLabel = null) {
+    return buildForecastActualChart('Warmwasser', '°C', labels, forecast, actual, {decimals: 1, actionHours, slopeColors: WARMWASSER_SLOPE_COLORS, chartKey: 'warmwasser', actualFine, blurredLabel});
 }
 
 function buildLadestandAutoForecastActualChart(labels, forecast, actual, actionHours) {
@@ -9201,7 +9201,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, options
     }, {labels, stickyKey: options.chartKey || title});
 }
 
-function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null, actualFine = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
+function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null, actualFine = null, blurredLabel = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
     // "Prognose" ist visuell EINE Linie ueber den ganzen Tag: fuer bereits vergangene Stunden der zu
     // ihrer Zeit juengste Planungsstand (plannedHistory), fuer die Zukunft die aktuelle Prognose
     // (forecast) - ersetzt die fruehere separate dritte Linie/Legende "Letzter Planungsstand".
@@ -9401,7 +9401,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     }
 
     const chartContainer = document.createElement('div');
-    chartContainer.className = 'dashboardChartContainer';
+    chartContainer.className = 'dashboardChartContainer' + (blurredLabel ? ' dashboardChartContainer--blurred' : '');
     chartContainer.innerHTML = `
         <svg viewBox="0 0 ${width} ${height}" class="dashboardChartSvg">
             <line x1="${paddingLeft}" y1="${paddingTop}" x2="${paddingLeft}" y2="${baseline.toFixed(1)}" stroke="var(--color-border)" />
@@ -9417,6 +9417,13 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
             <circle class="dashboardChartMarker" r="4.5" cx="0" cy="0" visibility="hidden" />
         </svg>`;
     wrapper.appendChild(chartContainer);
+
+    if (blurredLabel) {
+        const overlay = document.createElement('div');
+        overlay.className = 'dashboardChartBlurOverlay';
+        overlay.textContent = blurredLabel;
+        chartContainer.appendChild(overlay);
+    }
 
     // PV-Ertrag Heute|Morgen (ab 21 Uhr auch Übermorgen, siehe computePvEnergySummary) als schlichter Text UNTER diesem Chart -
     // ein Versuch, die Werte stattdessen platzsparend IN den Chart einzuzeichnen (neben "Jetzt"-Linie/
@@ -11501,11 +11508,16 @@ async function loadDashboardImpl() {
                 ? 'Heizung deaktiviert - keine Heizungs-Aktionen'
                 : null,
         }));
+        // Steht "Warmwassermodus aktiviert?" auf Aus, bekommt der Optimierer keinen Warmwasserbedarf (siehe build_hot_water_optimizer_fields) - die Prognose waere
+        // bedeutungslos. Der Chart bleibt, wird aber wie bei der Raumtemperatur als "deaktiviert" ausgeblendet (Heizstab/nicht zugeordnet: null -> nichts ausgeblendet).
+        const warmwasserBlurredLabel = (flowData && flowData.heatpump && flowData.heatpump.dhwActivated === false)
+            ? 'Warmwasser deaktiviert - keine Warmwasser-Aktionen'
+            : null;
         let warmwasserChartRendered = false;
         try {
             const warmwasserComparison = await getJson(insideHomeAssistant + '/dashboard/warmwasser-forecast-vs-actual');
             if (warmwasserComparison.status === 'success' && warmwasserComparison.labels.length > 0) {
-                updateOrAppendDashboardWidget(container, 'warmwasser', buildWarmwasserForecastActualChart(warmwasserComparison.labels, warmwasserComparison.forecast, warmwasserComparison.actual, warmwasserComparison.actionHours, warmwasserComparison.actualFine));
+                updateOrAppendDashboardWidget(container, 'warmwasser', buildWarmwasserForecastActualChart(warmwasserComparison.labels, warmwasserComparison.forecast, warmwasserComparison.actual, warmwasserComparison.actionHours, warmwasserComparison.actualFine, warmwasserBlurredLabel));
                 warmwasserChartRendered = true;
             }
         } catch (err) {
@@ -11514,6 +11526,7 @@ async function loadDashboardImpl() {
         if (!warmwasserChartRendered) {
             updateOrAppendDashboardWidget(container, 'warmwasser', buildLineChart('Warmwasser', '°C', data.output_labels, data.t_hw, {
                 slopeBands: WARMWASSER_SLOPE_COLORS,
+                blurredLabel: warmwasserBlurredLabel,
             }));
         }
         // Ist-Teil (0 Uhr bis jetzt) aus der echten Sensorhistorie statt aus der Optimierer-Prognose

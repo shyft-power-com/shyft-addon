@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.321
+
+* **Dashboard: Warmwasser-Chart wird bei deaktiviertem Warmwasser ausgeblendet.** Steht „Warmwassermodus aktiviert?“ auf Aus, bekommt der Optimierer keinen Warmwasserbedarf mehr, und die „Prognose“-Linie (simulierte Tanktemperatur, zuletzt 53–59 °C bei echten 26 °C) ist dann bedeutungslos. Der Chart wird deshalb wie „Raumtemperatur“ bei deaktivierter Heizung geblurrt und mit „Warmwasser deaktiviert - keine Warmwasser-Aktionen“ beschriftet. Gleiche Logik wie beim Optimierer: nicht zugeordnet = aktiv, bei „unknown“ gilt der letzte bekannte Zustand; mit Heizstab wird nichts ausgeblendet.
+
 ## 0.0.45.320
 
 * **Dashboard-Charts: „Jetzt“ nur noch als Punkt mit Ring, kein senkrechter Strich mehr.** Der gestrichelte senkrechte Strich bei „Jetzt“ konnte mit den Tageswechsel-Linien verwechselt werden und ist in allen Charts entfernt. Stattdessen hat der „Jetzt“-Punkt auf der Kurve jetzt einen zweiten, halbtransparenten Ring in Shyft-Grün, damit er besser auffällt (auch bei den Charts mit zwei Kurven je Kurve).
