@@ -1,4 +1,4 @@
-name: "shyft-power"
+name: "shyft-power (Test-Onboarding)"
 description: >-
   Home-Energy-Management-System für Home Assistant. Steuere deine großen Stromverbraucher optimal und minimiere so deine Stromkosten - inkl. PV-Prognose, Auto-Anwesenheitsprognose, Wärmepumpen- und Batteriesteuerung
 version: "0.0.45.324"
