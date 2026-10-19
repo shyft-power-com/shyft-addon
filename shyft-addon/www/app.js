@@ -8709,14 +8709,15 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         if (secondSeries.fine) defined2.push(...secondSeries.fine.map(p => p[1]));
         if (secondSeries.actual && secondSeries.forecast) defined2.push(...secondSeries.forecast.filter(v => v !== null && v !== undefined));
         if (secondSeries.actualFine) defined2.push(...parseFinePoints(secondSeries.actualFine).map(p => p[1]));
-        const rawMin2 = secondSeries.zeroBased ? 0 : Math.min(...defined2);
-        const rawMax2 = Math.max(...defined2);
+        // signed (z.B. Netzbezug/Einspeisung): positive UND negative Werte - die Skala schliesst 0 immer ein und geht bei Einspeisung darunter.
+        const rawMin2 = secondSeries.zeroBased ? 0 : (secondSeries.signed ? Math.min(0, ...defined2) : Math.min(...defined2));
+        const rawMax2 = secondSeries.signed ? Math.max(0, ...defined2) : Math.max(...defined2);
         const valueRange2 = (rawMax2 - rawMin2) || 1;
         // absolutePadding (z.B. 0.2 °C beim Innenraum): fester Abstand in Einheiten des Werts statt
         // 10 % der Spanne - bei einer kleinen Spanne (Innentemperatur schwankt nur um Zehntel Grad)
         // verlaeuft die Kurve dadurch deutlich flacher, statt die volle Diagrammhoehe auszufuellen.
         const pad2 = secondSeries.absolutePadding ?? valueRange2 * 0.1;
-        yMin2 = secondSeries.zeroBased ? 0 : rawMin2 - pad2;
+        yMin2 = secondSeries.zeroBased ? 0 : (secondSeries.signed ? (rawMin2 < 0 ? rawMin2 - pad2 : 0) : rawMin2 - pad2);
         yMax2 = rawMax2 + pad2;
         if (secondSeries.band) {
             const totalRange2 = (yMax2 - yMin2) / CHART_BAND_FRACTION_SECOND;
@@ -8964,8 +8965,15 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     // Rechte Achsenbeschriftung fuer secondSeries - eigene Skala, also eigene Ticks (gleiches Muster
     // wie yLabels links), am rechten Rand nach aussen ausgerichtet.
     let yLabels2 = '';
+    let zeroLine2Markup = '';
     if (secondSeries) {
         let yTicks2 = [yMax2, (yMin2 + yMax2) / 2, yMin2];
+        if (secondSeries.signed && yMin2 < 0) {
+            // Nulllinie der rechten Skala (Bezug darueber, Einspeisung darunter) samt "0"-Beschriftung statt der Mitte
+            yTicks2 = [yMax2, 0, yMin2];
+            const zy2 = (paddingTop + plotHeight - ((0 - yMin2) / yRange2) * plotHeight).toFixed(1);
+            zeroLine2Markup = `<line x1="${paddingLeft}" y1="${zy2}" x2="${width - paddingRight}" y2="${zy2}" stroke="var(--color-border)" stroke-dasharray="2,3" />`;
+        }
         if (secondSeries.integerTicks) {
             // Nur volle Zahlen als Achsenbeschriftung (hoechstens ~5 Stueck, bei grossem Bereich in groeberen Schritten)
             const lowTick = Math.ceil(yMin2 - 1e-9), highTick = Math.floor(yMax2 + 1e-9);
@@ -9054,6 +9062,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
             ${areaMarkup}
             ${lineMarkup}
             ${overlayMarkup}
+            ${hideSecond ? '' : zeroLine2Markup}
             ${hideSecond ? '' : secondLineMarkup}
             ${presenceMarkup}
             ${nowMarkup}
@@ -11427,7 +11436,7 @@ async function loadDashboardImpl() {
         } catch (err) {
             console.log(err);
         }
-        // Netzbezug (nur Bezug, keine Einspeisung) fuer die optionale Linie im Strompreis-Chart
+        // Netzbezug/Einspeisung (Bezug positiv, Einspeisung negativ) fuer die Netz-Linie im Strompreis-Chart
         let gridFinePoints = [];
         try {
             const gridFine = await getJson(insideHomeAssistant + '/dashboard/usage-fine?source=grid');
@@ -11452,8 +11461,8 @@ async function loadDashboardImpl() {
                 });
                 const forecast = labelMs.map((ms, k) => (actual[k] === null && ms > lastFineMs && Number.isFinite(optByMs.get(ms)) ? optByMs.get(ms) : null));
                 secondSeries = {
-                    label: 'Netzbezug', unit: 'kW', decimals: 1, color: 'var(--color-text-secondary)',
-                    actual, forecast, fine: gridFinePoints.length >= 2 ? gridFinePoints : null, binMs: usageFineBinMs, zeroBased: true,
+                    label: 'Netzbezug/Einspeisung', unit: 'kW', decimals: 1, color: 'var(--color-text-secondary)',
+                    actual, forecast, fine: gridFinePoints.length >= 2 ? gridFinePoints : null, binMs: usageFineBinMs, signed: true,
                 };
             }
             return buildLineChart('Strompreis', 'Cent/kWh', strompreisLabels, strompreisValues, {

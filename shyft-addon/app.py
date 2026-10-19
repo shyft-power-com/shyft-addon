@@ -1931,8 +1931,8 @@ def readDashboardChartData():
                 # Batterieladung (B_sum_in_45), gleiche Definition wie PowerUsageBaseList.
                 opt_cost.append(_safe_float(row.get("profits_net_opt")))
                 opt_usage.append(_safe_float(row.get("X_sum")) + _safe_float(row.get("B_sum_in_45")))
-                # Netzbezug (nur positiver GR_sum, Einspeisung zaehlt nicht) - optionale Linie im Strompreis-Chart
-                opt_grid_import.append(max(0.0, _safe_float(row.get("GR_sum"))))
+                # Netzsaldo (GR_sum: positiv = Bezug, negativ = Einspeisung) - Netz-Linie "Netzbezug/Einspeisung" im Strompreis-Chart
+                opt_grid_import.append(_safe_float(row.get("GR_sum")))
         except Exception as e:
             print("[Shyft] output_csv konnte nicht gelesen werden:", repr(e))
             output_rows = []
@@ -11371,7 +11371,7 @@ def _household_usage_fine_points(config=None, sensor_key="photovoltaic_powerflow
     Je Schritt der zeitgewichtete Mittelwert der Leistung (Treppenfunktion wie in _sensor_history_kwh) -
     in kW, was zugleich "kWh pro Stunde" ist und damit auf derselben Achse liegt wie die stuendlichen
     kWh-Werte der Verbrauchs-Charts. sensor_key/import_only: mit 'photovoltaic_powerflow_grid' und import_only=True
-    der NETZBEZUG (nur positive Leistung, Einspeisung zaehlt als 0). Liste von [Schritt-Beginn (ISO, UTC), kW]; leer ohne Sensor/Historie.
+    der NETZBEZUG (nur positive Leistung, Einspeisung zaehlt als 0); ohne import_only (grid) der Netzsaldo mit Vorzeichen. Liste von [Schritt-Beginn (ISO, UTC), kW]; leer ohne Sensor/Historie.
     Kurz zwischengespeichert, da der Dashboard-Refresh alle 30 s fragt."""
     now = datetime.now(timezone.utc)
     midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
@@ -11421,11 +11421,11 @@ def _household_usage_fine_points(config=None, sensor_key="photovoltaic_powerflow
 
 @app.route("/dashboard/usage-fine", methods=["GET"])
 def readUsageFine():
-    "Ist-Stromverbrauch heute in 5-Minuten-Schritten (kW), siehe _household_usage_fine_points - fuer 'Dein Stromverbrauch'. Mit ?source=grid stattdessen der NETZBEZUG (optionale Linie im Strompreis-Chart)."
+    "Ist-Stromverbrauch heute in 5-Minuten-Schritten (kW), siehe _household_usage_fine_points - fuer 'Dein Stromverbrauch'. Mit ?source=grid stattdessen der NETZSALDO mit Vorzeichen (Bezug positiv, Einspeisung negativ - Netz-Linie im Strompreis-Chart)."
     if is_demo_mode():
         return jsonify({"status": "success", "binMinutes": USAGE_FINE_BIN_MINUTES, "points": []})
     if request.args.get("source") == "grid":
-        points = _household_usage_fine_points(sensor_key="photovoltaic_powerflow_grid", import_only=True)
+        points = _household_usage_fine_points(sensor_key="photovoltaic_powerflow_grid")  # Netzsaldo mit Vorzeichen: Bezug positiv, Einspeisung negativ
     else:
         points = _household_usage_fine_points()
     return jsonify({"status": "success", "binMinutes": USAGE_FINE_BIN_MINUTES, "points": points})
