@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.328
+
+* **Ladekontrolle „Auto laden“: Wallbox-Status im Log.** Die Logzeilen „Wallbox lädt nicht (…)“ und „Wiederholung x/10: Startbefehl wird erneut gesendet (…)“ nennen jetzt zusätzlich den aktuellen Status der Wallbox (der zugeordnete Sensor „Wallbox-Status“, z. B. „Wallbox-Status: awaiting_authorization“). So sieht man, ob die Wallbox den Befehl annimmt (z. B. `awaiting_start`) und das Auto nur nicht reagiert. Gilt für Optimierer-Aktion und PV-Überschuss-Session. Die Wiederholungen selbst (Abstand, Anzahl) sind unverändert.
+
 ## 0.0.45.327
 
 * **PV-Überschussladen stoppt erst bei 95 % Heimspeicher-Ladestand.** Die Grenze, bis zu der der Heimspeicher beim Überschussladen (Optimierer-Aktion und Fallback-Session) entladen werden darf, sinkt von 97 auf 95 %. Bei einem Ladestand von 95 % oder darunter wird die Aktion beendet, nicht neu gestartet und zur vollen Stunde nicht verlängert; darüber läuft sie weiter. Vorher stoppte sie schon bei 97 %.

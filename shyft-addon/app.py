@@ -9260,12 +9260,13 @@ def _ev_check_classify(live_kw, target_kw, check_deviation=True):
     return "dev"
 
 
-def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, window_start_ms, window_end_ms, check_deviation=True):
+def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, window_start_ms, window_end_ms, check_deviation=True, wallbox_status=None):
     """Ein Prueftakt fuer eine laufende 'Auto laden'-Aktion; aendert 'state' (der Zaehlerstand der Aktion, wird vom
     Aufrufer mit der Aktion gespeichert) und liefert {"messages": [Logzeilen ohne Uhrzeit], "retry": bool,
     "error": Fehlertext oder None}. paused_reason (Text oder None): keine Pruefung, solange z.B. das Auto nicht
     ladebereit/voll ist. window_start_ms/window_end_ms: geplantes Zeitfenster der Aktion (Grundlage fuer 'ueberwiegend
-    nicht geladen')."""
+    nicht geladen'). wallbox_status (optional): roher Wallbox-Verbindungsstatus (z.B. 'awaiting_authorization') - wird nur an die
+    Logzeilen 'Wallbox laedt nicht' und 'Wiederholung' angehaengt, damit man sieht, was die Wallbox gerade meldet."""
     result = {"messages": [], "retry": False, "error": None}
     if state.get("first_seen_ms") is None:
         state["first_seen_ms"] = now_ms
@@ -9300,9 +9301,10 @@ def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, windo
         state["committed"] = sample
         announced = state.get("announced", "ok")
         target_text = "" if target_kw is None else f", Soll {_ev_check_kw(target_kw)} kW"
+        status_text = f", Wallbox-Status: {wallbox_status}" if wallbox_status else ""
         if sample == "off" and announced != "off":
             state["announced"] = "off"
-            result["messages"].append(f"Wallbox lädt nicht (gemessen {_ev_check_kw(live_kw)} kW{target_text})")
+            result["messages"].append(f"Wallbox lädt nicht (gemessen {_ev_check_kw(live_kw)} kW{target_text}{status_text})")
         elif sample == "dev":
             if now_ms - state.get("dev_log_ms", 0) >= EV_CHARGE_CHECK_DEV_LOG_MIN_INTERVAL_SECONDS * 1000 and announced != "dev":
                 state["dev_log_ms"] = now_ms
@@ -9326,7 +9328,8 @@ def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, windo
             state["last_retry_ms"] = now_ms
             state["grace_until_ms"] = now_ms + EV_CHARGE_RETRY_GRACE_SECONDS * 1000
             result["retry"] = True
-            result["messages"].append(f"Wiederholung {retries + 1}/{EV_CHARGE_RETRY_MAX}: Startbefehl wird erneut gesendet (Soll {_ev_check_kw(target_kw)} kW)")
+            status_text = f", Wallbox-Status: {wallbox_status}" if wallbox_status else ""
+            result["messages"].append(f"Wiederholung {retries + 1}/{EV_CHARGE_RETRY_MAX}: Startbefehl wird erneut gesendet (Soll {_ev_check_kw(target_kw)} kW{status_text})")
 
     # Ueberwiegend nicht geladen? Schon vor Ende sicher, sobald die Zeit ohne Ladeleistung mehr als die Haelfte des
     # geplanten Zeitfensters ausmacht.
@@ -9372,7 +9375,7 @@ def _ev_check_computed_action(action, config, live_kw, paused_reason, now_ms, ch
     "Prueftakt fuer eine laufende Optimierer-'Auto laden'-Aktion; speichert die Aktion bei Aenderungen."
     state = action.setdefault("_evCheck", {})
     target_kw = action.get("Target Value")
-    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, action.get("Date Start"), action.get("Date End"), check_deviation)
+    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, action.get("Date Start"), action.get("Date End"), check_deviation, _read_mapped_raw_state(config, "wallbox_plugged"))
     for message in result["messages"]:
         _append_action_log(action, message)
     if result["retry"]:
@@ -9392,7 +9395,7 @@ def _ev_check_pv_session(session, config, live_kw, paused_reason, now_ms, check_
     "Prueftakt fuer eine aktive PV-Ueberschuss-Fallback-Session; der Aufrufer speichert die Sessions."
     state = session.setdefault("ev_check", {})
     target_kw = session.get("target_kw")
-    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, session.get("start_ms"), session.get("planned_end_ms"), check_deviation)
+    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, session.get("start_ms"), session.get("planned_end_ms"), check_deviation, _read_mapped_raw_state(config, "wallbox_plugged"))
     for message in result["messages"]:
         _append_pv_surplus_log(session, target_kw or 0, note=message)
     if result["retry"]:
