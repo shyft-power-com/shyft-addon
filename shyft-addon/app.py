@@ -214,7 +214,7 @@ PV_SURPLUS_NO_BATTERY_INCREASE_SCALE = 0.9
 PV_SURPLUS_DECREASE_RATIO = 0.05
 PV_SURPLUS_NO_BATTERY_DECREASE_RATIO = 0.10
 PV_SURPLUS_NO_BATTERY_MIN_DECREASE_KW = 0.3
-PV_SURPLUS_BATTERY_STOP_SOC = 97
+PV_SURPLUS_BATTERY_STOP_SOC = 95
 # Mindestabstand zwischen dem Ende einer Fallback-Session und dem Start der naechsten - ohne diese
 # Sperre konnte eine Session, die z.B. wegen kurzzeitig gefallenem Heimspeicher-SOC beendet wurde,
 # schon Sekunden spaeter durch den naechsten live-getriggerten Tick (siehe

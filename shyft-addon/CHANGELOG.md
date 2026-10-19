@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.327
+
+* **PV-Überschussladen stoppt erst bei 95 % Heimspeicher-Ladestand.** Die Grenze, bis zu der der Heimspeicher beim Überschussladen (Optimierer-Aktion und Fallback-Session) entladen werden darf, sinkt von 97 auf 95 %. Bei einem Ladestand von 95 % oder darunter wird die Aktion beendet, nicht neu gestartet und zur vollen Stunde nicht verlängert; darüber läuft sie weiter. Vorher stoppte sie schon bei 97 %.
+
 ## 0.0.45.326
 
 * **Test-Add-on: eigener Seitenleisten-Titel.** Der Eintrag in der Seitenleiste von Home Assistant zeigte trotz des neuen Add-on-Namens weiter „shyft-power“. Auf `test` steht deshalb zusätzlich `panel_title: "shyft-power (TEST)"` in der `config.yaml`, damit der Titel ausdrücklich festgelegt ist. Der pre-push-Hook und der Build auf `main` lehnen jetzt auch einen Test-`panel_title` ab.
