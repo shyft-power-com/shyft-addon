@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.326
+
+* **Test-Add-on: eigener Seitenleisten-Titel.** Der Eintrag in der Seitenleiste von Home Assistant zeigte trotz des neuen Add-on-Namens weiter „shyft-power“. Auf `test` steht deshalb zusätzlich `panel_title: "shyft-power (TEST)"` in der `config.yaml`, damit der Titel ausdrücklich festgelegt ist. Der pre-push-Hook und der Build auf `main` lehnen jetzt auch einen Test-`panel_title` ab.
+
 ## 0.0.45.325
 
 * **Test-Add-on heißt „shyft-power (TEST)“.** Auf dem Branch `test` steht der Add-on-Name jetzt in der `config.yaml` als „shyft-power (TEST)“, damit eine parallel zu PROD installierte Test-Instanz im App Store und in der Seitenleiste von Home Assistant unterscheidbar ist (der frühere Zusatz im Build-Workflow kam bei Home Assistant nie an: Supervisor liest den Namen aus dem Repository, nicht aus dem Image). Auf `main` bleibt der Name „shyft-power“; ein Push dorthin mit Test-Namen wird lokal vom pre-push-Hook abgelehnt, und der Build auf `main` bricht dann ab.
