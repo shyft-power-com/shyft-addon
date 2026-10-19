@@ -200,6 +200,15 @@ def fetch_weather(latitude, longitude):
     _write_json(WEATHER_CACHE_PATH, cache)
     log_weather_fetch(cache)
     try:
+        today_start = _cache_index_for(cache, _local_midnight_today())
+        today_gti = cache["gti"][today_start:today_start + 24] if today_start is not None else []
+        if today_gti:
+            print(f"[Shyft] Wetter-Abruf ok: {len(cache['time'])} Stunden, Einstrahlung heute max {max((g or 0) for g in today_gti):.0f} W/m^2, Stand {cache['fetched_at']}")
+        else:
+            print(f"[Shyft] Wetter-Abruf ok: {len(cache['time'])} Stunden (heute nicht im Cache), Stand {cache['fetched_at']}")
+    except Exception as e:
+        print("[Shyft] Wetter-Abruf: Zusammenfassung fehlgeschlagen:", repr(e))
+    try:
         _check_gti_anomalies(cache)
     except Exception as e:
         print("[Shyft] Einstrahlungs-Pruefung fehlgeschlagen:", repr(e))
@@ -547,4 +556,193 @@ def calibrate(history_pairs, days, from_default=False):
             updated_hours += 1
 
     _write_calibration(m2, today.date().isoformat(), extra={"updated_hours_last_run": updated_hours})
+    print(f"[Shyft] PV-Kalibrierung: {updated_hours} Stunden angepasst (Tage: {days}{', von Standardprofil' if from_default else ''}); "
+          f"m2 je UTC-Stunde: {[round(v) for v in m2]}")
     print(f"[Shyft] PV-Kalibrierung: {updated_hours} Stunden-Buckets angepasst (m2-Summe {sum(m2):.0f}).")
+
+
+# ---------------------------------------------------------------------------
+# Diagnose: was wurde gesendet, was kam beim Optimierer an?
+# ---------------------------------------------------------------------------
+# Anlass: Im Dashboard-Chart standen abends/morgens PV-Werte (z.B. 4,4 kW um 20:00), die weder die Wetter-API (0 W/m^2) noch die eigene Prognose des
+# Add-ons (0 kW) hergeben. Bei jedem Sync wird deshalb festgehalten, was das Add-on an den Server schickt (PV-Liste, Temperatur, dazu Einstrahlung,
+# m2-Profil und Stand des Wetter-Caches), und sobald der Lauf zurueckkommt, wird der Optimierer-Input Stunde fuer Stunde damit verglichen -
+# auch mit Zeitversatz, falls die Zuordnung der Stunden verrutscht ist. Siehe record_sync / diagnose_input und /diagnostics/pv-forecast in app.py.
+PV_SYNC_LOG_PATH = "/data/pv_sync_log.jsonl"
+PV_SYNC_LOG_MAX_RECORDS = 72
+PV_DIAGNOSE_LOG_PATH = "/data/pv_diagnose.jsonl"
+PV_DIAGNOSE_LOG_MAX_RECORDS = 60
+PV_DIAGNOSE_TOLERANCE_KW = 0.05
+PV_DIAGNOSE_COMPARE_ROWS = 48
+PV_DIAGNOSE_MAX_OFFSET_HOURS = 3
+PV_DIAGNOSE_MAX_MISMATCHES_LOGGED = 8
+
+
+def _append_jsonl(path, entry, max_records):
+    "Haengt eine JSON-Zeile an und behaelt nur die letzten max_records Zeilen. Beste-effort - ein Schreibfehler darf nie den Sync stoeren."
+    try:
+        try:
+            with open(path, "r") as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            lines = []
+        lines.append(json.dumps(entry, ensure_ascii=False) + "\n")
+        with open(path, "w") as f:
+            f.writelines(lines[-max_records:])
+    except Exception as e:
+        print(f"[Shyft] {path} konnte nicht geschrieben werden:", repr(e))
+
+
+def read_jsonl(path, limit=None):
+    "Die letzten `limit` Eintraege (alle ohne limit) einer JSON-Lines-Datei, aelteste zuerst; kaputte Zeilen werden uebersprungen."
+    try:
+        with open(path, "r") as f:
+            lines = f.readlines()
+    except Exception:
+        return []
+    entries = []
+    for line in lines:
+        try:
+            entries.append(json.loads(line))
+        except ValueError:
+            continue
+    return entries[-limit:] if limit else entries
+
+
+def record_sync(period, weather_fields):
+    """Haelt fest, was beim Sync an den Server geht: die PV-Liste und Temperatur (ab datetimeWeatherMs[0]), die Einstrahlung (gti) aus dem Wetter-Cache
+    fuer genau diese Stunden, das m2-Profil und den Stand des Wetter-Caches. Gibt den Eintrag zurueck (None ohne weather_fields)."""
+    if not weather_fields:
+        return None
+    try:
+        pv = [float(x) for x in str(weather_fields.get("pvPrediction", "")).split(",") if x != ""]
+        temps = [float(x) for x in str(weather_fields.get("temperature", "")).split(",") if x != ""]
+        datetimes = weather_fields.get("datetimeWeatherMs") or []
+        cache = _read_json(WEATHER_CACHE_PATH) or {}
+        start = _cache_index_for(cache, _local_midnight_today()) if cache else None
+        gti = (cache.get("gti") or [])[start:start + period + 1] if start is not None else []
+        m2, calibrated_on = _read_calibration()
+        entry = {
+            "sent_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "start_ms": datetimes[0] if datetimes else None,
+            "pv": pv, "temperature": temps,
+            "gti": gti, "m2": [round(v, 2) for v in m2], "calibrated_on": calibrated_on,
+            "cache_fetched_at": cache.get("fetched_at"),
+        }
+    except Exception as e:
+        print("[Shyft] PV-Sync-Protokoll fehlgeschlagen:", repr(e))
+        return None
+    _append_jsonl(PV_SYNC_LOG_PATH, entry, PV_SYNC_LOG_MAX_RECORDS)
+    if pv and entry["start_ms"] is not None:
+        peak_i = max(range(len(pv)), key=lambda i: pv[i])
+        peak_time = datetime.fromtimestamp(entry["start_ms"] / 1000 + peak_i * 3600, timezone.utc).strftime("%d.%m. %H:%M UTC")
+        night = sum(1 for i, v in enumerate(pv) if v > 0 and i < len(gti) - 1 and (gti[i] or 0) + (gti[i + 1] or 0) < IRRADIANCE_ZERO_THRESHOLD_WM2)
+        print(f"[Shyft] PV-Sync: {len(pv)} Stunden ab {datetime.fromtimestamp(entry['start_ms'] / 1000, timezone.utc).strftime('%d.%m. %H:%M UTC')}, "
+              f"Maximum {pv[peak_i]:.2f} kW ({peak_time}), Wetter-Cache von {entry['cache_fetched_at']}, "
+              f"m2 min/max {min(m2):.0f}/{max(m2):.0f}, kalibriert am {calibrated_on}"
+              + (f" - ACHTUNG: {night} Stunden mit Leistung trotz Einstrahlung unter Schwelle" if night else ""))
+    return entry
+
+
+def _csv_float_list(input_csv, column):
+    import csv
+    import io
+    rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
+    out = []
+    for row in rows:
+        try:
+            out.append(float(row.get(column)))
+        except (TypeError, ValueError):
+            out.append(None)
+    return out
+
+
+def _sent_index(record, instant_s):
+    "Listenindex der gesendeten Stunde, die bei instant_s (Unix-Sekunden) beginnt, oder None (ausserhalb der gesendeten Liste)."
+    start_ms = record.get("start_ms")
+    if start_ms is None:
+        return None
+    index = round((instant_s - start_ms / 1000) / 3600)
+    return index if 0 <= index < len(record.get("pv") or []) else None
+
+
+def diagnose_input(input_csv, creation_date_ms, tz=timezone.utc):
+    """Vergleicht den PV- (und Temperatur-)Input des Optimierers mit den zuletzt gesendeten Listen (siehe record_sync). Die Zeilen des Inputs werden - wie im
+    Dashboard - ab der Erstellstunde des Laufs (creation_date) im Stundenraster beschriftet. Gesucht wird der gesendete Sync und der Zeitversatz (-3..+3 h), bei dem
+    die meisten Stunden uebereinstimmen. Liefert ein Ergebnis-Dict (auch zum Speichern) oder None, wenn nichts zu vergleichen ist. Schreibt Log und Diagnose-Datei
+    nur einmal je Lauf."""
+    if not input_csv or creation_date_ms is None:
+        return None
+    last = read_jsonl(PV_DIAGNOSE_LOG_PATH, limit=1)
+    if last and last[0].get("creation_ms") == creation_date_ms:
+        return None
+    records = read_jsonl(PV_SYNC_LOG_PATH, limit=6)
+    if not records:
+        return None
+    pv_in = _csv_float_list(input_csv, "PV_generation")
+    temp_in = _csv_float_list(input_csv, "Temperature")
+    start_s = int(creation_date_ms / 1000) // 3600 * 3600
+    rows = min(len(pv_in), PV_DIAGNOSE_COMPARE_ROWS)
+
+    def score(record, offset_h):
+        compared = matched = 0
+        for j in range(rows):
+            index = _sent_index(record, start_s + (j + offset_h) * 3600)
+            if index is None or pv_in[j] is None:
+                continue
+            compared += 1
+            if abs(record["pv"][index] - pv_in[j]) <= PV_DIAGNOSE_TOLERANCE_KW:
+                matched += 1
+        return matched, compared
+
+    best = None
+    for record in records:
+        for offset_h in range(-PV_DIAGNOSE_MAX_OFFSET_HOURS, PV_DIAGNOSE_MAX_OFFSET_HOURS + 1):
+            matched, compared = score(record, offset_h)
+            key = (matched, -abs(offset_h), record.get("sent_at") or "")
+            if compared and (best is None or key > best[0]):
+                best = (key, record, offset_h, matched, compared)
+    if best is None:
+        return None
+    _key, record, offset_h, matched, compared = best
+    zero_matched, zero_compared = score(record, 0)
+
+    sent_temps = record.get("temperature") or []
+    temp_matched = temp_compared = 0
+    for j in range(min(len(temp_in), PV_DIAGNOSE_COMPARE_ROWS)):
+        index = _sent_index(record, start_s + (j + offset_h) * 3600)
+        if temp_in[j] is None or index is None or index >= len(sent_temps):
+            continue
+        temp_compared += 1
+        if abs(sent_temps[index] - temp_in[j]) <= 0.15:
+            temp_matched += 1
+
+    mismatches = []
+    gti = record.get("gti") or []
+    m2 = record.get("m2") or []
+    for j in range(rows):
+        index = _sent_index(record, start_s + (j + offset_h) * 3600)
+        if index is None or pv_in[j] is None or abs(record["pv"][index] - pv_in[j]) <= PV_DIAGNOSE_TOLERANCE_KW:
+            continue
+        mismatches.append({
+            "row": j, "hour": datetime.fromtimestamp(start_s + j * 3600, tz).strftime("%d.%m. %H:%M"),
+            "received": round(pv_in[j], 3), "sent": round(record["pv"][index], 3),
+            "gti_this": gti[index] if index < len(gti) else None, "gti_next": gti[index + 1] if index + 1 < len(gti) else None,
+            "m2": m2[index % 24] if m2 else None,
+        })
+    result = {
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "creation_ms": creation_date_ms,
+        "sync_sent_at": record.get("sent_at"), "cache_fetched_at": record.get("cache_fetched_at"),
+        "best_offset_h": offset_h, "matched": matched, "compared": compared, "matched_offset0": zero_matched, "compared_offset0": zero_compared,
+        "temperature_matched": temp_matched, "temperature_compared": temp_compared,
+        "mismatches": mismatches, "input_pv": [None if v is None else round(v, 3) for v in pv_in[:72]],
+    }
+    _append_jsonl(PV_DIAGNOSE_LOG_PATH, result, PV_DIAGNOSE_LOG_MAX_RECORDS)
+    summary = (f"[Shyft] PV-Diagnose: Optimierer-Input vs. gesendete PV-Liste (Sync {record.get('sent_at')}, Versatz {offset_h:+d} h): "
+               f"{matched}/{compared} Stunden gleich (Versatz 0: {zero_matched}/{zero_compared}), Temperatur {temp_matched}/{temp_compared} gleich")
+    if mismatches:
+        shown = "; ".join(f"{m['hour']} gesendet {m['sent']:.2f} / erhalten {m['received']:.2f} kW (gti {m['gti_this']}, m2 {m['m2']})"
+                          for m in mismatches[:PV_DIAGNOSE_MAX_MISMATCHES_LOGGED])
+        summary += f" - {len(mismatches)} Abweichungen: {shown}"
+    print(summary)
+    return result

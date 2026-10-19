@@ -1499,6 +1499,11 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         # ohne Preise rechnet mit 0 EUR/kWh und liefert Unsinn, also gar nicht erst senden.
         print("[Shyft] Optimierung nicht angestoßen, Pflichtangaben fehlen:", " | ".join(blocking))
         return json.dumps({"status": "skipped", "message": "Pflichtangaben fehlen: " + " ".join(blocking)})
+    # Diagnose (siehe pv_forecast.record_sync/diagnose_input): festhalten, was an den Server geht, damit der zurueckkommende Optimierer-Input verglichen werden kann
+    try:
+        pv_forecast.record_sync(optimizer_period + 24, weather_fields)
+    except Exception as e:
+        print("[Shyft] PV-Sync-Protokoll fehlgeschlagen:", repr(e))
     submitted_at = datetime.now(timezone.utc)
     result = shyft_adapter.send_site_data(payload, weather_fields, addon_version=ADDON_VERSION_NUMBER)
     try:
@@ -2267,6 +2272,20 @@ def _read_future_pv_forecast_by_hour():
         hour_local = _hour_floor((start_utc + timedelta(hours=i)).astimezone(get_ha_timezone()))
         result[hour_local] = _safe_float(row.get("PV_generation"))
     return result
+
+
+@app.route("/diagnostics/pv-forecast", methods=["GET"])
+def readPvForecastDiagnostics():
+    """Diagnose der PV-Prognose: die zuletzt an den Server gesendeten Listen (PV, Temperatur, Einstrahlung, m2-Profil, Stand des Wetter-Caches) und die Ergebnisse
+    des Vergleichs mit dem jeweils zurueckgekommenen Optimierer-Input (siehe pv_forecast.record_sync/diagnose_input). ?syncs=N / ?diagnoses=N begrenzen die Anzahl
+    (Standard 3 bzw. 10, neueste zuletzt)."""
+    syncs = request.args.get("syncs", default=3, type=int)
+    diagnoses = request.args.get("diagnoses", default=10, type=int)
+    return jsonify({
+        "status": "success",
+        "syncs": pv_forecast.read_jsonl(pv_forecast.PV_SYNC_LOG_PATH, limit=syncs) if syncs > 0 else [],
+        "diagnoses": pv_forecast.read_jsonl(pv_forecast.PV_DIAGNOSE_LOG_PATH, limit=diagnoses) if diagnoses > 0 else [],
+    })
 
 
 @app.route("/dashboard/pv-forecast-vs-actual", methods=["GET"])
@@ -11577,6 +11596,10 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
     except Exception as e:
         print("[Shyft] Dashboard-Chart-Daten konnten nicht zwischengespeichert werden:", repr(e))
     _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms)
+    try:
+        pv_forecast.diagnose_input(input_csv, creation_date_ms, get_ha_timezone())
+    except Exception as e:
+        print("[Shyft] PV-Diagnose fehlgeschlagen:", repr(e))
     _maybe_freeze_battery_soc_forecast_snapshot(output_csv, creation_date_ms)
     _record_stitched_forecast_run(output_csv, creation_date_ms)
     recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id, base)

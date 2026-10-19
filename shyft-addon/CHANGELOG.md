@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.330
+
+* **Diagnose der PV-Prognose (Ursachensuche für unplausible PV-Werte im Dashboard).** Im Chart standen abends und morgens PV-Werte (z. B. 4,4 kW um 20 Uhr), die weder die Wetter-API (0 W/m²) noch die eigene Prognose des Add-ons (0 kW) hergeben. Das Add-on hält deshalb bei jedem Sync fest, was es an den Server schickt (PV-Liste, Temperatur, Einstrahlung aus dem Wetter-Cache, m2-Profil, Stand von Wetter-Cache und Kalibrierung, Datei `pv_sync_log.jsonl`, letzte 72 Syncs), und vergleicht den zurückgekommenen Optimierer-Input Stunde für Stunde damit, auch mit Zeitversatz von ±3 Stunden (Datei `pv_diagnose.jsonl`, einmal je Lauf). Das Log nennt „PV-Sync: …“ (Maximum, Cache-Stand, Warnung bei Leistung trotz Einstrahlung unter der Schwelle) und „PV-Diagnose: …“ mit den abweichenden Stunden (gesendet / erhalten, Einstrahlung, m2) und der Treffer-Quote samt Temperatur. Der neue Endpunkt `/diagnostics/pv-forecast` liefert die Protokolle (`?syncs=N&diagnoses=N`). Zusätzlich loggen Wetter-Abruf („Wetter-Abruf ok: … Einstrahlung heute max …“) und Kalibrierung („PV-Kalibrierung: … m2 je UTC-Stunde …“) jetzt eine Zusammenfassung. Die Prognose selbst ändert sich dadurch nicht.
+
 ## 0.0.45.329
 
 * **Gerätesteuerung: „Jetzt“-Strich im unteren Drittel.** Beim Öffnen der Gerätesteuerung scrollt die Seite jetzt so, dass der „Jetzt“-Strich bei zwei Dritteln der Bildschirmhöhe von oben liegt statt bei einem Drittel. Die Liste ist absteigend sortiert (neueste zuerst): aktive und geplante Aktionen stehen über dem Strich und belegen jetzt zwei Drittel des Bildschirms, die bereits beendeten darunter ein Drittel. Vorher war es umgekehrt, und man sah überwiegend die Historie.
