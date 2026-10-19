@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.325
+
+* **Test-Add-on heißt „shyft-power (TEST)“.** Auf dem Branch `test` steht der Add-on-Name jetzt in der `config.yaml` als „shyft-power (TEST)“, damit eine parallel zu PROD installierte Test-Instanz im App Store und in der Seitenleiste von Home Assistant unterscheidbar ist (der frühere Zusatz im Build-Workflow kam bei Home Assistant nie an: Supervisor liest den Namen aus dem Repository, nicht aus dem Image). Auf `main` bleibt der Name „shyft-power“; ein Push dorthin mit Test-Namen wird lokal vom pre-push-Hook abgelehnt, und der Build auf `main` bricht dann ab.
+
 ## 0.0.45.324
 
 * **Strompreis-Chart: Netz-Linie zeigt Bezug und Einspeisung.** Die Kurve „Netzbezug“ heißt jetzt „Netzbezug/Einspeisung“ und zeigt den Netzsaldo mit Vorzeichen: Bezug über der Nulllinie, Einspeisung darunter. Vorher wurde die Einspeisung auf 0 gekappt. Der Ist-Verlauf ist weiter der 5-Minuten-Mittelwert des Netz-Sensors (jetzt ohne Kappung), die Prognose der Netto-Saldo `GR_sum` des Optimierers. Die rechte Achse reicht bei Einspeisung unter 0 und hat eine „0“-Marke samt gestrichelter Nulllinie; ohne Einspeisung bleibt sie wie bisher bei 0 verankert.
