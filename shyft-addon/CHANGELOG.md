@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.329
+
+* **Gerätesteuerung: „Jetzt“-Strich im unteren Drittel.** Beim Öffnen der Gerätesteuerung scrollt die Seite jetzt so, dass der „Jetzt“-Strich bei zwei Dritteln der Bildschirmhöhe von oben liegt statt bei einem Drittel. Die Liste ist absteigend sortiert (neueste zuerst): aktive und geplante Aktionen stehen über dem Strich und belegen jetzt zwei Drittel des Bildschirms, die bereits beendeten darunter ein Drittel. Vorher war es umgekehrt, und man sah überwiegend die Historie.
+
 ## 0.0.45.328
 
 * **Ladekontrolle „Auto laden“: Wallbox-Status im Log.** Die Logzeilen „Wallbox lädt nicht (…)“ und „Wiederholung x/10: Startbefehl wird erneut gesendet (…)“ nennen jetzt zusätzlich den aktuellen Status der Wallbox (der zugeordnete Sensor „Wallbox-Status“, z. B. „Wallbox-Status: awaiting_authorization“). So sieht man, ob die Wallbox den Befehl annimmt (z. B. `awaiting_start`) und das Auto nur nicht reagiert. Gilt für Optimierer-Aktion und PV-Überschuss-Session. Die Wiederholungen selbst (Abstand, Anzahl) sind unverändert.
