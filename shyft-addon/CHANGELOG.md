@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.0.45.329
+
+* **Gerätesteuerung: „Jetzt“-Strich im unteren Drittel.** Beim Öffnen der Gerätesteuerung scrollt die Seite jetzt so, dass der „Jetzt“-Strich bei zwei Dritteln der Bildschirmhöhe von oben liegt statt bei einem Drittel. Die Liste ist absteigend sortiert (neueste zuerst): aktive und geplante Aktionen stehen über dem Strich und belegen jetzt zwei Drittel des Bildschirms, die bereits beendeten darunter ein Drittel. Vorher war es umgekehrt, und man sah überwiegend die Historie.
+
+## 0.0.45.328
+
+* **Ladekontrolle „Auto laden“: Wallbox-Status im Log.** Die Logzeilen „Wallbox lädt nicht (…)“ und „Wiederholung x/10: Startbefehl wird erneut gesendet (…)“ nennen jetzt zusätzlich den aktuellen Status der Wallbox (der zugeordnete Sensor „Wallbox-Status“, z. B. „Wallbox-Status: awaiting_authorization“). So sieht man, ob die Wallbox den Befehl annimmt (z. B. `awaiting_start`) und das Auto nur nicht reagiert. Gilt für Optimierer-Aktion und PV-Überschuss-Session. Die Wiederholungen selbst (Abstand, Anzahl) sind unverändert.
+
+## 0.0.45.327
+
+* **PV-Überschussladen stoppt erst bei 95 % Heimspeicher-Ladestand.** Die Grenze, bis zu der der Heimspeicher beim Überschussladen (Optimierer-Aktion und Fallback-Session) entladen werden darf, sinkt von 97 auf 95 %. Bei einem Ladestand von 95 % oder darunter wird die Aktion beendet, nicht neu gestartet und zur vollen Stunde nicht verlängert; darüber läuft sie weiter. Vorher stoppte sie schon bei 97 %.
+
+## 0.0.45.326
+
+* **Test-Add-on: eigener Seitenleisten-Titel.** Der Eintrag in der Seitenleiste von Home Assistant zeigte trotz des neuen Add-on-Namens weiter „shyft-power“. Auf `test` steht deshalb zusätzlich `panel_title: "shyft-power (TEST)"` in der `config.yaml`, damit der Titel ausdrücklich festgelegt ist. Der pre-push-Hook und der Build auf `main` lehnen jetzt auch einen Test-`panel_title` ab.
+
+## 0.0.45.325
+
+* **Test-Add-on heißt „shyft-power (TEST)“.** Auf dem Branch `test` steht der Add-on-Name jetzt in der `config.yaml` als „shyft-power (TEST)“, damit eine parallel zu PROD installierte Test-Instanz im App Store und in der Seitenleiste von Home Assistant unterscheidbar ist (der frühere Zusatz im Build-Workflow kam bei Home Assistant nie an: Supervisor liest den Namen aus dem Repository, nicht aus dem Image). Auf `main` bleibt der Name „shyft-power“; ein Push dorthin mit Test-Namen wird lokal vom pre-push-Hook abgelehnt, und der Build auf `main` bricht dann ab.
+
+## 0.0.45.324
+
+* **Strompreis-Chart: Netz-Linie zeigt Bezug und Einspeisung.** Die Kurve „Netzbezug“ heißt jetzt „Netzbezug/Einspeisung“ und zeigt den Netzsaldo mit Vorzeichen: Bezug über der Nulllinie, Einspeisung darunter. Vorher wurde die Einspeisung auf 0 gekappt. Der Ist-Verlauf ist weiter der 5-Minuten-Mittelwert des Netz-Sensors (jetzt ohne Kappung), die Prognose der Netto-Saldo `GR_sum` des Optimierers. Die rechte Achse reicht bei Einspeisung unter 0 und hat eine „0“-Marke samt gestrichelter Nulllinie; ohne Einspeisung bleibt sie wie bisher bei 0 verankert.
+
+## 0.0.45.323
+
+* **Einspeisung: neue Option „Direktvermarktung (Börsenstrompreis)“.** Unter „Strom“ → „Einspeisung“ wählst du per Radiobutton zwischen „Einspeisevergütung (brutto)“ und „Direktvermarktung (Börsenstrompreis)“. Die Einspeisevergütung funktioniert wie bisher, der eingetragene Satz gilt auch für Bestandskunden unverändert weiter (ohne gespeicherte Auswahl ist sie vorausgewählt). Bei „Direktvermarktung“ erscheint das Feld „Kostenabzug pro kWh“ (ct/kWh): Du erhältst für jede eingespeiste kWh den aktuellen Börsenstrompreis abzüglich dieser Kosten des Direktvermarkters. Das Add-on berechnet daraus für den gesamten Optimierungszeitraum einen stündlichen Einspeisepreis: Börsenpreis (netto, EPEX Day-Ahead ohne Mehrwertsteuer – so wird er ausgezahlt) minus Kostenabzug; für die Stunden, für die noch keine Day-Ahead-Preise vorliegen, gilt wie beim dynamischen Stromtarif Bubbles Preisprognose samt Fehlerkorrektur. Der Einspeisepreis kann dabei bei negativen Börsenpreisen negativ werden. Er geht als neues Feld `p_sell_array_addon` (Stundenwerte wie `p_buy_addon`) an den Server, der Mittelwert zusätzlich als flacher `p_sell_addon` für einen Server ohne Stundenwerte. **Braucht den Server ab 0.46.27.0** (liest `p_sell_array_addon`); ein älterer Server rechnet mit dem flachen Mittelwert. Fehlt bei Direktvermarktung der Kostenabzug, wird – wie bei der Einspeisevergütung – keine Optimierung gestartet und die Konfigurationsseite weist darauf hin.
+
+## 0.0.45.322
+
+* **Strompreis-Chart: Rot erst ab 40 Cent.** Die Grenze, ab der der Strompreis im Strompreis-Chart rot eingefärbt wird, steigt von 35 auf 40 Cent/kWh. Dieselbe Grenze gilt für die Einstufung „hoch“ beim Strompreis über dem Strommast im Energiefluss, damit beide Darstellungen übereinstimmen. Grün (bis 25 Cent) und Lila (ab 80 Cent) bleiben unverändert.
+
+## 0.0.45.321
+
+* **Dashboard: Warmwasser-Chart wird bei deaktiviertem Warmwasser ausgeblendet.** Steht „Warmwassermodus aktiviert?“ auf Aus, bekommt der Optimierer keinen Warmwasserbedarf mehr, und die „Prognose“-Linie (simulierte Tanktemperatur, zuletzt 53–59 °C bei echten 26 °C) ist dann bedeutungslos. Der Chart wird deshalb wie „Raumtemperatur“ bei deaktivierter Heizung geblurrt und mit „Warmwasser deaktiviert - keine Warmwasser-Aktionen“ beschriftet. Gleiche Logik wie beim Optimierer: nicht zugeordnet = aktiv, bei „unknown“ gilt der letzte bekannte Zustand; mit Heizstab wird nichts ausgeblendet.
+
+## 0.0.45.320
+
+* **Dashboard-Charts: „Jetzt“ nur noch als Punkt mit Ring, kein senkrechter Strich mehr.** Der gestrichelte senkrechte Strich bei „Jetzt“ konnte mit den Tageswechsel-Linien verwechselt werden und ist in allen Charts entfernt. Stattdessen hat der „Jetzt“-Punkt auf der Kurve jetzt einen zweiten, halbtransparenten Ring in Shyft-Grün, damit er besser auffällt (auch bei den Charts mit zwei Kurven je Kurve).
+
+## 0.0.45.319
+
+* **Strompreisprognose: Fehler am Ende der echten Day-ahead-Preise wird auf die Prognose übertragen.** Die Prognose (Bubble/energyforecast.de) liegt erfahrungsgemäß über Stunden bis Tage auf derselben Seite des echten Preises (z. B. am Tageswechsel zu niedrig → auch danach zu niedrig), und zwischen der Veröffentlichung der Day-ahead-Preise (ca. 14 Uhr) und dem nächsten Bubble-Lauf beruht sie noch auf dem Stand davor. Das Add-on misst deshalb bei jeder Preisberechnung die Differenz zwischen dem letzten echten Day-ahead-Preis (Awattar) und der Prognose für genau diese Stunde (beides netto) und schlägt sie auf die Prognose der Folgestunden auf. Die Korrektur schmilzt je Stunde um 0,1 Cent/kWh (netto) ab und endet bei 0 (bei einer Differenz von 3,4 Cent nach etwa 34 Stunden). Ist Bubbles Prognose für diese Stunde schon identisch mit dem echten Preis, passiert nichts. Die Abschwächung der Extreme in der Prognose bleibt bewusst unverändert. Das Log nennt bei jeder Änderung der Differenz den letzten echten Preis, die Prognose dafür, die Differenz und die Abschmelzdauer („Prognose-Korrektur: …“). Wirkt auf den Strompreis-Chart, den Strompreis im Energiefluss und `p_buy_addon` für den Optimierer.
+
+## 0.0.45.318
+
+* **Strompreisprognose-Abruf ohne Wiederholungen.** Die Wiederholungen alle 5 Minuten aus 0.0.45.317 entfallen: Ist Bubbles Prognose beim Abruf unverändert oder schlägt der Abruf fehl, fällt der Lauf einfach aus (es gilt der letzte Stand) und der nächste Abruf folgt zur nächsten festen Zeit, 12 Stunden später (06:05 und 18:05 Uhr, Europe/Berlin). Der Cache bleibt als Sicherheitsnetz bis zu 14 Stunden gültig.
+
+## 0.0.45.317
+
+* **Bubbles Strompreisprognose wird zweimal täglich passend zu Bubbles Läufen abgerufen.** Bubble aktualisiert seine Prognose um 05:59 und 17:59 Uhr (Europe/Berlin); das Add-on holt sie jetzt um 06:05 und 18:05 Uhr und nutzt dazwischen den zwischengespeicherten Stand (bisher wurde alle 30 Minuten neu geholt, und der Cache lief unabhängig von Bubbles Läufen ab). Ist die Prognose beim Abruf noch unverändert (Bubble noch nicht fertig) oder schlägt der Abruf fehl, wird bis zu dreimal im Abstand von 5 Minuten wiederholt. Der Cache gilt maximal 14 Stunden als Sicherheitsnetz (z. B. nach einem Neustart ohne Cache). Das Log nennt je Abruf Stundenanzahl, Zeitraum und wie viele Werte sich gegenüber dem letzten Stand geändert haben.
+
+## 0.0.45.316
+
+* **Dashboard: „wird geladen“ statt sofort „Diagrammdaten konnten nicht geladen werden“.** Beim Öffnen des Dashboards zeigt die Seite jetzt „Diagramme werden geladen …“, solange noch nichts da ist. Antwortet der Server (z. B. direkt nach einem Add-on-Start) nicht sofort, wird der Abruf automatisch bis zu viermal wiederholt (nach 2, 4, 8 und 15 s) und dabei „… der Server antwortet gerade langsam, neuer Versuch“ gezeigt. Erst wenn auch das nicht klappt, erscheint die Fehlermeldung, jetzt mit einem Knopf „Erneut versuchen“. Antwortet der Server mit „noch keine Daten“ (z. B. vor der ersten Optimierung), ist das ein neutraler Hinweis und keine Fehlermeldung. Außerdem läuft das Laden nur noch einmal gleichzeitig: Tab-Klick, 30-s-Refresh und „Tab wieder sichtbar“ zählten Fehlschläge bisher gemeinsam und lösten die Fehlermeldung zu früh aus.
+* **Gerätesteuerung: Sprung zur aktiven Aktion bzw. zur „Jetzt“-Linie zuverlässiger.** Der Tab-Klick scrollte bisher sofort auf die noch vorhandene (alte) Liste; kurz danach ersetzte das Neuladen die Karten, die Position stimmte nicht mehr, und der Wunsch war schon verbraucht. Er wurde außerdem auch verbraucht, wenn der Container nur eine Fehlermeldung enthielt, und nachladende Bilder verschoben die Linie nach dem Scrollen. Jetzt wird erst nach dem Rendern der frisch geladenen Liste gescrollt (nur wenn die „Jetzt“-Linie wirklich da ist, Wunsch läuft nach 15 s ab), und die Position wird kurz nachgeführt (nach 250 ms, 900 ms und bei nachladenden Bildern), solange du nicht selbst scrollst oder tippst.
+
+## 0.0.45.315
+
+* **`WB - p_min`: Schwelle für den PV-Überschuss gilt jetzt pro Tag.** Bisher schaltete `p_min` (Endwert des Stroms im Auto im Optimierer) auf die Einspeisevergütung als Basis um, sobald `PV_GR` + `PV_EV` im letzten Plan über den gesamten Zeitraum mehr als 5 kWh ergaben – unabhängig davon, wie lang der Optimierungszeitraum ist. Jetzt sind es 5 kWh **pro Tag**, auf den tatsächlichen Zeitraum hochgerechnet: 5 / 24 kWh je Stunde mal Stunden des Laufs (48 h → 10 kWh, 24 h → 5 kWh, 72 h → 15 kWh). Alles andere bleibt: darüber gilt die Einspeisevergütung plus 2 Cent, sonst der niedrigste kommende Preis plus 2 Cent. Der Diagnose-Log „WB p_min=…“ nennt die Schwelle jetzt als „10,0 kWh = 5,0 kWh/Tag x 48 h“.
+
+## 0.0.45.314
+
+* **PV-Prognose: Summe für Übermorgen ab 21 Uhr.** Unter dem PV-Chart steht ab 21:00 Uhr zusätzlich „| Übermorgen: XX kWh“. Vorher ist die Summe bewusst ausgeblendet, weil das 48-Stunden-Fenster den Tag erst am späten Abend nahezu vollständig abdeckt (die Prüfung, dass die PV-Erzeugung am Abend auf 0 gefallen ist, gilt wie bei Morgen).
+* **Diagnose-Log für `WB - p_min`.** Beim Berechnen von `p_min` (Endwert des Stroms im Auto im Optimierer: Laden lohnt sich nur in Stunden mit `p_buy` unter `p_min`) schreibt das Add-on eine Log-Zeile „WB p_min=…“: den Wert, die gewählte Basis (`p_buy` oder `p_sell`), die PV-Überschuss-Summe (`PV_GR`+`PV_EV`) des letzten Plans samt Schwelle, den niedrigsten kommenden Preis der Basis, die Marge, den niedrigsten kommenden `p_buy` zum Vergleich und den verwendeten Cache-Lauf. Die Berechnung ist unverändert.
+
 ## 0.0.45.313
 
 * **„Warmwassermodus aktiviert?“ = Off unterdrückt keine Warmwasser-Aktionen mehr im Add-on.** Bei „Off“ sendet das Add-on weiterhin keinen Warmwasserbedarf an den Optimierer (`hotwaterkwh` überall 0, `hw_usage_h` leer); der Optimierer plant dann kein Warmwasser. Das Add-on filtert die Aktionen aber nicht zusätzlich selbst heraus, damit die Fehlersuche einfach bleibt – angezeigt und ausgeführt wird, was der Optimierer liefert. (Die Aussage „keine Warmwasser-Aktionen“ im Eintrag zu 0.0.45.312 gilt damit nicht mehr.)

@@ -1037,6 +1037,8 @@ async function saveConfigurationNow() {
         "electricityNetzentgeltWindows": configData["electricityNetzentgeltWindows"] ?? [],
         "electricityNetzentgeltQuarters": configData["electricityNetzentgeltQuarters"] ?? [],
         "electricitySellCent": configData["electricitySellCent"] ?? null,
+        "electricitySellMode": configData["electricitySellMode"] ?? 'feed_in_tariff',
+        "electricityDirectMarketingCostCent": configData["electricityDirectMarketingCostCent"] ?? null,
         "feedInLimitEnabled": configData["feedInLimitEnabled"] === true,
         "feedInLimitKw": configData["feedInLimitKw"] ?? null,
         "heatingRodControl": isHeatingRodToggleOn(),
@@ -2405,7 +2407,8 @@ function isElectricityConfigComplete() {
     else if (mode === 'ht_nt') tariffOk = has('electricityHtCent') && has('electricityNtCent');
     else if (mode === 'dynamic') tariffOk = has('electricityDynamicSurchargeCent');
     else if (mode === 'dynamic_variable') tariffOk = has('electricityNetzentgeltHtCent') && has('electricityNetzentgeltNtCent') && has('electricityNetzentgeltStandardCent');
-    return tariffOk && has('electricitySellCent');
+    const sellOk = configData['electricitySellMode'] === 'direct_marketing' ? has('electricityDirectMarketingCostCent') : has('electricitySellCent');
+    return tariffOk && sellOk;
 }
 
 function renderGeneralConfigSection() {
@@ -2457,7 +2460,7 @@ function renderGeneralConfigSection() {
     bodyDiv.appendChild(buildElectricityTariffControl());
 
     bodyDiv.appendChild(buildElectricitySubheading('Einspeisung'));
-    bodyDiv.appendChild(buildElectricityPriceSellField());
+    bodyDiv.appendChild(buildElectricitySellControl());
 
     // Optional: zusaetzliche(r) Netzleistungs-Sensor(en) unabhaengig vom (ebenfalls optionalen)
     // Wechselrichter-Sensor "photovoltaic_powerflow_grid" - siehe read_grid_power_kw in app.py, das
@@ -4487,6 +4490,65 @@ function buildOptimizationPeriodsField() {
         defaultValue: 48,
         step: '1',
     });
+}
+
+// Einspeisung: Radiobuttons "Einspeisevergütung (brutto)" (fester Satz, bisheriges Feld electricitySellCent - Bestandskunden bleiben unverändert dabei)
+// oder "Direktvermarktung (Börsenstrompreis)" (Börsenpreis minus Kostenabzug des Direktvermarkters, siehe compute_price_sell_array in app.py).
+// electricitySellMode fehlt bei Bestandskunden = Einspeisevergütung; es wird bewusst nicht vorab in configData geschrieben.
+function buildElectricitySellControl() {
+    const wrap = document.createElement('div');
+    const current = configData['electricitySellMode'] === 'direct_marketing' ? 'direct_marketing' : 'feed_in_tariff';
+
+    const radioGroup = document.createElement('div');
+    radioGroup.className = 'electricityRadioGroup';
+    radioGroup.setAttribute('role', 'radiogroup');
+    const panel = document.createElement('div');
+
+    function renderPanel(mode) {
+        panel.innerHTML = '';
+        if (mode === 'direct_marketing') {
+            panel.appendChild(buildConfigNumberField({
+                label: 'Kostenabzug pro kWh',
+                tooltip: 'Was dein Direktvermarkter dir pro eingespeister Kilowattstunde vom Börsenstrompreis abzieht.',
+                id: 'electricity_direct_marketing_cost_cent',
+                configKey: 'electricityDirectMarketingCostCent',
+                placeholder: 'z.B. 0.4',
+                step: '0.1',
+                min: '0',
+                unit: 'ct/kWh',
+            }));
+            const note = document.createElement('p');
+            note.className = 'electricityHint';
+            note.textContent = 'Du erhältst für deine eingespeisten kWh Strom den aktuellen Börsenstrompreis, abzüglich dieser Kosten des Direktvermarkters.';
+            panel.appendChild(note);
+        } else {
+            panel.appendChild(buildElectricityPriceSellField());
+        }
+    }
+
+    for (const [value, label] of [['feed_in_tariff', 'Einspeisevergütung (brutto)'], ['direct_marketing', 'Direktvermarktung (Börsenstrompreis)']]) {
+        const option = document.createElement('label');
+        option.className = 'electricityRadioOption';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'electricity_sell_mode';
+        input.value = value;
+        input.checked = value === current;
+        input.addEventListener('change', () => {
+            if (!input.checked) return;
+            configData['electricitySellMode'] = value;
+            markConfigFieldTouched('electricitySellMode');
+            renderPanel(value);
+            autoSave();
+        });
+        option.appendChild(input);
+        option.appendChild(document.createTextNode(label));
+        radioGroup.appendChild(option);
+    }
+    wrap.appendChild(radioGroup);
+    wrap.appendChild(panel);
+    renderPanel(current);
+    return wrap;
 }
 
 function buildElectricityPriceSellField() {
@@ -7623,40 +7685,67 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
 // Nutzer-Korrektur: das Addon laeuft als HA-Ingress-Panel und ein "Seitenaufruf" im Sinne von
 // document.readyState passiert praktisch nur einmal pro Browser-Tab - ein erneuter Klick auf den
 // Tab soll aber trotzdem jedes Mal zum "Jetzt"-Marker scrollen) zu #shyftNowMarker scrollen (siehe
-// renderShyftActions) - bei einem Drittel der Bildschirmhoehe von oben statt mittig (Nutzer-
-// Vorgabe): oben bleibt Platz fuer bereits vergangene Aktionen (1/3), darunter aktuelle/zukuenftige
-// (2/3). Der Marker existiert IMMER (auch waehrend eine Aktion aktiv laeuft, siehe dort), anders als
+// renderShyftActions) - bei zwei Dritteln der Bildschirmhoehe von oben (Nutzer-Vorgabe): die Liste ist absteigend
+// sortiert, aktive und geplante Aktionen stehen also UEBER dem Marker (2/3 des Bildschirms), die bereits beendeten
+// darunter (1/3). Der Marker existiert IMMER (auch waehrend eine Aktion aktiv laeuft, siehe dort), anders als
 // die fruehere Ziel-Auswahl ueber ".is-active"-Karten, die bei "gerade nichts aktiv" leer lief.
 //
-// shyftActionsScrollPending: "beim naechsten fertigen Render dieses Tabs einmal scrollen" - wird von
-// requestShyftActionsAutoScroll() (Tab-Klick, siehe setupTabs) gesetzt. maybeAutoScrollToActiveShyftActions
-// wird zusaetzlich nach JEDEM Rendern der Aktionsliste aufgerufen (Erstladen UND der 30-Sekunden-
-// Auto-Refresh, siehe refreshShyftActions) - ohne gesetztes Pending-Flag ist das dort ein no-op,
-// daher stoert der periodische Hintergrund-Refresh die Scrollposition nicht. Das Flag wird erst
-// verbraucht, sobald die Liste tatsaechlich befuellt ist (container.children.length > 0) - vorher
-// koennte ein Klick kurz vor Abschluss des ersten Ladevorgangs sonst die einzige Scroll-Chance
-// verpassen, weil der Marker noch gar nicht im DOM steht.
-let shyftActionsScrollPending = false;
+// shyftActionsScrollRequestedAt: "beim naechsten fertigen Render dieses Tabs einmal scrollen" - wird von requestShyftActionsAutoScroll()
+// (Tab-Klick, siehe setupTabs) gesetzt. maybeAutoScrollToActiveShyftActions wird nach JEDEM Rendern der Aktionsliste aufgerufen (Erstladen UND
+// der 30-Sekunden-Auto-Refresh, siehe refreshShyftActions) - ohne offenen Wunsch ist das dort ein no-op, daher stoert der periodische
+// Hintergrund-Refresh die Scrollposition nicht.
+// Zuverlaessigkeit (Nutzer-Meldung "funktioniert nicht zuverlaessig"): frueher scrollte schon der Tab-Klick selbst sofort auf die noch
+// VORHANDENE (alte) Liste, danach ersetzte das Neuladen (refreshActiveTabNow) die Karten - die Position stimmte dann nicht mehr, und das
+// Pending-Flag war schon verbraucht. Ausserdem verbrauchte der Klick es auch, wenn der Container nur eine Fehlermeldung enthielt, und
+// nachladende Bilder in den Karten verschoben den Marker nach dem Scrollen. Jetzt:
+//  - der Tab-Klick merkt sich den Wunsch nur (mit Ablaufzeit), gescrollt wird erst nach dem Rendern der FRISCH geladenen Liste (der Klick loest
+//    ohnehin ein Neuladen aus), und nur, wenn der Marker wirklich im DOM steht;
+//  - nach dem Scrollen wird die Position noch kurz nachgefuehrt (nachladende Bilder, Layout), solange der Nutzer nicht selbst scrollt/tippt.
+let shyftActionsScrollRequestedAt = 0;
+const SHYFT_ACTIONS_SCROLL_REQUEST_TTL_MS = 15000;
+const SHYFT_ACTIONS_SCROLL_SETTLE_MS = 2500;
+let shyftLastUserInputAt = 0;
+let shyftActionsAutoScrollRunId = 0;
+['wheel', 'touchstart', 'touchmove', 'keydown', 'mousedown'].forEach(type => {
+    window.addEventListener(type, () => { shyftLastUserInputAt = Date.now(); }, {passive: true, capture: true});
+});
+
 function requestShyftActionsAutoScroll() {
-    shyftActionsScrollPending = true;
-    maybeAutoScrollToActiveShyftActions();
+    shyftActionsScrollRequestedAt = Date.now();
 }
+
+function scrollShyftNowMarkerIntoPlace(marker) {
+    // bei zwei Dritteln der Bildschirmhoehe von oben (siehe oben); relativ zur aktuellen Position, daher beliebig oft wiederholbar
+    const delta = marker.getBoundingClientRect().top - window.innerHeight * 2 / 3;
+    if (Math.abs(delta) > 2) window.scrollBy({top: delta, behavior: 'auto'});
+}
+
 function maybeAutoScrollToActiveShyftActions() {
-    if (!shyftActionsScrollPending) return;
+    if (!shyftActionsScrollRequestedAt) return;
+    if (Date.now() - shyftActionsScrollRequestedAt > SHYFT_ACTIONS_SCROLL_REQUEST_TTL_MS) {
+        shyftActionsScrollRequestedAt = 0;  // abgelaufen (z.B. Laden fehlgeschlagen) - ein spaeterer Refresh soll nicht ungefragt scrollen
+        return;
+    }
     const panel = document.getElementById('tab-geraetesteuerung');
     if (!panel || !panel.classList.contains('active')) return;
     const container = document.getElementById('shyftActionsBody');
-    if (!container || container.children.length === 0) return; // Daten noch nicht geladen - Pending bleibt gesetzt
-    shyftActionsScrollPending = false; // ab hier: genau ein Versuch pro Tab-Oeffnen, egal ob der Marker gefunden wird
     const marker = document.getElementById('shyftNowMarker');
-    if (!marker) return;
-    // rAF, damit Layout (inkl. evtl. noch nicht geladener Icon-Bilder) sicher steht, bevor die
-    // Position gemessen wird.
-    requestAnimationFrame(() => {
-        const rect = marker.getBoundingClientRect();
-        const targetOffsetFromTop = window.innerHeight / 3;
-        window.scrollBy({top: rect.top - targetOffsetFromTop, behavior: 'auto'});
-    });
+    if (!container || !marker) return; // Liste (noch) nicht gerendert - der Wunsch bleibt bis zum naechsten Rendern/zum Ablauf bestehen
+    shyftActionsScrollRequestedAt = 0;
+    const runId = ++shyftActionsAutoScrollRunId;
+    const startedAt = Date.now();
+    const settle = () => {
+        // abgebrochen, wenn inzwischen neu gerendert (Marker ausgetauscht), ein neuer Lauf gestartet wurde oder der Nutzer selbst bedient hat
+        if (runId !== shyftActionsAutoScrollRunId || !marker.isConnected || shyftLastUserInputAt > startedAt) return;
+        scrollShyftNowMarkerIntoPlace(marker);
+    };
+    // rAF, damit das Layout steht, bevor die Position gemessen wird; danach nachfuehren (Bilder laden nach, siehe oben)
+    requestAnimationFrame(settle);
+    setTimeout(settle, 250);
+    setTimeout(settle, 900);
+    const onImageLoad = () => settle();
+    container.addEventListener('load', onImageLoad, true);
+    setTimeout(() => container.removeEventListener('load', onImageLoad, true), SHYFT_ACTIONS_SCROLL_SETTLE_MS);
 }
 
 // --- Gerätesteuerung: Schalter "Steuerung aktivieren/deaktivieren" je Aktionstyp --------------------------
@@ -7799,9 +7888,8 @@ function showShyftActionsError(container) {
 // Kalendertag (lokale Zeit), summiert aus den stündlichen kW-Werten (ein kW-Wert über eine Stunde
 // ist per Definition eine kWh). "Heute" zählt nur noch nicht vergangene Stunden.
 //
-// "Übermorgen" wird bewusst nicht mehr ausgewiesen (nur Heute/Morgen) - ein 48h-Fenster deckt
-// diesen Tag rechnerisch nie vollstaendig ab (Heute + Morgen allein verbrauchen schon mindestens
-// 24h davon), die Summe wirkte dadurch irrefuehrend unvollstaendig. "Vollstaendig" heißt hier
+// "Übermorgen" wird erst ab 21 Uhr ausgewiesen (siehe computePvEnergySummary) - vorher deckt das
+// 48h-Fenster diesen Tag nicht vollstaendig ab, die Summe wirkte irrefuehrend unvollstaendig. "Vollstaendig" heißt hier
 // ohnehin nicht "Mitternacht bis Mitternacht", sondern "die PV-Erzeugung ist erkennbar auf 0
 // gefallen": sobald ab PV_COMPLETE_CHECK_FROM_HOUR (17 Uhr - spätestens 21 Uhr wäre auch im
 // Hochsommer sicher, im Winter geht die Sonne aber teils schon um 17 Uhr unter) ein Wert nahe 0
@@ -7919,25 +8007,25 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
 // stand dort vorher ohne erkennbaren Bezug zum Chart direkt neben der (inhaltlich anderen)
 // Einsatzplan-Karte und wurde faelschlich fuer deren "Stromverbrauch"-Kennzahl gehalten.
 //
-// Nur Heute/Morgen - "Übermorgen" wird bewusst nicht ausgewiesen, das 48h-Fenster deckt diesen
-// Tag ohnehin nie vollstaendig ab (siehe reachedZeroInEvening-Kommentar unten), die Summe wirkte
-// dadurch irrefuehrend unvollstaendig.
+// Heute/Morgen immer, "Übermorgen" erst ab PV_DAY_AFTER_TOMORROW_FROM_HOUR Uhr (21 Uhr): das 48h-Fenster deckt diesen Tag
+// erst dann (nahezu) vollstaendig ab - frueher wirkte die Summe irrefuehrend unvollstaendig.
 function computePvEnergySummary(labels, values) {
     const PV_ZERO_THRESHOLD_KW = 0.05;
     const PV_COMPLETE_CHECK_FROM_HOUR = 17;
+    const PV_DAY_AFTER_TOMORROW_FROM_HOUR = 21;
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const currentHourStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours());
-    const dayLabels = ['Heute', 'Morgen'];
-    const sums = [0, 0];
-    const hasData = [false, false];
-    const reachedZeroInEvening = [false, false];
+    const dayLabels = ['Heute', 'Morgen', 'Übermorgen'];
+    const sums = [0, 0, 0];
+    const hasData = [false, false, false];
+    const reachedZeroInEvening = [false, false, false];
 
     for (let i = 0; i < labels.length; i++) {
         const d = new Date(labels[i]);
         const startOfThatDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
         const dayOffset = Math.round((startOfThatDay - startOfToday) / (24 * 60 * 60 * 1000));
-        if (dayOffset < 0 || dayOffset > 1) continue;
+        if (dayOffset < 0 || dayOffset > 2) continue;
         if (dayOffset === 0 && d < currentHourStart) continue; // schon vergangene Stunde
         sums[dayOffset] += values[i];
         hasData[dayOffset] = true;
@@ -7946,12 +8034,13 @@ function computePvEnergySummary(labels, values) {
         }
     }
 
-    // offset 0 = Heute (neben der "Jetzt"-Linie), offset 1 = Morgen (neben der 1. Tagesgrenze) -
+    // offset 0 = Heute (neben der "Jetzt"-Linie), offset 1 = Morgen (neben der 1. Tagesgrenze), offset 2 = Übermorgen -
     // der Aufrufer (buildPvForecastActualChart) ordnet ueber offset den passenden x-Koordinaten zu.
     const result = [];
-    for (let offset = 0; offset < 2; offset++) {
+    for (let offset = 0; offset < 3; offset++) {
         if (!hasData[offset]) continue;
         if (offset > 0 && !reachedZeroInEvening[offset]) continue;
+        if (offset === 2 && now.getHours() < PV_DAY_AFTER_TOMORROW_FROM_HOUR) continue;
         result.push({offset, label: dayLabels[offset], kwh: Math.round(sums[offset])});
     }
     return result;
@@ -8466,6 +8555,14 @@ function computeNiceTicks(min, max, targetCount = 4) {
     return ticks.length ? ticks : [min];
 }
 
+// "Jetzt"-Markierung in den Charts: Punkt auf der Kurve mit einem zweiten, halbtransparenten Ring in Shyft-Gruen (kein senkrechter Strich mehr -
+// der wurde mit den Tageswechsel-Linien verwechselt). Ring zuerst, damit der Punkt darueber liegt. Eigene Klassen (nicht dashboardChartMarker), damit
+// der verschiebbare Hover-Punkt nicht mit diesem verwechselt wird (er wird per querySelector gesucht).
+function nowDotSvg(cx, cy) {
+    const x = Number(cx).toFixed(1), y = Number(cy).toFixed(1);
+    return `<circle class="dashboardChartNowRing" r="9" cx="${x}" cy="${y}" /><circle class="dashboardChartNowDot" r="4.5" cx="${x}" cy="${y}" />`;
+}
+
 function buildLineChart(title, unit, labels, values, options = {}) {
     const scaleHolder = {};
     return makeToggleableChart(options.chartKey, ctx => {
@@ -8612,14 +8709,15 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         if (secondSeries.fine) defined2.push(...secondSeries.fine.map(p => p[1]));
         if (secondSeries.actual && secondSeries.forecast) defined2.push(...secondSeries.forecast.filter(v => v !== null && v !== undefined));
         if (secondSeries.actualFine) defined2.push(...parseFinePoints(secondSeries.actualFine).map(p => p[1]));
-        const rawMin2 = secondSeries.zeroBased ? 0 : Math.min(...defined2);
-        const rawMax2 = Math.max(...defined2);
+        // signed (z.B. Netzbezug/Einspeisung): positive UND negative Werte - die Skala schliesst 0 immer ein und geht bei Einspeisung darunter.
+        const rawMin2 = secondSeries.zeroBased ? 0 : (secondSeries.signed ? Math.min(0, ...defined2) : Math.min(...defined2));
+        const rawMax2 = secondSeries.signed ? Math.max(0, ...defined2) : Math.max(...defined2);
         const valueRange2 = (rawMax2 - rawMin2) || 1;
         // absolutePadding (z.B. 0.2 °C beim Innenraum): fester Abstand in Einheiten des Werts statt
         // 10 % der Spanne - bei einer kleinen Spanne (Innentemperatur schwankt nur um Zehntel Grad)
         // verlaeuft die Kurve dadurch deutlich flacher, statt die volle Diagrammhoehe auszufuellen.
         const pad2 = secondSeries.absolutePadding ?? valueRange2 * 0.1;
-        yMin2 = secondSeries.zeroBased ? 0 : rawMin2 - pad2;
+        yMin2 = secondSeries.zeroBased ? 0 : (secondSeries.signed ? (rawMin2 < 0 ? rawMin2 - pad2 : 0) : rawMin2 - pad2);
         yMax2 = rawMax2 + pad2;
         if (secondSeries.band) {
             const totalRange2 = (yMax2 - yMin2) / CHART_BAND_FRACTION_SECOND;
@@ -8867,8 +8965,15 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     // Rechte Achsenbeschriftung fuer secondSeries - eigene Skala, also eigene Ticks (gleiches Muster
     // wie yLabels links), am rechten Rand nach aussen ausgerichtet.
     let yLabels2 = '';
+    let zeroLine2Markup = '';
     if (secondSeries) {
         let yTicks2 = [yMax2, (yMin2 + yMax2) / 2, yMin2];
+        if (secondSeries.signed && yMin2 < 0) {
+            // Nulllinie der rechten Skala (Bezug darueber, Einspeisung darunter) samt "0"-Beschriftung statt der Mitte
+            yTicks2 = [yMax2, 0, yMin2];
+            const zy2 = (paddingTop + plotHeight - ((0 - yMin2) / yRange2) * plotHeight).toFixed(1);
+            zeroLine2Markup = `<line x1="${paddingLeft}" y1="${zy2}" x2="${width - paddingRight}" y2="${zy2}" stroke="var(--color-border)" stroke-dasharray="2,3" />`;
+        }
         if (secondSeries.integerTicks) {
             // Nur volle Zahlen als Achsenbeschriftung (hoechstens ~5 Stueck, bei grossem Bereich in groeberen Schritten)
             const lowTick = Math.ceil(yMin2 - 1e-9), highTick = Math.floor(yMax2 + 1e-9);
@@ -8906,13 +9011,9 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     const firstLabelMs = new Date(labels[0]).getTime();
     const nowIndex = Math.round((nowMs - firstLabelMs) / 3600000);
     if (nowIndex >= 0 && nowIndex <= lastIndex) {
-        const x = (paddingLeft + (nowIndex / lastIndex) * plotWidth).toFixed(1);
-        nowMarkup = `<line x1="${x}" y1="${paddingTop}" x2="${x}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
-        // Zusaetzlich ein dauerhaft sichtbarer Punkt auf der Linie (der Strich allein ist zu unauffaellig) - gleiches
-        // Aussehen wie der Punkt beim Mouse-over (dashboardChartMarker), aber eigene Klasse, damit er nicht mit dem
-        // verschiebbaren Hover-Punkt verwechselt wird (der per querySelector gesucht wird).
+        // Dauerhaft sichtbarer Punkt mit Ring auf der Kurve (siehe nowDotSvg) - kein senkrechter Strich mehr.
         for (const p of [hidePrimarySeg(nowIndex) ? null : points[nowIndex], hideSecond ? null : (points2 && points2[nowIndex])]) {
-            if (p) nowMarkup += `<circle class="dashboardChartNowDot" r="4.5" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" />`;
+            if (p) nowMarkup += nowDotSvg(p[0], p[1]);
         }
     }
 
@@ -8961,6 +9062,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
             ${areaMarkup}
             ${lineMarkup}
             ${overlayMarkup}
+            ${hideSecond ? '' : zeroLine2Markup}
             ${hideSecond ? '' : secondLineMarkup}
             ${presenceMarkup}
             ${nowMarkup}
@@ -9124,8 +9226,8 @@ function buildBatterySocForecastActualChart(labels, forecast, actual, actionHour
     });
 }
 
-function buildWarmwasserForecastActualChart(labels, forecast, actual, actionHours, actualFine = null) {
-    return buildForecastActualChart('Warmwasser', '°C', labels, forecast, actual, {decimals: 1, actionHours, slopeColors: WARMWASSER_SLOPE_COLORS, chartKey: 'warmwasser', actualFine});
+function buildWarmwasserForecastActualChart(labels, forecast, actual, actionHours, actualFine = null, blurredLabel = null) {
+    return buildForecastActualChart('Warmwasser', '°C', labels, forecast, actual, {decimals: 1, actionHours, slopeColors: WARMWASSER_SLOPE_COLORS, chartKey: 'warmwasser', actualFine, blurredLabel});
 }
 
 function buildLadestandAutoForecastActualChart(labels, forecast, actual, actionHours) {
@@ -9170,7 +9272,7 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, options
     }, {labels, stickyKey: options.chartKey || title});
 }
 
-function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null, actualFine = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
+function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null, actualFine = null, blurredLabel = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
     // "Prognose" ist visuell EINE Linie ueber den ganzen Tag: fuer bereits vergangene Stunden der zu
     // ihrer Zeit juengste Planungsstand (plannedHistory), fuer die Zukunft die aktuelle Prognose
     // (forecast) - ersetzt die fruehere separate dritte Linie/Legende "Letzter Planungsstand".
@@ -9313,21 +9415,16 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
         return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="end">${v.toFixed(decimals)}</text>`;
     }).join('');
 
-    // "Jetzt"-Markierung: Trennlinie zwischen den bereits vergangenen Stunden (mit Ist-Werten) und
-    // der Zukunft (nur noch Prognose) - der letzte Index, an dem ein Ist-Wert vorliegt.
+    // "Jetzt"-Markierung: nur noch ein Punkt mit Ring auf der Kurve (siehe nowDotSvg), kein senkrechter Strich mehr - der wurde mit den
+    // Tageswechsel-Linien verwechselt. "jetzt" = der letzte Index, an dem ein Ist-Wert vorliegt. nowMarkup bleibt (leer) fuer den SVG-Aufbau unten.
     let nowMarkup = '';
     const lastActualIndex = actual.reduce((last, v, i) => (v !== null && v !== undefined ? i : last), -1);
-    if (lastActualIndex >= 0 && lastActualIndex < labels.length - 1) {
-        const x = xFor(lastActualIndex).toFixed(1);
-        nowMarkup = `<line x1="${x}" y1="${paddingTop}" x2="${x}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
-    }
-    // Dauerhaft sichtbarer Punkt auf der Linie bei "jetzt" (der Strich allein ist zu unauffaellig) - wird UEBER den
-    // Linien gezeichnet (siehe nowDotMarkup im SVG unten), nicht wie der Strich darunter.
+    // Wird UEBER den Linien gezeichnet (siehe nowDotMarkup im SVG unten).
     let nowDotMarkup = '';
     if (lastActualIndex >= 0 && showActual) {
         const nowDotValue = actual[lastActualIndex] ?? prognose[lastActualIndex];
         if (nowDotValue !== null && nowDotValue !== undefined) {
-            nowDotMarkup = `<circle class="dashboardChartNowDot" r="4.5" cx="${xFor(lastActualIndex).toFixed(1)}" cy="${yFor(nowDotValue).toFixed(1)}" />`;
+            nowDotMarkup = nowDotSvg(xFor(lastActualIndex), yFor(nowDotValue));
         }
     }
     if (useFineActual) {
@@ -9335,10 +9432,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
         const [lastMs, lastValue] = fineActual[fineActual.length - 1];
         const nowX = xOfMs(lastMs + 150000);
         if (nowX >= paddingLeft && nowX <= width - paddingRight) {
-            nowDotMarkup = `<circle class="dashboardChartNowDot" r="4.5" cx="${nowX.toFixed(1)}" cy="${yFor(lastValue).toFixed(1)}" />`;
-            if (lastActualIndex < labels.length - 1) {
-                nowMarkup = `<line x1="${nowX.toFixed(1)}" y1="${paddingTop}" x2="${nowX.toFixed(1)}" y2="${baseline.toFixed(1)}" stroke="var(--color-text)" stroke-width="1" stroke-dasharray="2,3" opacity="0.6" />`;
-            }
+            nowDotMarkup = nowDotSvg(nowX, yFor(lastValue));
         }
     }
 
@@ -9378,7 +9472,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     }
 
     const chartContainer = document.createElement('div');
-    chartContainer.className = 'dashboardChartContainer';
+    chartContainer.className = 'dashboardChartContainer' + (blurredLabel ? ' dashboardChartContainer--blurred' : '');
     chartContainer.innerHTML = `
         <svg viewBox="0 0 ${width} ${height}" class="dashboardChartSvg">
             <line x1="${paddingLeft}" y1="${paddingTop}" x2="${paddingLeft}" y2="${baseline.toFixed(1)}" stroke="var(--color-border)" />
@@ -9395,7 +9489,14 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
         </svg>`;
     wrapper.appendChild(chartContainer);
 
-    // PV-Ertrag Heute|Morgen (siehe computePvEnergySummary) als schlichter Text UNTER diesem Chart -
+    if (blurredLabel) {
+        const overlay = document.createElement('div');
+        overlay.className = 'dashboardChartBlurOverlay';
+        overlay.textContent = blurredLabel;
+        chartContainer.appendChild(overlay);
+    }
+
+    // PV-Ertrag Heute|Morgen (ab 21 Uhr auch Übermorgen, siehe computePvEnergySummary) als schlichter Text UNTER diesem Chart -
     // ein Versuch, die Werte stattdessen platzsparend IN den Chart einzuzeichnen (neben "Jetzt"-Linie/
     // Tagesgrenze) wirkte trotz Kollisionsvermeidung nicht sauber genug. Direkt hier (statt weiter
     // unten separat im Dashboard-Flow) verankert, damit der Bezug zu DIESEM Chart eindeutig bleibt.
@@ -11182,6 +11283,9 @@ function updateOrAppendDashboardWidget(container, key, newEl) {
     if (existing) {
         existing.replaceWith(newEl);
     } else {
+        // erstes Widget da: "Diagramme werden geladen ..." (siehe loadDashboard) ist nicht mehr noetig
+        const loadingNotice = container.querySelector('.dashboardLoadingNotice');
+        if (loadingNotice) loadingNotice.remove();
         container.appendChild(newEl);
     }
 }
@@ -11194,9 +11298,11 @@ function updateOrAppendDashboardWidget(container, key, newEl) {
 let dashboardChartLoadFailureCount = 0;
 const DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD = 3;
 
-function showDashboardChartLoadError(container, message) {
+// immediate=true: der Erstaufbau hat seine automatischen Wiederholungen schon hinter sich (siehe loadDashboard) - dann sofort anzeigen,
+// statt erneut auf DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD Fehlschlaege zu warten.
+function showDashboardChartLoadError(container, message, immediate = false) {
     dashboardChartLoadFailureCount++;
-    if (dashboardChartLoadFailureCount < DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD) {
+    if (!immediate && dashboardChartLoadFailureCount < DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD) {
         console.log(`[Shyft] Dashboard-Chart-Laden fehlgeschlagen (Versuch ${dashboardChartLoadFailureCount}/${DASHBOARD_CHART_LOAD_FAILURE_THRESHOLD}), noch keine Anzeige: ${message}`);
         return;
     }
@@ -11205,18 +11311,72 @@ function showDashboardChartLoadError(container, message) {
     error.className = 'shyftActionsError';
     error.textContent = message;
     container.appendChild(error);
+    const retryButton = document.createElement('button');
+    retryButton.type = 'button';
+    retryButton.textContent = 'Erneut versuchen';
+    retryButton.addEventListener('click', () => {
+        dashboardChartLoadFailureCount = 0;
+        loadDashboard();
+    });
+    container.appendChild(retryButton);
 }
+
+// Hinweis "wird geladen" (neutral, kein Fehler) solange noch kein Widget steht - z.B. direkt nach dem Klick auf "Dashboard" oder wenn der
+// Server (Home Assistant Ingress, frisch gestartetes Add-on) einige Sekunden zum Antworten braucht. Wird vom ersten angehaengten Widget entfernt
+// (siehe updateOrAppendDashboardWidget).
+function showDashboardLoadingNotice(container, text) {
+    let notice = container.querySelector('.dashboardLoadingNotice');
+    if (!notice) {
+        container.querySelectorAll('.shyftActionsError').forEach(el => el.remove());
+        notice = document.createElement('p');
+        notice.className = 'shyftActionsEmpty dashboardLoadingNotice';
+        container.appendChild(notice);
+    }
+    notice.textContent = text;
+}
+
+// Automatische Wiederholungen des allerersten Ladens (Pause vor dem 2., 3., ... Versuch) - erst danach gilt es als Fehler.
+const DASHBOARD_INITIAL_LOAD_RETRY_DELAYS_MS = [2000, 4000, 8000, 15000];
+let dashboardLoadInFlight = null;
 
 // Baut/aktualisiert alle Dashboard-Widgets - sowohl beim ersten Seitenaufruf (container ist leer,
 // jedes updateOrAppendDashboardWidget haengt einfach an) als auch bei jedem periodischen Refresh
 // (siehe refreshDashboard unten): dann wird JEDES Widget einzeln an seinem bestehenden Platz
 // ausgetauscht, ohne die Seite als Ganzes neu aufzubauen.
-async function loadDashboard() {
+// Ein Aufruf zur Zeit: Klick auf den Tab, 30-s-Refresh und "Tab wieder sichtbar" koennen gleichzeitig laden - mehrere parallele (langsame) Aufrufe
+// zaehlten sonst ihre Fehlschlaege zusammen und zeigten die Fehlermeldung, obwohl der naechste Versuch geklappt haette.
+function loadDashboard() {
+    if (!dashboardLoadInFlight) {
+        dashboardLoadInFlight = loadDashboardImpl().finally(() => { dashboardLoadInFlight = null; });
+    }
+    return dashboardLoadInFlight;
+}
+
+async function loadDashboardImpl() {
     const container = document.getElementById('dashboardBody');
     if (!container) return;
+    // Noch kein Widget (erster Aufruf): "wird geladen" zeigen und bei Fehlern automatisch wiederholen, statt sofort eine Fehlermeldung.
+    const isInitialLoad = !container.querySelector('[data-dashboard-widget-key]');
+    if (isInitialLoad) showDashboardLoadingNotice(container, 'Diagramme werden geladen …');
     try {
-        const data = await getJson(insideHomeAssistant + '/dashboard/chart-data');
+        let data;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                data = await getJson(insideHomeAssistant + '/dashboard/chart-data');
+                break;
+            } catch (err) {
+                if (!isInitialLoad || attempt >= DASHBOARD_INITIAL_LOAD_RETRY_DELAYS_MS.length) throw err;
+                console.log(`[Shyft] Dashboard-Daten noch nicht erreichbar (Versuch ${attempt + 1}), neuer Versuch in ${DASHBOARD_INITIAL_LOAD_RETRY_DELAYS_MS[attempt]} ms:`, err);
+                showDashboardLoadingNotice(container, 'Diagramme werden geladen … (der Server antwortet gerade langsam, neuer Versuch)');
+                await new Promise(resolve => setTimeout(resolve, DASHBOARD_INITIAL_LOAD_RETRY_DELAYS_MS[attempt]));
+            }
+        }
         if (data.status !== 'success') {
+            if (isInitialLoad) {
+                // Server antwortet, hat aber (noch) keine Daten - z.B. nach einer Neuinstallation vor der ersten Optimierung: Hinweis, kein Fehler.
+                showDashboardLoadingNotice(container, data.message || 'Noch keine Diagrammdaten vorhanden.');
+                return;
+            }
             showDashboardChartLoadError(container, data.message || 'Diagrammdaten konnten nicht geladen werden.');
             return;
         }
@@ -11276,7 +11436,7 @@ async function loadDashboard() {
         } catch (err) {
             console.log(err);
         }
-        // Netzbezug (nur Bezug, keine Einspeisung) fuer die optionale Linie im Strompreis-Chart
+        // Netzbezug/Einspeisung (Bezug positiv, Einspeisung negativ) fuer die Netz-Linie im Strompreis-Chart
         let gridFinePoints = [];
         try {
             const gridFine = await getJson(insideHomeAssistant + '/dashboard/usage-fine?source=grid');
@@ -11301,8 +11461,8 @@ async function loadDashboard() {
                 });
                 const forecast = labelMs.map((ms, k) => (actual[k] === null && ms > lastFineMs && Number.isFinite(optByMs.get(ms)) ? optByMs.get(ms) : null));
                 secondSeries = {
-                    label: 'Netzbezug', unit: 'kW', decimals: 1, color: 'var(--color-text-secondary)',
-                    actual, forecast, fine: gridFinePoints.length >= 2 ? gridFinePoints : null, binMs: usageFineBinMs, zeroBased: true,
+                    label: 'Netzbezug/Einspeisung', unit: 'kW', decimals: 1, color: 'var(--color-text-secondary)',
+                    actual, forecast, fine: gridFinePoints.length >= 2 ? gridFinePoints : null, binMs: usageFineBinMs, signed: true,
                 };
             }
             return buildLineChart('Strompreis', 'Cent/kWh', strompreisLabels, strompreisValues, {
@@ -11315,8 +11475,8 @@ async function loadDashboard() {
             valueScale: 100,
             decimals: 0,
             // extremeThreshold/-Color: Nutzer-Vorgabe, sehr teure Stunden (>80 Cent) zusaetzlich
-            // zum normalen "teuer"-Rot (>35 Cent) farblich abheben, statt gleich auszusehen.
-            colorBands: {extremeThreshold: 80, extremeColor: '#8e24aa', highThreshold: 35, highColor: 'var(--color-error)', lowThreshold: 25, lowColor: 'var(--color-accent)', midColor: 'var(--color-text-secondary)'},
+            // zum normalen "teuer"-Rot (>40 Cent) farblich abheben, statt gleich auszusehen.
+            colorBands: {extremeThreshold: 80, extremeColor: '#8e24aa', highThreshold: 40, highColor: 'var(--color-error)', lowThreshold: 25, lowColor: 'var(--color-accent)', midColor: 'var(--color-text-secondary)'},
             // Nutzer-Vorgabe: alle veroeffentlichten Awattar-Werte durchgezogen zeichnen (auch in der
             // Zukunft - die sind bekannt, keine Prognose), erst danach gestrichelt.
             dashedFromIndex: strompreisDashedFromIndex,
@@ -11419,11 +11579,16 @@ async function loadDashboard() {
                 ? 'Heizung deaktiviert - keine Heizungs-Aktionen'
                 : null,
         }));
+        // Steht "Warmwassermodus aktiviert?" auf Aus, bekommt der Optimierer keinen Warmwasserbedarf (siehe build_hot_water_optimizer_fields) - die Prognose waere
+        // bedeutungslos. Der Chart bleibt, wird aber wie bei der Raumtemperatur als "deaktiviert" ausgeblendet (Heizstab/nicht zugeordnet: null -> nichts ausgeblendet).
+        const warmwasserBlurredLabel = (flowData && flowData.heatpump && flowData.heatpump.dhwActivated === false)
+            ? 'Warmwasser deaktiviert - keine Warmwasser-Aktionen'
+            : null;
         let warmwasserChartRendered = false;
         try {
             const warmwasserComparison = await getJson(insideHomeAssistant + '/dashboard/warmwasser-forecast-vs-actual');
             if (warmwasserComparison.status === 'success' && warmwasserComparison.labels.length > 0) {
-                updateOrAppendDashboardWidget(container, 'warmwasser', buildWarmwasserForecastActualChart(warmwasserComparison.labels, warmwasserComparison.forecast, warmwasserComparison.actual, warmwasserComparison.actionHours, warmwasserComparison.actualFine));
+                updateOrAppendDashboardWidget(container, 'warmwasser', buildWarmwasserForecastActualChart(warmwasserComparison.labels, warmwasserComparison.forecast, warmwasserComparison.actual, warmwasserComparison.actionHours, warmwasserComparison.actualFine, warmwasserBlurredLabel));
                 warmwasserChartRendered = true;
             }
         } catch (err) {
@@ -11432,6 +11597,7 @@ async function loadDashboard() {
         if (!warmwasserChartRendered) {
             updateOrAppendDashboardWidget(container, 'warmwasser', buildLineChart('Warmwasser', '°C', data.output_labels, data.t_hw, {
                 slopeBands: WARMWASSER_SLOPE_COLORS,
+                blurredLabel: warmwasserBlurredLabel,
             }));
         }
         // Ist-Teil (0 Uhr bis jetzt) aus der echten Sensorhistorie statt aus der Optimierer-Prognose
@@ -11562,7 +11728,7 @@ async function loadDashboard() {
         }
     } catch (err) {
         console.log(err);
-        showDashboardChartLoadError(container, 'Diagrammdaten konnten nicht geladen werden.');
+        showDashboardChartLoadError(container, 'Diagrammdaten konnten nicht geladen werden.', isInitialLoad);
     }
 }
 

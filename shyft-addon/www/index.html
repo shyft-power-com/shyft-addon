@@ -784,6 +784,23 @@
         .electricityTariffPanels {
             margin-top: 0.75em;
         }
+        /* Einspeisung: Radiobuttons (Einspeisevergütung / Direktvermarktung) */
+        .electricityRadioGroup {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4em;
+            margin-bottom: 0.6em;
+        }
+        .electricityRadioOption {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+            cursor: pointer;
+        }
+        .electricityRadioOption input[type="radio"] {
+            accent-color: var(--color-accent);
+            margin: 0;
+        }
         .segmentedControl {
             display: inline-flex;
             flex-wrap: wrap;
@@ -2328,6 +2345,15 @@
             fill: var(--color-text);
             stroke: var(--color-bg);
             stroke-width: 2px;
+            pointer-events: none;
+        }
+        /* Zweiter, halbtransparenter Ring in Shyft-Gruen um den "jetzt"-Punkt - macht ihn sichtbarer als der frühere senkrechte Strich. */
+        .dashboardChartNowRing {
+            fill: var(--color-accent);
+            fill-opacity: 0.28;
+            stroke: var(--color-accent);
+            stroke-opacity: 0.6;
+            stroke-width: 1.5px;
             pointer-events: none;
         }
 

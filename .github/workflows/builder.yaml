@@ -44,14 +44,16 @@ jobs:
       - name: Record build branch
         run: echo "${{ github.ref_name }}" > shyft-addon/BUILD_BRANCH
 
-      # Haengt " (TEST)" an den in Supervisor angezeigten Add-on-Namen an, wenn von "test" gebaut wird -
-      # damit ein parallel zu PROD installiertes Test-Add-on auch in der Add-on-Liste/Sidebar klar als
-      # solches erkennbar ist. Nur im CI-Checkout geaendert (wie BUILD_BRANCH oben), config.yaml im
-      # Git-Quelltext bleibt auf main/test identisch.
-      - name: Append TEST suffix to add-on name (test branch only)
-        if: github.ref_name == 'test'
+      # Der Add-on-Name steht im Git-Quelltext: auf "test" "shyft-power (TEST)" (damit ein parallel zu PROD
+      # installiertes Test-Add-on in der Add-on-Liste/Sidebar erkennbar ist - Supervisor liest den Namen aus der
+      # config.yaml des Repositories, nicht aus dem Image; der frueher hier per sed angehaengte Zusatz kam nie an).
+      # Auf main MUSS er exakt "shyft-power" sein: ein "git merge test" bringt die Test-Zeile sonst unbemerkt mit nach
+      # PROD. Lokal verhindert das der pre-push-Hook, hier faellt es spaetestens im Build auf.
+      - name: Guard - add-on name on main must be plain "shyft-power"
+        if: github.ref_name == 'main'
         run: |
-          sed -i 's/^name: "shyft-power"$/name: "shyft-power (TEST)"/' shyft-addon/config.yaml
+          grep -qx 'name: "shyft-power"' shyft-addon/config.yaml || { echo "::error::main hat in shyft-addon/config.yaml einen Test-Namen: $(grep -m1 '^name:' shyft-addon/config.yaml)"; exit 1; }
+          if grep -q '^panel_title:' shyft-addon/config.yaml; then grep -qx 'panel_title: "shyft-power"' shyft-addon/config.yaml || { echo "::error::main hat in shyft-addon/config.yaml einen Test-panel_title: $(grep -m1 '^panel_title:' shyft-addon/config.yaml)"; exit 1; }; fi
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3

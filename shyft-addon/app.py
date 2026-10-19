@@ -214,7 +214,7 @@ PV_SURPLUS_NO_BATTERY_INCREASE_SCALE = 0.9
 PV_SURPLUS_DECREASE_RATIO = 0.05
 PV_SURPLUS_NO_BATTERY_DECREASE_RATIO = 0.10
 PV_SURPLUS_NO_BATTERY_MIN_DECREASE_KW = 0.3
-PV_SURPLUS_BATTERY_STOP_SOC = 97
+PV_SURPLUS_BATTERY_STOP_SOC = 95
 # Mindestabstand zwischen dem Ende einer Fallback-Session und dem Start der naechsten - ohne diese
 # Sperre konnte eine Session, die z.B. wegen kurzzeitig gefallenem Heimspeicher-SOC beendet wurde,
 # schon Sekunden spaeter durch den naechsten live-getriggerten Tick (siehe
@@ -828,7 +828,74 @@ def _fetch_awattar_prices(force_refresh=False):
 
 
 BUBBLE_PRICE_PREDICTION_CACHE_PATH = "/data/bubble_price_prediction_cache.json"
-BUBBLE_PRICE_PREDICTION_CACHE_TTL_SECONDS = 1800  # gleiche Kadenz wie AWATTAR_CACHE_TTL_SECONDS
+# Bubble aktualisiert seine Strompreisprognose zweimal taeglich (05:59 und 17:59, Europe/Berlin); das Add-on holt sie kurz danach
+# (refresh_bubble_price_prediction, siehe Scheduler unten) und nutzt zwischendurch den Cache. Der TTL ist deshalb laenger als der Abstand der
+# beiden Laeufe (12 h): er greift nur als Sicherheitsnetz (Neustart ohne Cache, verpasster Abruf), nicht mehr als Takt.
+BUBBLE_PRICE_PREDICTION_CACHE_TTL_SECONDS = 14 * 3600
+BUBBLE_PRICE_PREDICTION_REFRESH_TIMEZONE = "Europe/Berlin"
+BUBBLE_PRICE_PREDICTION_REFRESH_TIMES = ((6, 5), (18, 5))  # (Stunde, Minute): einige Minuten nach Bubbles Laeufen um 05:59 / 17:59
+
+
+def _request_bubble_price_prediction():
+    "Ruft Bubbles Strompreisprognose ab (provide_input_output_csv) und gibt {hour_start_epoch_ms: EUR/kWh netto} zurueck ({} ohne Zugangstoken/Nutzer). Wirft bei Fehlern."
+    user_id = extract_shyft_user_id(shyft_adapter.bubble_token)
+    if not user_id:
+        return {}
+    result = shyft_adapter.get_input_output_csv(user_id)
+    prediction = (result.get("response") or {}).get("price_prediction") or {}
+    datetimes_ms = prediction.get("Datetime Array") or []
+    price_text = prediction.get("Price (text)") or ""
+    price_values = [float(p.replace(",", ".")) for p in price_text.split(";") if p != ""]
+    prices = {}
+    for ts_ms, price in zip(datetimes_ms, price_values):
+        hour = datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+        prices[int(hour.timestamp() * 1000)] = price
+    return prices
+
+
+def _write_bubble_price_prediction_cache(prices):
+    try:
+        with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "w") as f:
+            json.dump({"fetched_at": time.time(), "prices": {str(k): v for k, v in prices.items()}}, f)
+    except Exception as e:
+        print("[Shyft] Bubble-Preisprognose-Cache konnte nicht geschrieben werden:", repr(e))
+
+
+def refresh_bubble_price_prediction():
+    """Holt Bubbles Strompreisprognose unabhaengig vom Cache neu und schreibt sie in den Cache (zweimal taeglich kurz nach Bubbles Laeufen, siehe
+    BUBBLE_PRICE_PREDICTION_REFRESH_TIMES). Keine Wiederholungen: ist die Prognose unveraendert oder schlaegt der Abruf fehl, faellt der Lauf aus
+    (es gilt der letzte Stand) und der naechste Abruf folgt zur naechsten festen Zeit, 12 Stunden spaeter. True, wenn sich Werte geaendert haben."""
+    try:
+        with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "r") as f:
+            old_prices = (json.load(f).get("prices") or {})
+    except Exception:
+        old_prices = {}
+    try:
+        prices = _request_bubble_price_prediction()
+    except Exception as e:
+        print(f"[Shyft] Bubble-Strompreisprognose: Abruf fehlgeschlagen ({e!r}) - es gilt der letzte bekannte Stand, naechster Abruf zur naechsten festen Zeit.")
+        return False
+    if not prices:
+        print("[Shyft] Bubble-Strompreisprognose: keine Prognose erhalten - es gilt der letzte bekannte Stand, naechster Abruf zur naechsten festen Zeit.")
+        return False
+    new_prices = {str(k): v for k, v in prices.items()}
+    changed = sum(1 for k, v in new_prices.items() if old_prices.get(k) != v)
+    first = datetime.fromtimestamp(min(prices) / 1000, tz=timezone.utc).isoformat()
+    last = datetime.fromtimestamp(max(prices) / 1000, tz=timezone.utc).isoformat()
+    _write_bubble_price_prediction_cache(prices)
+    if changed == 0:
+        print(f"[Shyft] Bubble-Strompreisprognose unveraendert ({len(prices)} Stunden, {first} bis {last}) - Bubble evtl. noch nicht fertig; naechster Abruf zur naechsten festen Zeit.")
+        return False
+    print(f"[Shyft] Bubble-Strompreisprognose aktualisiert: {len(prices)} Stunden ({first} bis {last}), {changed} Werte gegenueber dem letzten Stand geaendert.")
+    return True
+
+
+def refresh_bubble_price_prediction_periodically():
+    with app.app_context():
+        try:
+            refresh_bubble_price_prediction()
+        except Exception as e:
+            print("[Shyft] Bubble-Strompreisprognose-Abruf fehlgeschlagen:", repr(e))
 
 
 def _fetch_bubble_price_prediction():
@@ -842,7 +909,8 @@ def _fetch_bubble_price_prediction():
     Gleiches Datei-Cache-Muster wie _fetch_awattar_prices (return {} bei Fehler/leer, faellt bei
     einem fehlgeschlagenen Abruf auf den letzten Cache-Stand zurueck) - sonst wuerde jeder
     sync_site_data-Lauf einen vollen provide_input_output_csv-Request (inkl. Optimizer-CSV) ausloesen,
-    nur um den Preis-Teil der Antwort zu nutzen."""
+    nur um den Preis-Teil der Antwort zu nutzen. Neu geholt wird zweimal taeglich kurz nach Bubbles Aktualisierung
+    (refresh_bubble_price_prediction); hier nur, wenn noch gar kein (oder ein sehr alter) Cache existiert."""
     try:
         with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "r") as f:
             cached = json.load(f)
@@ -850,42 +918,69 @@ def _fetch_bubble_price_prediction():
         cached = None
     if cached and time.time() - cached.get("fetched_at", 0) < BUBBLE_PRICE_PREDICTION_CACHE_TTL_SECONDS and cached.get("prices"):
         return {int(k): v for k, v in cached["prices"].items()}
-    user_id = extract_shyft_user_id(shyft_adapter.bubble_token)
-    if not user_id:
-        return {}
     try:
-        result = shyft_adapter.get_input_output_csv(user_id)
-        prediction = (result.get("response") or {}).get("price_prediction") or {}
-        datetimes_ms = prediction.get("Datetime Array") or []
-        price_text = prediction.get("Price (text)") or ""
-        price_values = [float(p.replace(",", ".")) for p in price_text.split(";") if p != ""]
-        prices = {}
-        for ts_ms, price in zip(datetimes_ms, price_values):
-            hour = datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
-            prices[int(hour.timestamp() * 1000)] = price
+        prices = _request_bubble_price_prediction()
     except Exception as e:
         print("[Shyft] Bubble-Strompreisprognose konnte nicht geladen werden:", repr(e))
         if cached and cached.get("prices"):
             return {int(k): v for k, v in cached["prices"].items()}
         return {}
     if prices:
-        try:
-            with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "w") as f:
-                json.dump({"fetched_at": time.time(), "prices": {str(k): v for k, v in prices.items()}}, f)
-        except Exception as e:
-            print("[Shyft] Bubble-Preisprognose-Cache konnte nicht geschrieben werden:", repr(e))
+        _write_bubble_price_prediction_cache(prices)
     return prices
 
 
-def _resolve_fallback_price(h, by_hour, bubble_by_hour):
+# Fehler der Prognose halten erfahrungsgemaess ueber Stunden bis Tage an (gleiches Vorzeichen, z.B. Prognose am Tageswechsel zu niedrig -> auch in den
+# Folgestunden zu niedrig). Deshalb wird die Differenz am Ende der echten Day-ahead-Preise (letzter veroeffentlichter Awattar-Preis minus Prognose fuer
+# genau diese Stunde, beides netto) auf die Prognose der Folgestunden aufgeschlagen und schmilzt je Stunde um BUBBLE_BIAS_MELT_PER_HOUR_EUR ab.
+BUBBLE_BIAS_MELT_PER_HOUR_EUR = 0.001  # 0,1 Cent/kWh netto je Stunde
+_last_logged_bubble_bias = None
+
+
+def _bubble_bias(by_hour, bubble_by_hour):
+    """(letzte Stunde mit echtem Awattar-Preis, Differenz echter Preis minus Bubble-Prognose dieser Stunde, beides netto in EUR/kWh) - None, wenn es keinen
+    echten Preis oder keine Prognose fuer diese Stunde gibt. Ist Bubbles Stand aktuell genug, dass er dort schon den echten Preis enthaelt, ist die Differenz 0."""
+    global _last_logged_bubble_bias
+    if not by_hour:
+        return None
+    last = max(by_hour)
+    forecast_net = bubble_by_hour.get(last)
+    if forecast_net is None:
+        return None
+    actual_net = by_hour[last] / AWATTAR_VAT_FACTOR
+    delta = actual_net - forecast_net
+    marker = (last, round(delta, 5))
+    if marker != _last_logged_bubble_bias:
+        _last_logged_bubble_bias = marker
+        melt_hours = int(abs(delta) / BUBBLE_BIAS_MELT_PER_HOUR_EUR)
+        print(f"[Shyft] Prognose-Korrektur: letzter echter Day-ahead-Preis {last.isoformat()} netto {actual_net:.4f}, Bubble-Prognose dafuer {forecast_net:.4f} -> "
+              f"Differenz {delta:+.4f} EUR/kWh, wird auf die Prognose danach aufgeschlagen und schmilzt um {BUBBLE_BIAS_MELT_PER_HOUR_EUR * 100:.1f} ct/h ab "
+              f"(nach etwa {melt_hours} Stunden weg).")
+    return last, delta
+
+
+def _bubble_bias_offset(h, bias):
+    "Aufschlag (EUR/kWh netto) auf die Bubble-Prognose der Stunde h: die Differenz am Ende der echten Preise, je Stunde danach um BUBBLE_BIAS_MELT_PER_HOUR_EUR kleiner (nie ueber 0 hinaus)."
+    if not bias:
+        return 0.0
+    last, delta = bias
+    steps = (h - last) / timedelta(hours=1)
+    if steps < 1:
+        return 0.0
+    remaining = abs(delta) - BUBBLE_BIAS_MELT_PER_HOUR_EUR * steps
+    return math.copysign(remaining, delta) if remaining > 0 else 0.0
+
+
+def _resolve_fallback_price(h, by_hour, bubble_by_hour, bias=None):
     """Brutto-Preis (EUR/kWh) fuer eine Stunde jenseits des echten Awattar-Fensters: zuerst Bubbles
     eigene Strompreisprognose (_fetch_bubble_price_prediction, netto -> brutto konvertiert - deckt
-    i.d.R. den gesamten Optimierungszeitraum ab), sonst als letzter Rueckfall ein echter
+    i.d.R. den gesamten Optimierungszeitraum ab; mit abschmelzender Korrektur um den Fehler am Ende der
+    echten Preise, siehe _bubble_bias), sonst als letzter Rueckfall ein echter
     Awattar-Preis derselben Uhrzeit bis zu PRICE_FALLBACK_MAX_DAYS_BACK Tage zurueck. None, wenn
     beides fehlschlaegt - der Aufrufer faellt dann selbst auf den zuletzt aufgeloesten Wert zurueck."""
     bubble_price = bubble_by_hour.get(h)
     if bubble_price is not None:
-        return round(bubble_price * AWATTAR_VAT_FACTOR, 5)
+        return round((bubble_price + _bubble_bias_offset(h, bias)) * AWATTAR_VAT_FACTOR, 5)
     for days_back in range(1, PRICE_FALLBACK_MAX_DAYS_BACK + 1):
         price = by_hour.get(h - timedelta(days=days_back))
         if price is not None:
@@ -979,12 +1074,13 @@ def compute_price_buy_array(config, base_time_utc, hours):
         # echte, tagesspezifische Prognose statt eines wiederverwendeten aelteren Tagesprofils. Nur
         # wenn die ebenfalls fehlt, auf den letzten Tag mit echten Awattar-Daten zurueckfallen (bis
         # zu PRICE_FALLBACK_MAX_DAYS_BACK Tage), zuletzt auf den vorherigen Wert.
+        bias = _bubble_bias(by_hour, bubble_by_hour)
         out = []
         for i in range(hours):
             h = (base_time_utc + timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
             price = by_hour.get(h)
             if price is None:
-                price = _resolve_fallback_price(h, by_hour, bubble_by_hour)
+                price = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias)
             if price is None:
                 price = out[-1] - surcharge if out else 0.0
             out.append(round(price + surcharge, 5))
@@ -1006,6 +1102,7 @@ def compute_price_buy_array(config, base_time_utc, hours):
         bubble_by_hour = {}
         for ts_ms, price in _fetch_bubble_price_prediction().items():
             bubble_by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
+        bias = _bubble_bias(by_hour, bubble_by_hour)
         out = []
         prev_raw_price = None
         for i in range(hours):
@@ -1016,7 +1113,7 @@ def compute_price_buy_array(config, base_time_utc, hours):
                 # echter Awattar-Preis eines frueheren Tages, zuletzt der vorherige Wert (Notnagel -
                 # erzeugte ohne den Bubble-Fallback einen eingefrorenen Preisverlauf, siehe
                 # CHANGELOG 0.0.45.88).
-                raw_price = _resolve_fallback_price(h, by_hour, bubble_by_hour)
+                raw_price = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias)
             if raw_price is None:
                 raw_price = prev_raw_price if prev_raw_price is not None else 0.0
             tariff = _netzentgelt_tariff_for_hour(h.astimezone(get_ha_timezone()), windows, quarters)
@@ -1026,6 +1123,67 @@ def compute_price_buy_array(config, base_time_utc, hours):
         return out
 
     return None
+
+
+# Einspeisung: entweder fester Verguetungssatz (electricitySellCent, bisheriges Verhalten - auch fuer Bestandskunden ohne electricitySellMode) oder
+# Direktvermarktung (Boersenpreis minus Kostenabzug des Direktvermarkters, stuendlich wechselnd).
+ELECTRICITY_SELL_MODE_FEED_IN = "feed_in_tariff"
+ELECTRICITY_SELL_MODE_DIRECT_MARKETING = "direct_marketing"
+
+
+def electricity_sell_mode(config):
+    "'direct_marketing' oder 'feed_in_tariff' - ohne (oder mit unbekanntem) electricitySellMode gilt der feste Verguetungssatz wie bisher."
+    return ELECTRICITY_SELL_MODE_DIRECT_MARKETING if config.get("electricitySellMode") == ELECTRICITY_SELL_MODE_DIRECT_MARKETING else ELECTRICITY_SELL_MODE_FEED_IN
+
+
+def _direct_marketing_cost_eur(config):
+    "Kostenabzug pro kWh der Direktvermarktung in EUR (Feld in Cent), None wenn nicht eingetragen."
+    value = config.get("electricityDirectMarketingCostCent")
+    try:
+        return float(value) / 100.0 if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def compute_price_sell_array(config, base_time_utc, hours):
+    """Stuendlicher Einspeisepreis (EUR/kWh) ab base_time_utc fuer 'hours' Stunden bei Direktvermarktung: Boersenpreis (netto, EPEX Day-Ahead - ohne
+    Mehrwertsteuer, so wird er ausgezahlt) minus Kostenabzug des Direktvermarkters. Die Boersenpreise kommen wie beim dynamischen Stromtarif aus Awattar
+    (veroeffentlichtes Fenster) und danach aus Bubbles Preisprognose samt abschmelzender Fehlerkorrektur (siehe _resolve_fallback_price) - der Preis kann
+    also negativ werden. None, wenn nicht Direktvermarktung gewaehlt ist, der Kostenabzug fehlt oder keine Boersenpreise vorliegen."""
+    if electricity_sell_mode(config) != ELECTRICITY_SELL_MODE_DIRECT_MARKETING:
+        return None
+    cost = _direct_marketing_cost_eur(config)
+    if cost is None:
+        return None
+    spot = _fetch_awattar_prices()  # {epoch_ms: EUR/kWh brutto}
+    if not spot:
+        return None
+    by_hour = {}
+    for ts_ms, price in spot.items():
+        by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
+    bubble_by_hour = {}
+    for ts_ms, price in _fetch_bubble_price_prediction().items():
+        bubble_by_hour[datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)] = price
+    bias = _bubble_bias(by_hour, bubble_by_hour)
+    out = []
+    prev_gross = None
+    for i in range(hours):
+        h = (base_time_utc + timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
+        gross = by_hour.get(h)
+        if gross is None:
+            gross = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias)
+        if gross is None:
+            gross = prev_gross if prev_gross is not None else 0.0
+        out.append(round(gross / AWATTAR_VAT_FACTOR - cost, 5))
+        prev_gross = gross
+    return out
+
+
+def describe_missing_sell_price(config):
+    "Klartext, warum bei Direktvermarktung kein Einspeisepreis berechnet werden konnte."
+    if _direct_marketing_cost_eur(config) is None:
+        return "Der Kostenabzug der Direktvermarktung ist nicht eingetragen. Trage ihn auf der Konfigurationsseite unter „Strom“ ein."
+    return "Der Einspeisepreis (Direktvermarktung) fehlt: die Börsenpreise von Awattar konnten nicht geladen werden. Das Add-on versucht es mit dem nächsten Sync erneut."
 
 
 @app.route("/electricity/price-preview", methods=["GET"])
@@ -1276,7 +1434,17 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         # Einspeiseverguetung als Skalar (EUR/kWh) - ebenfalls neues Feld, damit der Server vom
         # bisherigen "Electricity Price Sell"-Dropdown darauf umstellen kann.
         sell_cent = config.get("electricitySellCent")
-        if sell_cent not in (None, ""):
+        if electricity_sell_mode(config) == ELECTRICITY_SELL_MODE_DIRECT_MARKETING:
+            # Direktvermarktung: stuendlicher Einspeisepreis (Boersenpreis minus Kostenabzug) als Array fuer den Server (p_sell_array_addon, gleiche
+            # Stunden wie p_buy_addon). p_sell_addon bleibt als flacher Rueckfall (Mittelwert) - fuer einen Server ohne Array-Unterstuetzung.
+            sell_arr = compute_price_sell_array(config, price_base, optimizer_period + 24)
+            if sell_arr:
+                live_values["p_sell_array_addon"] = ";".join(f"{v:.5f}" for v in sell_arr)
+                live_values["p_sell_addon"] = round(sum(sell_arr) / len(sell_arr), 5)
+                live_values.setdefault("baseTime", price_base.isoformat())
+            elif _pv_sensor_configured(config):
+                missing_required.append(describe_missing_sell_price(config))
+        elif sell_cent not in (None, ""):
             live_values["p_sell_addon"] = round(float(sell_cent) / 100.0, 5)
         elif _pv_sensor_configured(config):
             # Ohne PV-Anlage gibt es nichts einzuspeisen - dort ist ein leerer Wert (= 0) in Ordnung.
@@ -1763,8 +1931,8 @@ def readDashboardChartData():
                 # Batterieladung (B_sum_in_45), gleiche Definition wie PowerUsageBaseList.
                 opt_cost.append(_safe_float(row.get("profits_net_opt")))
                 opt_usage.append(_safe_float(row.get("X_sum")) + _safe_float(row.get("B_sum_in_45")))
-                # Netzbezug (nur positiver GR_sum, Einspeisung zaehlt nicht) - optionale Linie im Strompreis-Chart
-                opt_grid_import.append(max(0.0, _safe_float(row.get("GR_sum"))))
+                # Netzsaldo (GR_sum: positiv = Bezug, negativ = Einspeisung) - Netz-Linie "Netzbezug/Einspeisung" im Strompreis-Chart
+                opt_grid_import.append(_safe_float(row.get("GR_sum")))
         except Exception as e:
             print("[Shyft] output_csv konnte nicht gelesen werden:", repr(e))
             output_rows = []
@@ -5000,7 +5168,7 @@ def _normalized_battery_kw(config, raw_kw):
     return raw_kw  # Default/"raw_positive_is_charging": roh uebernehmen, solange nichts erkannt/uebersteuert wurde
 
 
-PRICE_HIGH_THRESHOLD_CENT = 35
+PRICE_HIGH_THRESHOLD_CENT = 40
 PRICE_LOW_THRESHOLD_CENT = 25
 
 
@@ -5063,29 +5231,35 @@ def _read_current_price_info(config=None):
 
 # Sicherheitsmarge auf den guenstigsten noch bevorstehenden Strompreis - siehe compute_wb_p_min.
 WB_P_MIN_MARGIN_EUR = 0.02
-# Ab dieser Summe (kWh) aus PV_GR + PV_EV ueber den gesamten Optimierungszeitraum der letzten
-# output.csv gilt der Zeitraum als PV-Ueberschuss-Fall und p_min wird auf Basis von p_sell statt
-# p_buy gerechnet. PV_GR (PV -> Netz) und PV_EV (PV -> Auto) sind beide >= 0 und beschreiben die
-# ueber den Sofortbedarf hinaus verfuegbare PV-Energie.
-WB_P_MIN_PSELL_SWITCH_KWH = 5.0
+# Ab dieser Summe (kWh PRO TAG) aus PV_GR + PV_EV gilt der Optimierungszeitraum der letzten output.csv als PV-Ueberschuss-Fall und p_min wird
+# auf Basis von p_sell statt p_buy gerechnet. PV_GR (PV -> Netz) und PV_EV (PV -> Auto) sind beide >= 0 und beschreiben die ueber den
+# Sofortbedarf hinaus verfuegbare PV-Energie. Die Schwelle wird auf den tatsaechlichen Optimierungszeitraum hochgerechnet (kWh/Tag / 24 je Stunde
+# mal Anzahl Stunden des Laufs, z.B. 5 kWh/Tag -> 10 kWh bei 48 h), siehe _wb_p_min_basis.
+WB_P_MIN_PSELL_SWITCH_KWH_PER_DAY = 5.0
 
 
-def _wb_p_min_price_column():
-    """'p_buy' (Normalfall) oder 'p_sell', je nach der letzten output.csv im Dashboard-Cache:
-    uebersteigt die Summe aus PV_GR + PV_EV ueber alle Stunden WB_P_MIN_PSELL_SWITCH_KWH (deutlich
-    PV-Ueberschuss vorhanden), wird 'p_sell' gewaehlt. 'p_buy' als Rueckfall, wenn keine
-    output.csv vorliegt oder sie nicht lesbar ist."""
+def _wb_p_min_basis():
+    """(Preisspalte, PV-Ueberschuss-Summe in kWh oder None, Schwelle in kWh oder None, Anzahl Stunden des Laufs oder None): 'p_buy' (Normalfall)
+    oder 'p_sell', je nach der letzten output.csv im Dashboard-Cache: uebersteigt die Summe aus PV_GR + PV_EV ueber alle Stunden des Laufs die
+    Schwelle WB_P_MIN_PSELL_SWITCH_KWH_PER_DAY / 24 * Stunden (deutlich PV-Ueberschuss vorhanden), wird 'p_sell' gewaehlt. 'p_buy' als Rueckfall
+    (Summe/Schwelle None), wenn keine output.csv vorliegt oder sie nicht lesbar ist."""
     try:
         with open(DASHBOARD_CACHE_PATH, "r") as f:
             cache = json.load(f)
         output_csv = cache.get("output_csv")
         if not output_csv:
-            return "p_buy"
+            return "p_buy", None, None, None
         out_rows = list(csv.DictReader(io.StringIO(output_csv)))
         pv_surplus = sum(_safe_float(r.get("PV_GR")) + _safe_float(r.get("PV_EV")) for r in out_rows)
-        return "p_sell" if pv_surplus > WB_P_MIN_PSELL_SWITCH_KWH else "p_buy"
+        threshold = WB_P_MIN_PSELL_SWITCH_KWH_PER_DAY / 24 * len(out_rows)
+        return ("p_sell" if pv_surplus > threshold else "p_buy"), pv_surplus, threshold, len(out_rows)
     except Exception:
-        return "p_buy"
+        return "p_buy", None, None, None
+
+
+def _wb_p_min_price_column():
+    "'p_buy' oder 'p_sell' - siehe _wb_p_min_basis."
+    return _wb_p_min_basis()[0]
 
 
 def compute_wb_p_min():
@@ -5094,7 +5268,7 @@ def compute_wb_p_min():
     gecachten input.csv. Vergangene Stunden werden bewusst ausgeschlossen - der Optimierer soll
     die Wallbox nie unterhalb dessen laden lassen, was ohnehin der guenstigste noch kommende
     Preis waere. Basispreis ist normalerweise p_buy; hat der letzte Optimierungslauf ueber den
-    ganzen Zeitraum PV_GR + PV_EV > WB_P_MIN_PSELL_SWITCH_KWH ergeben (PV-Ueberschuss-Fall),
+    ganzen Zeitraum PV_GR + PV_EV > WB_P_MIN_PSELL_SWITCH_KWH_PER_DAY (je Tag, auf den Zeitraum hochgerechnet) ergeben (PV-Ueberschuss-Fall),
     wird stattdessen p_sell verwendet (siehe _wb_p_min_price_column). None, wenn noch kein Cache
     vorhanden oder keine bevorstehende Stunde darin abgedeckt ist."""
     try:
@@ -5113,7 +5287,7 @@ def compute_wb_p_min():
         rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
     except Exception:
         return None
-    price_column = _wb_p_min_price_column()
+    price_column, pv_surplus_kwh, switch_threshold_kwh, run_hours = _wb_p_min_basis()
     upcoming_prices = []
     for i, row in enumerate(rows):
         if i < current_index:
@@ -5124,7 +5298,24 @@ def compute_wb_p_min():
             continue
     if not upcoming_prices:
         return None
-    return round(min(upcoming_prices) + WB_P_MIN_MARGIN_EUR, 4)
+    p_min = round(min(upcoming_prices) + WB_P_MIN_MARGIN_EUR, 4)
+    # Diagnose-Log: der Wert ist der Endwert des Stroms im Auto im Optimierer (Laden lohnt sich nur in Stunden mit p_buy < p_min) und haengt
+    # davon ab, ob der LETZTE Plan einen PV-Ueberschuss ueber der Schwelle hatte (dann p_sell-Basis) - kann also von Lauf zu Lauf wechseln.
+    surplus_text = f"{pv_surplus_kwh:.1f} kWh" if pv_surplus_kwh is not None else "unbekannt (keine output.csv)"
+    p_buy_prices = []
+    for i, row in enumerate(rows):
+        if i >= current_index:
+            try:
+                p_buy_prices.append(_safe_float(row.get("p_buy")))
+            except (TypeError, ValueError):
+                pass
+    cheapest_p_buy = f"{min(p_buy_prices):.4f}" if p_buy_prices else "?"
+    threshold_text = (f"{switch_threshold_kwh:.1f} kWh = {WB_P_MIN_PSELL_SWITCH_KWH_PER_DAY} kWh/Tag x {run_hours} h"
+                      if switch_threshold_kwh is not None else "-")
+    print(f"[Shyft] WB p_min={p_min} EUR/kWh: Basis {price_column} (PV_GR+PV_EV des letzten Plans {surplus_text}, Schwelle {threshold_text}), "
+          f"niedrigster kommender {price_column} {min(upcoming_prices):.4f} + Marge {WB_P_MIN_MARGIN_EUR}; niedrigster kommender p_buy {cheapest_p_buy}; "
+          f"Cache-Lauf {start.isoformat()}")
+    return p_min
 
 
 def compute_energy_flow_data():
@@ -5224,6 +5415,9 @@ def compute_energy_flow_data():
             "isRod": False,
             "on": _read_mapped_bool_on(config, "heatpump_on_off", anything_but_off=True) if heatpump_configured else None,
             "heatingOn": _read_mapped_bool_on(config, "heatpump_heating_activated", anything_but_off=True) if heatpump_configured else None,
+            # "Warmwassermodus aktiviert?" (gleiche Logik wie beim Optimierer: nicht zugeordnet = an, bei unknown der letzte bekannte Zustand) - bei False wird der
+            # Warmwasser-Chart ausgeblendet (kein Bedarf an den Optimierer, die Prognose waere bedeutungslos).
+            "dhwActivated": resolve_dhw_activated(config, homeassistant_adapter) if heatpump_configured else None,
             "supplyTempC": _read_mapped_numeric(config, "heatpump_supply_temp_hp") if heatpump_configured else None,
             "dhwTankTempC": _read_mapped_numeric(config, "heatpump_dhw_tank_temp") if heatpump_configured else None,
             "targetTempC": _read_mapped_numeric(config, "heatpump_heating_target_temp_normal") if heatpump_configured else None,
@@ -9066,12 +9260,13 @@ def _ev_check_classify(live_kw, target_kw, check_deviation=True):
     return "dev"
 
 
-def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, window_start_ms, window_end_ms, check_deviation=True):
+def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, window_start_ms, window_end_ms, check_deviation=True, wallbox_status=None):
     """Ein Prueftakt fuer eine laufende 'Auto laden'-Aktion; aendert 'state' (der Zaehlerstand der Aktion, wird vom
     Aufrufer mit der Aktion gespeichert) und liefert {"messages": [Logzeilen ohne Uhrzeit], "retry": bool,
     "error": Fehlertext oder None}. paused_reason (Text oder None): keine Pruefung, solange z.B. das Auto nicht
     ladebereit/voll ist. window_start_ms/window_end_ms: geplantes Zeitfenster der Aktion (Grundlage fuer 'ueberwiegend
-    nicht geladen')."""
+    nicht geladen'). wallbox_status (optional): roher Wallbox-Verbindungsstatus (z.B. 'awaiting_authorization') - wird nur an die
+    Logzeilen 'Wallbox laedt nicht' und 'Wiederholung' angehaengt, damit man sieht, was die Wallbox gerade meldet."""
     result = {"messages": [], "retry": False, "error": None}
     if state.get("first_seen_ms") is None:
         state["first_seen_ms"] = now_ms
@@ -9106,9 +9301,10 @@ def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, windo
         state["committed"] = sample
         announced = state.get("announced", "ok")
         target_text = "" if target_kw is None else f", Soll {_ev_check_kw(target_kw)} kW"
+        status_text = f", Wallbox-Status: {wallbox_status}" if wallbox_status else ""
         if sample == "off" and announced != "off":
             state["announced"] = "off"
-            result["messages"].append(f"Wallbox lädt nicht (gemessen {_ev_check_kw(live_kw)} kW{target_text})")
+            result["messages"].append(f"Wallbox lädt nicht (gemessen {_ev_check_kw(live_kw)} kW{target_text}{status_text})")
         elif sample == "dev":
             if now_ms - state.get("dev_log_ms", 0) >= EV_CHARGE_CHECK_DEV_LOG_MIN_INTERVAL_SECONDS * 1000 and announced != "dev":
                 state["dev_log_ms"] = now_ms
@@ -9132,7 +9328,8 @@ def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, windo
             state["last_retry_ms"] = now_ms
             state["grace_until_ms"] = now_ms + EV_CHARGE_RETRY_GRACE_SECONDS * 1000
             result["retry"] = True
-            result["messages"].append(f"Wiederholung {retries + 1}/{EV_CHARGE_RETRY_MAX}: Startbefehl wird erneut gesendet (Soll {_ev_check_kw(target_kw)} kW)")
+            status_text = f", Wallbox-Status: {wallbox_status}" if wallbox_status else ""
+            result["messages"].append(f"Wiederholung {retries + 1}/{EV_CHARGE_RETRY_MAX}: Startbefehl wird erneut gesendet (Soll {_ev_check_kw(target_kw)} kW{status_text})")
 
     # Ueberwiegend nicht geladen? Schon vor Ende sicher, sobald die Zeit ohne Ladeleistung mehr als die Haelfte des
     # geplanten Zeitfensters ausmacht.
@@ -9178,7 +9375,7 @@ def _ev_check_computed_action(action, config, live_kw, paused_reason, now_ms, ch
     "Prueftakt fuer eine laufende Optimierer-'Auto laden'-Aktion; speichert die Aktion bei Aenderungen."
     state = action.setdefault("_evCheck", {})
     target_kw = action.get("Target Value")
-    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, action.get("Date Start"), action.get("Date End"), check_deviation)
+    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, action.get("Date Start"), action.get("Date End"), check_deviation, _read_mapped_raw_state(config, "wallbox_plugged"))
     for message in result["messages"]:
         _append_action_log(action, message)
     if result["retry"]:
@@ -9198,7 +9395,7 @@ def _ev_check_pv_session(session, config, live_kw, paused_reason, now_ms, check_
     "Prueftakt fuer eine aktive PV-Ueberschuss-Fallback-Session; der Aufrufer speichert die Sessions."
     state = session.setdefault("ev_check", {})
     target_kw = session.get("target_kw")
-    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, session.get("start_ms"), session.get("planned_end_ms"), check_deviation)
+    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, session.get("start_ms"), session.get("planned_end_ms"), check_deviation, _read_mapped_raw_state(config, "wallbox_plugged"))
     for message in result["messages"]:
         _append_pv_surplus_log(session, target_kw or 0, note=message)
     if result["retry"]:
@@ -11177,7 +11374,7 @@ def _household_usage_fine_points(config=None, sensor_key="photovoltaic_powerflow
     Je Schritt der zeitgewichtete Mittelwert der Leistung (Treppenfunktion wie in _sensor_history_kwh) -
     in kW, was zugleich "kWh pro Stunde" ist und damit auf derselben Achse liegt wie die stuendlichen
     kWh-Werte der Verbrauchs-Charts. sensor_key/import_only: mit 'photovoltaic_powerflow_grid' und import_only=True
-    der NETZBEZUG (nur positive Leistung, Einspeisung zaehlt als 0). Liste von [Schritt-Beginn (ISO, UTC), kW]; leer ohne Sensor/Historie.
+    der NETZBEZUG (nur positive Leistung, Einspeisung zaehlt als 0); ohne import_only (grid) der Netzsaldo mit Vorzeichen. Liste von [Schritt-Beginn (ISO, UTC), kW]; leer ohne Sensor/Historie.
     Kurz zwischengespeichert, da der Dashboard-Refresh alle 30 s fragt."""
     now = datetime.now(timezone.utc)
     midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
@@ -11227,11 +11424,11 @@ def _household_usage_fine_points(config=None, sensor_key="photovoltaic_powerflow
 
 @app.route("/dashboard/usage-fine", methods=["GET"])
 def readUsageFine():
-    "Ist-Stromverbrauch heute in 5-Minuten-Schritten (kW), siehe _household_usage_fine_points - fuer 'Dein Stromverbrauch'. Mit ?source=grid stattdessen der NETZBEZUG (optionale Linie im Strompreis-Chart)."
+    "Ist-Stromverbrauch heute in 5-Minuten-Schritten (kW), siehe _household_usage_fine_points - fuer 'Dein Stromverbrauch'. Mit ?source=grid stattdessen der NETZSALDO mit Vorzeichen (Bezug positiv, Einspeisung negativ - Netz-Linie im Strompreis-Chart)."
     if is_demo_mode():
         return jsonify({"status": "success", "binMinutes": USAGE_FINE_BIN_MINUTES, "points": []})
     if request.args.get("source") == "grid":
-        points = _household_usage_fine_points(sensor_key="photovoltaic_powerflow_grid", import_only=True)
+        points = _household_usage_fine_points(sensor_key="photovoltaic_powerflow_grid")  # Netzsaldo mit Vorzeichen: Bezug positiv, Einspeisung negativ
     else:
         points = _household_usage_fine_points()
     return jsonify({"status": "success", "binMinutes": USAGE_FINE_BIN_MINUTES, "points": points})
@@ -12248,6 +12445,11 @@ scheduler.add_job(calibrate_pv_forecast_periodically, 'cron', hour="22", minute=
 # 3-stuendlichen Wetter-Abrufen stundenaktuell - der State soll immer die JETZT laufende Stunde
 # zeigen, nicht bis zu 3h alt sein.
 scheduler.add_job(push_pv_forecast_sensor_periodically, 'cron', minute="0")
+# Bubbles Strompreisprognose wird dort um 05:59 und 17:59 (Europe/Berlin) aktualisiert - das Add-on holt sie einige Minuten danach (ohne Wiederholung:
+# ist sie unveraendert, faellt der Lauf aus), damit es zweimal taeglich den aktuellsten Stand hat (siehe refresh_bubble_price_prediction).
+for _refresh_hour, _refresh_minute in BUBBLE_PRICE_PREDICTION_REFRESH_TIMES:
+    scheduler.add_job(refresh_bubble_price_prediction_periodically, 'cron', hour=_refresh_hour, minute=_refresh_minute,
+                      timezone=BUBBLE_PRICE_PREDICTION_REFRESH_TIMEZONE)
 scheduler.start()
 
 
