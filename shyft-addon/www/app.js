@@ -7736,9 +7736,9 @@ function renderShyftActions(container, actions, displayMaxDays = 3) {
 // Nutzer-Korrektur: das Addon laeuft als HA-Ingress-Panel und ein "Seitenaufruf" im Sinne von
 // document.readyState passiert praktisch nur einmal pro Browser-Tab - ein erneuter Klick auf den
 // Tab soll aber trotzdem jedes Mal zum "Jetzt"-Marker scrollen) zu #shyftNowMarker scrollen (siehe
-// renderShyftActions) - bei einem Drittel der Bildschirmhoehe von oben statt mittig (Nutzer-
-// Vorgabe): oben bleibt Platz fuer bereits vergangene Aktionen (1/3), darunter aktuelle/zukuenftige
-// (2/3). Der Marker existiert IMMER (auch waehrend eine Aktion aktiv laeuft, siehe dort), anders als
+// renderShyftActions) - bei zwei Dritteln der Bildschirmhoehe von oben (Nutzer-Vorgabe): die Liste ist absteigend
+// sortiert, aktive und geplante Aktionen stehen also UEBER dem Marker (2/3 des Bildschirms), die bereits beendeten
+// darunter (1/3). Der Marker existiert IMMER (auch waehrend eine Aktion aktiv laeuft, siehe dort), anders als
 // die fruehere Ziel-Auswahl ueber ".is-active"-Karten, die bei "gerade nichts aktiv" leer lief.
 //
 // shyftActionsScrollRequestedAt: "beim naechsten fertigen Render dieses Tabs einmal scrollen" - wird von requestShyftActionsAutoScroll()
@@ -7766,8 +7766,8 @@ function requestShyftActionsAutoScroll() {
 }
 
 function scrollShyftNowMarkerIntoPlace(marker) {
-    // bei einem Drittel der Bildschirmhoehe von oben (siehe oben); relativ zur aktuellen Position, daher beliebig oft wiederholbar
-    const delta = marker.getBoundingClientRect().top - window.innerHeight / 3;
+    // bei zwei Dritteln der Bildschirmhoehe von oben (siehe oben); relativ zur aktuellen Position, daher beliebig oft wiederholbar
+    const delta = marker.getBoundingClientRect().top - window.innerHeight * 2 / 3;
     if (Math.abs(delta) > 2) window.scrollBy({top: delta, behavior: 'auto'});
 }
 

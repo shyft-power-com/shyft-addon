@@ -214,7 +214,7 @@ PV_SURPLUS_NO_BATTERY_INCREASE_SCALE = 0.9
 PV_SURPLUS_DECREASE_RATIO = 0.05
 PV_SURPLUS_NO_BATTERY_DECREASE_RATIO = 0.10
 PV_SURPLUS_NO_BATTERY_MIN_DECREASE_KW = 0.3
-PV_SURPLUS_BATTERY_STOP_SOC = 97
+PV_SURPLUS_BATTERY_STOP_SOC = 95
 # Mindestabstand zwischen dem Ende einer Fallback-Session und dem Start der naechsten - ohne diese
 # Sperre konnte eine Session, die z.B. wegen kurzzeitig gefallenem Heimspeicher-SOC beendet wurde,
 # schon Sekunden spaeter durch den naechsten live-getriggerten Tick (siehe
@@ -1514,6 +1514,11 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         # ohne Preise rechnet mit 0 EUR/kWh und liefert Unsinn, also gar nicht erst senden.
         print("[Shyft] Optimierung nicht angestoßen, Pflichtangaben fehlen:", " | ".join(blocking))
         return json.dumps({"status": "skipped", "message": "Pflichtangaben fehlen: " + " ".join(blocking)})
+    # Diagnose (siehe pv_forecast.record_sync/diagnose_input): festhalten, was an den Server geht, damit der zurueckkommende Optimierer-Input verglichen werden kann
+    try:
+        pv_forecast.record_sync(optimizer_period + 24, weather_fields)
+    except Exception as e:
+        print("[Shyft] PV-Sync-Protokoll fehlgeschlagen:", repr(e))
     submitted_at = datetime.now(timezone.utc)
     result = shyft_adapter.send_site_data(payload, weather_fields, addon_version=ADDON_VERSION_NUMBER)
     try:
@@ -2282,6 +2287,20 @@ def _read_future_pv_forecast_by_hour():
         hour_local = _hour_floor((start_utc + timedelta(hours=i)).astimezone(get_ha_timezone()))
         result[hour_local] = _safe_float(row.get("PV_generation"))
     return result
+
+
+@app.route("/diagnostics/pv-forecast", methods=["GET"])
+def readPvForecastDiagnostics():
+    """Diagnose der PV-Prognose: die zuletzt an den Server gesendeten Listen (PV, Temperatur, Einstrahlung, m2-Profil, Stand des Wetter-Caches) und die Ergebnisse
+    des Vergleichs mit dem jeweils zurueckgekommenen Optimierer-Input (siehe pv_forecast.record_sync/diagnose_input). ?syncs=N / ?diagnoses=N begrenzen die Anzahl
+    (Standard 3 bzw. 10, neueste zuletzt)."""
+    syncs = request.args.get("syncs", default=3, type=int)
+    diagnoses = request.args.get("diagnoses", default=10, type=int)
+    return jsonify({
+        "status": "success",
+        "syncs": pv_forecast.read_jsonl(pv_forecast.PV_SYNC_LOG_PATH, limit=syncs) if syncs > 0 else [],
+        "diagnoses": pv_forecast.read_jsonl(pv_forecast.PV_DIAGNOSE_LOG_PATH, limit=diagnoses) if diagnoses > 0 else [],
+    })
 
 
 @app.route("/dashboard/pv-forecast-vs-actual", methods=["GET"])
@@ -9291,12 +9310,13 @@ def _ev_check_classify(live_kw, target_kw, check_deviation=True):
     return "dev"
 
 
-def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, window_start_ms, window_end_ms, check_deviation=True):
+def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, window_start_ms, window_end_ms, check_deviation=True, wallbox_status=None):
     """Ein Prueftakt fuer eine laufende 'Auto laden'-Aktion; aendert 'state' (der Zaehlerstand der Aktion, wird vom
     Aufrufer mit der Aktion gespeichert) und liefert {"messages": [Logzeilen ohne Uhrzeit], "retry": bool,
     "error": Fehlertext oder None}. paused_reason (Text oder None): keine Pruefung, solange z.B. das Auto nicht
     ladebereit/voll ist. window_start_ms/window_end_ms: geplantes Zeitfenster der Aktion (Grundlage fuer 'ueberwiegend
-    nicht geladen')."""
+    nicht geladen'). wallbox_status (optional): roher Wallbox-Verbindungsstatus (z.B. 'awaiting_authorization') - wird nur an die
+    Logzeilen 'Wallbox laedt nicht' und 'Wiederholung' angehaengt, damit man sieht, was die Wallbox gerade meldet."""
     result = {"messages": [], "retry": False, "error": None}
     if state.get("first_seen_ms") is None:
         state["first_seen_ms"] = now_ms
@@ -9331,9 +9351,10 @@ def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, windo
         state["committed"] = sample
         announced = state.get("announced", "ok")
         target_text = "" if target_kw is None else f", Soll {_ev_check_kw(target_kw)} kW"
+        status_text = f", Wallbox-Status: {wallbox_status}" if wallbox_status else ""
         if sample == "off" and announced != "off":
             state["announced"] = "off"
-            result["messages"].append(f"Wallbox lädt nicht (gemessen {_ev_check_kw(live_kw)} kW{target_text})")
+            result["messages"].append(f"Wallbox lädt nicht (gemessen {_ev_check_kw(live_kw)} kW{target_text}{status_text})")
         elif sample == "dev":
             if now_ms - state.get("dev_log_ms", 0) >= EV_CHARGE_CHECK_DEV_LOG_MIN_INTERVAL_SECONDS * 1000 and announced != "dev":
                 state["dev_log_ms"] = now_ms
@@ -9357,7 +9378,8 @@ def ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, windo
             state["last_retry_ms"] = now_ms
             state["grace_until_ms"] = now_ms + EV_CHARGE_RETRY_GRACE_SECONDS * 1000
             result["retry"] = True
-            result["messages"].append(f"Wiederholung {retries + 1}/{EV_CHARGE_RETRY_MAX}: Startbefehl wird erneut gesendet (Soll {_ev_check_kw(target_kw)} kW)")
+            status_text = f", Wallbox-Status: {wallbox_status}" if wallbox_status else ""
+            result["messages"].append(f"Wiederholung {retries + 1}/{EV_CHARGE_RETRY_MAX}: Startbefehl wird erneut gesendet (Soll {_ev_check_kw(target_kw)} kW{status_text})")
 
     # Ueberwiegend nicht geladen? Schon vor Ende sicher, sobald die Zeit ohne Ladeleistung mehr als die Haelfte des
     # geplanten Zeitfensters ausmacht.
@@ -9403,7 +9425,7 @@ def _ev_check_computed_action(action, config, live_kw, paused_reason, now_ms, ch
     "Prueftakt fuer eine laufende Optimierer-'Auto laden'-Aktion; speichert die Aktion bei Aenderungen."
     state = action.setdefault("_evCheck", {})
     target_kw = action.get("Target Value")
-    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, action.get("Date Start"), action.get("Date End"), check_deviation)
+    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, action.get("Date Start"), action.get("Date End"), check_deviation, _read_mapped_raw_state(config, "wallbox_plugged"))
     for message in result["messages"]:
         _append_action_log(action, message)
     if result["retry"]:
@@ -9423,7 +9445,7 @@ def _ev_check_pv_session(session, config, live_kw, paused_reason, now_ms, check_
     "Prueftakt fuer eine aktive PV-Ueberschuss-Fallback-Session; der Aufrufer speichert die Sessions."
     state = session.setdefault("ev_check", {})
     target_kw = session.get("target_kw")
-    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, session.get("start_ms"), session.get("planned_end_ms"), check_deviation)
+    result = ev_charge_check_step(state, target_kw, live_kw, paused_reason, now_ms, session.get("start_ms"), session.get("planned_end_ms"), check_deviation, _read_mapped_raw_state(config, "wallbox_plugged"))
     for message in result["messages"]:
         _append_pv_surplus_log(session, target_kw or 0, note=message)
     if result["retry"]:
@@ -11770,6 +11792,10 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
     except Exception as e:
         print("[Shyft] Dashboard-Chart-Daten konnten nicht zwischengespeichert werden:", repr(e))
     _maybe_freeze_pv_forecast_snapshot(input_csv, creation_date_ms)
+    try:
+        pv_forecast.diagnose_input(input_csv, creation_date_ms, get_ha_timezone())
+    except Exception as e:
+        print("[Shyft] PV-Diagnose fehlgeschlagen:", repr(e))
     _maybe_freeze_battery_soc_forecast_snapshot(output_csv, creation_date_ms)
     _record_stitched_forecast_run(output_csv, creation_date_ms)
     recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms, optimizer_run_id, base)

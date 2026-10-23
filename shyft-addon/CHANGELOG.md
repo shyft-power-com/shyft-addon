@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.0.45.331
+
+* **Demomodus: Dashboard-Charts ohne Lücken.** Der mitgelieferte Demo-Datensatz ist jetzt fest ab 0 Uhr verankert, statt bei jedem Sync „ab jetzt“ neu zu beginnen. Für Demo-Geräte erzeugt das Add-on daraus synthetische Ist-Werte (Ladestand Heimspeicher, Warmwasser, Ladestand Auto) und die Prognose für die bereits vergangenen Stunden – auch für Stunden, in denen das Add-on nicht lief. Der Live-Wert im Energiefluss passt dazu. Alles lokal, ohne Bubble-Aufruf.
+* **Demomodus: explizit keine Kommunikation mit Bubble.** Bubbles Strompreisprognose und Fehlerreports werden ohne echten shyft-power-Account jetzt ausdrücklich übersprungen (bisher nur indirekt über das fehlende Zugangstoken).
+* **Strom-Kachel: Pflichtfelder im Demomodus rot umrandet.** Solange sie leer sind, z. B. „Kosten (brutto)“ und „Einspeisevergütung (brutto)“. Nach einem Wechsel von Tarif oder Einspeiseart werden die neuen Pflichtfelder markiert; die Markierung verschwindet, sobald etwas eingetragen ist.
+* **Einspeisung: neue Option „Keine Einspeisung“.** Für Anlagen ohne Wechselrichter oder mit Nulleinspeisung. Der Optimierer bekommt dann einen Einspeisepreis von 0 (`p_sell_addon` und `p_sell_array_addon`), die Strom-Kachel gilt ohne Vergütung als vollständig.
+* **Konfiguration: Demo-Geräte gelten nicht als eingerichtet.** In der Navigation steht bei einem Demo-Gerät ein rotes „✕“ statt des Hakens, und die Problemliste zeigt je Gerät „Richte deinen … ein oder lösche das Demo-Gerät“. Die Hinweistexte in den Gerätekacheln sind neu formuliert („Binde den Wechselrichter aus deiner Home-Assistant-Umgebung ein. Wenn du keinen Wechselrichter hast, lösche das Demo-Gerät.“).
+
+## 0.0.45.330
+
+* **Diagnose der PV-Prognose (Ursachensuche für unplausible PV-Werte im Dashboard).** Im Chart standen abends und morgens PV-Werte (z. B. 4,4 kW um 20 Uhr), die weder die Wetter-API (0 W/m²) noch die eigene Prognose des Add-ons (0 kW) hergeben. Das Add-on hält deshalb bei jedem Sync fest, was es an den Server schickt (PV-Liste, Temperatur, Einstrahlung aus dem Wetter-Cache, m2-Profil, Stand von Wetter-Cache und Kalibrierung, Datei `pv_sync_log.jsonl`, letzte 72 Syncs), und vergleicht den zurückgekommenen Optimierer-Input Stunde für Stunde damit, auch mit Zeitversatz von ±3 Stunden (Datei `pv_diagnose.jsonl`, einmal je Lauf). Das Log nennt „PV-Sync: …“ (Maximum, Cache-Stand, Warnung bei Leistung trotz Einstrahlung unter der Schwelle) und „PV-Diagnose: …“ mit den abweichenden Stunden (gesendet / erhalten, Einstrahlung, m2) und der Treffer-Quote samt Temperatur. Der neue Endpunkt `/diagnostics/pv-forecast` liefert die Protokolle (`?syncs=N&diagnoses=N`). Zusätzlich loggen Wetter-Abruf („Wetter-Abruf ok: … Einstrahlung heute max …“) und Kalibrierung („PV-Kalibrierung: … m2 je UTC-Stunde …“) jetzt eine Zusammenfassung. Die Prognose selbst ändert sich dadurch nicht.
+
+## 0.0.45.329
+
+* **Gerätesteuerung: „Jetzt“-Strich im unteren Drittel.** Beim Öffnen der Gerätesteuerung scrollt die Seite jetzt so, dass der „Jetzt“-Strich bei zwei Dritteln der Bildschirmhöhe von oben liegt statt bei einem Drittel. Die Liste ist absteigend sortiert (neueste zuerst): aktive und geplante Aktionen stehen über dem Strich und belegen jetzt zwei Drittel des Bildschirms, die bereits beendeten darunter ein Drittel. Vorher war es umgekehrt, und man sah überwiegend die Historie.
+
+## 0.0.45.328
+
+* **Ladekontrolle „Auto laden“: Wallbox-Status im Log.** Die Logzeilen „Wallbox lädt nicht (…)“ und „Wiederholung x/10: Startbefehl wird erneut gesendet (…)“ nennen jetzt zusätzlich den aktuellen Status der Wallbox (der zugeordnete Sensor „Wallbox-Status“, z. B. „Wallbox-Status: awaiting_authorization“). So sieht man, ob die Wallbox den Befehl annimmt (z. B. `awaiting_start`) und das Auto nur nicht reagiert. Gilt für Optimierer-Aktion und PV-Überschuss-Session. Die Wiederholungen selbst (Abstand, Anzahl) sind unverändert.
+
+## 0.0.45.327
+
+* **PV-Überschussladen stoppt erst bei 95 % Heimspeicher-Ladestand.** Die Grenze, bis zu der der Heimspeicher beim Überschussladen (Optimierer-Aktion und Fallback-Session) entladen werden darf, sinkt von 97 auf 95 %. Bei einem Ladestand von 95 % oder darunter wird die Aktion beendet, nicht neu gestartet und zur vollen Stunde nicht verlängert; darüber läuft sie weiter. Vorher stoppte sie schon bei 97 %.
+
+## 0.0.45.326
+
+* **Test-Add-on: eigener Seitenleisten-Titel.** Der Eintrag in der Seitenleiste von Home Assistant zeigte trotz des neuen Add-on-Namens weiter „shyft-power“. Auf `test` steht deshalb zusätzlich `panel_title: "shyft-power (TEST)"` in der `config.yaml`, damit der Titel ausdrücklich festgelegt ist. Der pre-push-Hook und der Build auf `main` lehnen jetzt auch einen Test-`panel_title` ab.
+
+## 0.0.45.325
+
+* **Test-Add-on heißt „shyft-power (TEST)“.** Auf dem Branch `test` steht der Add-on-Name jetzt in der `config.yaml` als „shyft-power (TEST)“, damit eine parallel zu PROD installierte Test-Instanz im App Store und in der Seitenleiste von Home Assistant unterscheidbar ist (der frühere Zusatz im Build-Workflow kam bei Home Assistant nie an: Supervisor liest den Namen aus dem Repository, nicht aus dem Image). Auf `main` bleibt der Name „shyft-power“; ein Push dorthin mit Test-Namen wird lokal vom pre-push-Hook abgelehnt, und der Build auf `main` bricht dann ab.
+
 ## 0.0.45.324
 
 * **Strompreis-Chart: Netz-Linie zeigt Bezug und Einspeisung.** Die Kurve „Netzbezug“ heißt jetzt „Netzbezug/Einspeisung“ und zeigt den Netzsaldo mit Vorzeichen: Bezug über der Nulllinie, Einspeisung darunter. Vorher wurde die Einspeisung auf 0 gekappt. Der Ist-Verlauf ist weiter der 5-Minuten-Mittelwert des Netz-Sensors (jetzt ohne Kappung), die Prognose der Netto-Saldo `GR_sum` des Optimierers. Die rechte Achse reicht bei Einspeisung unter 0 und hat eine „0“-Marke samt gestrichelter Nulllinie; ohne Einspeisung bleibt sie wie bisher bei 0 verankert.
