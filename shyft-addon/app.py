@@ -1,6 +1,7 @@
 from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id, resolve_dhw_activated
 from homeassistant_adapter import HomeAssistantAdapter, EntityState
 from shyft_adapter import ShyftAdapter
+from constants import DEV_ACCESS_KEY_PREFIX
 from live_entity_watcher import LiveEntityWatcher
 import problem_registry
 import assistant
@@ -690,8 +691,12 @@ def maybe_create_real_account(new_integration_mappings):
     )
     if not has_real_device:
         return
+    # Vom test-Branch gebautes Add-on (siehe BUILD_BRANCH): Konto in der Bubble-Testversion anlegen und den Schluessel
+    # mit DEV_ACCESS_KEY_PREFIX ("test_") speichern - damit verbindet sich das Test-Add-on auch danach mit der Testversion
+    # (siehe ShyftAdapter.set_access_key). Ein main-Build legt wie bisher ein Konto in PROD an.
+    use_test_environment = BUILD_BRANCH == "test"
     try:
-        result = shyft_adapter.create_user()
+        result = shyft_adapter.create_user(test_environment=use_test_environment)
     except Exception as e:
         print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
         return
@@ -716,6 +721,8 @@ def maybe_create_real_account(new_integration_mappings):
     if not new_access_key:
         print("[Shyft] create_user_addon lieferte keinen Token/access_key:", result)
         return
+    if use_test_environment and not new_access_key.startswith(DEV_ACCESS_KEY_PREFIX):
+        new_access_key = DEV_ACCESS_KEY_PREFIX + new_access_key
     try:
         _persist_shyft_access_key(new_access_key)
         config["shyftAccountCreated"] = True
