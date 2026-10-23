@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.0.45.333
+
+* **Auto laden: Preisgrenze `p_min` von +2 auf +3 Cent.** Die Preisgrenze, bis zu der der Optimierer das Auto lädt (`p_min`), liegt jetzt 3 Cent statt 2 Cent über dem niedrigsten kommenden Strompreis (`WB_P_MIN_MARGIN_EUR`). Bei +2 Cent war der Gewinn je kWh für den Optimierer so klein, dass er in der Rechengenauigkeit unterging und das Auto in sehr günstigen Nächten gar nicht lud. In Testrechnungen mit dem Optimierer lädt der Wagen ab +3 Cent in den günstigsten Stunden.
+
+## 0.0.45.332
+
+* **Test-Add-on: automatisch angelegtes Konto in der Bubble-Testversion.** Ein vom `test`-Branch gebautes Add-on legt beim ersten echten Gerät (Wechsel aus dem Demomodus) das shyft-power-Konto jetzt in der Bubble-Testversion (`version-test`) an statt in PROD und speichert den Zugangsschlüssel mit dem Präfix `test_`. Dadurch verbindet sich das Test-Add-on auch danach mit der Testversion. Ein Add-on vom `main`-Branch legt das Konto wie bisher in PROD an.
+
+## 0.0.45.331
+
+* **Demomodus: Dashboard-Charts ohne Lücken.** Der mitgelieferte Demo-Datensatz ist jetzt fest ab 0 Uhr verankert, statt bei jedem Sync „ab jetzt“ neu zu beginnen. Für Demo-Geräte erzeugt das Add-on daraus synthetische Ist-Werte (Ladestand Heimspeicher, Warmwasser, Ladestand Auto) und die Prognose für die bereits vergangenen Stunden – auch für Stunden, in denen das Add-on nicht lief. Der Live-Wert im Energiefluss passt dazu. Alles lokal, ohne Bubble-Aufruf.
+* **Demomodus: explizit keine Kommunikation mit Bubble.** Bubbles Strompreisprognose und Fehlerreports werden ohne echten shyft-power-Account jetzt ausdrücklich übersprungen (bisher nur indirekt über das fehlende Zugangstoken).
+* **Strom-Kachel: Pflichtfelder im Demomodus rot umrandet.** Solange sie leer sind, z. B. „Kosten (brutto)“ und „Einspeisevergütung (brutto)“. Nach einem Wechsel von Tarif oder Einspeiseart werden die neuen Pflichtfelder markiert; die Markierung verschwindet, sobald etwas eingetragen ist.
+* **Einspeisung: neue Option „Keine Einspeisung“.** Für Anlagen ohne Wechselrichter oder mit Nulleinspeisung. Der Optimierer bekommt dann einen Einspeisepreis von 0 (`p_sell_addon` und `p_sell_array_addon`), die Strom-Kachel gilt ohne Vergütung als vollständig.
+* **Konfiguration: Demo-Geräte gelten nicht als eingerichtet.** In der Navigation steht bei einem Demo-Gerät ein rotes „✕“ statt des Hakens, und die Problemliste zeigt je Gerät „Richte deinen … ein oder lösche das Demo-Gerät“. Die Hinweistexte in den Gerätekacheln sind neu formuliert („Binde den Wechselrichter aus deiner Home-Assistant-Umgebung ein. Wenn du keinen Wechselrichter hast, lösche das Demo-Gerät.“).
+
+## 0.0.45.330
+
+* **Diagnose der PV-Prognose (Ursachensuche für unplausible PV-Werte im Dashboard).** Im Chart standen abends und morgens PV-Werte (z. B. 4,4 kW um 20 Uhr), die weder die Wetter-API (0 W/m²) noch die eigene Prognose des Add-ons (0 kW) hergeben. Das Add-on hält deshalb bei jedem Sync fest, was es an den Server schickt (PV-Liste, Temperatur, Einstrahlung aus dem Wetter-Cache, m2-Profil, Stand von Wetter-Cache und Kalibrierung, Datei `pv_sync_log.jsonl`, letzte 72 Syncs), und vergleicht den zurückgekommenen Optimierer-Input Stunde für Stunde damit, auch mit Zeitversatz von ±3 Stunden (Datei `pv_diagnose.jsonl`, einmal je Lauf). Das Log nennt „PV-Sync: …“ (Maximum, Cache-Stand, Warnung bei Leistung trotz Einstrahlung unter der Schwelle) und „PV-Diagnose: …“ mit den abweichenden Stunden (gesendet / erhalten, Einstrahlung, m2) und der Treffer-Quote samt Temperatur. Der neue Endpunkt `/diagnostics/pv-forecast` liefert die Protokolle (`?syncs=N&diagnoses=N`). Zusätzlich loggen Wetter-Abruf („Wetter-Abruf ok: … Einstrahlung heute max …“) und Kalibrierung („PV-Kalibrierung: … m2 je UTC-Stunde …“) jetzt eine Zusammenfassung. Die Prognose selbst ändert sich dadurch nicht.
+
 ## 0.0.45.329
 
 * **Gerätesteuerung: „Jetzt“-Strich im unteren Drittel.** Beim Öffnen der Gerätesteuerung scrollt die Seite jetzt so, dass der „Jetzt“-Strich bei zwei Dritteln der Bildschirmhöhe von oben liegt statt bei einem Drittel. Die Liste ist absteigend sortiert (neueste zuerst): aktive und geplante Aktionen stehen über dem Strich und belegen jetzt zwei Drittel des Bildschirms, die bereits beendeten darunter ein Drittel. Vorher war es umgekehrt, und man sah überwiegend die Historie.
