@@ -361,14 +361,33 @@ const INTEGRATION_SECTIONS = [
 
 // Hinweistext beim aktiven Demo-Gerät, je Geraetekachel mit dem passenden Begriff (siehe
 // renderSectionBody). Fallback fuer kuenftige hasDemo-Sektionen ohne eigenen Eintrag.
+const DEMO_DEVICE_NOTE_PREFIX = 'Demo-Gerät mit Beispieldaten hinterlegt. ';
 const DEMO_DEVICE_NOTE_BY_SECTION = {
-    batterie: 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du über keine Batterie verfügst, oder binde deine echte Batterie aus deiner Home-Assistant-Umgebung ein.',
-    waermepumpe: 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du über keine Wärmepumpe verfügst, oder binde deine echte Wärmepumpe aus deiner Home-Assistant-Umgebung ein.',
-    auto: 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du über kein Elektroauto verfügst, oder binde dein echtes Auto aus deiner Home-Assistant-Umgebung ein.',
-    wallbox: 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du über keine Wallbox verfügst, oder binde deine echte Wallbox aus deiner Home-Assistant-Umgebung ein.',
-    raumtemperatur: 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du keinen Innenraum-Temperatursensor einbinden möchtest (Shyft simuliert die Raumtemperatur dann), oder binde deinen echten Sensor aus deiner Home-Assistant-Umgebung ein.',
+    wechselrichter: DEMO_DEVICE_NOTE_PREFIX + 'Binde den Wechselrichter aus deiner Home-Assistant-Umgebung ein. Wenn du keinen Wechselrichter hast, lösche das Demo-Gerät.',
+    batterie: DEMO_DEVICE_NOTE_PREFIX + 'Binde die Batterie aus deiner Home-Assistant-Umgebung ein. Wenn du keine Batterie hast, lösche das Demo-Gerät.',
+    heizstab: DEMO_DEVICE_NOTE_PREFIX + 'Binde den Heizstab aus deiner Home-Assistant-Umgebung ein. Wenn du keinen Heizstab hast, lösche das Demo-Gerät.',
+    waermepumpe: DEMO_DEVICE_NOTE_PREFIX + 'Binde die Wärmepumpe aus deiner Home-Assistant-Umgebung ein. Wenn du keine Wärmepumpe hast, lösche das Demo-Gerät.',
+    auto: DEMO_DEVICE_NOTE_PREFIX + 'Binde dein Elektroauto aus deiner Home-Assistant-Umgebung ein. Wenn du kein Elektroauto hast, lösche das Demo-Gerät.',
+    wallbox: DEMO_DEVICE_NOTE_PREFIX + 'Binde die Wallbox aus deiner Home-Assistant-Umgebung ein. Wenn du keine Wallbox hast, lösche das Demo-Gerät.',
+    raumtemperatur: DEMO_DEVICE_NOTE_PREFIX + 'Binde deinen Innenraum-Temperatursensor aus deiner Home-Assistant-Umgebung ein. Wenn du keinen Sensor einbinden möchtest, lösche das Demo-Gerät (Shyft simuliert die Raumtemperatur dann).',
 };
-const DEMO_DEVICE_NOTE_FALLBACK = 'Demo-Gerät mit Beispieldaten hinterlegt. Lösche das Demo-Gerät, wenn du dieses Gerät nicht nutzt, oder binde dein echtes Gerät aus deiner Home-Assistant-Umgebung ein.';
+const DEMO_DEVICE_NOTE_FALLBACK = DEMO_DEVICE_NOTE_PREFIX + 'Binde dein Gerät aus deiner Home-Assistant-Umgebung ein. Wenn du dieses Gerät nicht nutzt, lösche das Demo-Gerät.';
+
+// Hinweis in der Problemliste der Konfigurationsseite (siehe computeMissingRequiredFieldsWarnings), solange eine
+// Kachel das Demo-Geraet nutzt - ein Demo-Geraet gilt in der Navigation nicht als eingerichtet (rotes "✕").
+const DEMO_DEVICE_SETUP_HINT_BY_SECTION = {
+    wechselrichter: 'Richte deinen Wechselrichter ein oder lösche das Demo-Gerät.',
+    batterie: 'Richte deine Batterie ein oder lösche das Demo-Gerät.',
+    heizstab: 'Richte deinen Heizstab ein oder lösche das Demo-Gerät.',
+    waermepumpe: 'Richte deine Wärmepumpe ein oder lösche das Demo-Gerät.',
+    auto: 'Richte dein Elektroauto ein oder lösche das Demo-Gerät.',
+    wallbox: 'Richte deine Wallbox ein oder lösche das Demo-Gerät.',
+    raumtemperatur: 'Richte deinen Innenraum-Temperatursensor ein oder lösche das Demo-Gerät.',
+};
+
+function isDemoSelection(currentIds) {
+    return currentIds.length === 1 && currentIds[0] === DEMO_INTEGRATION_ID;
+}
 
 // True, sobald mindestens eine Geraetekachel ein Geraet zugeordnet hat UND JEDE zugeordnete Kachel
 // ausschliesslich das Demo-Geraet nutzt (kein einziges echtes Geraet irgendwo) - Grundlage fuer den
@@ -1449,6 +1468,10 @@ function buildDeviceNavChip(label, sectionKey, iconState) {
     } else if (iconState === 'error') {
         icon.textContent = '!';
         icon.classList.add('status-error');
+    } else if (iconState === 'demo') {
+        // Demo-Geraet: gilt nicht als eingerichtet (Nutzer-Vorgabe) - rotes "✕" statt Haken.
+        icon.textContent = '✕';
+        icon.classList.add('status-error');
     } else {
         icon.textContent = '✓';
         icon.classList.add('status-ok');
@@ -1474,6 +1497,7 @@ function renderDeviceNav(problems, warnings) {
     for (const section of INTEGRATION_SECTIONS) {
         const currentIds = currentIntegrationSelections[section.key] || [];
         const iconState = (currentIds.length === 0 || isSectionDisabled(section.key, currentIds)) ? 'unconfigured'
+            : isDemoSelection(currentIds) ? 'demo'
             : (failedSectionKeys.has(section.key) || warningSectionKeys.has(section.key)) ? 'error' : 'ok';
         container.appendChild(buildDeviceNavChip(section.label, section.key, iconState));
     }
@@ -2291,7 +2315,15 @@ function computeMissingRequiredFieldsWarnings() {
     for (const section of INTEGRATION_SECTIONS) {
         const currentIds = integrationMappings[section.key] || [];
         if (currentIds.length === 0) continue;
-        if (currentIds.length === 1 && currentIds[0] === DEMO_INTEGRATION_ID) continue;
+        if (isDemoSelection(currentIds)) {
+            warnings.push({
+                key: 'demo_device:' + section.key,
+                sectionKey: section.key,
+                fieldId: null,
+                message: DEMO_DEVICE_SETUP_HINT_BY_SECTION[section.key] || `Richte ${section.label} ein oder lösche das Demo-Gerät.`,
+            });
+            continue;
+        }
         if (isSectionDisabled(section.key, currentIds)) continue;
 
         // {label, fieldId} statt nur eines Labels - fieldId ist die DOM-Id des konkreten
