@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.332
+
+* **Test-Add-on: automatisch angelegtes Konto in der Bubble-Testversion.** Ein vom `test`-Branch gebautes Add-on legt beim ersten echten Gerät (Wechsel aus dem Demomodus) das shyft-power-Konto jetzt in der Bubble-Testversion (`version-test`) an statt in PROD und speichert den Zugangsschlüssel mit dem Präfix `test_`. Dadurch verbindet sich das Test-Add-on auch danach mit der Testversion. Ein Add-on vom `main`-Branch legt das Konto wie bisher in PROD an.
+
 ## 0.0.45.331
 
 * **Demomodus: Dashboard-Charts ohne Lücken.** Der mitgelieferte Demo-Datensatz ist jetzt fest ab 0 Uhr verankert, statt bei jedem Sync „ab jetzt“ neu zu beginnen. Für Demo-Geräte erzeugt das Add-on daraus synthetische Ist-Werte (Ladestand Heimspeicher, Warmwasser, Ladestand Auto) und die Prognose für die bereits vergangenen Stunden – auch für Stunden, in denen das Add-on nicht lief. Der Live-Wert im Energiefluss passt dazu. Alles lokal, ohne Bubble-Aufruf.

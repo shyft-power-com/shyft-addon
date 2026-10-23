@@ -80,7 +80,7 @@ class ShyftAdapter:
     # komplett lokal im Addon (siehe recompute_actions_from_optimizer_run in app.py), Bubble wird
     # dafuer weder gelesen noch beschrieben.
 
-    def create_user(self):
+    def create_user(self, test_environment=False):
         """Signs a new shyft-power account up (create_user_addon workflow) in the background, the
         first time a demo-mode addon user configures a real device (see maybe_create_real_account in
         app.py) - no parameters: Bubble generates its own email/username/password server-side (the
@@ -90,12 +90,16 @@ class ShyftAdapter:
 
         Routet ueber _create_complete_uri, richtet sich also nach development_mode: ein "notset"-
         (bzw. jeder nicht mit test_ praefixierte) Schluessel zaehlt als Produktivumgebung und trifft
-        https://shyft-power.com/api/1.1/wf/create_user_addon (nicht version-test)."""
+        https://shyft-power.com/api/1.1/wf/create_user_addon (nicht version-test). test_environment=True
+        erzwingt die Bubble-Testversion (version-test) - fuer Add-ons, die vom test-Branch gebaut wurden
+        (siehe maybe_create_real_account in app.py)."""
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.bubble_token}"
         }
         uri = self._create_complete_uri("create_user_addon")
+        if test_environment:
+            uri = f"{BUBBLE_URI_TEST}api/1.1/wf/create_user_addon"
         self._log_info(f"create_user uri={uri}")
         response = requests.post(uri, headers=headers, data=json.dumps({}))
         response.raise_for_status()
