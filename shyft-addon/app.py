@@ -838,6 +838,8 @@ BUBBLE_PRICE_PREDICTION_REFRESH_TIMES = ((6, 5), (18, 5))  # (Stunde, Minute): e
 
 def _request_bubble_price_prediction():
     "Ruft Bubbles Strompreisprognose ab (provide_input_output_csv) und gibt {hour_start_epoch_ms: EUR/kWh netto} zurueck ({} ohne Zugangstoken/Nutzer). Wirft bei Fehlern."
+    if is_demo_mode():
+        return {}  # Demo-Modus: nie Bubble aufrufen (Dashboard nutzt dann die Live-Awattar-Preise)
     user_id = extract_shyft_user_id(shyft_adapter.bubble_token)
     if not user_id:
         return {}
@@ -865,6 +867,8 @@ def refresh_bubble_price_prediction():
     """Holt Bubbles Strompreisprognose unabhaengig vom Cache neu und schreibt sie in den Cache (zweimal taeglich kurz nach Bubbles Laeufen, siehe
     BUBBLE_PRICE_PREDICTION_REFRESH_TIMES). Keine Wiederholungen: ist die Prognose unveraendert oder schlaegt der Abruf fehl, faellt der Lauf aus
     (es gilt der letzte Stand) und der naechste Abruf folgt zur naechsten festen Zeit, 12 Stunden spaeter. True, wenn sich Werte geaendert haben."""
+    if is_demo_mode():
+        return False  # Demo-Modus: kein Bubble-Aufruf
     try:
         with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "r") as f:
             old_prices = (json.load(f).get("prices") or {})
@@ -1126,14 +1130,19 @@ def compute_price_buy_array(config, base_time_utc, hours):
 
 
 # Einspeisung: entweder fester Verguetungssatz (electricitySellCent, bisheriges Verhalten - auch fuer Bestandskunden ohne electricitySellMode) oder
-# Direktvermarktung (Boersenpreis minus Kostenabzug des Direktvermarkters, stuendlich wechselnd).
+# Direktvermarktung (Boersenpreis minus Kostenabzug des Direktvermarkters, stuendlich wechselnd) oder "Keine Einspeisung" (kein Wechselrichter
+# oder Nulleinspeisung - der Optimierer bekommt dann p_sell = 0).
 ELECTRICITY_SELL_MODE_FEED_IN = "feed_in_tariff"
 ELECTRICITY_SELL_MODE_DIRECT_MARKETING = "direct_marketing"
+ELECTRICITY_SELL_MODE_NONE = "none"
 
 
 def electricity_sell_mode(config):
-    "'direct_marketing' oder 'feed_in_tariff' - ohne (oder mit unbekanntem) electricitySellMode gilt der feste Verguetungssatz wie bisher."
-    return ELECTRICITY_SELL_MODE_DIRECT_MARKETING if config.get("electricitySellMode") == ELECTRICITY_SELL_MODE_DIRECT_MARKETING else ELECTRICITY_SELL_MODE_FEED_IN
+    "'direct_marketing', 'none' oder 'feed_in_tariff' - ohne (oder mit unbekanntem) electricitySellMode gilt der feste Verguetungssatz wie bisher."
+    mode = config.get("electricitySellMode")
+    if mode in (ELECTRICITY_SELL_MODE_DIRECT_MARKETING, ELECTRICITY_SELL_MODE_NONE):
+        return mode
+    return ELECTRICITY_SELL_MODE_FEED_IN
 
 
 def _direct_marketing_cost_eur(config):
@@ -1434,7 +1443,13 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         # Einspeiseverguetung als Skalar (EUR/kWh) - ebenfalls neues Feld, damit der Server vom
         # bisherigen "Electricity Price Sell"-Dropdown darauf umstellen kann.
         sell_cent = config.get("electricitySellCent")
-        if electricity_sell_mode(config) == ELECTRICITY_SELL_MODE_DIRECT_MARKETING:
+        if electricity_sell_mode(config) == ELECTRICITY_SELL_MODE_NONE:
+            # Keine Einspeisung (kein Wechselrichter/Nulleinspeisung): Einspeisepreis 0 fuer den Optimierer - flach und als Array
+            # (gleiche Stunden wie p_buy_addon), damit auch ein Server, der p_sell_array_addon bevorzugt, 0 nimmt.
+            live_values["p_sell_addon"] = 0.0
+            live_values["p_sell_array_addon"] = ";".join("0.00000" for _ in range(optimizer_period + 24))
+            live_values.setdefault("baseTime", price_base.isoformat())
+        elif electricity_sell_mode(config) == ELECTRICITY_SELL_MODE_DIRECT_MARKETING:
             # Direktvermarktung: stuendlicher Einspeisepreis (Boersenpreis minus Kostenabzug) als Array fuer den Server (p_sell_array_addon, gleiche
             # Stunden wie p_buy_addon). p_sell_addon bleibt als flacher Rueckfall (Mittelwert) - fuer einen Server ohne Array-Unterstuetzung.
             sell_arr = compute_price_sell_array(config, price_base, optimizer_period + 24)
@@ -2419,13 +2434,18 @@ def _record_stitched_forecast_run(output_csv, creation_date_ms):
                 c: (_safe_float(row.get(c)) if row.get(c) not in (None, "") else None) for c in STITCHED_FORECAST_COLUMNS}
         midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
         hours = {k: v for k, v in hours.items() if datetime.fromisoformat(k) >= midnight_utc}
-        try:
-            tmp_path = STITCHED_FORECAST_PATH + ".tmp"
-            with open(tmp_path, "w") as f:
-                json.dump({"latestRunMs": creation_date_ms, "hours": hours}, f)
-            os.replace(tmp_path, STITCHED_FORECAST_PATH)
-        except Exception as e:
-            print("[Shyft] Prognose-Zusammensetzung konnte nicht gespeichert werden:", repr(e))
+        _write_stitched_forecast(creation_date_ms, hours)
+
+
+def _write_stitched_forecast(latest_run_ms, hours):
+    "Atomares Schreiben von STITCHED_FORECAST_PATH - nur unter _stitched_forecast_lock aufrufen."
+    try:
+        tmp_path = STITCHED_FORECAST_PATH + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump({"latestRunMs": latest_run_ms, "hours": hours}, f)
+        os.replace(tmp_path, STITCHED_FORECAST_PATH)
+    except Exception as e:
+        print("[Shyft] Prognose-Zusammensetzung konnte nicht gespeichert werden:", repr(e))
 
 
 def _read_future_output_column_by_hour(column, scale=1.0, include_first=False):
@@ -2644,9 +2664,10 @@ def readWarmwasserForecastVsActual():
     midnight_local = _hour_floor(_local_now().replace(hour=0))
     current_hour_local = _hour_floor(_local_now())
     forecast_by_hour = _read_future_output_column_by_hour("T_HW")
-    actual_by_hour = _hourly_state_actual(entity_id, midnight_local, current_hour_local)
+    demo = _demo_profile_sensor(config, "heatpump_dhw_tank_temp")  # Demo-Geraet: Ist aus dem Demo-Profil
+    actual_by_hour = _demo_hourly_actual("heatpump_dhw_tank_temp", midnight_local, current_hour_local) if demo else _hourly_state_actual(entity_id, midnight_local, current_hour_local)
     payload = _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=DHW_ACTION_NAMES)
-    payload["actualFine"] = _state_fine_points(entity_id)
+    payload["actualFine"] = _demo_fine_points("heatpump_dhw_tank_temp") if demo else _state_fine_points(entity_id)
     payload["binMinutes"] = FINE_ACTUAL_BIN_MINUTES
     return jsonify(payload)
 
@@ -2662,9 +2683,10 @@ def readLadestandAutoForecastVsActual():
     midnight_local = _hour_floor(_local_now().replace(hour=0))
     current_hour_local = _hour_floor(_local_now())
     forecast_by_hour = _read_future_output_column_by_hour("SOC_EV", scale=100.0)
-    actual_by_hour = _hourly_state_actual(entity_id, midnight_local, current_hour_local)
+    demo = _demo_profile_sensor(config, "electronicvehicle_state_of_charge")  # Demo-Geraet: Ist aus dem Demo-Profil
+    actual_by_hour = _demo_hourly_actual("electronicvehicle_state_of_charge", midnight_local, current_hour_local) if demo else _hourly_state_actual(entity_id, midnight_local, current_hour_local)
     payload = _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=CAR_CHARGE_ACTION_NAMES)
-    payload["actualFine"] = _state_fine_points(entity_id)
+    payload["actualFine"] = _demo_fine_points("electronicvehicle_state_of_charge") if demo else _state_fine_points(entity_id)
     payload["binMinutes"] = FINE_ACTUAL_BIN_MINUTES
     return jsonify(payload)
 
@@ -2821,7 +2843,10 @@ def readBatterySocForecastVsActual():
                 continue
 
     actual_by_hour = {}
-    if entity_id:
+    demo = _demo_profile_sensor(config, "battery_state_of_charge")  # Demo-Geraet: Ist aus dem Demo-Profil
+    if demo:
+        actual_by_hour = _demo_hourly_actual("battery_state_of_charge", midnight_local, current_hour_local)
+    elif entity_id:
         hours = []
         cursor = midnight_local
         while cursor <= current_hour_local:
@@ -2860,7 +2885,8 @@ def readBatterySocForecastVsActual():
 
     return jsonify({"status": "success", "labels": labels, "forecast": forecast, "actual": actual,
                      "plannedHistory": planned_history, "actionHours": action_hours,
-                     "actualFine": _state_fine_points(entity_id), "binMinutes": FINE_ACTUAL_BIN_MINUTES})
+                     "actualFine": _demo_fine_points("battery_state_of_charge") if demo else _state_fine_points(entity_id),
+                     "binMinutes": FINE_ACTUAL_BIN_MINUTES})
 
 
 def get_wallbox_connection_status_options():
@@ -4393,8 +4419,10 @@ def log_error_to_shyft(context, error_type, error_message, service_called=None, 
     """Best-effort error report to shyft-power, sent whenever a Test-Button click in the addon
     returns an error - lets shyft-power's team see integration failures across users without
     needing addon log access. Never raises: a failed report shouldn't break the actual test
-    response the user is waiting on.
+    response the user is waiting on. Im Demo-Modus nie (kein Bubble-Aufruf ohne echten Account).
     """
+    if is_demo_mode():
+        return
     user_id = extract_shyft_user_id(shyft_adapter.bubble_token)
     if not user_id:
         return
@@ -4881,7 +4909,10 @@ def _read_mapped_entity_state(config, sensor_key):
     sync_service.py), wird HA gar nicht erst gefragt - stattdessen ein synthetisches EntityState aus
     get_demo_value gebaut (last_updated = jetzt, damit es nie als "veraltet" markiert wird)."""
     if is_demo_sensor(config, sensor_key):
-        state, unit = get_demo_value(sensor_key)
+        # Im Demo-Modus kommen Ladestand/Tanktemperatur aus dem Demo-Profil (passend zum Ist-Verlauf im Chart)
+        state, unit = _demo_live_state(sensor_key) if _demo_profile_sensor(config, sensor_key) else (None, None)
+        if state is None:
+            state, unit = get_demo_value(sensor_key)
         if state is None:
             return None
         return EntityState(state, unit or "", datetime.now(timezone.utc))
@@ -11252,22 +11283,187 @@ def _overlay_live_demo_series(input_csv, start_utc):
     return out.getvalue()
 
 
+# ----------------------------------------------------------------------------
+# Demo-Profil (Nutzer-Vorgabe: im Demo-Modus keine Luecken in den Prognose-vs-Ist-Charts): der
+# statische Demo-Lauf (DEMO_OUTPUT_CSV_PATH, 48 Stunden) ist fest ab 0 Uhr lokal HEUTE verankert -
+# Zeile i = Stunde i ab Mitternacht. Frueher wurde er bei jedem Sync "ab jetzt" neu verankert; die
+# vergangenen Stunden kamen dann nur aus frueheren Syncs (zusammengesetzte Prognose), und lief das
+# Addon ein paar Stunden nicht (Update/Neustart), blieb dort eine Luecke. Zudem haben Demo-Geraete
+# keine HA-Historie, es gab also gar keine Ist-Linie. Jetzt wird beides synthetisch aus demselben
+# Profil erzeugt: die Prognose fuer vergangene Stunden (_backfill_demo_stitched_forecast) und die
+# Ist-Werte der Demo-Geraete (_demo_hourly_actual/_demo_fine_points) - deterministisch, damit Ist,
+# Prognose und Live-Wert im Energiefluss zusammenpassen. Alles lokal, kein Bubble-Aufruf.
+# Ueber Zeile 47 hinaus (spaet am Abend reicht der 48h-Horizont sonst nicht) wiederholt sich der
+# zweite Tag des Datensatzes (Zeilen 24..47).
+# ----------------------------------------------------------------------------
+DEMO_PROFILE_DAY_HOURS = 24
+# sensor_key -> (output_csv-Spalte, Faktor): Demo-Sensoren, deren Ist-Verlauf aus dem Profil kommt.
+DEMO_PROFILE_SENSOR_COLUMNS = {
+    "battery_state_of_charge": ("SOC_B", 1.0),
+    "heatpump_dhw_tank_temp": ("T_HW", 1.0),
+    "electronicvehicle_state_of_charge": ("SOC_EV", 100.0),
+}
+# Startzustands-Spalten im input_csv, die zur jeweiligen Startstunde des verschobenen Laufs passen muessen
+# (input-Spalte -> output-Spalte), sonst rechnet der Base Case von einem anderen Zustand aus.
+DEMO_INPUT_INITIAL_STATE_COLUMNS = {"SOC_b_0_percent": "SOC_B", "T_hw_0": "T_HW", "ev_soc_0": "SOC_EV", "T_i_0": "T_i"}
+_demo_csv_cache = {}
+
+
+def _read_demo_csv(path):
+    "Inhalt einer mitgelieferten Demo-CSV (im Speicher gehalten, die Dateien aendern sich zur Laufzeit nie). Wirft FileNotFoundError."
+    if path not in _demo_csv_cache:
+        with open(path, "r", encoding="utf-8") as f:
+            _demo_csv_cache[path] = f.read()
+    return _demo_csv_cache[path]
+
+
+def _demo_profile_rows():
+    "Zeilen des Demo-output_csv als Liste von Dicts ([] ohne Demo-Datei)."
+    try:
+        return list(csv.DictReader(io.StringIO(_read_demo_csv(DEMO_OUTPUT_CSV_PATH))))
+    except Exception:
+        return []
+
+
+def _demo_profile_index(hour_offset, row_count):
+    "Profilzeile fuer Stunde hour_offset ab 0 Uhr heute - ab row_count wiederholt sich der zweite Tag (siehe oben)."
+    hour_offset = max(0, hour_offset)
+    if hour_offset < row_count or row_count <= DEMO_PROFILE_DAY_HOURS:
+        return min(hour_offset, row_count - 1)
+    return DEMO_PROFILE_DAY_HOURS + (hour_offset - DEMO_PROFILE_DAY_HOURS) % (row_count - DEMO_PROFILE_DAY_HOURS)
+
+
+def _demo_midnight_local():
+    return _hour_floor(_local_now().replace(hour=0))
+
+
+def _demo_hours_since_midnight(dt):
+    "Ganze Stunden von 0 Uhr lokal heute bis dt (aware) - echte Stunden, auch an Tagen mit Zeitumstellung."
+    return int((dt - _demo_midnight_local()).total_seconds() // 3600)
+
+
+def _demo_profile_value(column, dt, rows=None):
+    "Wert der Profilspalte column zum Zeitpunkt dt (aware), linear zwischen den Stundenwerten interpoliert - None ohne Profil/Spalte."
+    rows = rows if rows is not None else _demo_profile_rows()
+    if not rows or column not in rows[0]:
+        return None
+    hours = max(0.0, (dt - _demo_midnight_local()).total_seconds() / 3600)
+    i = int(hours)
+    v0 = _safe_float(rows[_demo_profile_index(i, len(rows))].get(column))
+    v1 = _safe_float(rows[_demo_profile_index(i + 1, len(rows))].get(column))
+    return v0 + (hours - i) * (v1 - v0)
+
+
+def _demo_profile_sensor(config, sensor_key):
+    "True, wenn der Ist-Verlauf/Live-Wert von sensor_key aus dem Demo-Profil kommt: Addon im Demo-Modus UND die Section nutzt das Demo-Geraet."
+    return sensor_key in DEMO_PROFILE_SENSOR_COLUMNS and is_demo_mode() and is_demo_sensor(config, sensor_key)
+
+
+def _demo_hourly_actual(sensor_key, midnight_local, current_hour_local):
+    "Pendant zu _hourly_state_actual fuer ein Demo-Geraet: {Stunde (lokal): Profilwert zu Stundenbeginn} von 0 Uhr bis zur laufenden Stunde."
+    column, scale = DEMO_PROFILE_SENSOR_COLUMNS[sensor_key]
+    rows = _demo_profile_rows()
+    result = {}
+    hour = midnight_local
+    while hour <= current_hour_local:
+        value = _demo_profile_value(column, hour, rows)
+        if value is not None:
+            result[hour] = round(value * scale, 3)
+        hour += timedelta(hours=1)
+    return result
+
+
+def _demo_fine_points(sensor_key):
+    "Pendant zu _state_fine_points fuer ein Demo-Geraet: [[Schritt-Beginn (ISO, UTC), Wert]] in FINE_ACTUAL_BIN_MINUTES-Schritten von 0 Uhr bis jetzt."
+    column, scale = DEMO_PROFILE_SENSOR_COLUMNS[sensor_key]
+    rows = _demo_profile_rows()
+    now = datetime.now(timezone.utc)
+    cursor = _demo_midnight_local().astimezone(timezone.utc)
+    points = []
+    while cursor < now:
+        value = _demo_profile_value(column, cursor, rows)
+        if value is not None:
+            points.append([cursor.isoformat(), round(value * scale, 3)])
+        cursor += timedelta(minutes=FINE_ACTUAL_BIN_MINUTES)
+    return points
+
+
+def _demo_live_state(sensor_key):
+    "(state, unit) des Demo-Geraets JETZT aus dem Profil - passend zum Ist-Verlauf im Chart. (None, None) ohne Profil."
+    column, scale = DEMO_PROFILE_SENSOR_COLUMNS[sensor_key]
+    value = _demo_profile_value(column, datetime.now(timezone.utc))
+    if value is None:
+        return None, None
+    return f"{value * scale:.1f}", ("°C" if column == "T_HW" else "%")
+
+
+def _shift_demo_run(input_csv, output_csv, hour_offset):
+    """Verschiebt den statischen Demo-Lauf so, dass Zeile 0 die Profilstunde hour_offset (Stunden seit 0 Uhr heute,
+    = laufende Stunde) ist - gleiche Laenge wie der Originallauf, ueber das Datensatzende hinaus wiederholt sich Tag 2.
+    Die Startzustands-Spalten im input_csv (DEMO_INPUT_INITIAL_STATE_COLUMNS) bekommen den Profilwert der Startstunde."""
+    out_reader = csv.DictReader(io.StringIO(output_csv))
+    out_rows = list(out_reader)
+    in_reader = csv.DictReader(io.StringIO(input_csv), delimiter=";")
+    in_rows = list(in_reader)
+    if not out_rows or not in_rows:
+        return input_csv, output_csv
+    indices = [_demo_profile_index(hour_offset + k, len(out_rows)) for k in range(len(out_rows))]
+    new_out = [out_rows[i] for i in indices]
+    start_row = new_out[0]
+    new_in = []
+    for k in range(len(in_rows)):
+        row = dict(in_rows[min(_demo_profile_index(hour_offset + k, len(out_rows)), len(in_rows) - 1)])
+        for in_col, out_col in DEMO_INPUT_INITIAL_STATE_COLUMNS.items():
+            if in_col in row and start_row.get(out_col) not in (None, ""):
+                row[in_col] = start_row[out_col]
+        new_in.append(row)
+    in_buf = io.StringIO()
+    in_writer = csv.DictWriter(in_buf, fieldnames=list(in_reader.fieldnames), delimiter=";", lineterminator="\n")
+    in_writer.writeheader()
+    in_writer.writerows(new_in)
+    out_buf = io.StringIO()
+    out_writer = csv.DictWriter(out_buf, fieldnames=list(out_reader.fieldnames), lineterminator="\n")
+    out_writer.writeheader()
+    out_writer.writerows(new_out)
+    return in_buf.getvalue(), out_buf.getvalue()
+
+
+def _backfill_demo_stitched_forecast():
+    """Demo-Modus: schreibt die zusammengesetzte Prognose (STITCHED_FORECAST_PATH) fuer alle Stunden von 0 Uhr bis
+    zur laufenden Stunde aus dem Demo-Profil - dadurch hat die Prognose-Linie auch fuer Stunden, in denen das Addon
+    nicht lief, einen Wert (keine Luecke), und alte, noch "ab jetzt" verankerte Demo-Werte werden ersetzt. Die
+    Stunden danach schreibt ohnehin _record_stitched_forecast_run aus dem gecachten (verschobenen) Demo-Lauf."""
+    rows = _demo_profile_rows()
+    if not rows:
+        return
+    midnight_local = _demo_midnight_local()
+    current_hour_local = _hour_floor(_local_now())
+    with _stitched_forecast_lock:
+        data = _read_stitched_forecast()
+        hours = data["hours"]
+        hour = midnight_local
+        while hour <= current_hour_local:
+            row = rows[_demo_profile_index(_demo_hours_since_midnight(hour), len(rows))]
+            hours[hour.astimezone(timezone.utc).isoformat()] = {
+                c: (_safe_float(row.get(c)) if row.get(c) not in (None, "") else None) for c in STITCHED_FORECAST_COLUMNS}
+            hour += timedelta(hours=1)
+        _write_stitched_forecast(data.get("latestRunMs"), hours)
+
+
 def _load_demo_dashboard_data():
     """Demo-Pendant zu einer echten shyft-power-Antwort (input_csv/output_csv/creation_date) - aus
     zwei statischen CSV-Dateien (DEMO_INPUT_CSV_PATH/DEMO_OUTPUT_CSV_PATH), damit Dashboard-Charts
-    auch im Demo-Modus etwas zeigen. creation_date wird bei jedem Aufruf auf die aktuelle volle
-    Stunde gesetzt, damit die (immer gleichen) Beispieldaten stets "aktuell" wirken, statt nach ein
-    paar Stunden aus dem abgedeckten Zeitraum zu laufen. Temperatur/PV/Strompreis werden zusaetzlich
-    live ueberlagert (siehe _overlay_live_demo_series). None, wenn die Demo-Dateien (noch) nicht
-    vorhanden sind."""
+    auch im Demo-Modus etwas zeigen. creation_date ist die aktuelle volle Stunde, der Lauf wird dazu
+    passend verschoben (siehe Demo-Profil oben: fest ab 0 Uhr heute verankert). Temperatur/PV/Strompreis
+    werden zusaetzlich live ueberlagert (siehe _overlay_live_demo_series). None, wenn die Demo-Dateien
+    (noch) nicht vorhanden sind."""
     try:
-        with open(DEMO_INPUT_CSV_PATH, "r", encoding="utf-8") as f:
-            input_csv = f.read()
-        with open(DEMO_OUTPUT_CSV_PATH, "r", encoding="utf-8") as f:
-            output_csv = f.read()
+        input_csv = _read_demo_csv(DEMO_INPUT_CSV_PATH)
+        output_csv = _read_demo_csv(DEMO_OUTPUT_CSV_PATH)
     except FileNotFoundError:
         return None
     now_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    input_csv, output_csv = _shift_demo_run(input_csv, output_csv, _demo_hours_since_midnight(now_hour))
     # Ohne (aktuellen) Wetter-Cache erst einmal live holen, damit schon der erste Demo-Render zur
     # Jahreszeit passt - best effort, blockiert den Sync nicht bei Netzproblemen.
     try:
@@ -11656,6 +11852,7 @@ def sync_dashboard_chart_data():
         if demo_data is None:
             return
         _write_dashboard_cache(demo_data["input_csv"], demo_data["output_csv"], demo_data["creation_date"])
+        _backfill_demo_stitched_forecast()
         return
     user_id = extract_shyft_user_id(shyft_adapter.bubble_token)
     if not user_id:

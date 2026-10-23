@@ -2407,7 +2407,9 @@ function isElectricityConfigComplete() {
     else if (mode === 'ht_nt') tariffOk = has('electricityHtCent') && has('electricityNtCent');
     else if (mode === 'dynamic') tariffOk = has('electricityDynamicSurchargeCent');
     else if (mode === 'dynamic_variable') tariffOk = has('electricityNetzentgeltHtCent') && has('electricityNetzentgeltNtCent') && has('electricityNetzentgeltStandardCent');
-    const sellOk = configData['electricitySellMode'] === 'direct_marketing' ? has('electricityDirectMarketingCostCent') : has('electricitySellCent');
+    const sellMode = configData['electricitySellMode'];
+    const sellOk = sellMode === 'none' ? true
+        : sellMode === 'direct_marketing' ? has('electricityDirectMarketingCostCent') : has('electricitySellCent');
     return tariffOk && sellOk;
 }
 
@@ -2537,7 +2539,7 @@ function buildElectricityTariffControl() {
         // step: '1' statt '0.01' - die Pfeile am Zahlenfeld sollen um ganze Cent aendern, nicht um
         // Hundertstel-Cent (Nutzer-Vorgabe). Freie Eingabe (Tippen) bleibt davon unberuehrt, nur die
         // Schrittweite der Spinner-Pfeile aendert sich.
-        return buildConfigNumberField({label, tooltip, id, configKey, placeholder, step: '1', min: '0', unit: 'ct/kWh'});
+        return buildConfigNumberField({label, tooltip, id, configKey, placeholder, step: '1', min: '0', unit: 'ct/kWh', required: true});
     }
 
     // Pruefzeilen je Tarifstufe (nur im Modus 'dynamic_variable' belegt, siehe renderPanels). Jede Eingabe/
@@ -4101,7 +4103,9 @@ function isUnconfirmedDefault(configKey, defaultValue) {
     return v !== undefined && v !== null && String(v) === String(defaultValue);
 }
 
-function buildConfigNumberField({label, tooltip, id, configKey, placeholder, step = '0.1', defaultValue = null, min = '0', max = null, unit = ''}) {
+// required: Pflichtfeld - im Demomodus (siehe isFullyDemoMode) rot umrandet (.configFieldUnconfirmed), solange es leer ist; die
+// Markierung verschwindet, sobald etwas eingetippt ist (blosses Hineinklicken genuegt hier nicht, anders als bei isUnconfirmedDefault).
+function buildConfigNumberField({label, tooltip, id, configKey, placeholder, step = '0.1', defaultValue = null, min = '0', max = null, unit = '', required = false}) {
     const wrapper = document.createElement('div');
     const table = document.createElement('table');
     const tbody = document.createElement('tbody');
@@ -4133,6 +4137,13 @@ function buildConfigNumberField({label, tooltip, id, configKey, placeholder, ste
         input.classList.remove('configFieldUnconfirmed');
         autoSave();
     });
+    if (required) {
+        // Nach den uebrigen Listenern registriert - die entfernen die Markierung schon beim Fokus/change, hier wird sie fuer ein
+        // weiterhin leeres Pflichtfeld wieder gesetzt.
+        const markIfMissing = () => input.classList.toggle('configFieldUnconfirmed', isFullyDemoMode() && input.value.trim() === '');
+        for (const eventName of ['focus', 'input', 'change']) input.addEventListener(eventName, markIfMissing);
+        markIfMissing();
+    }
     if (unit) {
         // Einheit als eigenes Suffix-Element rechts neben dem Eingabefeld (statt Teil des Werts -
         // <input type="number"> kann selbst kein "80 %" als Wert halten), z.B. "80" [Feld] "%".
@@ -4493,11 +4504,12 @@ function buildOptimizationPeriodsField() {
 }
 
 // Einspeisung: Radiobuttons "Einspeisevergütung (brutto)" (fester Satz, bisheriges Feld electricitySellCent - Bestandskunden bleiben unverändert dabei)
-// oder "Direktvermarktung (Börsenstrompreis)" (Börsenpreis minus Kostenabzug des Direktvermarkters, siehe compute_price_sell_array in app.py).
+// oder "Direktvermarktung (Börsenstrompreis)" (Börsenpreis minus Kostenabzug des Direktvermarkters, siehe compute_price_sell_array in app.py)
+// oder "Keine Einspeisung" (kein Wechselrichter/Nulleinspeisung, p_sell = 0 fuer den Optimierer, siehe sync_site_data).
 // electricitySellMode fehlt bei Bestandskunden = Einspeisevergütung; es wird bewusst nicht vorab in configData geschrieben.
 function buildElectricitySellControl() {
     const wrap = document.createElement('div');
-    const current = configData['electricitySellMode'] === 'direct_marketing' ? 'direct_marketing' : 'feed_in_tariff';
+    const current = ['direct_marketing', 'none'].includes(configData['electricitySellMode']) ? configData['electricitySellMode'] : 'feed_in_tariff';
 
     const radioGroup = document.createElement('div');
     radioGroup.className = 'electricityRadioGroup';
@@ -4516,17 +4528,23 @@ function buildElectricitySellControl() {
                 step: '0.1',
                 min: '0',
                 unit: 'ct/kWh',
+                required: true,
             }));
             const note = document.createElement('p');
             note.className = 'electricityHint';
             note.textContent = 'Du erhältst für deine eingespeisten kWh Strom den aktuellen Börsenstrompreis, abzüglich dieser Kosten des Direktvermarkters.';
+            panel.appendChild(note);
+        } else if (mode === 'none') {
+            const note = document.createElement('p');
+            note.className = 'electricityHint';
+            note.textContent = 'Für Anlagen ohne Wechselrichter oder mit Nulleinspeisung: Shyft rechnet für eingespeisten Strom mit 0 ct/kWh.';
             panel.appendChild(note);
         } else {
             panel.appendChild(buildElectricityPriceSellField());
         }
     }
 
-    for (const [value, label] of [['feed_in_tariff', 'Einspeisevergütung (brutto)'], ['direct_marketing', 'Direktvermarktung (Börsenstrompreis)']]) {
+    for (const [value, label] of [['feed_in_tariff', 'Einspeisevergütung (brutto)'], ['direct_marketing', 'Direktvermarktung (Börsenstrompreis)'], ['none', 'Keine Einspeisung']]) {
         const option = document.createElement('label');
         option.className = 'electricityRadioOption';
         const input = document.createElement('input');
@@ -4561,6 +4579,7 @@ function buildElectricityPriceSellField() {
         step: '1',
         min: '0',
         unit: 'ct/kWh',
+        required: true,
     });
 }
 
