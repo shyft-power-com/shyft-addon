@@ -5287,7 +5287,7 @@ def _read_current_price_info(config=None):
 
 
 # Sicherheitsmarge auf den guenstigsten noch bevorstehenden Strompreis - siehe compute_wb_p_min.
-WB_P_MIN_MARGIN_EUR = 0.02
+WB_P_MIN_MARGIN_EUR = 0.03
 # Ab dieser Summe (kWh PRO TAG) aus PV_GR + PV_EV gilt der Optimierungszeitraum der letzten output.csv als PV-Ueberschuss-Fall und p_min wird
 # auf Basis von p_sell statt p_buy gerechnet. PV_GR (PV -> Netz) und PV_EV (PV -> Auto) sind beide >= 0 und beschreiben die ueber den
 # Sofortbedarf hinaus verfuegbare PV-Energie. Die Schwelle wird auf den tatsaechlichen Optimierungszeitraum hochgerechnet (kWh/Tag / 24 je Stunde

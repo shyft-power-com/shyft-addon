@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.333
+
+* **Auto laden: Preisgrenze `p_min` von +2 auf +3 Cent.** Die Preisgrenze, bis zu der der Optimierer das Auto lädt (`p_min`), liegt jetzt 3 Cent statt 2 Cent über dem niedrigsten kommenden Strompreis (`WB_P_MIN_MARGIN_EUR`). Bei +2 Cent war der Gewinn je kWh für den Optimierer so klein, dass er in der Rechengenauigkeit unterging und das Auto in sehr günstigen Nächten gar nicht lud. In Testrechnungen mit dem Optimierer lädt der Wagen ab +3 Cent in den günstigsten Stunden.
+
 ## 0.0.45.332
 
 * **Test-Add-on: automatisch angelegtes Konto in der Bubble-Testversion.** Ein vom `test`-Branch gebautes Add-on legt beim ersten echten Gerät (Wechsel aus dem Demomodus) das shyft-power-Konto jetzt in der Bubble-Testversion (`version-test`) an statt in PROD und speichert den Zugangsschlüssel mit dem Präfix `test_`. Dadurch verbindet sich das Test-Add-on auch danach mit der Testversion. Ein Add-on vom `main`-Branch legt das Konto wie bisher in PROD an.
