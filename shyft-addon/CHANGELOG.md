@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.335
+
+* **Steuerungs-Schalter während einer laufenden Aktion umlegen: Start bzw. Stopp wird nachgeholt.** Wird die Steuerung eines Aktionstyps aktiviert, während eine Aktion läuft, sendet das Add-on den Startbefehl sofort nachträglich ans Gerät. Bisher passierte das nicht, wenn die Aktion deaktiviert gestartet und damit nur simuliert worden war. Beim Deaktivieren geht der Stoppbefehl sofort raus; die restliche Zeit wird nur simuliert. Mehrfaches Umlegen funktioniert in beide Richtungen, und das reguläre Ende zur Endzeit greift weiterhin. Schlägt ein nachgeholter Start oder Stopp fehl, wiederholt ihn jeder Poll, bis er gelingt.
+* **Log der Aktion.** Jeder dieser Schritte steht im Log der Aktion, ebenso ein Hinweis, wenn eine Aktion bei ausgeschalteter Steuerung nur simuliert gestartet wurde.
+
 ## 0.0.45.334
 
 * **Deaktivierte Steuerung im Dashboard sichtbar.** Ist auf der Gerätesteuerung die Steuerung eines Aktionstyps ausgeschaltet, trägt der zugehörige Chart-Titel ein Label „deaktiviert“: Warmwasser, Raumtemperatur (Heizung), Ladestand Heimspeicher, Ladestand Auto und Sonstiger Verbraucher. Beim Heimspeicher mit drei Aktionstypen heißt es „teilweise deaktiviert“, wenn nur einige aus sind. Der Tooltip nennt die betroffenen Aktionstypen.

@@ -8688,6 +8688,8 @@ def handle_shyft_action_start(action, actions_enabled, config):
         _note_action_outcome(label, "gestartet")  # deaktiviert = kein Ausfuehrungsfehler, evtl. alten Eintrag freigeben
         action["Execution Status"] = "no, deactivated"
         action.pop("Error Message", None)
+        # An der Aktion sichtbar machen, warum am Geraet nichts passiert (sonst nur im Add-on-Log)
+        _append_action_log(action, "Steuerung deaktiviert - nur simuliert, kein Befehl ans Gerät gesendet.")
         _update_computed_action(action)
         notify_action_event(config, action, "gestartet (nur simuliert)")
         return
@@ -11033,6 +11035,17 @@ def _process_shyft_actions_unlocked():
             if action.get("Execution Status") != "no, error":
                 started_ids.add(action_id)
 
+    # Laufende Aktionen mit dem Steuerungs-Schalter abgleichen (Start/Stopp nachholen bzw. fehlgeschlagene
+    # Nachhol-Versuche wiederholen, siehe reconcile_running_actions_with_toggles).
+    config["startedShyftActionIds"] = sorted(started_ids)
+    config["endedShyftActionIds"] = sorted(ended_ids)
+    try:
+        reconcile_running_actions_with_toggles(config)
+    except Exception as e:
+        print("[Shyft] Abgleich laufender Aktionen mit den Steuerungs-Schaltern fehlgeschlagen:", repr(e))
+    started_ids = set(config.get("startedShyftActionIds", []))
+    ended_ids = set(config.get("endedShyftActionIds", []))
+
     # only keep ids that could still turn up in a future poll, so these don't grow forever
     config["startedShyftActionIds"] = sorted(started_ids & seen_ids)
     config["endedShyftActionIds"] = sorted(ended_ids & seen_ids)
@@ -11050,16 +11063,28 @@ def _process_shyft_actions_unlocked():
 def apply_action_type_toggle_changes(old_map, new_map, config):
     """Called from writeConfig when the actionTypeEnabled toggles changed. A currently running
     action of an affected Aktionstyp must be stopped/started right away instead of waiting for
-    the next scheduled poll (up to 15 min later).
+    the next scheduled poll (up to 15 min later) - see reconcile_running_actions_with_toggles.
     """
     changed_keys = [k for k in new_map if new_map.get(k, True) != old_map.get(k, True)]
-    if not changed_keys:
-        return
-
     changed_names = {ACTION_TYPE_TOGGLE_KEYS[k] for k in changed_keys if k in ACTION_TYPE_TOGGLE_KEYS}
-    if not changed_names:
-        return
+    if changed_names:
+        reconcile_running_actions_with_toggles(config, changed_names, toggled_now=True)
 
+
+# Execution Status, bei denen der Startbefehl am Geraet angekommen ist und noch kein erfolgreicher Stopp folgte
+# ("yes, not finished" = ein Stoppbefehl schlug fehl, das Geraet laeuft also vermutlich noch).
+_DEVICE_RUNNING_EXEC_STATUSES = ("yes, started", "yes, not finished")
+
+
+def reconcile_running_actions_with_toggles(config, action_names=None, toggled_now=False):
+    """Gleicht LAUFENDE Aktionen mit dem Steuerungs-Schalter ihres Aktionstyps ab (beide Richtungen):
+    - Schalter an, Aktion lief bisher nur simuliert (oder wurde per Schalter gestoppt): Startbefehl nachtraeglich senden.
+    - Schalter aus, Startbefehl war am Geraet angekommen: Stoppbefehl senden.
+    Entscheidend ist der Execution Status (was am Geraet wirklich passiert ist), NICHT startedShyftActionIds - eine
+    deaktiviert gestartete Aktion steht dort schon drin (nur simuliert), sonst wuerde sie beim Aktivieren nie gestartet.
+    Laeuft sofort nach dem Umlegen (toggled_now=True, aus writeConfig) und bei jedem Poll fuer alle Aktionstypen
+    (siehe process_shyft_actions) - so wird ein fehlgeschlagener Start/Stopp spaetestens beim naechsten Poll wiederholt.
+    Jeder Schritt landet im Log der Aktion. Schreibt die Id-Listen in config; persistieren muss der Aufrufer."""
     actions = _read_computed_actions()
     now_ms = time.time() * 1000
     started_ids = set(config.get("startedShyftActionIds", []))
@@ -11067,34 +11092,74 @@ def apply_action_type_toggle_changes(old_map, new_map, config):
 
     for action in actions:
         action_name = action.get("Action Name")
-        if action_name not in changed_names:
+        if action_name not in ACTION_NAME_TO_ACTOR_KEY:
             continue
-
+        if action_names is not None and action_name not in action_names:
+            continue
         action_id = action.get("_id")
         status = (action.get("Status") or "").lower()
-        is_active = status.startswith("aktiv")
         date_start = action.get("Date Start")
         date_end = action.get("Date End")
-
-        # only a currently running action needs immediate action - anything else is handled by
-        # the normal poll (a future action just picks up the new toggle state when it starts)
-        if not (is_active and date_start is not None and date_start <= now_ms):
+        # nur gerade laufende Aktionen - eine kuenftige uebernimmt den Schalter beim normalen Start im Poll
+        if not (action_id and status.startswith("aktiv") and date_start is not None and date_start <= now_ms):
             continue
         if date_end is not None and date_end <= now_ms:
             continue
+        # noch nie im Poll gestartet (z.B. Fehlerwiederholung "no, error" laeuft): das erledigt der normale Startpfad
+        if action_id not in started_ids:
+            continue
 
-        # actions_enabled=True in both branches: this whole block only runs for a type whose
-        # toggle just changed, so the newly-on type must really start and the newly-off type
-        # must really stop - neither call is "simulate only"
-        now_enabled = is_action_type_enabled(config, action_name)
-        if now_enabled and action_id and action_id not in started_ids:
+        exec_status = action.get("Execution Status")
+        device_running = exec_status in _DEVICE_RUNNING_EXEC_STATUSES
+        enabled = is_action_type_enabled(config, action_name)
+
+        if enabled and not device_running:
+            # "no, deactivated" = lief bisher nur simuliert; "no, error" = nachtraeglicher Start schlug fehl (Wiederholung).
+            # "yes, finished" nur direkt nach dem Umlegen bzw. bei offenem Nachhol-Start - im Poll koennte das auch ein
+            # regulaer vorzeitig beendeter Lauf sein (z.B. Auto voll), der nicht neu gestartet werden darf.
+            if exec_status == "yes, finished" and not (toggled_now or action.get("_toggleStartPending")):
+                continue
+            if exec_status not in ("no, deactivated", "no, error", "yes, finished"):
+                continue
+            if exec_status != "no, error":  # Wiederholungen nicht jedes Mal erneut ins Log schreiben
+                _append_action_log(action, "Steuerung aktiviert - Startbefehl wird nachträglich ans Gerät gesendet.")
+            ended_ids.discard(action_id)
             handle_shyft_action_start(action, True, config)
-            if action.get("Execution Status") != "no, error":
-                started_ids.add(action_id)
-        elif not now_enabled and action_id and action_id not in ended_ids:
+            if action.get("Execution Status") == "no, error":
+                if exec_status != "no, error":
+                    _append_action_log(action, "Nachträglicher Start fehlgeschlagen - neuer Versuch beim nächsten Poll.")
+                action["_toggleStartPending"] = True
+            else:
+                if exec_status == "no, error":
+                    _append_action_log(action, "Nachträglicher Start jetzt gelungen.")
+                action.pop("_toggleStartPending", None)
+            _update_computed_action(action)
+        elif enabled and device_running and exec_status == "yes, not finished" and toggled_now:
+            # Stopp nach dem Deaktivieren war fehlgeschlagen, jetzt wieder aktiviert: das Geraet laeuft noch - einfach weiterlaufen lassen.
+            action["Execution Status"] = "yes, started"
+            action.pop("Error Message", None)
+            ended_ids.discard(action_id)
+            _append_action_log(action, "Steuerung wieder aktiviert - Aktion läuft am Gerät weiter.")
+            _update_computed_action(action)
+        elif not enabled and device_running:
+            if exec_status == "yes, started":  # Wiederholungen nicht jedes Mal erneut ins Log schreiben
+                _append_action_log(action, "Steuerung deaktiviert - Stoppbefehl wird ans Gerät gesendet.")
             handle_shyft_action_end(action, True, config)
-            if action.get("Execution Status") != "yes, not finished":
+            if action.get("Execution Status") == "yes, not finished":
+                ended_ids.discard(action_id)
+                if exec_status == "yes, started":
+                    _append_action_log(action, "Stoppbefehl nach dem Deaktivieren fehlgeschlagen - neuer Versuch beim nächsten Poll.")
+            else:
                 ended_ids.add(action_id)
+                _append_action_log(action, "Am Gerät gestoppt, die restliche Zeit wird nur simuliert.")
+            _update_computed_action(action)
+        elif not enabled and toggled_now and exec_status == "no, error":
+            # Start schlug fehl und wird nicht mehr gebraucht: kein Fehler mehr, nur noch simuliert
+            action["Execution Status"] = "no, deactivated"
+            action.pop("Error Message", None)
+            action.pop("_toggleStartPending", None)
+            _append_action_log(action, "Steuerung deaktiviert - Aktion wird nur noch simuliert.")
+            _update_computed_action(action)
 
     config["startedShyftActionIds"] = sorted(started_ids)
     config["endedShyftActionIds"] = sorted(ended_ids)
