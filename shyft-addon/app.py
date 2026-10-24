@@ -615,6 +615,56 @@ def readAnalysisDayActions():
         return jsonify({"status": "error", "message": str(e)})
 
 
+
+# Unter dieser Prognose (kW bzw. kWh je Stunde) ist eine prozentuale Abweichung nicht aussagekraeftig (Daemmerung, Nacht:
+# 0,01 kW Prognose gegen 0,05 kW Ist waeren +400 %) - dort zeigt der Analyse-Tab nur die absolute Abweichung.
+PV_ACCURACY_MIN_FORECAST_FOR_PERCENT_KWH = 0.05
+# Stunden ohne nennenswerte Erzeugung UND Prognose (Nacht) nicht in der Stundenliste zeigen.
+PV_ACCURACY_MIN_SHOWN_KWH = 0.005
+
+
+@app.route("/analysis/pv-forecast", methods=["GET"])
+def readAnalysisPvForecast():
+    """PV-Prognose vs. Ist fuer den Analyse-Tab (siehe record_pv_forecast_accuracy), je Kalendertag (lokale Zeit) mit
+    stuendlicher Aufschluesselung, neuester Tag zuerst. Abweichung = Ist - Prognose (positiv: mehr erzeugt als vorhergesagt),
+    in % bezogen auf die Prognose. Die Tagessumme addiert die stuendlichen Abweichungen MIT Vorzeichen (Nutzer-Vorgabe: zu
+    viel und zu wenig gleichen sich aus) - das ist zugleich Ist-Summe minus Prognose-Summe. Query-Parameter: days (Default 31)."""
+    days = max(1, min(366, request.args.get("days", default=31, type=int)))
+    try:
+        record_pv_forecast_accuracy()  # gerade abgeschlossene Stunden sofort mitnehmen, nicht erst beim naechsten Stunden-Job
+    except Exception as e:
+        print("[Shyft] Analyse: PV-Prognose-Aufzeichnung fehlgeschlagen:", repr(e))
+    try:
+        tz = get_ha_timezone()
+        start_local = _hour_floor(_local_now().replace(hour=0)) - timedelta(days=days - 1)
+        rows = energy_archive.query_pv_hours(energy_archive.hour_key(start_local))
+        by_day = {}
+        for row in rows:
+            forecast, actual = row.get("forecast_kw"), row.get("actual_kw")
+            if forecast is None or actual is None:
+                continue
+            hour_local = datetime.fromisoformat(row["hour_start_utc"]).replace(tzinfo=timezone.utc).astimezone(tz)
+            day = by_day.setdefault(hour_local.date().isoformat(), {"forecast_kwh": 0.0, "actual_kwh": 0.0, "hours": []})
+            day["forecast_kwh"] += forecast
+            day["actual_kwh"] += actual
+            if forecast >= PV_ACCURACY_MIN_SHOWN_KWH or actual >= PV_ACCURACY_MIN_SHOWN_KWH:
+                day["hours"].append(_pv_accuracy_entry(forecast, actual, {"hour": hour_local.strftime("%H:00")}))
+        result = []
+        for date_str in sorted(by_day, reverse=True):
+            day = by_day[date_str]
+            result.append(_pv_accuracy_entry(day["forecast_kwh"], day["actual_kwh"], {"date": date_str, "hours": day["hours"]}))
+        return jsonify({"status": "success", "days": result})
+    except Exception as e:
+        print("[Shyft] Analyse: PV-Prognose-Vergleich konnte nicht geladen werden:", repr(e))
+        return jsonify({"status": "error", "message": str(e)})
+
+
+def _pv_accuracy_entry(forecast_kwh, actual_kwh, extra):
+    error_kwh = actual_kwh - forecast_kwh
+    error_pct = error_kwh / forecast_kwh * 100 if forecast_kwh >= PV_ACCURACY_MIN_FORECAST_FOR_PERCENT_KWH else None
+    return {**extra, "forecast_kwh": round(forecast_kwh, 3), "actual_kwh": round(actual_kwh, 3),
+            "error_kwh": round(error_kwh, 3), "error_pct": round(error_pct, 1) if error_pct is not None else None}
+
 def _persist_shyft_access_key(new_access_key):
     """Writes shyft_access_key into this addon's own Supervisor-managed options
     (POST /addons/self/options) so it survives restarts and shows correctly in HA's Configuration
@@ -11802,6 +11852,99 @@ def finalize_completed_hour_periodically():
         energy_archive.finalize_hour(energy_archive.hour_key(hour_start), hour_end, import_kwh, export_kwh, usage_kwh)
     except Exception as e:
         print("[Shyft] Energie-Archiv: Stundenabschluss fehlgeschlagen:", repr(e))
+    try:
+        record_pv_forecast_accuracy()
+    except Exception as e:
+        print("[Shyft] PV-Prognose-Aufzeichnung fehlgeschlagen:", repr(e))
+
+
+# PV-Prognose vs. Ist (Analyse-Tab): der stuendliche Job holt die letzten PV_ACCURACY_LOOKBACK_HOURS nach (deckt Neustarts
+# und verpasste Laeufe ab), einmal nach dem Start werden PV_ACCURACY_BACKFILL_DAYS Tage aus dem PV-Sync-Protokoll nachgetragen.
+PV_ACCURACY_LOOKBACK_HOURS = 48
+PV_ACCURACY_BACKFILL_DAYS = 10
+
+
+def _pv_forecast_by_hour_key():
+    """hour_key (UTC, siehe energy_archive.hour_key) -> (Prognose in kW, Quelle) fuer jede Stunde, fuer die eine Prognose
+    bekannt ist - jeweils die LETZTE vor bzw. waehrend der Stunde (wie im Tages-Snapshot, siehe
+    _maybe_freeze_pv_forecast_snapshot). Quelle 1: PV-Sync-Protokoll (pv_forecast.PV_SYNC_LOG_PATH, die gesendeten Listen
+    der letzten Syncs, reicht einige Tage zurueck); Quelle 2 und vorrangig: der Tages-Snapshot - unabhaengig von seinem
+    Datum, damit auch die letzte Stunde des Vortags nach Mitternacht (Snapshot noch nicht gewechselt) noch gefunden wird."""
+    result = {}
+    for entry in pv_forecast.read_jsonl(pv_forecast.PV_SYNC_LOG_PATH):  # aelteste zuerst - spaetere ueberschreiben
+        start_ms, sent = entry.get("start_ms"), entry.get("sent_at")
+        if start_ms is None or not sent:
+            continue
+        try:
+            sent_hour = _hour_floor(datetime.fromisoformat(sent).astimezone(timezone.utc))
+        except ValueError:
+            continue
+        start = _hour_floor(datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc))
+        for i, value in enumerate(entry.get("pv") or []):
+            hour = start + timedelta(hours=i)
+            if hour >= sent_hour and value is not None:
+                result[energy_archive.hour_key(hour)] = (float(value), "sync_log")
+    snapshot = _read_pv_forecast_snapshot() or {}
+    for label, value in zip(snapshot.get("labels", []), snapshot.get("pv_generation", [])):
+        if value is None:
+            continue
+        try:
+            result[energy_archive.hour_key(datetime.fromisoformat(label))] = (float(value), "snapshot")
+        except (ValueError, TypeError):
+            continue
+    return result
+
+
+def record_pv_forecast_accuracy(lookback_hours=PV_ACCURACY_LOOKBACK_HOURS):
+    """Speichert fuer jede abgeschlossene Stunde der letzten lookback_hours, die noch fehlt, Prognose und Ist der PV-Erzeugung
+    (energy_archive.record_pv_hour). Ist = Mittel der zeitgewichteten 20-Minuten-Werte des PV-Sensors in dieser Stunde, wie im
+    Dashboard-Chart (siehe readPvForecastVsActual); eine Stunde ohne Messwerte nach dem ersten Messwert im Zeitraum zaehlt
+    als 0 (schlafender Wechselrichter meldet nachts nichts). Stunden ohne bekannte Prognose oder vor dem ersten Messwert
+    (z.B. aelter als die Home-Assistant-Historie) werden nicht gespeichert. Gibt die Zahl gespeicherter Stunden zurueck."""
+    if is_demo_mode():
+        return 0
+    entity_id = _read_current_config().get("sensorMappings", {}).get("photovoltaic_powerflow_pv", "")
+    if not entity_id:
+        return 0
+    now_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    start = now_hour - timedelta(hours=lookback_hours)
+    done = energy_archive.pv_hours_recorded(energy_archive.hour_key(start))
+    forecasts = _pv_forecast_by_hour_key()
+    todo = [h for h in (start + timedelta(hours=i) for i in range(lookback_hours))
+            if energy_archive.hour_key(h) not in done and energy_archive.hour_key(h) in forecasts]
+    if not todo:
+        return 0
+    sums, counts, first_hour = {}, {}, None
+    for event in homeassistant_adapter.load_power_history(entity_id, todo[0], now_hour):
+        try:
+            value = float(event.state)
+        except (ValueError, TypeError):
+            continue
+        hour = _hour_floor(event.last_changed.astimezone(timezone.utc))
+        sums[hour] = sums.get(hour, 0.0) + value
+        counts[hour] = counts.get(hour, 0) + 1
+        first_hour = hour if first_hour is None or hour < first_hour else first_hour
+    if first_hour is None:
+        return 0
+    recorded = 0
+    for hour in todo:
+        if hour < first_hour or hour >= now_hour:
+            continue
+        actual = sums[hour] / counts[hour] if hour in counts else 0.0
+        forecast, source = forecasts[energy_archive.hour_key(hour)]
+        energy_archive.record_pv_hour(energy_archive.hour_key(hour), round(forecast, 4), round(max(0.0, actual), 4), source)
+        recorded += 1
+    return recorded
+
+
+def backfill_pv_forecast_accuracy():
+    "Einmalig kurz nach dem Start: die letzten PV_ACCURACY_BACKFILL_DAYS Tage nachtragen, soweit Prognose (Sync-Protokoll) und Ist (HA-Historie) noch vorliegen."
+    try:
+        recorded = record_pv_forecast_accuracy(PV_ACCURACY_BACKFILL_DAYS * 24)
+        if recorded:
+            print(f"[Shyft] PV-Prognose vs. Ist: {recorded} Stunden nachgetragen.")
+    except Exception as e:
+        print("[Shyft] PV-Prognose vs. Ist: Nachtragen fehlgeschlagen:", repr(e))
 
 
 BASE_CASE_RUNNING_STATE_PATH = "/data/base_case_running_state.json"
@@ -12712,6 +12855,7 @@ scheduler.add_job(monitor_ev_charging_periodically, 'interval', seconds=EV_CHARG
 # abgelaufenen Stunde schon abgegeben hat, bevor sie hier abgeschlossen wird (siehe
 # finalize_completed_hour_periodically/energy_archive.finalize_hour).
 scheduler.add_job(finalize_completed_hour_periodically, 'cron', minute="3")
+scheduler.add_job(backfill_pv_forecast_accuracy, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=150))
 scheduler.add_job(refresh_input_csv_health_if_problem_active, 'interval', minutes=5)
 scheduler.add_job(update_base_load_periodically, 'cron', minute="7", next_run_time=datetime.now(timezone.utc) + timedelta(seconds=120))
 scheduler.add_job(backfill_household_usage_periodically, 'interval', minutes=30, next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90))

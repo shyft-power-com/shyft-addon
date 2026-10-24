@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.337
+
+* **Analyse: PV-Prognose vs. Ist.** Neuer Bereich im Analyse-Tab mit den letzten 31 Tagen: je Tag Prognose, tatsächliche PV-Erzeugung und Abweichung (Ist minus Prognose) in kWh und in Prozent der Prognose. Ein Tipp auf den Tag klappt die Stunden auf. Die Tagesabweichung addiert die stündlichen Abweichungen mit Vorzeichen, zu viel und zu wenig gleichen sich also aus. Stunden ohne Erzeugung und Prognose (Nacht) sind ausgeblendet; bei sehr kleiner Prognose (unter 0,05 kWh) steht statt einer Prozentangabe „–“.
+* **Aufzeichnung.** Prognose ist die letzte Vorhersage für die jeweilige Stunde (aus dem Tages-Snapshot), Ist das Stundenmittel des PV-Sensors wie im Dashboard. Das Add-on speichert beides stündlich im Energie-Archiv und holt verpasste Stunden der letzten 48 Stunden nach. Nach dem Start trägt es einmalig bis zu 10 Tage aus dem PV-Sync-Protokoll und der Home-Assistant-Historie nach, soweit diese noch vorliegen.
+
 ## 0.0.45.336
 
 * **Mobil: Seite durch Herunterziehen aktualisieren.** Ganz oben auf der Seite nach unten ziehen, bis der Kreis-Pfeil grün wird, dann loslassen. Dashboard, Gerätesteuerung und Analyse laden ihre Daten neu; der Pfeil dreht sich, bis das Laden fertig ist. Auf der Konfigurationsseite wird die ganze Seite neu geladen (das gerade bearbeitete Feld wird vorher noch gespeichert). Wischen und Zoomen in den Charts bleibt unberührt.

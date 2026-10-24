@@ -101,6 +101,18 @@ def _ensure_schema(conn):
     # vorbei ist und die naechste Momentaufnahme unter einem neuen Datum landet. Dadurch haelt der
     # letzte Aufruf vor Mitternacht automatisch den finalen Tageswert fest, ohne eigene
     # Tageswechsel-Erkennung.
+    # PV-Prognose vs. Ist je abgeschlossener Stunde (Analyse-Tab, siehe app.record_pv_forecast_accuracy): forecast_kw = die
+    # letzte PV-Prognose vor Eintritt der Stunde, actual_kw = mittlere gemessene PV-Leistung der Stunde - beides in kW, ueber
+    # eine volle Stunde also zugleich kWh. forecast_source: 'snapshot' (Tages-Snapshot) bzw. 'sync_log' (nachgetragen).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pv_hourly (
+            hour_start_utc TEXT PRIMARY KEY,
+            forecast_kw REAL,
+            actual_kw REAL,
+            forecast_source TEXT,
+            recorded_at TEXT NOT NULL
+        )
+    """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS household_savings_daily (
             date TEXT PRIMARY KEY,
@@ -110,6 +122,42 @@ def _ensure_schema(conn):
             updated_at TEXT NOT NULL
         )
     """)
+
+
+
+def pv_hours_recorded(start_iso):
+    "hour_start_utc-Schluessel (siehe hour_key) aller PV-Stunden ab start_iso, fuer die schon Prognose UND Ist gespeichert sind."
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        rows = conn.execute("SELECT hour_start_utc FROM pv_hourly WHERE hour_start_utc >= ? AND forecast_kw IS NOT NULL AND actual_kw IS NOT NULL",
+                            (start_iso,)).fetchall()
+        return {r[0] for r in rows}
+
+
+def record_pv_hour(hour_start_iso, forecast_kw, actual_kw, forecast_source, at=None):
+    "Upsert einer PV-Stunde (siehe Tabelle pv_hourly); ein schon gespeicherter Wert wird nicht mit None ueberschrieben."
+    at = (at or datetime.now(timezone.utc)).isoformat()
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        conn.execute("""
+            INSERT INTO pv_hourly (hour_start_utc, forecast_kw, actual_kw, forecast_source, recorded_at) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(hour_start_utc) DO UPDATE SET
+                forecast_kw = COALESCE(excluded.forecast_kw, pv_hourly.forecast_kw),
+                actual_kw = COALESCE(excluded.actual_kw, pv_hourly.actual_kw),
+                forecast_source = COALESCE(excluded.forecast_source, pv_hourly.forecast_source),
+                recorded_at = excluded.recorded_at
+        """, (hour_start_iso, forecast_kw, actual_kw, forecast_source, at))
+
+
+def query_pv_hours(start_iso=None):
+    "Alle PV-Stunden ab start_iso (siehe hour_key), aelteste zuerst."
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        if start_iso:
+            rows = conn.execute("SELECT * FROM pv_hourly WHERE hour_start_utc >= ? ORDER BY hour_start_utc", (start_iso,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM pv_hourly ORDER BY hour_start_utc").fetchall()
+        return [dict(r) for r in rows]
 
 
 def _accumulate_open_segment(row, at):
