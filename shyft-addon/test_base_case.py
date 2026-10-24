@@ -229,3 +229,15 @@ def test_ev_reaches_norm_at_start_of_last_hour_after_late_return():
     soc = result["SOC_EVBaseList"]
     assert soc[-1] >= 0.5 - 1e-3  # Beginn der letzten Stunde: Norm erreicht
     assert min(soc) >= -1e-9
+
+
+def test_room_temperature_end_value_is_charged_in_kwh_not_inverted():
+    # Haus startet 0.3 K ueber T_i_min und kuehlt im Base Case bis T_i_min aus (Warmstart ohne Heizstunden-Bedarf).
+    # Der Speicher-Abbau muss mit dT * C_STORE * fh_size / COP * p_buy bewertet werden (180 m2 -> ca. 87 kWh/K),
+    # nicht mit dT / (C_STORE * fh_size) - sonst bleibt der Wert ~0 und die Optimierung sieht unnoetig teuer aus.
+    result = base_case.compute_base_case(_csv(6, heating="1", fh_size=180, fh_eff=120, T_i_0=20.3, T_i_min=20,
+                                              T_i_buffer=0.3, curve_level=30, curve_slope=1.0, Temperature=0, p_buy=0.3))
+    ev = result["endValue"]
+    if ev["t_i_end"] < ev["t_i_start"] - 1e-6:
+        thermal_kwh = (ev["t_i_start"] - ev["t_i_end"]) * base_case.C_STORE * 180
+        assert ev["term_i"] >= thermal_kwh / 6.0 * 0.3 - 1e-6  # COP <= 5.5 -> mindestens thermal/5.5 el. kWh
