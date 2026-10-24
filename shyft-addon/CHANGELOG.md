@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.334
+
+* **Deaktivierte Steuerung im Dashboard sichtbar.** Ist auf der Gerätesteuerung die Steuerung eines Aktionstyps ausgeschaltet, trägt der zugehörige Chart-Titel ein Label „deaktiviert“: Warmwasser, Raumtemperatur (Heizung), Ladestand Heimspeicher, Ladestand Auto und Sonstiger Verbraucher. Beim Heimspeicher mit drei Aktionstypen heißt es „teilweise deaktiviert“, wenn nur einige aus sind. Der Tooltip nennt die betroffenen Aktionstypen.
+* **Deaktivierte Aktionen auf der Gerätesteuerung ausgegraut.** Aktionen eines ausgeschalteten Aktionstyps erscheinen ausgegraut und gestrichelt umrandet, mit dem Hinweis „(deaktiviert)“ und ohne grüne Hervorhebung, auch wenn sie gerade laufen. Bisher erkannte die Karte das nur am alten Status-Suffix von shyft-power, das seit dem Add-on-eigenen Schalter fehlt. Geplante und laufende Aktionen folgen dem aktuellen Schalter, beendete zeigen, was beim Start galt. Beim Umlegen des Schalters werden die Karten sofort aus- bzw. wieder eingegraut.
+
 ## 0.0.45.333
 
 * **Auto laden: Preisgrenze `p_min` von +2 auf +3 Cent.** Die Preisgrenze, bis zu der der Optimierer das Auto lädt (`p_min`), liegt jetzt 3 Cent statt 2 Cent über dem niedrigsten kommenden Strompreis (`WB_P_MIN_MARGIN_EUR`). Bei +2 Cent war der Gewinn je kWh für den Optimierer so klein, dass er in der Rechengenauigkeit unterging und das Auto in sehr günstigen Nächten gar nicht lud. In Testrechnungen mit dem Optimierer lädt der Wagen ab +3 Cent in den günstigsten Stunden.

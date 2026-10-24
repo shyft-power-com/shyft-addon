@@ -2196,6 +2196,59 @@ function isActionToggleOff(toggleKey) {
     return (configData['actionTypeEnabled'] || {})[toggleKey] === false;
 }
 
+// Spiegel von ACTION_TYPE_TOGGLE_KEYS in app.py: shyft-power "Action Name" -> Steuerungs-Schalter (actionTypeEnabled-Key).
+const ACTION_NAME_TO_TOGGLE_KEY = {
+    'PV: Einspeisung begrenzen': 'pv_feed_in_limit',
+    'Verbrauch begrenzen (§14a)': 'consumption_limit_14a',
+    'Batterie-Laden verschieben (PV-Überschuss)': 'battery_charge_shift_pv_surplus',
+    'Batterie-Entladen verschieben': 'battery_discharge_shift',
+    'Batterie netzladen': 'battery_grid_charge',
+    'Warmwasser': 'hot_water',
+    'Heizung Soll-Temperatur': 'heating_target_temp',
+    'Auto laden': 'car_charge_start',
+    'Verbraucher an': 'consumer_on',
+};
+
+// Ist eine Aktion deaktiviert (wird nur simuliert)? Noch nicht beendete Aktionen folgen dem AKTUELLEN Schalter - der
+// Execution Status wird beim Anlegen gesetzt und kann veralten, wenn der Nutzer den Schalter danach umlegt. Beendete
+// Aktionen behalten, was beim Start galt (Execution Status "no, deactivated", siehe handle_shyft_action_start).
+function isShyftActionDeactivated(action) {
+    const status = (action['Status'] || '').toLowerCase();
+    if (status.includes('deaktiviert')) return true; // Altbestand: Suffix von shyft-power
+    const toggleKey = ACTION_NAME_TO_TOGGLE_KEY[action['Action Name']];
+    if (!toggleKey) return false;
+    const end = action['Date End'];
+    const ended = status.startsWith('beendet') || (end && new Date(end).getTime() <= Date.now());
+    if (!ended) return isActionToggleOff(toggleKey);
+    return (action['Execution Status'] || '').toLowerCase() === 'no, deactivated';
+}
+
+// Welche Aktionstypen ein Dashboard-Chart zeigt (Schluessel = Chart-Titel, wie an buildLineChart/buildForecastActualChart
+// uebergeben). Sind sie per Schalter aus, bekommt der Titel ein Label "deaktiviert" (bei mehreren nur teilweise: "teilweise
+// deaktiviert", der Tooltip nennt die betroffenen Aktionstypen).
+const CHART_TITLE_TO_TOGGLE_KEYS = {
+    'Warmwasser': ['hot_water'],
+    'Raumtemperatur': ['heating_target_temp'],
+    'Ladestand Heimspeicher': ['battery_grid_charge', 'battery_charge_shift_pv_surplus', 'battery_discharge_shift'],
+    'Ladestand Auto': ['car_charge_start'],
+    'Sonstiger Verbraucher': ['consumer_on'],
+};
+
+function appendChartDeactivatedBadge(titleEl, chartTitle) {
+    const keys = CHART_TITLE_TO_TOGGLE_KEYS[chartTitle];
+    if (!keys) return;
+    const off = keys.filter(isActionToggleOff);
+    if (off.length === 0) return;
+    const badge = document.createElement('span');
+    badge.className = 'dashboardChartTitleBadge deactivated hasValueTooltip';
+    const all = off.length === keys.length;
+    badge.textContent = all ? 'deaktiviert' : 'teilweise deaktiviert';
+    const names = off.map(key => (CONTROL_TOGGLE_CARDS.find(card => card.key === key) || {}).label || key);
+    attachTooltip(badge, (all && keys.length === 1 ? 'Die Steuerung ist' : `Deaktiviert: ${names.join(', ')}. Die Steuerung ist`)
+        + ' auf der Seite Gerätesteuerung ausgeschaltet - Shyft plant die Aktionen, führt sie aber nicht aus.');
+    titleEl.appendChild(badge);
+}
+
 // Ist eine sensorMappings-Zuordnung leer? Einzelfelder halten einen String, Mehrfachfelder (siehe
 // buildMultiSensorField, z.B. "Sonstiger Verbraucher") eine Liste - und eine leere Liste ist in JS truthy,
 // ein simples !mapping wuerde sie faelschlich als "gesetzt" werten.
@@ -6444,6 +6497,9 @@ function buildToggleSwitch(id, checked) {
         input.addEventListener('change', () => {
             configData['actionTypeEnabled'] = {...(configData['actionTypeEnabled'] || {}), [toggleKey]: input.checked};
             reapplyTestGates();
+            // Aktionskarten sofort aus- bzw. wieder eingrauen (siehe isShyftActionDeactivated), nicht erst beim naechsten Refresh.
+            const actionsBody = document.getElementById('shyftActionsBody');
+            if (actionsBody && lastShyftActions.length) renderShyftActions(actionsBody, lastShyftActions, lastShyftDisplayMaxDays);
         });
     }
     input.addEventListener('change', autoSave);
@@ -7315,7 +7371,7 @@ function buildShyftActionCard(action) {
     // Kalendertag). Bekommt deshalb bewusst NIE die "is-active"-Hervorhebung (Nutzer-Vorgabe:
     // dezenter darstellen, nicht wie eine echte laufende Geraete-Aktion).
     const isActive = normalizedStatus.startsWith('aktiv') && !isHouseholdSavings;
-    const isDeactivated = normalizedStatus.includes('deaktiviert');
+    const isDeactivated = !isHouseholdSavings && isShyftActionDeactivated(action);
     const baseStatus = status.replace(/\s*\(deaktiviert\)/i, '').trim();
     // "no, error" = Start nicht moeglich (nicht eingerichtet/getestet ODER Geraetefehler),
     // "yes, not finished" = Beenden fehlgeschlagen - beides rot umranden (siehe .shyftActionCard.is-error).
@@ -8663,6 +8719,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     titleEl.className = 'dashboardChartTitle';
     const parenthetical = [subtitle, unit].filter(Boolean).join(', ');
     titleEl.textContent = title + (parenthetical ? ` (${parenthetical})` : '');
+    appendChartDeactivatedBadge(titleEl, title);
     wrapper.appendChild(titleEl);
 
     // Legende (siehe chartLegendEntry): 'curves' = je Kurve ein Eintrag (Hauptkurve + optionale zweite Kurve, z.B.
@@ -9352,6 +9409,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     const titleEl = document.createElement('div');
     titleEl.className = 'dashboardChartTitle';
     titleEl.textContent = `${title} (${unit})`;
+    appendChartDeactivatedBadge(titleEl, title);
     wrapper.appendChild(titleEl);
 
     const legend = document.createElement('div');
