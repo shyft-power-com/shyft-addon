@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.336
+
+* **Mobil: Seite durch Herunterziehen aktualisieren.** Ganz oben auf der Seite nach unten ziehen, bis der Kreis-Pfeil grün wird, dann loslassen. Dashboard, Gerätesteuerung und Analyse laden ihre Daten neu; der Pfeil dreht sich, bis das Laden fertig ist. Auf der Konfigurationsseite wird die ganze Seite neu geladen (das gerade bearbeitete Feld wird vorher noch gespeichert). Wischen und Zoomen in den Charts bleibt unberührt.
+
 ## 0.0.45.335
 
 * **Steuerungs-Schalter während einer laufenden Aktion umlegen: Start bzw. Stopp wird nachgeholt.** Wird die Steuerung eines Aktionstyps aktiviert, während eine Aktion läuft, sendet das Add-on den Startbefehl sofort nachträglich ans Gerät. Bisher passierte das nicht, wenn die Aktion deaktiviert gestartet und damit nur simuliert worden war. Beim Deaktivieren geht der Stoppbefehl sofort raus; die restliche Zeit wird nur simuliert. Mehrfaches Umlegen funktioniert in beide Richtungen, und das reguläre Ende zur Endzeit greift weiterhin. Schlägt ein nachgeholter Start oder Stopp fehl, wiederholt ihn jeder Poll, bis er gelingt.

@@ -12135,12 +12135,114 @@ function setupFullscreenToggle() {
     button.hidden = false;
 }
 
+// --- Mobil: Seite durch Herunterziehen aktualisieren (Pull-to-Refresh) --------------------------------------------
+// Nur auf Touch-Geraeten und nur ganz oben auf der Seite. Aktualisiert den aktiven Tab wie refreshActiveTabNow, wartet
+// aber auf das Laden (Spinner bis fertig). Die Konfiguration hat keinen eigenen Nachlade-Pfad - dort wird die Seite neu
+// geladen (vorher das fokussierte Feld verlassen, damit dessen change-Event noch speichert, siehe autoSave).
+const PULL_REFRESH_THRESHOLD_PX = 64;
+const PULL_REFRESH_MAX_PX = 96;
+const PULL_REFRESH_TIMEOUT_MS = 20000;
+
+async function refreshActiveTabForPull() {
+    const activeButton = document.querySelector('.tabButton.active');
+    const tab = activeButton ? activeButton.dataset.tab : null;
+    if (tab === 'dashboard') return loadDashboard();
+    if (tab === 'geraetesteuerung') return loadShyftActions();
+    if (tab === 'analyse') return loadAnalyse();
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    await new Promise(resolve => setTimeout(resolve, 400));
+    window.location.reload();
+    return new Promise(() => {}); // Spinner bleibt bis zum Neuladen stehen
+}
+
+function setupPullToRefresh() {
+    if (!('ontouchstart' in window) && !(navigator.maxTouchPoints > 0)) return;
+    if (document.getElementById('pullRefreshIndicator')) return;
+    const indicator = document.createElement('div');
+    indicator.id = 'pullRefreshIndicator';
+    indicator.setAttribute('aria-hidden', 'true');
+    indicator.innerHTML = '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    document.body.appendChild(indicator);
+
+    let startX = 0, startY = null, pull = 0, tracking = false, refreshing = false;
+    const atTop = () => (window.scrollY || document.documentElement.scrollTop || 0) <= 0;
+    const render = () => {
+        const progress = Math.min(1, pull / PULL_REFRESH_THRESHOLD_PX);
+        indicator.style.transform = `translate(-50%, ${pull - 48}px) rotate(${progress * 270}deg)`;
+        indicator.style.opacity = String(Math.min(1, progress * 1.4));
+        indicator.classList.toggle('is-ready', pull >= PULL_REFRESH_THRESHOLD_PX);
+    };
+    const reset = () => {
+        tracking = false;
+        startY = null;
+        pull = 0;
+        indicator.classList.add('is-settling');
+        render();
+        setTimeout(() => indicator.classList.remove('is-settling'), 250);
+    };
+
+    window.addEventListener('touchstart', e => {
+        if (refreshing || e.touches.length !== 1 || !atTop() || e.target.closest?.('input, textarea, select, dialog')) {
+            startY = null;
+            return;
+        }
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        tracking = false;
+    }, {passive: true});
+
+    window.addEventListener('touchmove', e => {
+        if (startY === null) return;
+        // Ein Chart-Gesture (Wischen/Zoomen/Tooltip-Schieben, siehe makeToggleableChart) hat Vorrang
+        if (e.defaultPrevented || e.touches.length !== 1) { if (tracking) reset(); else startY = null; return; }
+        const dx = e.touches[0].clientX - startX;
+        const dy = e.touches[0].clientY - startY;
+        if (!tracking) {
+            if (dy > 10 && dy > Math.abs(dx) * 1.5 && atTop()) {
+                tracking = true;
+                startY = e.touches[0].clientY; // ab hier zaehlen, kein Sprung
+                indicator.classList.remove('is-settling', 'is-spinning');
+            } else if (Math.abs(dx) > 10 || dy < -4) {
+                startY = null; // horizontale Geste oder normales Scrollen nach unten
+            }
+            return;
+        }
+        e.preventDefault(); // kein Gummiband-/Browser-Refresh waehrend wir ziehen
+        const raw = Math.max(0, e.touches[0].clientY - startY);
+        pull = Math.min(PULL_REFRESH_MAX_PX, raw * 0.55);
+        render();
+    }, {passive: false});
+
+    const onEnd = async () => {
+        if (!tracking) { startY = null; return; }
+        if (pull < PULL_REFRESH_THRESHOLD_PX) { reset(); return; }
+        tracking = false;
+        startY = null;
+        refreshing = true;
+        pull = PULL_REFRESH_THRESHOLD_PX;
+        indicator.classList.add('is-settling', 'is-spinning');
+        indicator.style.transform = `translate(-50%, ${pull - 48}px)`;
+        indicator.style.opacity = '1';
+        try {
+            await Promise.race([refreshActiveTabForPull(), new Promise(resolve => setTimeout(resolve, PULL_REFRESH_TIMEOUT_MS))]);
+        } catch (err) {
+            console.log('[Shyft] Aktualisieren per Herunterziehen fehlgeschlagen:', err);
+        }
+        refreshing = false;
+        indicator.classList.remove('is-spinning');
+        reset();
+    };
+    window.addEventListener('touchend', onEnd, {passive: true});
+    window.addEventListener('touchcancel', onEnd, {passive: true});
+}
+
 // loadShyftActions waits for loadConfiguration so the action cards' brand icons (getActionIconUrl)
 // have integrationsData/currentIntegrationSelections available on the very first render
 if (document.readyState === 'complete') {
     loadConfiguration().then(loadShyftActions);
     loadDashboard();
     setupTabs();
+    setupPullToRefresh();
     syncTopBarHeightVar();
     setupFullscreenToggle();
     applyAnalyseTabVisibility();
@@ -12152,6 +12254,7 @@ if (document.readyState === 'complete') {
         loadConfiguration().then(loadShyftActions);
         loadDashboard();
         setupTabs();
+        setupPullToRefresh();
         syncTopBarHeightVar();
         setupFullscreenToggle();
         applyAnalyseTabVisibility();
