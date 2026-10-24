@@ -7132,6 +7132,7 @@ def writeConfig():
     # merge onto the existing config instead of replacing it outright, so backend-managed
     # fields the frontend doesn't know about (startedShyftActionIds, endedShyftActionIds) survive
     data = _read_current_config()
+    config_before_put = json.loads(json.dumps(data))
     _keep_valid_entity_ids(incoming, data)
     old_action_type_enabled = data.get("actionTypeEnabled", {})
     old_wallbox_mapping = data.get("wallboxConnectionStatusMapping", {})
@@ -7171,6 +7172,9 @@ def writeConfig():
             print("[Shyft] Sofort-Abgleich nach Toggle-Aenderung fehlgeschlagen:", repr(e))
 
     _write_current_config(data)
+
+    if data != config_before_put and not is_demo_mode():
+        schedule_optimization_after_config_change()
 
     # Ein neu zugeordneter/entfernter Sensor macht ein evtl. noch offenes "sensor_unavailable"- bzw.
     # "sensor_stale"-Problem fuer die alte Entity gegenstandslos - aktiv freigeben, statt auf ein
@@ -12680,6 +12684,36 @@ def sync_sensors_periodically():
         if skip_hourly_optimization_if_plan_fits():
             return
         sync_site_data()
+
+# Nach einer Aenderung der Konfiguration wird 3 Minuten gewartet (weitere Aenderungen setzen die Frist zurueck), dann einmal
+# neu optimiert - unabhaengig davon, ob der letzte Plan noch passen wuerde (skip_hourly_optimization_if_plan_fits).
+CONFIG_CHANGE_REOPTIMIZE_DELAY_SECONDS = 3 * 60
+_config_reoptimize_timer = None
+_config_reoptimize_lock = threading.Lock()
+
+
+def _run_config_change_reoptimization():
+    global _config_reoptimize_timer
+    with _config_reoptimize_lock:
+        _config_reoptimize_timer = None
+    with app.app_context():
+        try:
+            print("[Shyft] Konfiguration wurde geändert - stosse Neu-Optimierung an.")
+            sync_site_data()
+        except Exception as e:
+            print("[Shyft] Neu-Optimierung nach Konfigurationsänderung fehlgeschlagen:", repr(e))
+
+
+def schedule_optimization_after_config_change():
+    "Plant (bzw. verschiebt) die Neu-Optimierung CONFIG_CHANGE_REOPTIMIZE_DELAY_SECONDS nach der letzten Konfigurationsänderung."
+    global _config_reoptimize_timer
+    with _config_reoptimize_lock:
+        if _config_reoptimize_timer is not None:
+            _config_reoptimize_timer.cancel()
+        _config_reoptimize_timer = threading.Timer(CONFIG_CHANGE_REOPTIMIZE_DELAY_SECONDS, _run_config_change_reoptimization)
+        _config_reoptimize_timer.daemon = True
+        _config_reoptimize_timer.start()
+
 
 def sync_pv_history_periodically():
     with app.app_context():

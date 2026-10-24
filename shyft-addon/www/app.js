@@ -8085,7 +8085,7 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
     const ageMs = Date.now() - (validatedAt || einsatzplan.creation_date);
     const timeSpan = document.createElement('span');
     timeSpan.textContent = `Berechnet um ${formatShyftTime(einsatzplan.creation_date)} Uhr`;
-    if (validatedAt) timeSpan.textContent += ` (um ${formatShyftTime(validatedAt)} Uhr geprüft: passt noch)`;
+    if (validatedAt) timeSpan.textContent += ` (um ${formatShyftTime(validatedAt)} Uhr geprüft: Optimierung übersprungen, der Plan passt noch)`;
     if (ageMs >= EINSATZPLAN_STALE_ERROR_MS) {
         timeSpan.className = 'einsatzplanLegendStaleError';
         timeSpan.textContent += '!';
