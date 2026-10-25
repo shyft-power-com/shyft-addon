@@ -4462,6 +4462,13 @@ def _sonstiger_verbraucher_status(config):
     }
 
 
+def _round_target_for_device(control, target_value):
+    "Rundet den Zielwert ganzzahlig, wenn die Steuerung nur ganze Werte an das Geraet senden darf (round_to_integer)."
+    if control.get("round_to_integer") and target_value is not None:
+        return int(round(float(target_value)))
+    return target_value
+
+
 def execute_auto_managed_action(control_key, phase, target_value):
     """Executes the concrete Start/Ende-Verhalten for an AUTO_MANAGED_CONTROLS Aktionstyp - either
     "direct" (the addon writes the mapped entity itself, the original/default behavior) or
@@ -4472,6 +4479,7 @@ def execute_auto_managed_action(control_key, phase, target_value):
     config = _read_current_config()
     control = AUTO_MANAGED_CONTROLS[control_key]
     variant = resolve_control_variant(control_key, config)
+    target_value = _round_target_for_device(control, target_value)
 
     if variant == "ha_automation":
         actor_mappings = config.get("actorMappings", {})
@@ -7446,6 +7454,7 @@ def _write_and_verify_auto_managed_number(control_key, entity_id, target_value, 
     Frist, "timeout" wenn der Wert nicht rechtzeitig uebernommen wurde, "call_failed" wenn schon der Skriptaufruf
     selbst fehlschlug (detail = Ursache aus dem HA-Log) - dann wurde nichts an das Geraet gesendet."""
     control = AUTO_MANAGED_CONTROLS[control_key]
+    target_value = _round_target_for_device(control, target_value)
     test_log(f"Rufe script.{control['script_id']} mit Zielwert {target_value} auf …")
     try:
         homeassistant_adapter.call_service("script", control["script_id"], {"target_value": target_value})
@@ -7580,7 +7589,7 @@ def testHeatingTargetTempBoost():
         _record_action_test_result(control_key, False)
         return jsonify({"success": False, "message": "Aktueller Wert nicht lesbar"}), 500
 
-    boosted_value = original_value + HEATING_TARGET_TEMP_TEST_STEP_C
+    boosted_value = _round_target_for_device(AUTO_MANAGED_CONTROLS[control_key], original_value + HEATING_TARGET_TEMP_TEST_STEP_C)
     session = _current_test_session()
     with _heating_test_lock:
         if _heating_test_job["state"] == "running":
@@ -7684,7 +7693,7 @@ def testAutoManagedControl(control_key):
         delta = body.get("delta", 0)
         try:
             current_value = homeassistant_adapter.read_entity_numeric_value(entity_id)
-            new_value = current_value + delta
+            new_value = _round_target_for_device(control, current_value + delta)
             test_log(f"Entität {entity_id}: aktueller Wert {current_value}, Zielwert {new_value}")
             test_log(f"Rufe script.{control['script_id']} mit Zielwert {new_value} auf …")
             homeassistant_adapter.call_service("script", control["script_id"], {"target_value": new_value})
@@ -8429,6 +8438,9 @@ AUTO_MANAGED_CONTROLS = {
         "field_label": "Zieltemperatur",
         "field_description": "Die von Shyft berechnete Soll-Temperatur in °C.",
         "min": 0, "max": 100, "step": 0.1,
+        # An das Geraet geht nur ein ganzzahliger Sollwert (nicht jede Integration nimmt Nachkommastellen an);
+        # die Optimierung selbst arbeitet weiter mit der konfigurierten Solltemperatur inkl. Nachkommastelle.
+        "round_to_integer": True,
     },
     "pv_feed_in_limit": {
         "type": "number",

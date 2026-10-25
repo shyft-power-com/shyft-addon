@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.343
+
+* **Heizung Soll-Temperatur: an das Gerät geht ein ganzzahliger Wert.** Die Solltemperatur in der Konfiguration darf weiterhin eine Nachkommastelle haben, und der Optimierer rechnet damit. Der Sollwert, den die Aktion „Heizung Soll-Temperatur“ an die Wärmepumpe sendet (Skript und eigene HA-Automation, auch beim Test), wird jedoch auf eine ganze Zahl gerundet, da nicht jede Integration Nachkommastellen verarbeitet.
+
 ## 0.0.45.342
 
 * **Rotes „!“ neben „Sonstiger Verbraucher“ verschwindet nach bestandenem Test.** Ein früher gemeldetes Problem „Aktion konnte nicht … werden“ blieb auch nach erfolgreichem Test der Schalter-/Zahlensteuerung (Sonstiger Verbraucher, Heizung Soll-Temperatur u. a.) bestehen, sodass das „!“ in der Navigation nicht wieder zum grünen Haken wurde. Ein erfolgreicher Test gibt das Problem jetzt frei, und die Navigation wird direkt danach neu bewertet.
