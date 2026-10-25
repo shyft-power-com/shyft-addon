@@ -1029,7 +1029,7 @@ async function saveConfigurationNow() {
         "hpDhwTankSize": configData["hpDhwTankSize"] ?? 'klein (200 Liter)',
         "hpMaxPower": configData["hpMaxPower"] ?? 'mittel (6 kW)',
         "hpMaxSupplyTempC": configData["hpMaxSupplyTempC"] ?? 55,
-        "hpHeatingTargetTempMin": configData["hpHeatingTargetTempMin"] ?? '21',
+        "hpHeatingTargetTempMin": configData["hpHeatingTargetTempMin"] ?? 21,
         "hpHeatingBuffer": configData["hpHeatingBuffer"] ?? 'mittel__0.2',
         "hpHeatingCurveLevel": configData["hpHeatingCurveLevel"] ?? 0,
         "hpHeatingCurveSlope": configData["hpHeatingCurveSlope"] ?? 1.2,
@@ -4404,13 +4404,17 @@ function buildHpTypeField() {
 // sonst kann der Julia-Optimierer bei einem Rohwert an/ueber der Puffer-Obergrenze infeasible
 // werden und NaN ausgeben.
 function buildHpHeatingTargetTempMinField() {
-    return buildConfigSelectField({
+    return buildConfigNumberField({
         label: 'Gewünschte Raumtemperatur (mindestens)',
-        tooltip: 'Untergrenze für die Raumtemperatur. Die Optimierung hält die Innentemperatur immer mindestens auf diesem Wert (und höchstens den Heizungspuffer darüber).',
+        tooltip: 'Untergrenze für die Raumtemperatur, auf Zehntelgrad genau (z.B. 21,5). Die Optimierung hält die Innentemperatur immer mindestens auf diesem Wert (und höchstens den Heizungspuffer darüber).',
         id: 'hp_heating_target_temp_min',
         configKey: 'hpHeatingTargetTempMin',
-        options: [18, 19, 20, 21, 22, 23, 24].map(v => [String(v), `${v} °C`]),
-        defaultValue: '21',
+        placeholder: 'z.B. 21',
+        defaultValue: 21,
+        step: '0.1',
+        min: '15',
+        max: '30',
+        unit: '°C',
     });
 }
 

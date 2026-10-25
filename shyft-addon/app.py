@@ -8417,7 +8417,7 @@ AUTO_MANAGED_CONTROLS = {
         "script_alias": "Shyft: Heizung Soll-Temperatur",
         "field_label": "Zieltemperatur",
         "field_description": "Die von Shyft berechnete Soll-Temperatur in °C.",
-        "min": 0, "max": 100, "step": 0.5,
+        "min": 0, "max": 100, "step": 0.1,
     },
     "pv_feed_in_limit": {
         "type": "number",
@@ -9837,8 +9837,8 @@ HEIZUNG_TARGET_MAX_C = 25
 
 
 def _heizung_default_temp(config):
-    "Standard-Temperatur der Heizung (°C, ganzzahlig): die gewuenschte Raumtemperatur (hpHeatingTargetTempMin) - darauf wird nach einer Heizungs-Aktion zurueckgestellt, Aktionen mit genau diesem Sollwert gibt es nicht."
-    return round(_safe_float(config.get("hpHeatingTargetTempMin"), HEIZUNG_T_I_MIN_DEFAULT_C))
+    "Standard-Temperatur der Heizung (°C, auf Zehntelgrad): die gewuenschte Raumtemperatur (hpHeatingTargetTempMin) - darauf wird nach einer Heizungs-Aktion zurueckgestellt, Aktionen mit genau diesem Sollwert gibt es nicht."
+    return round(_safe_float(config.get("hpHeatingTargetTempMin"), HEIZUNG_T_I_MIN_DEFAULT_C), 1)
 
 
 def _end_heizung_restore_default(action, config):
@@ -9881,7 +9881,7 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
         return result
 
     t_i_min = _safe_float(config.get("hpHeatingTargetTempMin"), HEIZUNG_T_I_MIN_DEFAULT_C)
-    target_min = round(t_i_min - HEIZUNG_TARGET_MIN_OFFSET_C)
+    target_min = round(t_i_min - HEIZUNG_TARGET_MIN_OFFSET_C, 1)
     default_temp = _heizung_default_temp(config)
 
     row_count = len(output_rows)
@@ -9890,7 +9890,9 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
         is_current_hour = (i == 0)
 
         t_i_target = _safe_float(output_row.get("T_i_Target"))
-        target_value = max(target_min, min(HEIZUNG_TARGET_MAX_C, round(t_i_target)))
+        # Ganze Grad Abstand zur Standard-Temperatur (die auf Zehntelgrad stehen kann, z.B. 21,5 -> 20,5 / 22,5): so bleibt es bei
+        # wenigen, ruhigen Sollwert-Stufen, und "Standard-Temperatur" ist exakt gleich default_temp.
+        target_value = round(max(target_min, min(HEIZUNG_TARGET_MAX_C, default_temp + round(t_i_target - default_temp))), 1)
         if target_value == default_temp:
             continue  # Standard-Temperatur: keine Aktion noetig (siehe Docstring)
 
@@ -9918,7 +9920,7 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
             "Date End": date_end_ms,
             "Optimizer Run": optimizer_run_id,
             "Execution Status": "yes, planned" if is_action_type_enabled(config, HEIZUNG_ACTION_NAME) else "no, deactivated",
-            "Subtitle": f"Soll: {target_value} °C ({energy:.1f} kWh elektr.)",
+            "Subtitle": f"Soll: {format(target_value, 'g').replace('.', ',')} °C ({energy:.1f} kWh elektr.)",
         }
         result[i] = action
 
