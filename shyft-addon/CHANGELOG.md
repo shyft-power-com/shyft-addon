@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.342
+
+* **Rotes „!“ neben „Sonstiger Verbraucher“ verschwindet nach bestandenem Test.** Ein früher gemeldetes Problem „Aktion konnte nicht … werden“ blieb auch nach erfolgreichem Test der Schalter-/Zahlensteuerung (Sonstiger Verbraucher, Heizung Soll-Temperatur u. a.) bestehen, sodass das „!“ in der Navigation nicht wieder zum grünen Haken wurde. Ein erfolgreicher Test gibt das Problem jetzt frei, und die Navigation wird direkt danach neu bewertet.
+
 ## 0.0.45.341
 
 * **Sonstiger Verbraucher: Schalter-Auswahl zeigt nur noch Entitäten des gewählten Geräts.** Die Auswahl „Home-Assistant-Entität“ listete bisher alle Entitäten aus Home Assistant, unabhängig vom oben gewählten Gerät. Jetzt werden wie bei den übrigen Sensorfeldern nur die Entitäten der gewählten Geräte angeboten; bereits gewählte Entitäten bleiben sichtbar und abwählbar.

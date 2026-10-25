@@ -7624,6 +7624,13 @@ def _test_watch_switch_states(entity_ids, expected, timeout_seconds=12, interval
         test_sleep(interval_seconds)
 
 
+def _clear_control_action_problems(control_key):
+    "Ein erfolgreicher Test einer Entitaets-/Automations-Steuerung gibt ein zuvor gemeldetes 'action_failed:<Aktion>'-Problem wieder frei - sonst blieb z.B. das rote '!' neben 'Sonstiger Verbraucher' trotz bestandenem Test stehen (wie bei Warmwasser/Batterie ueber _note_action_outcome)."
+    for label, key in ACTION_NAME_TO_CONTROL_KEY.items():
+        if key == control_key:
+            _note_action_outcome(label, "getestet", None)
+
+
 @app.route("/actions/<control_key>/test", methods=["POST"])
 @_records_action_test()
 @_with_test_session
@@ -7645,6 +7652,7 @@ def testAutoManagedControl(control_key):
                 test_log(f"Löse die Automation {automation_entity_id} aus (Zielwert {delta}) …")
                 trigger_ha_automation(automation_entity_id, "start", delta)
                 test_log("Automation ausgelöst – was sie danach tut, kann Shyft nicht prüfen.", "ok")
+                _clear_control_action_problems(control_key)
                 return jsonify({"success": True, "value": delta, "confirmed": False})
             except Exception as e:
                 test_log(f"Auslösen fehlgeschlagen: {e}", "error")
@@ -7658,6 +7666,7 @@ def testAutoManagedControl(control_key):
                 test_log(f"Löse die Automation {automation_entity_id} aus (Phase: {phase}) …")
                 trigger_ha_automation(automation_entity_id, phase, None)
                 test_log("Automation ausgelöst – was sie danach tut, kann Shyft nicht prüfen.", "ok")
+                _clear_control_action_problems(control_key)
                 return jsonify({"success": True, "value": phase, "confirmed": False})
             except Exception as e:
                 test_log(f"Auslösen fehlgeschlagen: {e}", "error")
@@ -7684,6 +7693,7 @@ def testAutoManagedControl(control_key):
             # cloud API) can take much longer than a second or two to actually report the new
             # value back, so we return the optimistic value immediately instead of blocking
             # here and risking showing the stale one. The frontend re-checks shortly after.
+            _clear_control_action_problems(control_key)
             return jsonify({"success": True, "value": new_value, "confirmed": False})
         except Exception as e:
             test_log(f"Fehlgeschlagen: {e}", "error")
@@ -7699,6 +7709,7 @@ def testAutoManagedControl(control_key):
             homeassistant_adapter.call_service("homeassistant", "turn_on" if turn_on else "turn_off", {"entity_id": entity_ids})
             test_log("Befehl an Home Assistant gesendet.", "ok")
             _test_watch_switch_states(entity_ids, "on" if turn_on else "off")
+            _clear_control_action_problems(control_key)
             return jsonify({"success": True, "value": "on" if turn_on else "off", "confirmed": False})
         except Exception as e:
             test_log(f"Fehlgeschlagen: {e}", "error")

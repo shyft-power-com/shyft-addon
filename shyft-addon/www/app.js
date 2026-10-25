@@ -5341,6 +5341,8 @@ function buildAutoManagedNumberControl(control) {
         } finally {
             if (minusButton) minusButton.disabled = false;
             plusButton.disabled = false;
+            // Ein durch den Test erledigtes Problem ("!" in der Geraete-Navigation) sofort neu bewerten.
+            renderSystemHealth();
             await popup.finish(result);
         }
     }
@@ -5547,6 +5549,7 @@ function buildAutoManagedSwitchControl(control) {
             valueDisplay.className = 'autoActionValue';
         } finally {
             testButton.disabled = false;
+            renderSystemHealth();
             await popup.finish(outcome);
         }
     });
