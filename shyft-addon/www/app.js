@@ -11194,7 +11194,9 @@ function buildEnergyFlowSvgMobile(data) {
     let contentBottomY = trunkTopY + 20;
 
     if (devices.length > 0) {
-        const busY = trunkTopY + 55;
+        // 75 statt 55 - der Trunk (Haus -> Verbraucher-Bus) traegt jetzt links die Beschriftung des
+        // Gesamt-Hausverbrauchs (siehe unten) und braucht dafuer etwas mehr Hoehe.
+        const busY = trunkTopY + 75;
         const rowY = busY + 80;
         const n = devices.length;
         const colXs = devices.map((_, i) => (VIEW_W / (n + 1)) * (i + 1));
@@ -11214,6 +11216,12 @@ function buildEnergyFlowSvgMobile(data) {
         });
         const trunkLine = buildFlowLineFromPath(buildFlowPath(houseCx, trunkTopY, houseCx, busY), leftKw + rightKw, {thresholdKw: 0.1});
         if (trunkLine) svg.appendChild(trunkLine);
+        // Gesamt-Hausverbrauch (household.kw) links neben dem Trunk, vertikal mittig - wie im
+        // Desktop-Layout gehoert er auf den Trunk, nicht auf den Haushaltsstrom-Zweig (dort steckt
+        // nur der Rest-Anteil residualKw). Fehlte im Mobil-Layout bisher ganz.
+        if (data.household && data.household.configured) {
+            svg.appendChild(buildEnergyFlowLabel(houseCx - 14, (trunkTopY + busY) / 2, [withStaleness(formatKwValue(data.household.kw), data.household.updatedAt, INVERTER_STALE_MINUTES)], {anchor: 'end', noWrap: true}));
+        }
         if (n > 1) {
             for (const el of buildDeviceBusChain(houseCx, busY, leftXs, leftKws)) svg.appendChild(el);
             for (const el of buildDeviceBusChain(houseCx, busY, rightXs, rightKws)) svg.appendChild(el);
