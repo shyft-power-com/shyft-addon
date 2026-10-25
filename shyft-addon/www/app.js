@@ -3848,7 +3848,7 @@ function renderSectionBody(bodyDiv, section, entryIds) {
             bodyDiv.appendChild(buildEvSocMaxPvSurplusField());
         }
         if (section.key === 'sonstiger_verbraucher') {
-            bodyDiv.appendChild(buildMultiSensorField('sonstiger_verbraucher_switch_entities'));
+            bodyDiv.appendChild(buildMultiSensorField('sonstiger_verbraucher_switch_entities', candidateEntities));
             bodyDiv.appendChild(buildOdPriceThresholdField());
             bodyDiv.appendChild(buildOdPowerField());
         }
@@ -7066,7 +7066,7 @@ function wrapEntityInputWithClear(dropdownEl, input, showArrow = true) {
 // Entitaet) speichert dieser Schluessel ein ARRAY - schreibt sich deshalb direkt in
 // configData['sensorMappings'] (wie buildBatteryCoupledEntityField), statt ueber den generischen
 // DOM-id-basierten Sammelmechanismus in saveConfigurationNow zu laufen.
-function buildMultiSensorField(sensorKey) {
+function buildMultiSensorField(sensorKey, entityPool = allSensorIdOptions) {
     const container = document.createElement('div');
     container.className = 'configField multiSensorField';
     // Gleiche Id-Konvention wie die Einzelfelder (siehe buildMappingRow) - damit der rote Rahmen bei fehlendem
@@ -7124,7 +7124,7 @@ function buildMultiSensorField(sensorKey) {
     let selectedIds = Array.isArray(existing) ? existing.filter(Boolean) : (typeof existing === 'string' && existing ? [existing] : []);
 
     const filter = SENSOR_ENTITY_FILTERS[sensorKey];
-    const candidates = allSensorIdOptions
+    const candidates = entityPool
         .filter(entity => entityMatchesSensorFilter(entity, filter))
         .map(entity => ({entity, score: scoreSensorEntityForField(entity, sensorKey, undefined)}));
 

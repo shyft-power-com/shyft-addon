@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.341
+
+* **Sonstiger Verbraucher: Schalter-Auswahl zeigt nur noch Entitäten des gewählten Geräts.** Die Auswahl „Home-Assistant-Entität“ listete bisher alle Entitäten aus Home Assistant, unabhängig vom oben gewählten Gerät. Jetzt werden wie bei den übrigen Sensorfeldern nur die Entitäten der gewählten Geräte angeboten; bereits gewählte Entitäten bleiben sichtbar und abwählbar.
+
 ## 0.0.45.340
 
 * **Gewünschte Raumtemperatur auf Zehntelgrad.** Das Feld „Gewünschte Raumtemperatur (mindestens)“ ist jetzt ein Zahlenfeld (15 bis 30 °C, Schritt 0,1) statt einer Auswahl in ganzen Grad. Der Optimierer bekommt den Wert mit einer Nachkommastelle (Server und Optimierer rechnen mit Dezimalzahlen). Die Heizungs-Sollwerte der Aktionen liegen in ganzen Grad Abstand zu diesem Wert (z. B. 20,5 / 21,5 / 22,5 bei 21,5), nach einer Aktion wird exakt auf den eingestellten Wert zurückgestellt.
