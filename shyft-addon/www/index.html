@@ -1950,16 +1950,15 @@
             fill: var(--color-accent);
             filter: drop-shadow(0 0 3px var(--color-accent));
         }
-        @keyframes energyFlowPulse {
-            0%, 100% {
-                filter: brightness(1);
-            }
-            50% {
-                filter: brightness(1.12);
+        /* Rotor der Waermepumpe (siehe buildHeatpumpImage in app.js): dreht sich langsam, solange die Waermepumpe an ist. */
+        @keyframes energyFlowRotor {
+            to {
+                transform: rotate(360deg);
             }
         }
-        .energyFlowPulse {
-            animation: energyFlowPulse 1.8s ease-in-out infinite;
+        .energyFlowRotorSpin {
+            transform-origin: 0 0;
+            animation: energyFlowRotor 6s linear infinite;
         }
         /* PV-Ertrag Heute|Morgen unter dem PV-Prognose-Chart (siehe buildPvForecastActualChart) -
            direkt im Chart-Wrapper verankert (statt frueher lose irgendwo im Dashboard-Flow), damit
@@ -2093,8 +2092,8 @@
         }
         .einsatzplanGrid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 0.8em;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 0.6em;
             margin-top: 0.8em;
         }
         @media (max-width: 700px) {
@@ -2105,7 +2104,7 @@
         .einsatzplanStat {
             background: var(--color-accent);
             border-radius: 10px;
-            padding: 0.6em 0.8em;
+            padding: 0.45em 0.7em;
             color: #ffffff;
         }
         .einsatzplanStatLabel {
@@ -2113,10 +2112,9 @@
             opacity: 0.9;
             margin-bottom: 0.25em;
         }
-        /* Heute|Morgen (.einsatzplanStatSub) und die Einheit (.einsatzplanStatUnit) stehen in
-           derselben Zeile hinter der grossen Zahl statt darunter bzw. an der grossen Zahl selbst -
-           baseline-Ausrichtung, damit die kleinere Schrift nicht mittig neben der grossen Zahl
-           "schwebt". flex-wrap fuer sehr schmale Kacheln/lange Werte. */
+        /* Die beiden grossen Zahlen Heute | Morgen (.einsatzplanStatValue) und die Einheit (.einsatzplanStatUnit)
+           stehen in einer Zeile - baseline-Ausrichtung, damit die kleinere Schrift nicht mittig neben der
+           grossen Zahl "schwebt". flex-wrap fuer sehr schmale Kacheln/lange Werte. */
         .einsatzplanStatValueRow {
             display: flex;
             align-items: baseline;
@@ -2127,7 +2125,6 @@
             font-size: 1.15em;
             font-weight: 700;
         }
-        .einsatzplanStatSub,
         .einsatzplanStatUnit {
             font-size: 0.75em;
             opacity: 0.85;

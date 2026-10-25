@@ -322,7 +322,8 @@ def query_summary(granularity, start_iso=None, end_iso=None):
             SELECT {group_expr} AS period,
                    SUM(planned_usage_kwh) AS planned_usage_kwh, SUM(planned_cost_eur) AS planned_cost_eur,
                    SUM(base_usage_kwh) AS base_usage_kwh, SUM(base_cost_eur) AS base_cost_eur,
-                   SUM(actual_usage_kwh) AS actual_usage_kwh, SUM(actual_cost_eur) AS actual_cost_eur,
+                   SUM(actual_usage_kwh) AS actual_usage_kwh, SUM(actual_import_kwh) AS actual_import_kwh, SUM(actual_export_kwh) AS actual_export_kwh,
+                   SUM(actual_cost_eur) AS actual_cost_eur,
                    SUM(savings_vs_base_eur) AS savings_vs_base_eur, SUM(savings_vs_planned_eur) AS savings_vs_planned_eur,
                    COUNT(*) AS hours_recorded
             FROM hourly_archive

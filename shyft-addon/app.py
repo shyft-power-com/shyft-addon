@@ -2196,58 +2196,60 @@ def _series_day_split(values, start):
     return {"total": round(total, 4), "today": round(today, 4), "tomorrow": round(tomorrow, 4)}
 
 
-def _compute_einsatzplan_kpis(rows, pv_values):
-    """Reine Kennzahlen-Berechnung fuer eine beliebige Teilmenge von output_csv-Zeilen (+
-    zugehoerige PV-Erzeugung aus input_csv) - Basis sowohl fuer den vollen Zeitraum als auch fuer
-    die Heute/Morgen-Aufschluesselung in _compute_einsatzplan_summary. X_sum/GR_sum/costs_opt/
-    profits_opt sind Pro-Stunde-Spalten in output_csv (siehe OptimizerOutputHeader.java).
+def _plan_hour_energy(row, pv_value):
+    """Eine Plan-Stunde (output_csv-Zeile) als Energie-/Geldfluesse fuer _compute_einsatzplan_kpis. Fehlen die PV-Fluss-Spalten
+    (aeltere Laeufe), gilt als PV-Nutzung die Prognose pv_value, davon wird der nicht im Haus verbrauchte Teil als eingespeist gezaehlt."""
+    usage = _safe_float(row.get("X_sum"))
+    purchased = max(0.0, _safe_float(row.get("GR_sum")))
+    if row.get("PV_sum_44") not in (None, "") and row.get("PV_GR") not in (None, ""):
+        pv_used = _safe_float(row.get("PV_sum_44"))
+        pv_fed = max(0.0, _safe_float(row.get("PV_GR")))
+    else:
+        pv_used = pv_value
+        pv_fed = pv_used - max(0.0, min(usage - purchased, pv_used))
+    return {"usage": usage, "purchased": purchased, "cost": _safe_float(row.get("costs_opt")),
+            "revenue": _safe_float(row.get("profits_opt")), "pv_used": pv_used, "pv_fed": pv_fed}
+
+
+def _compute_einsatzplan_kpis(hours):
+    """Kennzahlen fuer eine Liste von Stunden (siehe _plan_hour_energy / _actual_hour_flows: je Stunde usage, purchased, cost, revenue,
+    pv_used, pv_fed; cost/revenue/pv_fed duerfen None sein, wenn nicht ermittelbar) - Basis der Heute/Morgen-Kacheln in
+    _compute_einsatzplan_summary. Plan-Stunden stammen aus output_csv (X_sum/GR_sum/costs_opt/profits_opt sind Pro-Stunde-Spalten, siehe
+    OptimizerOutputHeader.java), vergangene Stunden aus den gemessenen Ist-Werten.
 
     GR_sum ist laut Optimierer (run_SHEMS.jl: "net load / feed in from / to the grid") ein NETTO-
     Wert und wird in Stunden mit Netzeinspeisung negativ. Fuer ø Netzstrom UND Autarkie wird jede
     Stunde mit Einspeisung (negativer GR_sum) auf 0 gesetzt, d.h. Einspeisung wird gar nicht
     beruecksichtigt und nicht gegen Bezug gegengerechnet (Nutzer-Vorgabe):
-      - Stromverbrauch (kWh) = Summe(X_sum)
+      - Stromverbrauch (kWh) = Summe(Verbrauch)
       - o Netzstrom (Cent/kWh): NUR tatsaechlich eingekaufter (positiver) Netzstrom zaehlt -
         eingespeister Strom wird fuer diese Kennzahl ignoriert (nicht gegengerechnet), pro Stunde
         bei 0 gekappt. "-" wenn gar keine Energie eingekauft wurde (z.B. 100% Autarkie).
-      - Autarkie (%) = (Summe(X_sum) - Summe(eingekaufter Netzenergie)) / Summe(X_sum) * 100 -
-        eingekaufte Netzenergie = GR_sum pro Stunde bei 0 gekappt (Einspeisung ignoriert). Dadurch
+      - Autarkie (%) = (Summe(Verbrauch) - Summe(eingekaufter Netzenergie)) / Summe(Verbrauch) * 100 -
+        eingekaufte Netzenergie pro Stunde bei 0 gekappt (Einspeisung ignoriert). Dadurch
         von Natur aus zwischen 0% und 100%: kein Deckel noetig, aber Netzladen des Hausspeichers
         kann die Kennzahl bis auf 0% druecken (dessen Bezug steckt in GR_sum, nicht in X_sum).
-      - Eigenverbrauch (%) = (1 - Summe(PV_GR) / Summe(PV_sum_44)) * 100 - die uebliche Eigenverbrauchsquote:
-        der Anteil der tatsaechlich genutzten PV-Erzeugung, der NICHT ins Netz eingespeist wird (PV_GR =
-        PV -> Netz, PV_sum_44 = alle PV-Fluesse: Haus, Batterie, Waermepumpe, Zusatzgeraet, Auto, Netz).
-        PV, die in die Batterie geladen wird, zaehlt damit sofort als Eigenverbrauch. Die frueher genutzte
-        Formel (Verbrauch - Netzbezug) / PV-Prognose wertete eingespeicherte PV erst bei der spaeteren
-        Entladung und zog Netzladen der Batterie ab - sie lag dadurch oft deutlich zu niedrig. Fehlen die
-        beiden Spalten (aeltere Laeufe), gilt weiterhin die alte Formel.
-      - Stromertrag (EUR) = Summe(profits_opt) - der Verguetungserloes aus Netzeinspeisung, direkt
-        vom Optimierer berechnet (separate Spalte, nicht aus GR_sum abgeleitet)."""
-    if not rows:
+      - Eigenverbrauch (%) = (1 - Summe(PV -> Netz) / Summe(PV-Nutzung)) * 100 - die uebliche Eigenverbrauchsquote:
+        der Anteil der tatsaechlich genutzten PV-Erzeugung, der NICHT ins Netz eingespeist wird (Plan: PV_GR bzw.
+        PV_sum_44 = alle PV-Fluesse: Haus, Batterie, Waermepumpe, Zusatzgeraet, Auto, Netz; Ist: Einspeisung gedeckelt auf die
+        PV-Erzeugung der Stunde). PV, die in die Batterie geladen wird, zaehlt damit sofort als Eigenverbrauch.
+      - Stromertrag (EUR) = Summe(Einspeiseerloes) - der Verguetungserloes aus Netzeinspeisung, im Plan direkt
+        vom Optimierer berechnet (profits_opt), im Ist Einspeisung mal Einspeisepreis der Stunde."""
+    if not hours:
         return {"stromverbrauch_kwh": None, "netzstrom_preis_cent": None, "autarkie_pct": None,
                 "eigenverbrauch_pct": None, "stromertrag_eur": None}
 
-    def _sum_column(name, clamp_non_negative=False):
-        total = 0.0
-        for row in rows:
-            try:
-                value = _safe_float(row.get(name))
-            except (TypeError, ValueError):
-                continue
-            if clamp_non_negative:
-                value = max(0.0, value)
-            total += value
-        return total
-
-    x_sum = _sum_column("X_sum")
-    gr_purchased_sum = _sum_column("GR_sum", clamp_non_negative=True)
-    costs_opt_sum = _sum_column("costs_opt")
-    profits_opt_sum = _sum_column("profits_opt")
-    pv_sum = sum(pv_values)
+    x_sum = sum(h["usage"] for h in hours)
+    gr_purchased_sum = sum(h["purchased"] for h in hours)
+    priced = [h for h in hours if h["cost"] is not None]
+    priced_purchased_sum = sum(h["purchased"] for h in priced)
+    costs_sum = sum(h["cost"] for h in priced)
+    profits_sum = sum(h["revenue"] for h in hours if h["revenue"] is not None)
+    with_pv = [h for h in hours if h["pv_fed"] is not None]
 
     netzstrom_preis_cent = None
-    if gr_purchased_sum > EINSATZPLAN_ZERO_THRESHOLD:
-        netzstrom_preis_cent = round(costs_opt_sum / gr_purchased_sum * 100, 1)
+    if priced_purchased_sum > EINSATZPLAN_ZERO_THRESHOLD:
+        netzstrom_preis_cent = round(costs_sum / priced_purchased_sum * 100, 1)
 
     autarkie_pct = None
     if x_sum > EINSATZPLAN_ZERO_THRESHOLD:
@@ -2257,65 +2259,166 @@ def _compute_einsatzplan_kpis(rows, pv_values):
     # sondern eindeutig 0% Eigenverbrauch (von nichts kann nichts selbst verbraucht worden sein) -
     # deshalb 0 statt None/"-".
     eigenverbrauch_pct = 0
-    has_pv_flow_columns = any(row.get("PV_sum_44") not in (None, "") and row.get("PV_GR") not in (None, "") for row in rows)
-    if has_pv_flow_columns:
-        pv_used_sum = _sum_column("PV_sum_44")
-        if pv_used_sum > EINSATZPLAN_ZERO_THRESHOLD:
-            pv_fed_in_sum = _sum_column("PV_GR", clamp_non_negative=True)
-            eigenverbrauch_pct = round(max(0.0, min(100.0, (1 - pv_fed_in_sum / pv_used_sum) * 100)))
-    elif pv_sum > EINSATZPLAN_ZERO_THRESHOLD:
-        self_consumed = max(0.0, min(x_sum - gr_purchased_sum, pv_sum))
-        eigenverbrauch_pct = round(max(0.0, min(100.0, self_consumed / pv_sum * 100)))
+    pv_used_sum = sum(h["pv_used"] for h in with_pv)
+    if pv_used_sum > EINSATZPLAN_ZERO_THRESHOLD:
+        pv_fed_in_sum = sum(h["pv_fed"] for h in with_pv)
+        eigenverbrauch_pct = round(max(0.0, min(100.0, (1 - pv_fed_in_sum / pv_used_sum) * 100)))
 
     return {
         "stromverbrauch_kwh": round(x_sum, 1),
         "netzstrom_preis_cent": netzstrom_preis_cent,
         "autarkie_pct": autarkie_pct,
         "eigenverbrauch_pct": eigenverbrauch_pct,
-        "stromertrag_eur": round(profits_opt_sum, 2),
+        "stromertrag_eur": round(profits_sum, 2),
     }
 
 
-def _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, start):
-    """Fasst den aktuellen Optimierungslauf (output_csv) zur "Einsatzplan"-Karte im Dashboard-Tab
-    zusammen: die vier Kennzahlen (siehe _compute_einsatzplan_kpis) ueber die volle Laufzeit des
-    Optimizer-Runs (Anzahl output_csv-Zeilen), UND zusaetzlich getrennt fuer "heute" (restliche
-    Stunden inkl. der gerade laufenden) und "morgen" (jeweils in der lokalen Zeitzone) - "übermorgen"
-    wird bewusst nicht ausgewiesen, da der Zeitraum dafuer nie vollstaendig abgedeckt ist. Gibt None
-    zurueck (Karte bleibt im Frontend verborgen), wenn output_csv (noch) leer ist.
+# Gemessene Energie vergangener Stunden (nie wieder veraenderlich, sobald die Stunde um ist) - je hour_key (Abrufzeit, Ergebnis); ein
+# Ergebnis None (Sensordaten fehlen) wird nach EINSATZPLAN_ACTUAL_RETRY_SECONDS erneut versucht.
+_einsatzplan_actual_cache = {}
+EINSATZPLAN_ACTUAL_RETRY_SECONDS = 600
 
-    Der Lauf beginnt an der Stunde seiner Erstellung; ist er schon ein paar Stunden alt, sind die ersten
-    Zeilen laengst Vergangenheit. Die Kennzahlen zaehlen deshalb nur noch die Stunden ab der aktuellen
-    Stunde (inkl. der laufenden), und "hours" ist genau diese verbleibende Stundenzahl (nicht mehr pauschal
-    die 48 h des Optimierungszeitraums) - das Frontend nennt sie im Text der Karte."""
-    elapsed = max(0, int((_hour_floor(datetime.now(timezone.utc)) - start).total_seconds() // 3600))
-    if elapsed:
-        output_rows = output_rows[elapsed:]
-        pv_generation = pv_generation[elapsed:]
-        start = start + timedelta(hours=elapsed)
-    hours = len(output_rows)
-    if hours == 0:
+
+def _actual_hour_energy(hour_start_utc, archive_by_hour, pv_by_hour):
+    """Gemessene Energie einer abgeschlossenen Stunde: Verbrauch, Netzbezug/-einspeisung und PV-Erzeugung (alles kWh). Quelle ist das
+    Energie-Archiv (siehe finalize_completed_hour_periodically/record_pv_forecast_accuracy); fehlt dort etwas (Stunde nie archiviert),
+    wird es aus der Home-Assistant-Historie berechnet. None, wenn Verbrauch oder Netzbezug/-einspeisung nicht ermittelbar sind."""
+    key = energy_archive.hour_key(hour_start_utc)
+    cached = _einsatzplan_actual_cache.get(key)
+    if cached is not None and (cached[1] is not None or time.time() - cached[0] < EINSATZPLAN_ACTUAL_RETRY_SECONDS):
+        return cached[1]
+    row = archive_by_hour.get(key) or {}
+    usage, imp, exp = row.get("actual_usage_kwh"), row.get("actual_import_kwh"), row.get("actual_export_kwh")
+    pv = (pv_by_hour.get(key) or {}).get("actual_kw")
+    end = hour_start_utc + timedelta(hours=1)
+    if usage is None:
+        usage = _household_usage_kwh(hour_start_utc, end)
+    if imp is None or exp is None:
+        imp, exp = _grid_import_export_kwh(hour_start_utc, end)
+    if pv is None:
+        pv = _sensor_history_kwh("photovoltaic_powerflow_pv", hour_start_utc, end)[0]
+    result = None
+    if usage is not None and imp is not None and exp is not None:
+        result = {"usage": usage, "import": imp, "export": exp, "pv": pv}
+    _einsatzplan_actual_cache[key] = (time.time(), result)
+    return result
+
+
+def _price_sell_hourly(config, base_utc, hours):
+    "Einspeisepreis (EUR/kWh) je Stunde ab base_utc gemaess Einspeise-Modus der Konfiguration (siehe sync_site_data); None, wenn nicht ermittelbar."
+    mode = electricity_sell_mode(config)
+    if mode == ELECTRICITY_SELL_MODE_NONE:
+        return [0.0] * hours
+    if mode == ELECTRICITY_SELL_MODE_DIRECT_MARKETING:
+        return compute_price_sell_array(config, base_utc, hours)
+    try:
+        sell_cent = config.get("electricitySellCent")
+        return [float(sell_cent) / 100.0] * hours if sell_cent not in (None, "") else None
+    except (TypeError, ValueError):
         return None
 
-    full = _compute_einsatzplan_kpis(output_rows, pv_generation[:hours])
 
-    heute_rows, heute_pv, morgen_rows, morgen_pv = [], [], [], []
-    for i, row in enumerate(output_rows):
-        offset = _local_day_offset(start + timedelta(hours=i))
-        pv_value = pv_generation[i] if i < len(pv_generation) else 0.0
+def _local_day_hours(day_offset):
+    "Anzahl Stunden des lokalen Kalendertags (heute + day_offset) - 24, an Zeitumstellungen 23 bzw. 25."
+    tz = get_ha_timezone()
+    day = _local_now().date() + timedelta(days=day_offset)
+    next_day = day + timedelta(days=1)
+    day_start = datetime(day.year, day.month, day.day, tzinfo=tz)
+    day_end = datetime(next_day.year, next_day.month, next_day.day, tzinfo=tz)
+    return round((day_end.astimezone(timezone.utc) - day_start.astimezone(timezone.utc)).total_seconds() / 3600)
+
+
+def _actual_hour_flows(hours_utc, midnight_utc, config):
+    """Ist-Stunden fuer _compute_einsatzplan_kpis: {hour_start_utc: {usage, purchased, cost, revenue, pv_used, pv_fed}}. cost/revenue aus
+    Netzbezug/-einspeisung mal Strom-/Einspeisepreis der Stunde (None, wenn der Preis fehlt); Stunden ohne ermittelbare Messwerte fehlen."""
+    if not hours_utc or is_demo_mode():
+        return {}
+    first_key, end_key = energy_archive.hour_key(hours_utc[0]), energy_archive.hour_key(hours_utc[-1] + timedelta(hours=1))
+    archive_by_hour, pv_by_hour = {}, {}
+    try:
+        archive_by_hour = {r["period"]: r for r in energy_archive.query_summary("hourly", first_key, end_key)}
+        pv_by_hour = {r["hour_start_utc"]: r for r in energy_archive.query_pv_hours(first_key)}
+    except Exception as e:
+        print("[Shyft] Einsatzplan: Energie-Archiv konnte nicht gelesen werden:", repr(e))
+    count = int((hours_utc[-1] - midnight_utc).total_seconds() // 3600) + 1
+    try:
+        buy = compute_price_buy_array(config, midnight_utc, count)
+        sell = _price_sell_hourly(config, midnight_utc, count)
+    except Exception as e:
+        print("[Shyft] Einsatzplan: Preise vergangener Stunden nicht ermittelbar:", repr(e))
+        buy = sell = None
+    result = {}
+    for hour in hours_utc:
+        energy = _actual_hour_energy(hour, archive_by_hour, pv_by_hour)
+        if energy is None:
+            continue
+        idx = int((hour - midnight_utc).total_seconds() // 3600)
+        buy_price = buy[idx] if buy and idx < len(buy) else None
+        sell_price = sell[idx] if sell and idx < len(sell) else None
+        pv = energy["pv"]
+        result[hour] = {
+            "usage": energy["usage"], "purchased": energy["import"],
+            "cost": None if buy_price is None else energy["import"] * buy_price,
+            "revenue": None if sell_price is None else energy["export"] * sell_price,
+            "pv_used": pv or 0.0, "pv_fed": None if pv is None else min(energy["export"], pv),
+        }
+    return result
+
+
+def _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, start):
+    """Fasst Ist und Plan zur "Einsatzplan"-Karte im Dashboard-Tab zusammen: Kennzahlen (siehe _compute_einsatzplan_kpis) fuer "heute" und
+    "morgen" (jeweils die vollen 24 Stunden der lokalen Zeitzone). "Heute" besteht aus den Ist-Werten der bereits abgeschlossenen Stunden
+    (siehe _actual_hour_flows) und ab der laufenden Stunde aus dem Plan des letzten Optimierungslaufs (output_csv); "morgen" komplett aus dem
+    Plan und fehlt (None), wenn der Plan nicht den ganzen Tag abdeckt. Deckt der Plan den heutigen Tag nicht bis zum Ende ab, reicht "heute"
+    nur bis zum Planende - "heute_bis_hour" ist dann die (lokale) Stunde, bis zu der gerechnet wurde (sonst None). Gibt None zurueck (Karte
+    bleibt im Frontend verborgen), wenn der Plan keine Stunde ab jetzt enthaelt.
+
+    Der Lauf beginnt an der Stunde seiner Erstellung; ist er schon ein paar Stunden alt, sind die ersten Zeilen laengst Vergangenheit. Als
+    Plan zaehlen deshalb nur die Stunden ab der aktuellen Stunde (inkl. der laufenden); "hours" ist genau diese verbleibende Stundenzahl.
+    Fuer eine vergangene Stunde ohne ermittelbare Messwerte springt der damalige Plan-Wert ein (soweit der Lauf so weit zurueckreicht)."""
+    now_hour = _hour_floor(datetime.now(timezone.utc))
+    elapsed = max(0, int((now_hour - start).total_seconds() // 3600))
+    plan_rows = output_rows[elapsed:]
+    hours = len(plan_rows)
+    if hours == 0:
+        return None
+    plan_start = start + timedelta(hours=elapsed)
+
+    midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
+    past_hours_utc = [midnight_utc + timedelta(hours=i) for i in range(max(0, int((now_hour - midnight_utc).total_seconds() // 3600)))]
+    actual = _actual_hour_flows(past_hours_utc, midnight_utc, _read_current_config())
+
+    heute, morgen = [], []
+    for hour in past_hours_utc:
+        if hour in actual:
+            heute.append(actual[hour])
+            continue
+        idx = int((hour - start).total_seconds() // 3600)
+        if 0 <= idx < len(output_rows):
+            heute.append(_plan_hour_energy(output_rows[idx], pv_generation[idx] if idx < len(pv_generation) else 0.0))
+    heute_plan_hours = 0
+    last_heute_hour = None
+    for i, row in enumerate(plan_rows):
+        hour = plan_start + timedelta(hours=i)
+        offset = _local_day_offset(hour)
+        pv_index = elapsed + i
+        flows = _plan_hour_energy(row, pv_generation[pv_index] if pv_index < len(pv_generation) else 0.0)
         if offset == 0:
-            heute_rows.append(row)
-            heute_pv.append(pv_value)
+            heute.append(flows)
+            heute_plan_hours += 1
+            last_heute_hour = hour
         elif offset == 1:
-            morgen_rows.append(row)
-            morgen_pv.append(pv_value)
+            morgen.append(flows)
 
+    heute_bis_hour = None
+    if heute_plan_hours < _local_day_hours(0) - len(past_hours_utc) and last_heute_hour is not None:
+        heute_bis_hour = (last_heute_hour + timedelta(hours=1)).astimezone(get_ha_timezone()).hour
     return {
         "creation_date": creation_date_ms,
         "hours": hours,
-        **full,
-        "heute": _compute_einsatzplan_kpis(heute_rows, heute_pv),
-        "morgen": _compute_einsatzplan_kpis(morgen_rows, morgen_pv),
+        "heute": _compute_einsatzplan_kpis(heute),
+        "heute_bis_hour": heute_bis_hour,
+        "morgen": _compute_einsatzplan_kpis(morgen) if len(morgen) >= _local_day_hours(1) else None,
     }
 
 

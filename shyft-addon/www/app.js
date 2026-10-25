@@ -8027,7 +8027,7 @@ const EINSATZPLAN_STALE_ERROR_MS = (2 * 60 + 10) * 60 * 1000;  // 2:10 h
 
 const EINSATZPLAN_STATS = [
     ['stromverbrauch_kwh', 'Stromverbrauch', 'kWh', 0],
-    ['netzstrom_preis_cent', 'ø Netzstrom', 'Cent/kWh', 1],
+    ['netzstrom_preis_cent', 'ø Netzstrom', 'ct/kWh', 1],
     ['autarkie_pct', 'Autarkie', '%', 0],
     ['eigenverbrauch_pct', 'Eigenverbrauch', '%', 0],
     ['stromertrag_eur', 'Stromertrag', '€', 2],
@@ -8043,7 +8043,8 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
     card.appendChild(title);
 
     const heute = einsatzplan.heute || {};
-    const morgen = einsatzplan.morgen || {};
+    // Morgen fehlt, wenn der Einsatzplan nicht den ganzen morgigen Tag abdeckt (siehe _compute_einsatzplan_summary in app.py)
+    const morgen = einsatzplan.morgen || null;
 
     const grid = document.createElement('div');
     grid.className = 'einsatzplanGrid';
@@ -8053,23 +8054,17 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
         const labelEl = document.createElement('div');
         labelEl.className = 'einsatzplanStatLabel';
         labelEl.textContent = label;
-        // Kompakte Kachel: grosse Hauptzahl OHNE Einheit, dahinter klein die Heute|Morgen-Werte in
-        // Klammern, dahinter klein die Einheit - "47 (2 | 30) kWh" statt vorher "47 kWh (2 | 30)"
-        // (Einheit doppelt so gross wie noetig mitgezogen) bzw. noch frueher einer eigenen Zeile
-        // darunter.
+        // Zwei grosse Zahlen "Heute | Morgen" (ohne Morgen nur eine), dahinter klein die Einheit.
         const valueRow = document.createElement('div');
         valueRow.className = 'einsatzplanStatValueRow';
         const valueEl = document.createElement('span');
         valueEl.className = 'einsatzplanStatValue';
-        valueEl.textContent = formatEinsatzplanValue(einsatzplan[key], null, decimals);
-        const subEl = document.createElement('span');
-        subEl.className = 'einsatzplanStatSub';
-        subEl.textContent = `(${formatEinsatzplanValue(heute[key], null, decimals)} | ${formatEinsatzplanValue(morgen[key], null, decimals)})`;
+        const heuteText = formatEinsatzplanValue(heute[key], null, decimals);
+        valueEl.textContent = morgen ? `${heuteText} | ${formatEinsatzplanValue(morgen[key], null, decimals)}` : heuteText;
         const unitEl = document.createElement('span');
         unitEl.className = 'einsatzplanStatUnit';
         unitEl.textContent = unit;
         valueRow.appendChild(valueEl);
-        valueRow.appendChild(subEl);
         valueRow.appendChild(unitEl);
         stat.appendChild(labelEl);
         stat.appendChild(valueRow);
@@ -8093,9 +8088,13 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
         timeSpan.className = 'einsatzplanLegendStaleWarn';
     }
     legend.appendChild(timeSpan);
-    // einsatzplan.hours = die noch verbleibenden Stunden des Plans ab jetzt (siehe _compute_einsatzplan_summary)
-    const horizonText = einsatzplan.hours === 1 ? 'die nächste Stunde' : `die nächsten ${einsatzplan.hours} Stunden`;
-    legend.appendChild(document.createTextNode(`, Kennzahlen jeweils für ${horizonText} (bzw. in Klammern für die restlichen heutigen Stunden | für morgen).`));
+    // heute_bis_hour: der Einsatzplan reicht nicht bis zum Ende des heutigen Tages - "heute" ist dann nur bis dorthin gerechnet (und morgen fehlt).
+    const daysText = einsatzplan.heute_bis_hour !== null && einsatzplan.heute_bis_hour !== undefined
+        ? `für heute (bis ${einsatzplan.heute_bis_hour} Uhr)`
+        : (morgen ? 'jeweils für heute und morgen' : 'für heute');
+    // Nach "Berechnet um 15:55 Uhr!" (veralteter Plan) folgt der Satz ohne zusaetzlichen Punkt.
+    const sentenceStart = timeSpan.textContent.endsWith('!') ? ' ' : '. ';
+    legend.appendChild(document.createTextNode(`${sentenceStart}Kennzahlen ${daysText}, berechnet aus Ist-Werten (heute, bis jetzt) plus den prognostizierten Daten aus dem Einsatzplan (ab jetzt).`));
     if (optimizerRunning) {
         const running = document.createElement('span');
         running.className = 'einsatzplanLegendRunning';
@@ -8670,6 +8669,49 @@ function nowDotSvg(cx, cy) {
     return `<circle class="dashboardChartNowRing" r="9" cx="${x}" cy="${y}" /><circle class="dashboardChartNowDot" r="4.5" cx="${x}" cy="${y}" />`;
 }
 
+// Einheit an den Achsen statt im Titel: oben ueber der jeweiligen Achse (links die der Hauptkurve, rechts die der zweiten Kurve). Auf
+// schmalen Bildschirmen (gleiche Grenze wie die vergroesserte Chart-Schrift in index.html) steht eine Einheit mit "/" (ct/kWh)
+// zweizeilig ("ct/" ueber "kWh"), weil sie sonst nicht in den Rand neben den Achsenwerten passt - der Kopfbereich wird dafuer hoeher.
+function chartAxisUnitText(unit) {
+    return unit === 'Cent/kWh' ? 'ct/kWh' : unit;
+}
+
+function chartCompactUnits() {
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 600px)').matches;
+}
+
+function chartTopPadding(unit) {
+    return chartCompactUnits() && String(chartAxisUnitText(unit) || '').includes('/') ? 38 : 20;
+}
+
+function chartAxisUnitMarkup(unit, x, anchor, paddingTop, color = 'var(--color-text-secondary)') {
+    const text = chartAxisUnitText(unit);
+    if (!text) return '';
+    const slash = text.indexOf('/');
+    const lines = chartCompactUnits() && slash > 0 ? [text.slice(0, slash + 1), text.slice(slash + 1)] : [text];
+    const lastBaseline = paddingTop - 8;
+    const lineStep = 17;
+    const tspans = lines.map((line, i) => `<tspan x="${x}" y="${lastBaseline - (lines.length - 1 - i) * lineStep}">${line}</tspan>`).join('');
+    return `<text x="${x}" y="${lastBaseline}" fill="${color}" text-anchor="${anchor}">${tspans}</text>`;
+}
+
+// Wie computeNiceTicks, aber nur "gerade" Schrittweiten (1, 2, 5, 10 ...) - fuer die rechte Achse: 5, 10, 15, 20 statt 2,5 / 7,5 / 12,5.
+function computeEvenTicks(min, max, targetCount = 4) {
+    const range = max - min;
+    if (!isFinite(range) || range <= 0) return [min];
+    const rawStep = range / targetCount;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const residual = rawStep / magnitude;
+    const step = ([1, 2, 5, 10].find(v => residual <= v) ?? 10) * magnitude;
+    const ticks = [];
+    for (let v = Math.ceil(min / step - 1e-9) * step; v <= max + step * 1e-6; v += step) {
+        let cleaned = Math.round(v / step) * step;
+        if (Object.is(cleaned, -0)) cleaned = 0;
+        ticks.push(cleaned);
+    }
+    return ticks.length ? ticks : [min];
+}
+
 function buildLineChart(title, unit, labels, values, options = {}) {
     const scaleHolder = {};
     return makeToggleableChart(options.chartKey, ctx => {
@@ -8696,13 +8738,13 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 }
 
 function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hidden: new Set(), toggle: null}) {
-    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, overlayForecast = null, curveLegend = false, bandPrimary = null, primaryFine = null} = options;
+    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, overlayForecast = null, curveLegend = false, bandPrimary = null, primaryFine = null, axisMax = null} = options;
     const width = 600, height = CHART_SVG_HEIGHT;
     // presenceForecast reserves an extra strip just above the x-axis labels for the
     // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
     // eigener rechter Skala, siehe unten) braucht zusaetzlichen Platz rechts fuer ihre eigene
     // Achsenbeschriftung.
-    const paddingLeft = 52, paddingRight = secondSeries ? 42 : 15, paddingTop = 20, paddingBottom = presenceForecast ? 38 : 26;
+    const paddingLeft = 52, paddingRight = secondSeries ? 42 : 15, paddingTop = chartTopPadding(unit), paddingBottom = presenceForecast ? 38 : 26;
     ctx.plotLeft = paddingLeft;
     ctx.plotRight = paddingRight;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -8717,8 +8759,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     wrapper.className = 'dashboardChart dashboardChartHalf';
     const titleEl = document.createElement('div');
     titleEl.className = 'dashboardChartTitle';
-    const parenthetical = [subtitle, unit].filter(Boolean).join(', ');
-    titleEl.textContent = title + (parenthetical ? ` (${parenthetical})` : '');
+    titleEl.textContent = title + (subtitle ? ` (${subtitle})` : '');
     appendChartDeactivatedBadge(titleEl, title);
     wrapper.appendChild(titleEl);
 
@@ -8810,7 +8851,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     // Sensorhistorie, durchgezogen) + Prognose (Rest, gestrichelt) aus secondSeries.actual/.forecast
     // (mutuell exklusiv je Index wie beim Hauptchart), optional mit slopeColors (grau/rot/gruen nach
     // Wertrichtung) statt einer festen Farbe.
-    let points2 = null, merged2 = null, yMin2 = 0, yMax2 = 1, yRange2 = 1, secondLineMarkup = '';
+    let points2 = null, merged2 = null, yMin2 = 0, yMax2 = 1, yRange2 = 1, dataMin2 = null, secondLineMarkup = '';
     if (secondSeries) {
         merged2 = secondSeries.actual ? labels.map((_, i) => (secondSeries.actual[i] ?? secondSeries.forecast[i])) : secondSeries.values;
         const defined2 = merged2.filter(v => v !== null && v !== undefined);
@@ -8818,6 +8859,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         if (secondSeries.actual && secondSeries.forecast) defined2.push(...secondSeries.forecast.filter(v => v !== null && v !== undefined));
         if (secondSeries.actualFine) defined2.push(...parseFinePoints(secondSeries.actualFine).map(p => p[1]));
         // signed (z.B. Netzbezug/Einspeisung): positive UND negative Werte - die Skala schliesst 0 immer ein und geht bei Einspeisung darunter.
+        dataMin2 = Math.min(...defined2);
         const rawMin2 = secondSeries.zeroBased ? 0 : (secondSeries.signed ? Math.min(0, ...defined2) : Math.min(...defined2));
         const rawMax2 = secondSeries.signed ? Math.max(0, ...defined2) : Math.max(...defined2);
         const valueRange2 = (rawMax2 - rawMin2) || 1;
@@ -9064,35 +9106,50 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         return `<text x="${x}" y="${height - 6}" fill="var(--color-text-secondary)" text-anchor="${i === lastIndex ? 'end' : 'middle'}">${text}</text>`;
     }).join('');
 
-    const yTicks = computeNiceTicks(yMin, yMax);
+    // Mit zweiter Kurve gehoeren die linke Achse zur Hauptkurve (Farbe der Hauptkurve) und die rechte zur zweiten Kurve (deren Farbe).
+    // axisMax: hoechster beschrifteter Wert der linken Achse (z.B. Raumtemperatur: die Hauptkurve belegt nur die untere Haelfte des Charts).
+    const leftAxisColor = secondSeries ? 'var(--color-accent)' : 'var(--color-text-secondary)';
+    const yTicks = computeNiceTicks(yMin, yMax).filter(v => axisMax === null || v <= axisMax);
     const yLabels = yTicks.map(v => {
         const y = (paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight).toFixed(1);
-        return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="end">${round ? Math.round(v) : v.toFixed(1)}</text>`;
+        return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="${leftAxisColor}" text-anchor="end">${round ? Math.round(v) : v.toFixed(1)}</text>`;
     }).join('');
 
     // Rechte Achsenbeschriftung fuer secondSeries - eigene Skala, also eigene Ticks (gleiches Muster
     // wie yLabels links), am rechten Rand nach aussen ausgerichtet.
     let yLabels2 = '';
     let zeroLine2Markup = '';
+    let axisUnitMarkup = chartAxisUnitMarkup(unit, paddingLeft - 6, 'end', paddingTop, leftAxisColor);
     if (secondSeries) {
-        let yTicks2 = [yMax2, (yMin2 + yMax2) / 2, yMin2];
+        const color2 = secondSeries.color || 'var(--color-text-secondary)';
         if (secondSeries.signed && yMin2 < 0) {
-            // Nulllinie der rechten Skala (Bezug darueber, Einspeisung darunter) samt "0"-Beschriftung statt der Mitte
-            yTicks2 = [yMax2, 0, yMin2];
+            // Nulllinie der rechten Skala (Bezug darueber, Einspeisung darunter)
             const zy2 = (paddingTop + plotHeight - ((0 - yMin2) / yRange2) * plotHeight).toFixed(1);
             zeroLine2Markup = `<line x1="${paddingLeft}" y1="${zy2}" x2="${width - paddingRight}" y2="${zy2}" stroke="var(--color-border)" stroke-dasharray="2,3" />`;
         }
+        // Beschriftet werden nur "gerade" Werte (5, 10, 15 ...), nicht die Raender des Wertebereichs.
+        let yTicks2 = computeEvenTicks(yMin2, yMax2);
         if (secondSeries.integerTicks) {
-            // Nur volle Zahlen als Achsenbeschriftung (hoechstens ~5 Stueck, bei grossem Bereich in groeberen Schritten)
-            const lowTick = Math.ceil(yMin2 - 1e-9), highTick = Math.floor(yMax2 + 1e-9);
-            const tickStep = Math.max(1, Math.ceil((highTick - lowTick) / 4));
+            // Nur gerade ganze Zahlen (z.B. Innenraum 16, 18, 20), beginnend beim niedrigsten dargestellten Wert (abgerundet) - darunter
+            // belegt die Hauptkurve den Chart, die Achse soll dort nichts beschriften.
+            const lowTick = Math.floor((dataMin2 ?? yMin2) / 2 + 1e-9) * 2, highTick = Math.floor(yMax2 + 1e-9);
+            const tickStep = 2 * Math.max(1, Math.ceil((highTick - lowTick) / 2 / 4));
             yTicks2 = [];
-            for (let v = lowTick; v <= highTick + 1e-9; v += tickStep) yTicks2.push(v);
+            for (let v = lowTick; v <= highTick + 1e-9; v += tickStep) {
+                if (v >= yMin2 - 1e-9) yTicks2.push(v);
+            }
+            if (yTicks2.length < 2) {
+                // Zu kleiner Bereich fuer zwei gerade Werte: alle ganzen Zahlen im Bereich
+                yTicks2 = [];
+                for (let v = Math.ceil(Math.max(yMin2, dataMin2 ?? yMin2) - 1e-9); v <= highTick + 1e-9; v += 1) yTicks2.push(v);
+            }
         }
+        const decimals2 = secondSeries.integerTicks ? 0 : (secondSeries.decimals ?? 1);
         yLabels2 = yTicks2.map(v => {
             const y = (paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight).toFixed(1);
-            return `<text x="${(width - paddingRight + 6).toFixed(1)}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="start">${v.toFixed(secondSeries.integerTicks ? 0 : (secondSeries.decimals ?? 1))}</text>`;
+            return `<text x="${(width - paddingRight + 6).toFixed(1)}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="${color2}" text-anchor="start">${Number.isInteger(v) ? v.toFixed(0) : v.toFixed(decimals2)}</text>`;
         }).join('');
+        axisUnitMarkup += chartAxisUnitMarkup(secondSeries.unit !== undefined ? secondSeries.unit : unit, width - paddingRight + 6, 'start', paddingTop, color2);
     }
 
     // vertical marker wherever the local calendar date changes between two consecutive hourly
@@ -9177,6 +9234,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
             ${dayBoundaryMarkup}
             ${yLabels}
             ${hideSecond ? '' : yLabels2}
+            ${axisUnitMarkup}
             ${xLabels}
             <circle class="dashboardChartMarker" r="4.5" cx="0" cy="0" visibility="hidden" />
             ${secondSeries && !hideSecond ? '<circle class="dashboardChartMarker dashboardChartMarkerSecond" r="4.5" cx="0" cy="0" visibility="hidden" />' : ''}
@@ -9393,7 +9451,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     // laufende Stunden befuellt).
     const prognose = plannedHistory ? labels.map((_, i) => (plannedHistory[i] ?? forecast[i])) : forecast;
     const width = 600, height = CHART_SVG_HEIGHT;
-    const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
+    const paddingLeft = 52, paddingRight = 15, paddingTop = chartTopPadding(unit), paddingBottom = 26;
     ctx.plotLeft = paddingLeft;
     ctx.plotRight = paddingRight;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -9408,7 +9466,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     wrapper.className = 'dashboardChart dashboardChartHalf';
     const titleEl = document.createElement('div');
     titleEl.className = 'dashboardChartTitle';
-    titleEl.textContent = `${title} (${unit})`;
+    titleEl.textContent = title;
     appendChartDeactivatedBadge(titleEl, title);
     wrapper.appendChild(titleEl);
 
@@ -9593,6 +9651,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
             ${nowDotMarkup}
             ${dayBoundaryMarkup}
             ${yLabels}
+            ${chartAxisUnitMarkup(unit, paddingLeft - 6, 'end', paddingTop)}
             ${xLabels}
             <circle class="dashboardChartMarker" r="4.5" cx="0" cy="0" visibility="hidden" />
         </svg>`;
@@ -10686,6 +10745,47 @@ function heatDeviceName(data) {
     return data.heatpump && data.heatpump.isRod ? 'Heizstab' : 'Wärmepumpe';
 }
 
+// Waermepumpen-Icon mit drehendem Rotor: das JPG zeigt den Rotor starr hinter den Gitterringen. Darueber wird das Luftgitter
+// (dunkle Flaeche, drei Fluegel, weisse Ringe) als SVG nachgezeichnet; die Fluegel drehen sich langsam, solange die
+// Waermepumpe an ist. Alle Masse in Pixeln des Originalbilds (heatpump.jpg, 499x492; Gitter-Mitte 151,5/176). Der Heizstab hat
+// keinen Rotor und bleibt ein einfaches Bild.
+const HEATPUMP_IMG_W = 499, HEATPUMP_IMG_H = 492;
+const HEATPUMP_FAN_CENTER = [151.5, 176];
+const HEATPUMP_FAN_RING_RX = [20.5, 34.5, 48.5, 62.5, 77, 91];
+const HEATPUMP_FAN_RING_RY = [26.5, 43.5, 60.5, 78.5, 95.5, 112.5];
+const HEATPUMP_ROTOR_SECONDS = 6;
+const HEATPUMP_BLADE_PATH = 'M 0,-10 C -38,-25 -52,-62 -34,-84 C -18,-96 24,-90 40,-68 C 50,-50 28,-22 0,-10 Z';
+
+function buildHeatpumpImage(data, cx, cy, targetW) {
+    if (data.heatpump && data.heatpump.isRod) return buildFlowImage(heatDeviceImage(data), cx, cy, HEATPUMP_IMG_W, HEATPUMP_IMG_H, targetW);
+    const scale = targetW / HEATPUMP_IMG_W;
+    const g = svgEl('g', {transform: `translate(${cx - targetW / 2} ${cy - (HEATPUMP_IMG_H * scale) / 2}) scale(${scale})`});
+    g.appendChild(svgEl('image', {href: heatDeviceImage(data), x: 0, y: 0, width: HEATPUMP_IMG_W, height: HEATPUMP_IMG_H}));
+    const [fanX, fanY] = HEATPUMP_FAN_CENTER;
+    const outerRx = HEATPUMP_FAN_RING_RX[HEATPUMP_FAN_RING_RX.length - 1], outerRy = HEATPUMP_FAN_RING_RY[HEATPUMP_FAN_RING_RY.length - 1];
+    g.appendChild(svgEl('ellipse', {cx: fanX, cy: fanY, rx: outerRx, ry: outerRy, fill: '#8f7f7f'}));
+    // Der Rotor wird in Kreis-Koordinaten gezeichnet und per scale in die Ellipse (Blick schraeg von der Seite) gestaucht.
+    const squash = HEATPUMP_FAN_RING_RY[0] / HEATPUMP_FAN_RING_RX[0];
+    const rotorHolder = svgEl('g', {transform: `translate(${fanX} ${fanY}) scale(1 ${squash})`});
+    const rotor = svgEl('g');
+    if (data.heatpump && data.heatpump.on) {
+        rotor.setAttribute('class', 'energyFlowRotorSpin');
+        // Das Widget wird alle 30 s neu gebaut: die Startphase aus der Uhrzeit ableiten, damit die Drehung dabei nicht zurueckspringt.
+        rotor.style.animationDuration = `${HEATPUMP_ROTOR_SECONDS}s`;
+        rotor.style.animationDelay = `-${((Date.now() / 1000) % HEATPUMP_ROTOR_SECONDS).toFixed(2)}s`;
+    }
+    for (const angle of [0, 120, 240]) {
+        rotor.appendChild(svgEl('path', {d: HEATPUMP_BLADE_PATH, transform: `rotate(${angle})`, fill: '#c2b8b7'}));
+    }
+    rotorHolder.appendChild(rotor);
+    g.appendChild(rotorHolder);
+    g.appendChild(svgEl('ellipse', {cx: fanX, cy: fanY, rx: HEATPUMP_FAN_RING_RX[0], ry: HEATPUMP_FAN_RING_RY[0], fill: '#c2b8b7'}));
+    HEATPUMP_FAN_RING_RX.forEach((rx, i) => {
+        g.appendChild(svgEl('ellipse', {cx: fanX, cy: fanY, rx, ry: HEATPUMP_FAN_RING_RY[i], fill: 'none', stroke: '#ffffff', 'stroke-width': 3}));
+    });
+    return g;
+}
+
 function computeEnergyFlowKw(data) {
     const heatpumpOn = !!(data.heatpump && data.heatpump.configured && data.heatpump.on);
     const carCharging = !!(data.car && data.car.configured && data.car.state === 'charging');
@@ -10875,9 +10975,7 @@ function buildEnergyFlowSvgDesktop(data) {
         // laeuft - sonst wirkt es so, als flösse Strom zu einem ausgeschalteten Geraet.
         const line = buildFlowLineFromPath(buildFlowPath(busX, rowY, consumerAnchorX, rowY), heatpumpFlowKw);
         if (line) svg.appendChild(line);
-        const hp = buildFlowImage(heatDeviceImage(data), columnX, rowY, 499, 492, 80);
-        if (data.heatpump.on) hp.setAttribute('class', 'energyFlowPulse');
-        svg.appendChild(hp);
+        svg.appendChild(buildHeatpumpImage(data, columnX, rowY, 80));
         const statusLines = [
             withStaleness(data.heatpump.on === null ? heatDeviceName(data) : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES),
             data.heatpump.targetTempC !== null ? `Soll (aktuell): ${formatTemp(data.heatpump.targetTempC)}` : null,
@@ -11000,6 +11098,38 @@ function placeLabelBelow(x, topY, lines, opts = {}) {
     return {el: buildEnergyFlowLabel(x, centerY, lines, opts), bottomY};
 }
 
+// Abstand (Mitte der untersten Zeile) einer Beschriftung ueber einer waagerechten Stromleitung im Mobil-Layout.
+const MOBILE_FLOW_LINE_LABEL_GAP = 22;
+
+// Wie placeLabelBelow, aber nach OBEN wachsend: die unterste Zeile steht immer im selben Abstand ueber der Leitung (lineY), ein
+// zusaetzlicher Zeitstempel (zweite Zeile) schiebt den Textblock also nach oben statt die Leitung zu verdecken.
+function placeLabelAbove(x, lineY, lines, opts = {}) {
+    const lineHeight = opts.lineHeight || FLOW_LABEL_LINE_HEIGHT;
+    const lineCount = wrapEnergyFlowLines(lines).length;
+    const centerY = lineY - MOBILE_FLOW_LINE_LABEL_GAP - ((lineCount - 1) * lineHeight) / 2;
+    return buildEnergyFlowLabel(x, centerY, lines, opts);
+}
+
+// Breite (SVG-Einheiten) eines Textes in der Mobil-Schrift (25px, siehe .energyFlowLabel-Media-Query) - vorab gemessen, um den Abstand von
+// Mast/Batterie zum Haus an die Textbreite anzupassen. Ohne Layout (z.B. in Tests) eine grobe Schaetzung.
+function measureEnergyFlowTextWidth(text, fontSizePx = 25) {
+    const host = document.createElement('div');
+    host.style.cssText = 'position:absolute;visibility:hidden;width:0;height:0;overflow:hidden;';
+    const svg = svgEl('svg');
+    const textEl = svgEl('text', {class: 'energyFlowLabel', style: `font-size:${fontSizePx}px`}, [document.createTextNode(text)]);
+    svg.appendChild(textEl);
+    host.appendChild(svg);
+    document.body.appendChild(host);
+    let width = 0;
+    try {
+        width = textEl.getBBox().width;
+    } catch (err) {
+        width = 0;
+    }
+    document.body.removeChild(host);
+    return width || text.length * fontSizePx * 0.56;
+}
+
 // Mobil-Layout: schmaler und hochkant statt breit (buildEnergyFlowSvgDesktop), damit bei derselben
 // Containerbreite mehr Bildschirmpixel pro SVG-Einheit zur Verfuegung stehen (= groesserer, lesbarer
 // Text - siehe .energyFlowLabel-Media-Query in index.html) statt auf einem schmalen Screen unleserlich
@@ -11037,27 +11167,6 @@ function buildEnergyFlowSvgMobile(data) {
 
     const flows = computeEnergyFlowKw(data);
 
-    if (data.grid && data.grid.configured) {
-        // 130 statt vorher 75 - bei 75 stand der Mast zu eng am Haus (siehe buildPylonIcon: der Mast
-        // selbst ist schon ca. 90 breit inkl. Freileitung oben). Der Mast reicht von cy-44 (oberste
-        // Freileitung) bis cy+42 (Fuss) - die kW-Beschriftung braucht deshalb deutlich mehr Abstand
-        // als der generische FLOW_LINE_LABEL_GAP, sonst haengt sie in der Freileitung (siehe
-        // pylonLabelGap unten), ebenso der Strompreis-Text noch darueber.
-        const pylonCx = houseX - 130, pylonCy = houseCy;
-        svg.appendChild(buildPylonIcon(pylonCx, pylonCy));
-        const line = buildFlowLine(pylonCx + 24, pylonCy, houseX, houseCy, data.grid.kw, {reversed: (data.grid.kw || 0) < 0, thresholdKw: 0.1});
-        if (line) svg.appendChild(line);
-        const priceColor = energyFlowPriceColor(data.grid.priceLevel);
-        const priceText = data.grid.priceCent !== null ? `${data.grid.priceCent.toLocaleString('de-DE')} Cent` : '';
-        const gridLabelX = (pylonCx + 24 + houseX) / 2;
-        const pylonTopY = pylonCy - 44;
-        const gridLabelY = pylonTopY - 16;
-        svg.appendChild(buildEnergyFlowLabel(gridLabelX, gridLabelY, [withStaleness(formatKwValue(data.grid.kw), data.grid.updatedAt, INVERTER_STALE_MINUTES)], {anchor: 'middle', noWrap: true}));
-        if (priceText) {
-            svg.appendChild(svgEl('text', {x: pylonCx, y: gridLabelY - 26, 'text-anchor': 'middle', class: 'energyFlowLabel', style: `fill:${priceColor}`}, [document.createTextNode(priceText)]));
-        }
-    }
-
     if (data.pv && data.pv.configured) {
         const pvLineTopY = sunCy + 40, pvLineBottomY = houseY;
         const pvLine = buildFlowLine(houseCx, pvLineTopY, houseCx, pvLineBottomY, data.pv.kw);
@@ -11067,26 +11176,6 @@ function buildEnergyFlowSvgMobile(data) {
     }
 
     const houseRightX = houseX + houseVisibleW;
-    // Batterie wandert auf Mobil rechts neben das Haus (horizontaler Fluss, wie Grid links) statt
-    // wie auf Desktop darunter - dort unten stehen stattdessen die vier Verbraucher nebeneinander.
-    if (data.battery && data.battery.configured) {
-        const batteryImgW = 42, batteryImgH = batteryImgW / 0.535;
-        // 130 statt vorher 95, symmetrisch zum Mast (siehe pylonCx oben) - sonst wirkt es zu eng.
-        const batteryCx = houseRightX + 130, batteryCy = houseCy;
-        const line = buildFlowLine(houseRightX, houseCy, batteryCx - batteryImgW / 2 - 4, houseCy, data.battery.kw, {reversed: (data.battery.kw || 0) < 0});
-        if (line) svg.appendChild(line);
-        svg.appendChild(buildFlowImage(batteryImageFor(data.battery.soc), batteryCx, batteryCy, 240, 448, batteryImgW));
-        // kW-Wert oberhalb des Icons (mit echtem Abstand zur Icon-Oberkante, nicht der generische
-        // FLOW_LINE_LABEL_GAP - der reichte bei diesem vergleichsweise hohen Batterie-Icon nicht und
-        // die Beschriftung haenge sichtbar ins Icon hinein). SOC+Modus dagegen unterhalb des Icons -
-        // dort ist auf Mobil mehr Platz in der Breite als seitlich neben dem Icon (dort wuerde z.B.
-        // "Maximize Self Consumption" ueber den rechten Bildrand hinauslaufen).
-        const batteryTopY = batteryCy - batteryImgH / 2;
-        svg.appendChild(buildEnergyFlowLabel(batteryCx, batteryTopY - 16, [withStaleness(formatKwValue(data.battery.kw), data.battery.updatedAt, INVERTER_STALE_MINUTES)], {anchor: 'middle', noWrap: true}));
-        const batterySocModeLines = [`${Math.round(data.battery.soc ?? 0)} %`];
-        if (data.battery.mode) batterySocModeLines.push(data.battery.mode);
-        svg.appendChild(placeLabelBelow(batteryCx, batteryCy + batteryImgH / 2 + 14, batterySocModeLines, {anchor: 'middle', lineHeight: MOBILE_FLOW_LABEL_LINE_HEIGHT}).el);
-    }
 
     // Waermepumpe/Auto/Sonstiges Geraet/Haushaltsstrom nebeneinander unter dem Haus - nur die
     // tatsaechlich konfigurierten, gleichmaessig ueber die Breite verteilt (dieselbe
@@ -11140,11 +11229,9 @@ function buildEnergyFlowSvgMobile(data) {
                 const iconHalfH = 35;
                 const drop = buildFlowLineFromPath(`M ${colX},${busY} V ${rowY - iconHalfH}`, flows.heatpumpFlowKw);
                 if (drop) svg.appendChild(drop);
-                const hp = buildFlowImage(heatDeviceImage(data), colX, rowY, 499, 492, 70);
-                if (data.heatpump.on) hp.setAttribute('class', 'energyFlowPulse');
-                svg.appendChild(hp);
+                svg.appendChild(buildHeatpumpImage(data, colX, rowY, 70));
                 deviceDetailBlocks.push({colX, type, lines: [
-                    `${heatDeviceName(data)}: ${withStaleness(data.heatpump.on === null ? '–' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES)}`,
+                    withStaleness(data.heatpump.on === null ? '–' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES),
                     data.heatpump.targetTempC !== null ? `Soll (aktuell): ${formatTemp(data.heatpump.targetTempC)}` : null,
                     !data.heatpump.isRod && data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
                     // Label und Wert auf zwei Zeilen statt einer zu langen - "WW-Speicher: 36,5 °C"
@@ -11171,12 +11258,13 @@ function buildEnergyFlowSvgMobile(data) {
                 // schmalen Pro-Spalte-Breite im Mobil-Layout (bis zu 4 Geraete nebeneinander) lief
                 // eine einzelne Zeile "Auto: Ladestand 55 % (183 km)" leicht in die Nachbarspalte.
                 if (data.car.soc !== null) {
-                    carLines.push(withStaleness(`Auto: Ladestand ${Math.round(data.car.soc)} %`, data.car.updatedAt, OTHER_STALE_MINUTES));
+                    carLines.push(withStaleness(`Ladestand ${Math.round(data.car.soc)} %`, data.car.updatedAt, OTHER_STALE_MINUTES));
                     if (data.car.rangeKm !== null) carLines.push(`(${data.car.rangeKm} km)`);
-                } else carLines.push('Auto');
+                }
                 if (data.car.state === 'away') carLines.push('abwesend');
                 else if (data.car.state === 'charging') carLines.push(data.car.chargingKw != null ? `Lädt (${formatKwValue(data.car.chargingKw)})` : 'lädt');
                 else if (data.car.state === 'connected') carLines.push('eingesteckt');
+                if (carLines.length === 0) carLines.push('–');
                 deviceDetailBlocks.push({colX, type, lines: carLines});
             } else if (type === 'sonstiger') {
                 const iconHalfH = 34;
@@ -11244,28 +11332,79 @@ function buildEnergyFlowSvgMobile(data) {
         }
     }
 
-    // Horizontal auf den tatsaechlich gezeichneten Inhalt zuschneiden (wie viewCropLeft im Desktop-
-    // Layout, hier zusaetzlich auch rechts) - VIEW_W=1150 ist bewusst grosszuegig bemessen (siehe
-    // Kommentar oben), aber je nach konfigurierten Geraeten bleibt links und/oder rechts ungenutzter
-    // Rand. Ungenutzt liess das Widget auf schmalen Bildschirmen kleiner wirken, als der verfuegbare
-    // Platz hergibt (Nutzer-Feedback). getBBox() braucht ein angehaengtes Element - kurz unsichtbar
+    // Huellkurve des bisher gezeichneten Inhalts. getBBox() braucht ein angehaengtes Element - kurz unsichtbar
     // ins DOM haengen, um die reale gezeichnete Breite zu messen, dann wieder entfernen.
-    const measureHost = document.createElement('div');
-    measureHost.style.cssText = 'position:absolute;visibility:hidden;width:0;height:0;overflow:hidden;';
-    document.body.appendChild(measureHost);
-    measureHost.appendChild(svg);
     // Die animierten Fluss-Punkte (buildFlowDots, <animateMotion>) wandern kontinuierlich entlang
     // ihrer Leitung - ihre Position IN DIESEM MOMENT ist zufaellig (der zweite Punkt je Leitung
     // startet per negativem "begin" sogar schon in der Mitte seines Laufs) und darf die Zuschnitt-
     // Berechnung nicht verzerren, sonst haengt der Rand vom Animationsstand statt vom tatsaechlichen
     // Inhalt ab (Nutzer-Feedback: sehr grosser, wechselnder Rand auf einer Seite). Fuer die Messung
     // kurz ausblenden (getBBox() ignoriert display:none), danach sofort wieder sichtbar machen.
-    const dots = svg.querySelectorAll('.energyFlowDot');
-    for (const dot of dots) dot.style.display = 'none';
-    const contentBox = svg.getBBox();
-    for (const dot of dots) dot.style.display = '';
-    document.body.removeChild(measureHost);
-    const cropMargin = 24;
+    const measureContentBox = () => {
+        const measureHost = document.createElement('div');
+        measureHost.style.cssText = 'position:absolute;visibility:hidden;width:0;height:0;overflow:hidden;';
+        document.body.appendChild(measureHost);
+        measureHost.appendChild(svg);
+        const dots = svg.querySelectorAll('.energyFlowDot');
+        for (const dot of dots) dot.style.display = 'none';
+        const box = svg.getBBox();
+        for (const dot of dots) dot.style.display = '';
+        document.body.removeChild(measureHost);
+        return box;
+    };
+
+    // Mast und Batterie stehen symmetrisch links/rechts vom Haus (Abstand sideDistance zur Hausmitte) und moeglichst weit aussen: so weit, dass
+    // die breiteste Beschriftung (Batterie-Modus, z.B. "Maximize Self Consumption", einzeilig) noch in die Breite passt, die die uebrigen Inhalte
+    // (Geraete unter dem Haus) ohnehin schon belegen. Mindestabstand, damit der kW-Wert ueber der Leitung zwischen Haus und Mast/Batterie Platz hat.
+    const hasGrid = !!(data.grid && data.grid.configured);
+    const hasBattery = !!(data.battery && data.battery.configured);
+    const batteryImgW = 42, batteryImgH = batteryImgW / 0.535;
+    if (hasGrid || hasBattery) {
+        const batterySocModeLines = [`${Math.round((data.battery && data.battery.soc) ?? 0)} %`];
+        if (hasBattery && data.battery.mode) batterySocModeLines.push(data.battery.mode);
+        const sideHalfWidth = Math.max(60, batteryImgW / 2, ...(hasBattery ? batterySocModeLines.map(line => measureEnergyFlowTextWidth(line) / 2) : []));
+        const contentBox = measureContentBox();
+        const availableHalfSpan = Math.max(houseCx - contentBox.x, (contentBox.x + contentBox.width) - houseCx);
+        const sideDistance = Math.min(420, Math.max(260, availableHalfSpan - sideHalfWidth));
+
+        if (hasGrid) {
+            // Mast: Haus-/Mast-Abstand symmetrisch zur Batterie (siehe sideDistance). Der Mast selbst ist ca. 90 breit inkl. Freileitung
+            // (siehe buildPylonIcon) und reicht von cy-44 (oberste Freileitung) bis cy+42 (Fuss).
+            const pylonCx = houseCx - sideDistance, pylonCy = houseCy;
+            svg.appendChild(buildPylonIcon(pylonCx, pylonCy));
+            const line = buildFlowLine(pylonCx + 24, pylonCy, houseX, houseCy, data.grid.kw, {reversed: (data.grid.kw || 0) < 0, thresholdKw: 0.1});
+            if (line) svg.appendChild(line);
+            const priceColor = energyFlowPriceColor(data.grid.priceLevel);
+            const priceText = data.grid.priceCent !== null ? `${data.grid.priceCent.toLocaleString('de-DE')} Cent` : '';
+            // kW-Wert mittig ueber der Leitung (ein-, mit Aktualisierungszeit zweizeilig), auf derselben Hoehe wie der Batterie-Wert.
+            const gridLabelX = (pylonCx + 24 + houseX) / 2;
+            svg.appendChild(placeLabelAbove(gridLabelX, houseCy, [withStaleness(formatKwValue(data.grid.kw), data.grid.updatedAt, INVERTER_STALE_MINUTES)], {anchor: 'middle', lineHeight: MOBILE_FLOW_LABEL_LINE_HEIGHT}));
+            if (priceText) {
+                svg.appendChild(svgEl('text', {x: pylonCx, y: pylonCy - 44 - 18, 'text-anchor': 'middle', class: 'energyFlowLabel', style: `fill:${priceColor}`}, [document.createTextNode(priceText)]));
+            }
+        }
+
+        // Batterie rechts neben dem Haus (horizontaler Fluss, wie Grid links) statt wie auf Desktop darunter - dort unten stehen
+        // stattdessen die vier Verbraucher nebeneinander.
+        if (hasBattery) {
+            const batteryCx = houseCx + sideDistance, batteryCy = houseCy;
+            const batteryLineEndX = batteryCx - batteryImgW / 2 - 4;
+            const line = buildFlowLine(houseRightX, houseCy, batteryLineEndX, houseCy, data.battery.kw, {reversed: (data.battery.kw || 0) < 0});
+            if (line) svg.appendChild(line);
+            svg.appendChild(buildFlowImage(batteryImageFor(data.battery.soc), batteryCx, batteryCy, 240, 448, batteryImgW));
+            // kW-Wert mittig ueber der Leitung, SOC + Modus mit Abstand unterhalb des Icons (dort ist auf Mobil mehr Platz in der Breite als seitlich).
+            svg.appendChild(placeLabelAbove((houseRightX + batteryLineEndX) / 2, houseCy, [withStaleness(formatKwValue(data.battery.kw), data.battery.updatedAt, INVERTER_STALE_MINUTES)], {anchor: 'middle', lineHeight: MOBILE_FLOW_LABEL_LINE_HEIGHT}));
+            svg.appendChild(placeLabelBelow(batteryCx, batteryCy + batteryImgH / 2 + 30, batterySocModeLines, {anchor: 'middle', lineHeight: MOBILE_FLOW_LABEL_LINE_HEIGHT}).el);
+        }
+    }
+
+    // Horizontal auf den tatsaechlich gezeichneten Inhalt zuschneiden (wie viewCropLeft im Desktop-
+    // Layout, hier zusaetzlich auch rechts) - VIEW_W=1150 ist bewusst grosszuegig bemessen (siehe
+    // Kommentar oben), aber je nach konfigurierten Geraeten bleibt links und/oder rechts ungenutzter
+    // Rand. Ungenutzt liess das Widget auf schmalen Bildschirmen kleiner wirken, als der verfuegbare
+    // Platz hergibt (Nutzer-Feedback).
+    const contentBox = measureContentBox();
+    const cropMargin = 32;
     // Symmetrisch um houseCx zuschneiden (nicht einfach die engste Huelle um den ganzen Inhalt) -
     // sonst waeren Haus/senkrechte Leitungen/Auto/Sonne nicht mittig, sobald z.B. der Mast samt
     // Preis-Beschriftung links weiter herausragt als die rechte Verbraucher-Spalte (Nutzer-Feedback:
@@ -11671,6 +11810,9 @@ async function loadDashboardImpl() {
             // Kein subtitle mehr (Nutzer-Vorgabe: Titel bleibt schlicht "Raumtemperatur (°C)"),
             // primaryLabel beschriftet stattdessen nur die Legende darunter.
             primaryLabel: 'Heizung-Soll',
+            // Linke Achse (Heizung-Soll, untere Kurve) nur bis 25 beschriften, die rechte (Innenraum, obere Kurve) erst ab dem niedrigsten Wert
+            // der Innenraum-Kurve - so ist an den Beschriftungen erkennbar, welche Achse zu welcher Kurve gehoert.
+            axisMax: 25,
             chartKey: 'raumtemperatur',
             bandPrimary: 'lower',
             stepped: true,

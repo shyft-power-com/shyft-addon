@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.45.339
+
+* **Dashboard: Energiefluss (mobil).** Unter der Batterie stehen Ladestand und Modus mit mehr Abstand. Strommast und Batterie rücken symmetrisch zum Haus so weit nach außen, dass „Maximize Self Consumption“ weiterhin in eine Zeile mit Rand zum rechten Bildrand passt. Netzbezug und Batterieleistung stehen mittig über ihrer Leitung, auf gleicher Höhe; mit Aktualisierungszeit zweizeilig. „Auto: “ und „Wärmepumpe: “ entfallen, die Icons genügen.
+* **Wärmepumpe: Rotor dreht sich.** Das Pulsieren der eingeschalteten Wärmepumpe ist weg. Stattdessen dreht sich der Rotor im Lüftergitter langsam (eine Umdrehung in 6 Sekunden), solange die Wärmepumpe an ist.
+* **Charts: Einheiten an den Achsen.** Die Einheit steht nicht mehr im Titel, sondern oben an der jeweiligen Achse (links Hauptkurve, rechts zweite Kurve; „ct/kWh“ mobil zweizeilig). Der Strompreis-Chart heißt „Strompreis (Bezug)“. Die rechte Achse beschriftet nur gerade Werte (z. B. 5, 10, 15, 20). Bei der Raumtemperatur endet die linke Achse bei 25 und die rechte (Innenraum) beginnt beim niedrigsten dargestellten Wert (auf gerade Grad abgerundet); beide Achsen tragen die Farbe ihrer Kurve.
+* **Einsatzplan: Heute und Morgen aus Ist und Plan.** Die Kacheln zeigen statt reiner Prognose zwei Zahlen „Heute | Morgen“ für jeweils volle 24 Stunden. Heute besteht aus den gemessenen Werten bis jetzt (Verbrauch, Netzbezug, Einspeisung, PV; bewertet mit dem Strom- bzw. Einspeisepreis der jeweiligen Stunde) und ab jetzt aus dem Einsatzplan. Deckt der Plan morgen nicht komplett ab, entfällt Morgen; reicht er nicht bis zum Ende von heute, gilt Heute bis zum Planende („bis XX Uhr“). Einheit „ct/kWh“ statt „Cent/kWh“, die Kacheln sind kompakter.
+
 ## 0.0.45.338
 
 * **Konfiguration geändert → neue Optimierung nach 3 Minuten.** Sobald in der Konfiguration etwas gespeichert wird, das sich tatsächlich geändert hat, wartet das Add-on 3 Minuten auf weitere Änderungen (jede weitere Änderung setzt die Frist zurück) und stößt dann einmal eine neue Optimierung an. Das passiert auch dann, wenn der letzte Plan sonst noch gepasst hätte und die stündliche Optimierung übersprungen worden wäre.
