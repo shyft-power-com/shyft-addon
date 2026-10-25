@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.334
+
+* **Konfiguration: Toggle „shyft-power beim Öffnen von Home Assistant direkt starten“.** Ganz unten auf der Konfigurationsseite. Eingeschaltet setzt das Add-on sich als system-weites Standard-Panel von Home Assistant, sodass HA direkt shyft-power öffnet; ausgeschaltet wird die Startseite wieder zurückgesetzt (nur, wenn shyft-power selbst das Standard-Panel ist).
+
 ## 0.0.45.333
 
 * **Auto laden: Preisgrenze `p_min` von +2 auf +3 Cent.** Die Preisgrenze, bis zu der der Optimierer das Auto lädt (`p_min`), liegt jetzt 3 Cent statt 2 Cent über dem niedrigsten kommenden Strompreis (`WB_P_MIN_MARGIN_EUR`). Bei +2 Cent war der Gewinn je kWh für den Optimierer so klein, dass er in der Rechengenauigkeit unterging und das Auto in sehr günstigen Nächten gar nicht lud. In Testrechnungen mit dem Optimierer lädt der Wagen ab +3 Cent in den günstigsten Stunden.

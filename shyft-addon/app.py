@@ -1680,6 +1680,40 @@ def readNotificationTargets():
         return jsonify([])
 
 
+def _own_panel_path():
+    "Panel-Pfad dieses Add-ons in der HA-Seitenleiste (der Supervisor registriert das Ingress-Panel unter dem Add-on-Slug)."
+    return ((homeassistant_adapter.get_from_supervisor("/addons/self/info") or {}).get("data") or {}).get("slug")
+
+
+@app.route("/open-on-start", methods=["GET"])
+def readOpenOnStart():
+    "Ist dieses Add-on das system-weite Standard-Panel von Home Assistant (oeffnet es sich also direkt beim Oeffnen von HA)?"
+    try:
+        panel = _own_panel_path()
+        return jsonify({"status": "success", "enabled": bool(panel) and homeassistant_adapter.get_default_panel() == panel})
+    except Exception as e:
+        print("[Shyft] Standard-Panel nicht lesbar:", repr(e))
+        return jsonify({"status": "error", "message": str(e)})
+
+
+@app.route("/open-on-start", methods=["PUT"])
+def writeOpenOnStart():
+    "Setzt dieses Add-on als system-weites Standard-Panel von Home Assistant bzw. entfernt es wieder (nur wenn es selbst das Standard-Panel ist). Body: {\"enabled\": bool}."
+    enabled = bool((request.get_json(silent=True) or {}).get("enabled"))
+    try:
+        panel = _own_panel_path()
+        if not panel:
+            raise Exception("Panel-Pfad des Add-ons nicht ermittelbar")
+        if enabled:
+            homeassistant_adapter.set_default_panel(panel)
+        else:
+            homeassistant_adapter.set_default_panel(None, only_if_current=panel)
+        return jsonify({"status": "success", "enabled": enabled})
+    except Exception as e:
+        print("[Shyft] Standard-Panel nicht setzbar:", repr(e))
+        return jsonify({"status": "error", "message": str(e)})
+
+
 # Der lokale Aktions-Store (COMPUTED_ACTIONS_PATH) wird bewusst NICHT beschnitten - Aktionen bleiben
 # ueber Jahre erhalten, um sie spaeter auswerten zu koennen. Nur die Gerätesteuerung-Anzeige zeigt
 # ein begrenztes Fenster, damit die Liste nicht endlos waechst.
