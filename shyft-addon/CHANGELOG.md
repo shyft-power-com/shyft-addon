@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.334
+
+* **Heizung Soll-Temperatur: an das Gerät geht ein ganzzahliger Wert.** Die Solltemperatur in der Konfiguration darf weiterhin eine Nachkommastelle haben, und der Optimierer rechnet damit. Der Sollwert, den die Aktion „Heizung Soll-Temperatur“ an die Wärmepumpe sendet (Skript und eigene HA-Automation, auch beim Test), wird jedoch auf eine ganze Zahl gerundet, da nicht jede Integration Nachkommastellen verarbeitet.
+
 ## 0.0.45.333
 
 * **Auto laden: Preisgrenze `p_min` von +2 auf +3 Cent.** Die Preisgrenze, bis zu der der Optimierer das Auto lädt (`p_min`), liegt jetzt 3 Cent statt 2 Cent über dem niedrigsten kommenden Strompreis (`WB_P_MIN_MARGIN_EUR`). Bei +2 Cent war der Gewinn je kWh für den Optimierer so klein, dass er in der Rechengenauigkeit unterging und das Auto in sehr günstigen Nächten gar nicht lud. In Testrechnungen mit dem Optimierer lädt der Wagen ab +3 Cent in den günstigsten Stunden.
