@@ -444,7 +444,11 @@ def _compute_base_case(input_csv, state_overrides=None):
         term_hw = max(0.0, t_hw_0 - t_hw_end) / (c_hw * cop_hw_last) * last_p_buy
     term_i = 0.0
     if heating_hours and fh_size > 0:
-        term_i = (t_i_end - t_i_0) / (C_STORE * fh_size) * last_p_buy
+        # Gebaeudespeicher: dT * C_STORE * fh_size = thermische kWh (dieselbe Bilanz wie dT_i oben), durch den COP
+        # = elektrische kWh, bewertet zum letzten p_buy. (Frueher stand dT / (C_STORE * fh_size) ohne COP da -
+        # um den Faktor (C_STORE*fh_size)^2 zu klein, der abgekuehlte Speicher kostete im Base Case praktisch nichts.)
+        cop_i = max(COP_MIN, 5.5 - (t_i_min - t_out[horizon - 1]) / 20.0)
+        term_i = (t_i_end - t_i_0) * C_STORE * fh_size / cop_i * last_p_buy
 
     # Endwert-Korrektur (Excel BasePrice3!O106: -AR8 + S108 - T109 - S110) wird komplett auf die
     # LETZTE Stunde des Optimierungszeitraums aufgeschlagen - so ist sum(netProfitBaseList) exakt
