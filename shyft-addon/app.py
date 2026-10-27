@@ -14,6 +14,7 @@ import os
 from flask import Flask, send_from_directory, jsonify, request, Response
 import json
 import math
+import decimal
 import re
 import shutil
 import time
@@ -1728,6 +1729,40 @@ def readNotificationTargets():
     except Exception as e:
         print("Failed to load notification targets:", repr(e))
         return jsonify([])
+
+
+def _own_panel_path():
+    "Panel-Pfad dieses Add-ons in der HA-Seitenleiste (der Supervisor registriert das Ingress-Panel unter dem Add-on-Slug)."
+    return ((homeassistant_adapter.get_from_supervisor("/addons/self/info") or {}).get("data") or {}).get("slug")
+
+
+@app.route("/open-on-start", methods=["GET"])
+def readOpenOnStart():
+    "Ist dieses Add-on das system-weite Standard-Panel von Home Assistant (oeffnet es sich also direkt beim Oeffnen von HA)?"
+    try:
+        panel = _own_panel_path()
+        return jsonify({"status": "success", "enabled": bool(panel) and homeassistant_adapter.get_default_panel() == panel})
+    except Exception as e:
+        print("[Shyft] Standard-Panel nicht lesbar:", repr(e))
+        return jsonify({"status": "error", "message": str(e)})
+
+
+@app.route("/open-on-start", methods=["PUT"])
+def writeOpenOnStart():
+    "Setzt dieses Add-on als system-weites Standard-Panel von Home Assistant bzw. entfernt es wieder (nur wenn es selbst das Standard-Panel ist). Body: {\"enabled\": bool}."
+    enabled = bool((request.get_json(silent=True) or {}).get("enabled"))
+    try:
+        panel = _own_panel_path()
+        if not panel:
+            raise Exception("Panel-Pfad des Add-ons nicht ermittelbar")
+        if enabled:
+            homeassistant_adapter.set_default_panel(panel)
+        else:
+            homeassistant_adapter.set_default_panel(None, only_if_current=panel)
+        return jsonify({"status": "success", "enabled": enabled})
+    except Exception as e:
+        print("[Shyft] Standard-Panel nicht setzbar:", repr(e))
+        return jsonify({"status": "error", "message": str(e)})
 
 
 # Der lokale Aktions-Store (COMPUTED_ACTIONS_PATH) wird bewusst NICHT beschnitten - Aktionen bleiben
@@ -4462,10 +4497,15 @@ def _sonstiger_verbraucher_status(config):
     }
 
 
+def _round_half_up(value):
+    "Kaufmaennisch auf eine ganze Zahl runden (x,5 -> weg von 0, z.B. 20,5 -> 21, 22,5 -> 23). Pythons round() rundet x,5 dagegen auf die gerade Zahl (22,5 -> 22)."
+    return int(decimal.Decimal(str(float(value))).quantize(decimal.Decimal("1"), rounding=decimal.ROUND_HALF_UP))
+
+
 def _round_target_for_device(control, target_value):
-    "Rundet den Zielwert ganzzahlig, wenn die Steuerung nur ganze Werte an das Geraet senden darf (round_to_integer)."
+    "Rundet den Zielwert kaufmaennisch ganzzahlig, wenn die Steuerung nur ganze Werte an das Geraet senden darf (round_to_integer)."
     if control.get("round_to_integer") and target_value is not None:
-        return int(round(float(target_value)))
+        return _round_half_up(target_value)
     return target_value
 
 
@@ -9860,8 +9900,10 @@ HEIZUNG_TARGET_MAX_C = 25
 
 
 def _heizung_default_temp(config):
-    "Standard-Temperatur der Heizung (°C, auf Zehntelgrad): die gewuenschte Raumtemperatur (hpHeatingTargetTempMin) - darauf wird nach einer Heizungs-Aktion zurueckgestellt, Aktionen mit genau diesem Sollwert gibt es nicht."
-    return round(_safe_float(config.get("hpHeatingTargetTempMin"), HEIZUNG_T_I_MIN_DEFAULT_C), 1)
+    """Standard-Temperatur der Heizung (°C, ganze Grad): die gewuenschte Raumtemperatur (hpHeatingTargetTempMin, darf
+    eine Nachkommastelle haben) kaufmaennisch gerundet - das ist der Sollwert, der am Geraet ankommt. Darauf wird nach
+    einer Heizungs-Aktion zurueckgestellt, Aktionen mit genau diesem Sollwert gibt es nicht."""
+    return _round_half_up(_safe_float(config.get("hpHeatingTargetTempMin"), HEIZUNG_T_I_MIN_DEFAULT_C))
 
 
 def _end_heizung_restore_default(action, config):
@@ -9913,9 +9955,10 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
         is_current_hour = (i == 0)
 
         t_i_target = _safe_float(output_row.get("T_i_Target"))
-        # Ganze Grad Abstand zur Standard-Temperatur (die auf Zehntelgrad stehen kann, z.B. 21,5 -> 20,5 / 22,5): so bleibt es bei
-        # wenigen, ruhigen Sollwert-Stufen, und "Standard-Temperatur" ist exakt gleich default_temp.
-        target_value = round(max(target_min, min(HEIZUNG_TARGET_MAX_C, default_temp + round(t_i_target - default_temp))), 1)
+        # Ganze Grad, kaufmaennisch gerundet (wie der Wert, der am Geraet ankommt): so bleibt es bei wenigen, ruhigen
+        # Sollwert-Stufen, und die Aktion zeigt genau den Sollwert, der gesendet wird. Faellt der gerundete Wert auf die
+        # (ebenfalls gerundete) Standard-Temperatur, gibt es keine Aktion.
+        target_value = _round_half_up(max(target_min, min(HEIZUNG_TARGET_MAX_C, t_i_target)))
         if target_value == default_temp:
             continue  # Standard-Temperatur: keine Aktion noetig (siehe Docstring)
 

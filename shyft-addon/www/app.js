@@ -11,6 +11,7 @@ const integrationsUri = insideHomeAssistant + "/integrations";
 const integrationDomainHintsUri = insideHomeAssistant + "/integrationDomainHints.json";
 const shyftActionsUri = insideHomeAssistant + "/shyft/actions";
 const notificationTargetsUri = insideHomeAssistant + "/notification-targets";
+const openOnStartUri = insideHomeAssistant + "/open-on-start";
 const servicesUri = insideHomeAssistant + "/services";
 const systemHealthUri = insideHomeAssistant + "/system-health";
 const actionTestStatusUri = insideHomeAssistant + "/actions/test-status";
@@ -1831,6 +1832,7 @@ const loadConfiguration = async (event) => {
         renderGeneralConfigSection();
         renderIntegrationSections();
         renderNotificationSection();
+        renderOpenOnStartSection();
         renderSystemHealth();
         renderDashboardProblemBanner();
     } catch (err) {
@@ -3481,6 +3483,70 @@ function renderNotificationSection() {
     notifyTable.appendChild(notifyTbody);
     sectionDiv.appendChild(notifyTable);
 
+    container.appendChild(sectionDiv);
+}
+
+// Ganz unten auf der Konfigurationsseite: Toggle, der shyft-power zum system-weiten Standard-Panel von Home
+// Assistant macht (HA oeffnet dann direkt dieses Add-on). Der Zustand liegt in HA selbst (nicht in configData),
+// deshalb eigene Endpunkte /open-on-start statt autoSave.
+async function renderOpenOnStartSection() {
+    const container = document.getElementById('openOnStartSection');
+    if (!container) return;
+    container.innerHTML = '';
+
+    let enabled = false;
+    try {
+        const state = await getJson(openOnStartUri);
+        if (state.status !== 'success') return;
+        enabled = state.enabled;
+    } catch (err) {
+        console.log(err);
+        return;
+    }
+
+    const sectionDiv = document.createElement('div');
+    sectionDiv.className = 'integrationSection';
+    const heading = document.createElement('div');
+    heading.className = 'integrationHeading';
+    const headingTitle = document.createElement('h2');
+    headingTitle.textContent = 'Home Assistant';
+    heading.appendChild(headingTitle);
+    sectionDiv.appendChild(heading);
+
+    const row = document.createElement('tr');
+    const keyCell = document.createElement('td');
+    keyCell.textContent = 'shyft-power beim Öffnen von Home Assistant direkt starten';
+    keyCell.appendChild(buildTooltip('Macht shyft-power zur Startseite von Home Assistant (Standard-Panel für alle Nutzer). Beim Ausschalten wird die Startseite wieder auf Home Assistants Standard zurückgesetzt. Erfordert einen Administrator.'));
+    const toggleCell = document.createElement('td');
+    toggleCell.className = 'toggleCell';
+    const toggle = buildBareToggleSwitch(enabled);
+    const input = toggle.querySelector('input');
+    input.addEventListener('change', async () => {
+        const wanted = input.checked;
+        input.disabled = true;
+        try {
+            const response = await fetch(openOnStartUri, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({enabled: wanted})
+            });
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.message || 'unbekannter Fehler');
+        } catch (err) {
+            input.checked = !wanted;
+            alert('Die Einstellung konnte nicht gespeichert werden: ' + err.message);
+        } finally {
+            input.disabled = false;
+        }
+    });
+    toggleCell.appendChild(toggle);
+    row.appendChild(keyCell);
+    row.appendChild(toggleCell);
+    const table = document.createElement('table');
+    const tbody = document.createElement('tbody');
+    tbody.appendChild(row);
+    table.appendChild(tbody);
+    sectionDiv.appendChild(table);
     container.appendChild(sectionDiv);
 }
 

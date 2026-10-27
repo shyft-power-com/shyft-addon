@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.344
+
+* **Konfiguration: Toggle „shyft-power beim Öffnen von Home Assistant direkt starten“.** Ganz unten auf der Konfigurationsseite. Eingeschaltet setzt das Add-on sich als systemweites Standard-Panel von Home Assistant, sodass HA direkt shyft-power öffnet; ausgeschaltet wird die Startseite wieder zurückgesetzt (nur, wenn shyft-power selbst das Standard-Panel ist). Das Feature lag bisher nur auf einem eigenen Branch und war in keinem Test-Build enthalten.
+* **Heizungsaktionen in ganzen Grad, kaufmännisch gerundet.** Die Aktionen „Heizung Soll-Temperatur“ werden jetzt schon bei der Planung auf ganze Grad gerundet (x,5 nach oben, sonst zum nächsten ganzen Grad), Anzeige und Abweichungsprüfung zeigen also genau den Wert, der an die Wärmepumpe geht. Die Rückstellung nach einer Aktion geht auf die ebenso gerundete gewünschte Raumtemperatur (z. B. 21,5 → 22 °C); Aktionen, deren Sollwert darauf fällt, entfallen. Bisher rundete das Senden x,5 auf die gerade Zahl (22,5 → 22), wodurch eine Aktion bei 21,5 °C Wunschtemperatur wirkungslos sein konnte.
+
 ## 0.0.45.343
 
 * **Heizung Soll-Temperatur: an das Gerät geht ein ganzzahliger Wert.** Die Solltemperatur in der Konfiguration darf weiterhin eine Nachkommastelle haben, und der Optimierer rechnet damit. Der Sollwert, den die Aktion „Heizung Soll-Temperatur“ an die Wärmepumpe sendet (Skript und eigene HA-Automation, auch beim Test), wird jedoch auf eine ganze Zahl gerundet, da nicht jede Integration Nachkommastellen verarbeitet.
