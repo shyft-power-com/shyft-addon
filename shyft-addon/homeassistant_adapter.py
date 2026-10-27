@@ -1,6 +1,6 @@
 from typing import Any
 
-from constants import HOMEASSISTANT_URI
+from constants import HOMEASSISTANT_URI, shorten_log_detail
 
 from datetime import datetime, timedelta, timezone
 import os
@@ -210,7 +210,7 @@ class HomeAssistantAdapter:
 
     def _log_info(self, log_message: str):
         if self.detailed_logging:
-            logger.info(log_message)
+            logger.info(shorten_log_detail(log_message))
 
     def _calculate_state(self, state: str, unit: str) -> Any:
         try:

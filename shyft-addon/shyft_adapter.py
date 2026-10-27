@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timezone, timedelta
 
-from constants import BUBBLE_URI_TEST, BUBBLE_URI_PRD,  BUBBLE_TOKEN, DEV_ACCESS_KEY_PREFIX
+from constants import BUBBLE_URI_TEST, BUBBLE_URI_PRD,  BUBBLE_TOKEN, DEV_ACCESS_KEY_PREFIX, shorten_log_detail
 from homeassistant_adapter import PeriodElement
 
 import requests
@@ -182,4 +182,4 @@ class ShyftAdapter:
 
     def _log_info(self, log_message: str):
         if self.detailed_logging:
-            logger.info(log_message)
+            logger.info(shorten_log_detail(log_message))
