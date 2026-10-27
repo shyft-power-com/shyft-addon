@@ -306,7 +306,7 @@ _GROUP_EXPR_BY_GRANULARITY = {
 
 
 def query_summary(granularity, start_iso=None, end_iso=None):
-    "Je Periode (siehe _GROUP_EXPR_BY_GRANULARITY) aufsummierte Verbrauchs-/Kosten-/Ersparnis-Werte, neuestes zuerst (Nutzer-Vorgabe). start_iso/end_iso (siehe hour_key) grenzen optional auf hour_start_utc >= start_iso bzw. < end_iso ein."
+    "Je Periode (siehe _GROUP_EXPR_BY_GRANULARITY) aufsummierte Verbrauchs-/Kosten-Werte, neuestes zuerst (Nutzer-Vorgabe). savings_vs_base_eur = Kosten Basisfall minus Kosten geplant (Ersparnis laut Optimierung, positiv = Plan billiger), planned_minus_actual_eur = Kosten geplant minus Kosten Ist - beides wird hier aus den gespeicherten Stundenkosten gerechnet, gilt also auch rueckwirkend fuer alle archivierten Stunden (die gespeicherten savings_*-Spalten werden nicht mehr gelesen). start_iso/end_iso (siehe hour_key) grenzen optional auf hour_start_utc >= start_iso bzw. < end_iso ein."
     group_expr = _GROUP_EXPR_BY_GRANULARITY.get(granularity, _GROUP_EXPR_BY_GRANULARITY["daily"])
     where, params = [], []
     if start_iso:
@@ -324,7 +324,7 @@ def query_summary(granularity, start_iso=None, end_iso=None):
                    SUM(base_usage_kwh) AS base_usage_kwh, SUM(base_cost_eur) AS base_cost_eur,
                    SUM(actual_usage_kwh) AS actual_usage_kwh, SUM(actual_import_kwh) AS actual_import_kwh, SUM(actual_export_kwh) AS actual_export_kwh,
                    SUM(actual_cost_eur) AS actual_cost_eur,
-                   SUM(savings_vs_base_eur) AS savings_vs_base_eur, SUM(savings_vs_planned_eur) AS savings_vs_planned_eur,
+                   SUM(base_cost_eur - planned_cost_eur) AS savings_vs_base_eur, SUM(planned_cost_eur - actual_cost_eur) AS planned_minus_actual_eur,
                    COUNT(*) AS hours_recorded
             FROM hourly_archive
             {where_clause}
@@ -332,6 +332,27 @@ def query_summary(granularity, start_iso=None, end_iso=None):
             ORDER BY period DESC
         """, params).fetchall()
         return [dict(r) for r in rows]
+
+
+def query_pv_summary(granularity, start_iso=None, end_iso=None):
+    "{period: {forecast_kwh, actual_kwh}} aus pv_hourly (nur Stunden mit Prognose UND Ist), gruppiert wie query_summary - kW je Stunde entspricht kWh."
+    group_expr = _GROUP_EXPR_BY_GRANULARITY.get(granularity, _GROUP_EXPR_BY_GRANULARITY["daily"])
+    where, params = ["forecast_kw IS NOT NULL", "actual_kw IS NOT NULL"], []
+    if start_iso:
+        where.append("hour_start_utc >= ?")
+        params.append(start_iso)
+    if end_iso:
+        where.append("hour_start_utc < ?")
+        params.append(end_iso)
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        rows = conn.execute(f"""
+            SELECT {group_expr} AS period, SUM(forecast_kw) AS forecast_kwh, SUM(actual_kw) AS actual_kwh
+            FROM pv_hourly
+            WHERE {" AND ".join(where)}
+            GROUP BY period
+        """, params).fetchall()
+        return {r["period"]: {"forecast_kwh": r["forecast_kwh"], "actual_kwh": r["actual_kwh"]} for r in rows}
 
 
 def query_day_actions(date_str):

@@ -2565,7 +2565,9 @@
             border: 1px solid var(--color-border);
             border-radius: 8px;
             padding: 0.6em 1em;
-            overflow-x: auto;
+            /* Eigener Scrollbereich in beide Richtungen: Kopfzeile und linke Spalte (Zeitraum/Uhrzeit) bleiben dabei sichtbar (sticky) */
+            overflow: auto;
+            max-height: calc(100vh - 14em);
         }
         .analyseTable {
             border-collapse: collapse;
@@ -2580,6 +2582,20 @@
         }
         .analyseTable th:first-child, .analyseTable td:first-child {
             text-align: left;
+        }
+        .analyseTable thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: var(--color-bg-card);
+        }
+        .analyseTable th:first-child, .analyseTable td:first-child {
+            position: sticky;
+            left: 0;
+            background: var(--color-bg-card);
+        }
+        .analyseTable thead th:first-child {
+            z-index: 3;
         }
         .analyseTable tbody tr {
             cursor: pointer;
@@ -2605,30 +2621,7 @@
             margin: 0.4em 0 0;
             padding-left: 1.2em;
         }
-        /* PV-Prognose vs. Ist (siehe loadAnalysePvForecast in app.js) */
-        .analyseSectionHeading {
-            margin: 1.4em 0 0.5em;
-            font-family: var(--font-heading);
-        }
-        .analysePvTable tr.analysePvDay td {
-            font-weight: 600;
-        }
-        .analysePvTable th, .analysePvTable td {
-            padding: 0.4em 0.35em;
-        }
-        .analysePvTable tr.analysePvHour {
-            cursor: default;
-            font-size: 0.92em;
-            color: var(--color-text-secondary);
-        }
-        .analysePvTable tr.analysePvHour td:first-child {
-            padding-left: 1.8em;
-        }
-        .analysePvToggle {
-            display: inline-block;
-            width: 1em;
-            color: var(--color-text-secondary);
-        }
+        /* PV-Prognose vs. Ist: Spalten der Analyse-Tabelle (siehe loadAnalyse in app.js) */
         .analysePvAbove {
             color: var(--color-accent);
         }

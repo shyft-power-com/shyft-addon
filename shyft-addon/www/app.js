@@ -12175,22 +12175,20 @@ async function loadAnalyseDayActions(dateStr, container) {
     container.innerHTML = `<div class="analyseDayActions">Aktionen am ${heading}<ul>${items}</ul></div>`;
 }
 
-// --- Analyse: PV-Prognose vs. Ist (siehe /analysis/pv-forecast) ---------------------------------------------------
-// Je Tag Prognose, Ist und Abweichung (Ist - Prognose, in kWh und % der Prognose); ein Klick auf den Tag klappt die
-// Stunden darunter auf. Die Tages-Abweichung ist die Summe der stuendlichen Abweichungen MIT Vorzeichen - zu viel und
-// zu wenig gleichen sich aus (Nutzer-Vorgabe).
+// PV-Prognose vs. Ist: Spalten der Analyse-Tabelle (Felder pv_* aus /analysis/summary, siehe _pv_accuracy_entry in app.py).
+// Abweichung = Ist - Prognose; bei kleiner Prognose liefert der Server keine Abweichung (null) -> "-".
 function formatPvKwh(value) {
-    return Number.isFinite(value) ? value.toLocaleString('de-DE', {minimumFractionDigits: 1, maximumFractionDigits: 1}) : '–';
+    return Number.isFinite(value) ? value.toLocaleString('de-DE', {minimumFractionDigits: 1, maximumFractionDigits: 1}) + ' kWh' : '–';
 }
 
 function formatSignedKwh(value) {
-    if (!Number.isFinite(value)) return '–';
+    if (!Number.isFinite(value)) return '-';
     const text = Math.abs(value).toLocaleString('de-DE', {minimumFractionDigits: 1, maximumFractionDigits: 1});
-    return (value >= 0.05 ? '+' : value <= -0.05 ? '−' : '±') + text;
+    return (value >= 0.05 ? '+' : value <= -0.05 ? '−' : '±') + text + ' kWh';
 }
 
 function formatSignedPercent(value) {
-    if (!Number.isFinite(value)) return '–';
+    if (!Number.isFinite(value)) return '-';
     const text = Math.abs(value).toLocaleString('de-DE', {minimumFractionDigits: 0, maximumFractionDigits: 0});
     return (value >= 0.5 ? '+' : value <= -0.5 ? '−' : '±') + text + ' %';
 }
@@ -12198,54 +12196,6 @@ function formatSignedPercent(value) {
 function pvDeviationClass(value) {
     if (!Number.isFinite(value) || Math.abs(value) < 0.05) return '';
     return value > 0 ? 'analysePvAbove' : 'analysePvBelow';
-}
-
-function pvAccuracyCells(entry) {
-    const cls = pvDeviationClass(entry.error_kwh);
-    return `<td>${formatPvKwh(entry.forecast_kwh)}</td>
-            <td>${formatPvKwh(entry.actual_kwh)}</td>
-            <td class="${cls}">${formatSignedKwh(entry.error_kwh)}</td>
-            <td class="${cls}">${formatSignedPercent(entry.error_pct)}</td>`;
-}
-
-async function loadAnalysePvForecast(card) {
-    if (!card) return;
-    let days = [];
-    try {
-        const result = await getJson(insideHomeAssistant + '/analysis/pv-forecast?days=31');
-        days = result.days || [];
-    } catch (err) {
-        console.log(err);
-    }
-    if (days.length === 0) {
-        card.innerHTML = '<p class="shyftActionsEmpty">Noch keine Daten - der Vergleich füllt sich stündlich, sobald ein PV-Sensor eingerichtet ist und eine Stunde mit Prognose abgeschlossen ist.</p>';
-        return;
-    }
-    const rowsHtml = days.map((day, index) => {
-        const label = new Date(day.date + 'T00:00:00').toLocaleDateString('de-DE', {weekday: 'short', day: '2-digit', month: '2-digit'});
-        const hours = (day.hours || []).map(h => `
-            <tr class="analysePvHour" data-day="${index}" hidden>
-                <td>${h.hour}</td>${pvAccuracyCells(h)}
-            </tr>`).join('');
-        return `
-            <tr class="analysePvDay" data-day="${index}">
-                <td><span class="analysePvToggle">▸</span> ${label}</td>${pvAccuracyCells(day)}
-            </tr>${hours}`;
-    }).join('');
-    card.innerHTML = `
-        <table class="analyseTable analysePvTable">
-            <thead><tr><th></th><th>Prognose</th><th>Ist</th><th colspan="2">Abweichung</th></tr></thead>
-            <tbody>${rowsHtml}</tbody>
-        </table>
-        <p class="analysePvNote">Werte in kWh. Abweichung = Ist minus Prognose, in % der Prognose (+ = mehr erzeugt als vorhergesagt). Die Tageswerte summieren die stündlichen Abweichungen mit Vorzeichen, zu viel und zu wenig gleichen sich also aus. Prognose = letzte Vorhersage für die jeweilige Stunde.</p>
-    `;
-    card.querySelectorAll('tr.analysePvDay').forEach(tr => {
-        tr.addEventListener('click', () => {
-            const open = tr.classList.toggle('is-open');
-            tr.querySelector('.analysePvToggle').textContent = open ? '▾' : '▸';
-            card.querySelectorAll(`tr.analysePvHour[data-day="${tr.dataset.day}"]`).forEach(row => { row.hidden = !open; });
-        });
-    });
 }
 
 async function loadAnalyse() {
@@ -12264,11 +12214,8 @@ async function loadAnalyse() {
         </div>
         <div class="analyseSummaryCard"><p class="shyftActionsEmpty">Lade Daten…</p></div>
         <div id="analyseDayActions"></div>
-        <h3 class="analyseSectionHeading">PV-Prognose vs. Ist</h3>
-        <div class="analyseSummaryCard" id="analysePvForecast"><p class="shyftActionsEmpty">Lade Daten…</p></div>
     `;
     document.getElementById('analyseGranularity').addEventListener('change', loadAnalyse);
-    loadAnalysePvForecast(document.getElementById('analysePvForecast'));
 
     const summaryCard = body.querySelector('.analyseSummaryCard');
     let rows = [];
@@ -12294,7 +12241,11 @@ async function loadAnalyse() {
             <td>${formatEuro(r.base_cost_eur)}</td>
             <td>${formatEuro(r.actual_cost_eur)}</td>
             <td class="${analyseSavingsClass(r.savings_vs_base_eur)}">${formatEuro(r.savings_vs_base_eur)}</td>
-            <td class="${analyseSavingsClass(r.savings_vs_planned_eur)}">${formatEuro(r.savings_vs_planned_eur)}</td>
+            <td class="${analyseSavingsClass(r.planned_minus_actual_eur)}">${formatEuro(r.planned_minus_actual_eur)}</td>
+            <td>${formatPvKwh(r.pv_forecast_kwh)}</td>
+            <td>${formatPvKwh(r.pv_actual_kwh)}</td>
+            <td class="${pvDeviationClass(r.pv_error_kwh)}">${formatSignedKwh(r.pv_error_kwh)}</td>
+            <td class="${pvDeviationClass(r.pv_error_kwh)}">${formatSignedPercent(r.pv_error_pct)}</td>
         </tr>`).join('');
 
     summaryCard.innerHTML = `
@@ -12303,10 +12254,12 @@ async function loadAnalyse() {
                 <th>Zeitraum</th>
                 <th>Verbrauch geplant</th><th>Verbrauch Basisfall</th><th>Verbrauch Ist</th>
                 <th>Kosten geplant</th><th>Kosten Basisfall</th><th>Kosten Ist</th>
-                <th>Ersparnis ggü. Basisfall</th><th>Ersparnis ggü. Planung</th>
+                <th>Ersparnis ggü. Basisfall (Basisfall − geplant)</th><th>Kosten geplant − Ist</th>
+                <th>PV Prognose</th><th>PV Ist</th><th colspan="2">PV Abweichung</th>
             </tr></thead>
             <tbody>${rowsHtml}</tbody>
         </table>
+        <p class="analysePvNote">PV-Abweichung = Ist minus Prognose (+ = mehr erzeugt als vorhergesagt), in % der Prognose; die Summen über mehrere Stunden gleichen zu viel und zu wenig mit Vorzeichen aus. Prognose = letzte Vorhersage für die jeweilige Stunde. Bei einer Prognose unter 0,5 kWh wird keine Abweichung angezeigt (-).</p>
     `;
 
     if (clickable) {

@@ -1,4 +1,4 @@
-"""PV-Prognose vs. Ist im Analyse-Tab (siehe record_pv_forecast_accuracy / readAnalysisPvForecast in app.py)."""
+"""PV-Prognose vs. Ist im Analyse-Tab (siehe record_pv_forecast_accuracy / readAnalysisSummary in app.py)."""
 import json
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -72,21 +72,42 @@ def test_stunde_ohne_messwert_nach_dem_ersten_messwert_zaehlt_als_null(env):
     assert rows[energy_archive.hour_key(h2)]["actual_kw"] == 0.0
 
 
-def test_endpoint_tagessumme_gleicht_vorzeichen_aus(env):
+def test_summary_tagessumme_gleicht_vorzeichen_aus(env):
     now_hour, state, _ = env
-    day = (datetime.now(TZ) - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    day = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     for hour, forecast, actual in ((10, 4.0, 5.0), (11, 4.0, 3.0), (12, 2.0, 2.5), (2, 0.0, 0.0)):
-        start = day.replace(hour=hour).astimezone(timezone.utc)
-        energy_archive.record_pv_hour(energy_archive.hour_key(start), forecast, actual, "snapshot")
+        key = energy_archive.hour_key(day.replace(hour=hour))
+        start = day.replace(hour=hour)
+        energy_archive.record_plan_contribution(key, 1.0, 1.0, 1.0, 1.0, at=start)
+        energy_archive.finalize_hour(key, start + timedelta(hours=1), 1.0, 0.0, 1.0)
+        energy_archive.record_pv_hour(key, forecast, actual, "snapshot")
     with app.app.test_client() as client:
-        data = client.get("/analysis/pv-forecast?days=3").get_json()
-    assert data["status"] == "success"
-    entry = next(d for d in data["days"] if d["date"] == day.date().isoformat())
-    assert entry["forecast_kwh"] == pytest.approx(10.0)
-    assert entry["actual_kwh"] == pytest.approx(10.5)
-    assert entry["error_kwh"] == pytest.approx(0.5)  # +1 - 1 + 0,5: plus und minus gleichen sich aus
-    assert entry["error_pct"] == pytest.approx(5.0)
-    hours = {h["hour"]: h for h in entry["hours"]}
-    assert set(hours) == {"10:00", "11:00", "12:00"}  # Nachtstunde ohne Erzeugung ausgeblendet
-    assert hours["10:00"]["error_pct"] == pytest.approx(25.0)
-    assert hours["11:00"]["error_pct"] == pytest.approx(-25.0)
+        daily = client.get("/analysis/summary?granularity=daily").get_json()
+        hourly = client.get("/analysis/summary?granularity=hourly").get_json()
+    assert daily["status"] == "success"
+    entry = next(r for r in daily["rows"] if r["period"] == day.date().isoformat())
+    assert entry["pv_forecast_kwh"] == pytest.approx(10.0)
+    assert entry["pv_actual_kwh"] == pytest.approx(10.5)
+    assert entry["pv_error_kwh"] == pytest.approx(0.5)  # +1 - 1 + 0,5: plus und minus gleichen sich aus
+    assert entry["pv_error_pct"] == pytest.approx(5.0)
+    hours = {r["period"]: r for r in hourly["rows"]}
+    assert hours[energy_archive.hour_key(day.replace(hour=10))]["pv_error_pct"] == pytest.approx(25.0)
+    assert hours[energy_archive.hour_key(day.replace(hour=11))]["pv_error_pct"] == pytest.approx(-25.0)
+    # Prognose unter 0,5 kWh: keine Abweichung ("-" im Frontend)
+    night = hours[energy_archive.hour_key(day.replace(hour=2))]
+    assert night["pv_error_kwh"] is None and night["pv_error_pct"] is None
+
+
+def test_summary_ersparnis_wird_rueckwirkend_aus_stundenkosten_gerechnet(env):
+    now_hour, _, _ = env
+    start = now_hour - timedelta(hours=3)
+    key = energy_archive.hour_key(start)
+    energy_archive.record_plan_contribution(key, 1.0, 2.0, 1.0, 5.0, price_buy=1.0, price_sell=0.0, at=start)
+    energy_archive.finalize_hour(key, start + timedelta(hours=1), 3.0, 0.0, 1.0)
+    # alte gespeicherte Spalten (frueher Basisfall - Ist) duerfen nicht mehr einfliessen
+    with energy_archive._connect() as conn:
+        conn.execute("UPDATE hourly_archive SET savings_vs_base_eur = -99, savings_vs_planned_eur = -99")
+        conn.commit()
+    row = energy_archive.query_summary("hourly")[0]
+    assert row["savings_vs_base_eur"] == pytest.approx(3.0)  # Basisfall 5 - geplant 2
+    assert row["planned_minus_actual_eur"] == pytest.approx(-1.0)  # geplant 2 - Ist 3
