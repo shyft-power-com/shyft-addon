@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.334
+
+* **Strompreis-Chart: Netzbezug hängt nicht mehr in der Luft.** Die linke Preisachse endet unten immer auf Höhe der Null-Linie des Netzbezugs, auch wenn es zwischendurch Einspeisung gab. Die farbigen Preisflächen starten dort. Bei Einspeisung bricht die Netzkurve unter die Null-Linie aus, vor weißem Hintergrund. Die Null-Linie ist jetzt durchgehend als graue x-Achse markiert.
+
 ## 0.0.45.333
 
 * **Auto laden: Preisgrenze `p_min` von +2 auf +3 Cent.** Die Preisgrenze, bis zu der der Optimierer das Auto lädt (`p_min`), liegt jetzt 3 Cent statt 2 Cent über dem niedrigsten kommenden Strompreis (`WB_P_MIN_MARGIN_EUR`). Bei +2 Cent war der Gewinn je kWh für den Optimierer so klein, dass er in der Rechengenauigkeit unterging und das Auto in sehr günstigen Nächten gar nicht lud. In Testrechnungen mit dem Optimierer lädt der Wagen ab +3 Cent in den günstigsten Stunden.
