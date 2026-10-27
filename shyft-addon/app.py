@@ -11989,7 +11989,7 @@ def update_base_load_periodically():
 
 
 def compute_base_load_array(base_utc, hours):
-    "Stündliche Grundlast (kWh je Stunde) ab base_utc für die 'hours' Stunden, siehe base_load.hourly_kwh_array - Werktag/Wochenende-Median, ersatzweise Gesamtmedian bzw. 0,5 kW."
+    "Stündliche Grundlast (kWh je Stunde) ab base_utc für die 'hours' Stunden, siehe base_load.hourly_kwh_array - Werktag/Wochenende-Mittelwert, ersatzweise Gesamtmittelwert bzw. 0,5 kW."
     return base_load.hourly_kwh_array(base_utc, hours, get_ha_timezone())
 
 

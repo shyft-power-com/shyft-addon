@@ -9,7 +9,8 @@ Wärmepumpe (Leistung unter OFF_THRESHOLD_KW) sowie alle 'Sonstiger Verbraucher'
 (< MIN_KW oder > MAX_KW) werden verworfen.
 
 Ablage: je (Werktag/Wochenende, Stunde der lokalen Zeit) die letzten SAMPLES_PER_SLOT gültigen
-Messwerte; das Profil ist deren Median. Weil die HA-Historie nur ~10 Tage reicht (Winter: die WP
+Messwerte; das Profil ist deren Mittelwert (nicht Median: der Median liegt bei schiefen Lastprofilen mit Spitzen
+(Kochen, Trockner) unter dem Mittelwert, die Kosten waeren im Schnitt zu niedrig geplant). Weil die HA-Historie nur ~10 Tage reicht (Winter: die WP
 läuft oft tagelang durch und es gibt gar keine gültige Stunde), bleibt ein älteres Profil (z.B. aus dem
 Sommer) gültig, bis neue gültige Stunden einen Slot Stück für Stück überschreiben. Ohne jede
 Messung gilt DEFAULT_KW.
@@ -126,20 +127,20 @@ def add_sample(hour_start, slot, kw):
 
 
 def load_profile():
-    "({slot: Median kW}, Gesamtmedian kW oder None) aus den gespeicherten Messungen."
+    "({slot: Mittelwert kW}, Gesamtmittelwert kW oder None) aus den gespeicherten Messungen."
     with _lock, _connect() as conn:
         rows = conn.execute("SELECT slot, kw FROM base_load_samples").fetchall()
     by_slot = {}
     for slot, kw in rows:
         by_slot.setdefault(slot, []).append(kw)
-    profile = {slot: statistics.median(values) for slot, values in by_slot.items()}
-    overall = statistics.median([kw for _, kw in rows]) if rows else None
+    profile = {slot: statistics.fmean(values) for slot, values in by_slot.items()}
+    overall = statistics.fmean([kw for _, kw in rows]) if rows else None
     return profile, overall
 
 
 def hourly_kwh_array(base_utc, hours, tz):
-    """Grundlast (kWh je Stunde = kW) für die 'hours' Stunden ab base_utc: Median des Slots (Werktag/
-    Wochenende + lokale Stunde), ersatzweise der Gesamtmedian, ersatzweise DEFAULT_KW."""
+    """Grundlast (kWh je Stunde = kW) für die 'hours' Stunden ab base_utc: Mittelwert des Slots (Werktag/
+    Wochenende + lokale Stunde), ersatzweise der Gesamtmittelwert, ersatzweise DEFAULT_KW."""
     profile, overall = load_profile()
     fallback = overall if overall is not None else DEFAULT_KW
     return [profile.get(slot_for((base_utc + timedelta(hours=i)).astimezone(tz)), fallback) for i in range(hours)]
