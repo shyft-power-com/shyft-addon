@@ -2017,10 +2017,10 @@ def readDashboardChartData():
                 soc_b.append(_safe_float(row.get("SOC_B")))
                 soc_ev.append(_safe_float(row.get("SOC_EV")))
                 # Beta-Vergleich "mit Shyft" vs. Base Case (siehe base_case.compute_base_case):
-                # Kosten je Stunde = profits_net_opt; Brutto-Verbrauch = Geraetelast (X_sum) +
-                # Batterieladung (B_sum_in_45), gleiche Definition wie PowerUsageBaseList.
+                # Kosten je Stunde = profits_net_opt; Verbrauch = Geraetelast (X_sum), ohne
+                # Batterieladung, gleiche Definition wie PowerUsageBaseList.
                 opt_cost.append(_safe_float(row.get("profits_net_opt")))
-                opt_usage.append(_safe_float(row.get("X_sum")) + _safe_float(row.get("B_sum_in_45")))
+                opt_usage.append(_safe_float(row.get("X_sum")))
                 # Netzsaldo (GR_sum: positiv = Bezug, negativ = Einspeisung) - Netz-Linie "Netzbezug/Einspeisung" im Strompreis-Chart
                 opt_grid_import.append(_safe_float(row.get("GR_sum")))
         except Exception as e:
@@ -11788,7 +11788,7 @@ def _record_energy_archive_plan_contribution(input_csv, output_csv, creation_dat
         input_row0 = input_rows[0] if input_rows else {}
         output_row0 = output_rows[0]
         hour_start = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
-        planned_usage = _safe_float(output_row0.get("X_sum")) + _safe_float(output_row0.get("B_sum_in_45"))
+        planned_usage = _safe_float(output_row0.get("X_sum"))  # ohne Batterieladung: vergleichbar mit dem Ist-Verbrauch des Haushalts
         planned_cost = _safe_float(output_row0.get("profits_net_opt"))
         base_usage_list = (base or {}).get("PowerUsageBaseList") or []
         base_cost_list = (base or {}).get("netProfitBaseList") or []

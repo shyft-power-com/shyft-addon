@@ -36,8 +36,8 @@ Rueckgabe (Excel-Referenzen in Klammern):
                                       == sum(netProfitBaseList)
   netProfitBaseList        : [float] - Netto-Netzkosten je Stunde, + = Kosten (O58:O105);
                                       die Endwert-Korrektur steckt komplett in der letzten Stunde
-  PowerUsageBaseList       : [float] - Brutto-Stromverbrauch je Stunde inkl. EV- und
-                                       Batterieladung (P58:P105, neu definiert)
+  PowerUsageBaseList       : [float] - Stromverbrauch je Stunde inkl. EV-Ladung, aber OHNE Batterieladung
+                                       (wie X_sum im Optimierer, vergleichbar mit dem Haushalts-Verbrauchssensor)
   T_iBaseList/T_HWBaseList/SOC_BBaseList/SOC_EVBaseList : [float] je Stunde - reine Debug-/
                                        Vergleichs-Traces, kein Excel-Aequivalent; direkt vergleichbar
                                        mit den gleichnamigen Optimierer-Output-Spalten T_i/T_HW/
@@ -424,7 +424,7 @@ def _compute_base_case(input_csv, state_overrides=None):
         grid -= ev_charge_gross[i]  # E-Auto-Ladung immer aus dem Netz
         # grid > 0: Einspeisung (Ertrag, negative Kosten) | grid < 0: Bezug (Kosten)
         net_cost_list[i] = (-grid * (p_sell[i] if grid > 0 else p_buy[i])) or 0.0  # or 0.0: kein -0.0
-        power_usage_list[i] = d_e[i] + hp_heat[i] + hp_dhw[i] + ev_charge_gross[i] + batt_charge_gross + od_load[i]
+        power_usage_list[i] = d_e[i] + hp_heat[i] + hp_dhw[i] + ev_charge_gross[i] + od_load[i]  # ohne Batterieladung (wie X_sum)
     soc_b_end = soc_b
     if soc_b_after_hour0 is None:
         soc_b_after_hour0 = soc_b_end
