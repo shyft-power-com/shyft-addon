@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.346
+
+* **Log entschlackt.** Mit aktiviertem „detailed_logging“ stand jeder Home-Assistant-History-Abruf komplett in einer Zeile (10–20 kB) und verdrängte die Aktions- und Diagnosezeilen innerhalb weniger Minuten aus dem Log. Detail-Meldungen werden jetzt auf 600 Zeichen gekürzt (die Gesamtlänge bleibt im Text sichtbar), das Zugriffslog des Webservers (eine Zeile pro Dashboard-Abruf) ist abgeschaltet – Fehler bleiben erhalten – und die dauernd wiederkehrende Warnung „Akkustand konnte nicht gelesen werden“ der Anwesenheitsprognose erscheint höchstens alle 30 Minuten.
+* **Fix: Base Case bewertet die Raumtemperatur am Horizont-Ende richtig.** Der Wärmespeicher des Gebäudes wurde mit der falschen Einheit (dT geteilt statt multipliziert durch C_STORE·Wohnfläche, ohne COP) bewertet – um etwa den Faktor 1900 zu klein. Ein ausgekühltes Haus kostete im Base Case dadurch fast nichts, und die Ersparnis der Heizungsaktionen fiel zu niedrig bis negativ aus.
+
 ## 0.0.45.345
 
 * **Verbrauch geplant/Basisfall ohne Batterieladung.** Der geplante Verbrauch ist jetzt `X_sum` (Geräte), der Basisfall-Verbrauch die entsprechende Summe ohne Batterieladung. Vorher wurde die Energie, die in die Batterie geladen wird, mitgezählt, und kam beim späteren Entladen an einen Verbraucher nochmal vor. Die Werte sind damit mit „Verbrauch Ist“ (Haushalts-Leistungssensor) vergleichbar. Gilt auch für den Dashboard-Chart „Dein Stromverbrauch (Beta)“. Bereits archivierte Stunden behalten ihren alten Wert.
