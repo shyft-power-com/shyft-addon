@@ -10878,7 +10878,7 @@ function buildEnergyFlowSvgDesktop(data) {
 
         const tripPlanButtonW = 150, tripPlanButtonH = 34;
         const tripPlanFo = svgEl('foreignObject', {
-            x: carGroupCenterX - tripPlanButtonW / 2, y: carGroupBottomY + 14, width: tripPlanButtonW, height: tripPlanButtonH,
+            x: carGroupCenterX - tripPlanButtonW / 2, y: carGroupBottomY - 4, width: tripPlanButtonW, height: tripPlanButtonH,
         });
         const tripPlanFoDiv = document.createElement('div');
         tripPlanFoDiv.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
