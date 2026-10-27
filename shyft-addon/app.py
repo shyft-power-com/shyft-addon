@@ -117,9 +117,25 @@ class _TimestampedStream:
         return getattr(self._stream, name)
 
 
+_throttled_print_last = {}
+
+
+def _print_throttled(key, message, min_interval_seconds=1800):
+    """Schreibt eine wiederkehrende Meldung (z.B. ein dauerhaft nicht verfuegbarer Sensor, der bei jedem Lauf dieselbe Zeile
+    erzeugt) hoechstens alle min_interval_seconds - sonst fuellt sie das Log, ohne etwas Neues zu sagen."""
+    now = time.time()
+    if now - _throttled_print_last.get(key, 0.0) < min_interval_seconds:
+        return
+    _throttled_print_last[key] = now
+    print(message)
+
+
 sys.stdout = _TimestampedStream(sys.stdout)
 sys.stderr = _TimestampedStream(sys.stderr)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+# Zugriffslog von Flask/werkzeug (je eine Zeile pro Dashboard-/Chart-Abruf des Frontends) enthaelt keine Fehler- oder Aktionsinformation
+# und fuellt das Log - Fehler (WARNING+) bleiben erhalten.
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
 app = Flask(__name__, static_folder="www", static_url_path="")
 
 VERSION = load_addon_version()
@@ -3813,7 +3829,7 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
         try:
             soc_factor = car_soc_connect_factor(homeassistant_adapter.read_entity_numeric_value(soc_entity_id))
         except Exception as e:
-            print("[Shyft] Anwesenheitsprognose: Akkustand konnte nicht gelesen werden:", repr(e))
+            _print_throttled("anwesenheit_akkustand", "[Shyft] Anwesenheitsprognose: Akkustand konnte nicht gelesen werden: " + repr(e))
 
     start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     labels = [(start + timedelta(hours=i)).isoformat() for i in range(hours)]
