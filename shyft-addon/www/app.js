@@ -8911,11 +8911,6 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     const yRange = (yMax - yMin) || 1;
     const lastIndex = scaledValues.length - 1 || 1;
 
-    const points = scaledValues.map((v, i) => [
-        paddingLeft + (i / lastIndex) * plotWidth,
-        paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight,
-    ]);
-
     // Zweite Kurve mit EIGENER rechter Skala (Nutzer-Vorgabe, siehe secondSeries oben) - unabhaengig
     // von der Hauptreihe skaliert (eigenes Min/Max +10% Puffer, gleiches Muster wie yMin/yMax),
     // damit beide Kurven trotz ggf. sehr unterschiedlicher Wertebereiche gut lesbar bleiben.
@@ -8942,6 +8937,11 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         const pad2 = secondSeries.absolutePadding ?? valueRange2 * 0.1;
         yMin2 = secondSeries.zeroBased ? 0 : (secondSeries.signed ? (rawMin2 < 0 ? rawMin2 - pad2 : 0) : rawMin2 - pad2);
         yMax2 = rawMax2 + pad2;
+        if (secondSeries.signed && yMin2 < 0 && yMax2 < -yMin2 * 0.3 / 0.7) {
+            // Bei viel Einspeisung und kaum Bezug bliebe fuer die linke Skala (Preis) oberhalb der Nulllinie fast
+            // nichts uebrig - mindestens 30 % der Hoehe dafuer reservieren.
+            yMax2 = -yMin2 * 0.3 / 0.7;
+        }
         if (secondSeries.band) {
             const totalRange2 = (yMax2 - yMin2) / CHART_BAND_FRACTION_SECOND;
             if (secondSeries.band === 'upper') yMin2 = yMax2 - totalRange2; else yMax2 = yMin2 + totalRange2;
@@ -9037,6 +9037,20 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         }
     }
 
+    // Hauptkurve (linke Skala): endet unten auf Hoehe der Nulllinie der rechten, vorzeichenbehafteten Skala
+    // (z.B. Strompreis vs. Netzbezug/Einspeisung) - Bezug "haengt" so nicht in der Luft, sobald es Einspeisung
+    // gibt. Unterhalb der Nulllinie bleibt Platz nur fuer die Einspeisung (siehe belowZeroMarkup).
+    let primaryBottom = paddingTop + plotHeight;
+    if (secondSeries && secondSeries.signed && !hideSecond && yMin2 < 0 && yMax2 > 0) {
+        primaryBottom = paddingTop + plotHeight - ((0 - yMin2) / yRange2) * plotHeight;
+    }
+    const primaryHeight = primaryBottom - paddingTop;
+    const yPrimary = v => primaryBottom - ((v - yMin) / yRange) * primaryHeight;
+    const points = scaledValues.map((v, i) => [
+        paddingLeft + (i / lastIndex) * plotWidth,
+        yPrimary(v),
+    ]);
+
     function colorForValue(v) {
         if (!colorBands) return 'var(--color-accent)';
         if (colorBands.extremeThreshold !== undefined && v >= colorBands.extremeThreshold) return colorBands.extremeColor;
@@ -9093,7 +9107,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
             const [x0, y0] = points[i];
             const [x1] = points[i + 1];
             lineParts.push(`<path d="M${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y0.toFixed(1)}" fill="none" stroke="${color}" stroke-width="2" ${dashAttr} />`);
-            areaParts.push(`<path d="M${x0.toFixed(1)},${baseline.toFixed(1)} L${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${baseline.toFixed(1)} Z" fill="${color}" opacity="0.15" stroke="none" />`);
+            areaParts.push(`<path d="M${x0.toFixed(1)},${primaryBottom.toFixed(1)} L${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${primaryBottom.toFixed(1)} Z" fill="${color}" opacity="0.15" stroke="none" />`);
             const [, yNext] = points[i + 1];
             if (colorBands) {
                 for (const seg of splitJumpByBands(scaledValues[i], scaledValues[i + 1], y0, yNext)) {
@@ -9116,14 +9130,14 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
             const [x0, y0] = points[i];
             const [x1, y1] = points[i + 1];
             lineParts.push(`<path d="M${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)}" fill="none" stroke="${color}" stroke-width="2" ${dashAttr} />`);
-            areaParts.push(`<path d="M${x0.toFixed(1)},${baseline.toFixed(1)} L${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)} L${x1.toFixed(1)},${baseline.toFixed(1)} Z" fill="${color}" opacity="0.15" stroke="none" />`);
+            areaParts.push(`<path d="M${x0.toFixed(1)},${primaryBottom.toFixed(1)} L${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)} L${x1.toFixed(1)},${primaryBottom.toFixed(1)} Z" fill="${color}" opacity="0.15" stroke="none" />`);
         }
         lineMarkup = lineParts.join('');
         areaMarkup = areaParts.join('');
     } else {
         const color = colorForValue(scaledValues[0]);
         const linePath = points.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-        const areaPath = `${linePath} L${points[points.length - 1][0].toFixed(1)},${baseline.toFixed(1)} L${points[0][0].toFixed(1)},${baseline.toFixed(1)} Z`;
+        const areaPath = `${linePath} L${points[points.length - 1][0].toFixed(1)},${primaryBottom.toFixed(1)} L${points[0][0].toFixed(1)},${primaryBottom.toFixed(1)} Z`;
         areaMarkup = hidePrimarySeg(0) ? '' : `<path d="${areaPath}" fill="${color}" opacity="0.15" stroke="none" />`;
         lineMarkup = hidePrimarySeg(0) ? '' : `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2" />`;
     }
@@ -9135,11 +9149,11 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
             const fineAreaParts = [];
             lineMarkup += fineSeriesMarkup(fineP, {
                 xOfMs: ms => paddingLeft + ((ms - firstMs) / 3600000 / lastIndex) * plotWidth,
-                yOf: v => paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight,
+                yOf: yPrimary,
                 stepped,
                 colorFor: (vPrev, v) => (stepped ? 'var(--color-accent)' : colorForSlope(vPrev, v)),
                 areaParts: fineAreaParts,
-                baseline,
+                baseline: primaryBottom,
                 areaEndX: paddingLeft + (dashedFromIndex / lastIndex) * plotWidth,
             });
             areaMarkup += fineAreaParts.join('');
@@ -9154,7 +9168,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         const parts = [];
         const ov = overlayValues;
         const xOf = i => paddingLeft + (i / lastIndex) * plotWidth;
-        const yOf = v => paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight;
+        const yOf = yPrimary;
         for (let i = 0; i < Math.min(dashedFromIndex, ov.length, points.length - 1); i++) {
             if (ov[i] === null) continue;
             const next = i + 1 < ov.length ? ov[i + 1] : null;
@@ -9184,7 +9198,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     const leftAxisColor = secondSeries ? 'var(--color-accent)' : 'var(--color-text-secondary)';
     const yTicks = computeNiceTicks(yMin, yMax).filter(v => axisMax === null || v <= axisMax);
     const yLabels = yTicks.map(v => {
-        const y = (paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight).toFixed(1);
+        const y = yPrimary(v).toFixed(1);
         return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="${leftAxisColor}" text-anchor="end">${round ? Math.round(v) : v.toFixed(1)}</text>`;
     }).join('');
 
@@ -9198,7 +9212,9 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         if (secondSeries.signed && yMin2 < 0) {
             // Nulllinie der rechten Skala (Bezug darueber, Einspeisung darunter)
             const zy2 = (paddingTop + plotHeight - ((0 - yMin2) / yRange2) * plotHeight).toFixed(1);
-            zeroLine2Markup = `<line x1="${paddingLeft}" y1="${zy2}" x2="${width - paddingRight}" y2="${zy2}" stroke="var(--color-border)" stroke-dasharray="2,3" />`;
+            // Nulllinie als durchgezogene graue x-Achse; darunter (Einspeisung) weisser Hintergrund
+            zeroLine2Markup = `<rect x="${paddingLeft + 1}" y="${zy2}" width="${(plotWidth - 1).toFixed(1)}" height="${(baseline - parseFloat(zy2)).toFixed(1)}" fill="var(--color-bg)" />`
+                + `<line x1="${paddingLeft}" y1="${zy2}" x2="${width - paddingRight}" y2="${zy2}" stroke="var(--color-border)" />`;
         }
         // Beschriftet werden nur "gerade" Werte (5, 10, 15 ...), nicht die Raender des Wertebereichs.
         let yTicks2 = computeEvenTicks(yMin2, yMax2);

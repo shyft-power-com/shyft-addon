@@ -61,11 +61,10 @@
 
 ## 0.0.45.334
 
+* **Strompreis-Chart: Netzbezug hängt nicht mehr in der Luft.** Die linke Preisachse endet unten immer auf Höhe der Null-Linie des Netzbezugs, auch wenn es zwischendurch Einspeisung gab. Die farbigen Preisflächen starten dort. Bei Einspeisung bricht die Netzkurve unter die Null-Linie aus, vor weißem Hintergrund. Die Null-Linie ist jetzt durchgehend als graue x-Achse markiert.
+
 * **Deaktivierte Steuerung im Dashboard sichtbar.** Ist auf der Gerätesteuerung die Steuerung eines Aktionstyps ausgeschaltet, trägt der zugehörige Chart-Titel ein Label „deaktiviert“: Warmwasser, Raumtemperatur (Heizung), Ladestand Heimspeicher, Ladestand Auto und Sonstiger Verbraucher. Beim Heimspeicher mit drei Aktionstypen heißt es „teilweise deaktiviert“, wenn nur einige aus sind. Der Tooltip nennt die betroffenen Aktionstypen.
 * **Deaktivierte Aktionen auf der Gerätesteuerung ausgegraut.** Aktionen eines ausgeschalteten Aktionstyps erscheinen ausgegraut und gestrichelt umrandet, mit dem Hinweis „(deaktiviert)“ und ohne grüne Hervorhebung, auch wenn sie gerade laufen. Bisher erkannte die Karte das nur am alten Status-Suffix von shyft-power, das seit dem Add-on-eigenen Schalter fehlt. Geplante und laufende Aktionen folgen dem aktuellen Schalter, beendete zeigen, was beim Start galt. Beim Umlegen des Schalters werden die Karten sofort aus- bzw. wieder eingegraut.
-
-## 0.0.45.334
-
 * **„Fahrt planen“ sitzt im Desktop-Layout näher am Auto.** Der Button im Energiefluss-Widget rückt etwas nach oben, damit er optisch eindeutig zum Auto und nicht mehr zum „Sonstigen Gerät“ darunter gehört.
 
 ## 0.0.45.333
