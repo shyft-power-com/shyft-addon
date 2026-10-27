@@ -12241,7 +12241,7 @@ async function loadAnalyse() {
             <td>${formatEuro(r.base_cost_eur)}</td>
             <td>${formatEuro(r.actual_cost_eur)}</td>
             <td class="${analyseSavingsClass(r.savings_vs_base_eur)}">${formatEuro(r.savings_vs_base_eur)}</td>
-            <td class="${analyseSavingsClass(r.savings_vs_planned_eur)}">${formatEuro(r.savings_vs_planned_eur)}</td>
+            <td class="${analyseSavingsClass(r.planned_minus_actual_eur)}">${formatEuro(r.planned_minus_actual_eur)}</td>
             <td>${formatPvKwh(r.pv_forecast_kwh)}</td>
             <td>${formatPvKwh(r.pv_actual_kwh)}</td>
             <td class="${pvDeviationClass(r.pv_error_kwh)}">${formatSignedKwh(r.pv_error_kwh)}</td>
@@ -12254,7 +12254,7 @@ async function loadAnalyse() {
                 <th>Zeitraum</th>
                 <th>Verbrauch geplant</th><th>Verbrauch Basisfall</th><th>Verbrauch Ist</th>
                 <th>Kosten geplant</th><th>Kosten Basisfall</th><th>Kosten Ist</th>
-                <th>Ersparnis ggü. Basisfall</th><th>Ersparnis ggü. Planung</th>
+                <th>Ersparnis ggü. Basisfall (Basisfall − geplant)</th><th>Kosten geplant − Ist</th>
                 <th>PV Prognose</th><th>PV Ist</th><th colspan="2">PV Abweichung</th>
             </tr></thead>
             <tbody>${rowsHtml}</tbody>

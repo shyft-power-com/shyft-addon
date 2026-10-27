@@ -2,6 +2,7 @@
 
 ## 0.0.45.345
 
+* **Analyse: Ersparnis neu definiert, auch rückwirkend.** „Ersparnis ggü. Basisfall“ ist jetzt Kosten Basisfall minus Kosten geplant (Ersparnis laut Optimierung, positiv = Plan billiger). Neue Spalte „Kosten geplant − Ist“ ersetzt „Ersparnis ggü. Planung“. Beide werden beim Abruf aus den gespeicherten Stundenkosten gerechnet und gelten damit für alle bereits archivierten Stunden, ohne Neuaufzeichnung. Die alte Variante (Basisfall minus Ist) vermischte Prognose und reale Werte und konnte so durch Prognosefehler negativ werden.
 * **Analyse: PV-Prognose vs. Ist als Spalten in der Haupttabelle.** Die separate PV-Tabelle entfällt; je Zeitraum (stündlich bis jährlich) stehen jetzt PV Prognose, PV Ist und PV Abweichung (kWh und %) direkt neben Verbrauch, Kosten und Ersparnis. Bei einer Prognose unter 0,5 kWh wird keine Abweichung angezeigt, sondern „-“. Der Endpunkt `/analysis/pv-forecast` ist entfallen, `/analysis/summary` liefert die `pv_*`-Felder mit.
 * **Analyse: Kopfzeile und linke Spalte bleiben sichtbar.** Die Tabelle scrollt in einem eigenen Bereich (Höhe an das Fenster angepasst); die Spalte „Zeitraum“ und die Überschriften bleiben dabei stehen.
 

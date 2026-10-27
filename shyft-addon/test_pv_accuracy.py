@@ -96,3 +96,18 @@ def test_summary_tagessumme_gleicht_vorzeichen_aus(env):
     # Prognose unter 0,5 kWh: keine Abweichung ("-" im Frontend)
     night = hours[energy_archive.hour_key(day.replace(hour=2))]
     assert night["pv_error_kwh"] is None and night["pv_error_pct"] is None
+
+
+def test_summary_ersparnis_wird_rueckwirkend_aus_stundenkosten_gerechnet(env):
+    now_hour, _, _ = env
+    start = now_hour - timedelta(hours=3)
+    key = energy_archive.hour_key(start)
+    energy_archive.record_plan_contribution(key, 1.0, 2.0, 1.0, 5.0, price_buy=1.0, price_sell=0.0, at=start)
+    energy_archive.finalize_hour(key, start + timedelta(hours=1), 3.0, 0.0, 1.0)
+    # alte gespeicherte Spalten (frueher Basisfall - Ist) duerfen nicht mehr einfliessen
+    with energy_archive._connect() as conn:
+        conn.execute("UPDATE hourly_archive SET savings_vs_base_eur = -99, savings_vs_planned_eur = -99")
+        conn.commit()
+    row = energy_archive.query_summary("hourly")[0]
+    assert row["savings_vs_base_eur"] == pytest.approx(3.0)  # Basisfall 5 - geplant 2
+    assert row["planned_minus_actual_eur"] == pytest.approx(-1.0)  # geplant 2 - Ist 3
