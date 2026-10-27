@@ -334,6 +334,27 @@ def query_summary(granularity, start_iso=None, end_iso=None):
         return [dict(r) for r in rows]
 
 
+def query_pv_summary(granularity, start_iso=None, end_iso=None):
+    "{period: {forecast_kwh, actual_kwh}} aus pv_hourly (nur Stunden mit Prognose UND Ist), gruppiert wie query_summary - kW je Stunde entspricht kWh."
+    group_expr = _GROUP_EXPR_BY_GRANULARITY.get(granularity, _GROUP_EXPR_BY_GRANULARITY["daily"])
+    where, params = ["forecast_kw IS NOT NULL", "actual_kw IS NOT NULL"], []
+    if start_iso:
+        where.append("hour_start_utc >= ?")
+        params.append(start_iso)
+    if end_iso:
+        where.append("hour_start_utc < ?")
+        params.append(end_iso)
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        rows = conn.execute(f"""
+            SELECT {group_expr} AS period, SUM(forecast_kw) AS forecast_kwh, SUM(actual_kw) AS actual_kwh
+            FROM pv_hourly
+            WHERE {" AND ".join(where)}
+            GROUP BY period
+        """, params).fetchall()
+        return {r["period"]: {"forecast_kwh": r["forecast_kwh"], "actual_kwh": r["actual_kwh"]} for r in rows}
+
+
 def query_day_actions(date_str):
     "Kompakte Liste erfolgreich ausgefuehrter Aktionen fuer einen Kalendertag (lokale Addon-Zeitzone, wie ueberall sonst im Addon, siehe _local_day_offset in app.py). date_str im Format YYYY-MM-DD. Haengt am Ende die archivierte 'Ersparnis Haushaltsstrom'-Tageszeile (siehe household_savings_daily) an, falls fuer diesen Tag vorhanden - dieselbe Zeilenform wie completed_actions, damit das Frontend sie identisch behandeln kann."
     day_start_local = datetime.strptime(date_str, "%Y-%m-%d").astimezone()

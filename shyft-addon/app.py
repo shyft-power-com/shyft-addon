@@ -593,10 +593,19 @@ def assistantSupportStatus():
 
 @app.route("/analysis/summary", methods=["GET"])
 def readAnalysisSummary():
-    "Aggregierte Verbrauchs-/Kosten-/Ersparnis-Werte fuer den Analyse-Tab, siehe energy_archive.query_summary. Query-Parameter: granularity (hourly/daily/weekly/monthly/yearly, Default daily), optional from/to (siehe energy_archive.hour_key-Format)."
+    "Aggregierte Verbrauchs-/Kosten-/Ersparnis-Werte plus PV-Prognose vs. Ist (pv_*-Felder, siehe _pv_accuracy_entry) fuer den Analyse-Tab, siehe energy_archive.query_summary. Query-Parameter: granularity (hourly/daily/weekly/monthly/yearly, Default daily), optional from/to (siehe energy_archive.hour_key-Format)."
     granularity = request.args.get("granularity", "daily")
     try:
+        record_pv_forecast_accuracy()  # gerade abgeschlossene PV-Stunden sofort mitnehmen, nicht erst beim naechsten Stunden-Job
+    except Exception as e:
+        print("[Shyft] Analyse: PV-Prognose-Aufzeichnung fehlgeschlagen:", repr(e))
+    try:
         rows = energy_archive.query_summary(granularity, request.args.get("from"), request.args.get("to"))
+        pv_by_period = energy_archive.query_pv_summary(granularity, request.args.get("from"), request.args.get("to"))
+        for row in rows:
+            pv = pv_by_period.get(row["period"])
+            row.update(_pv_accuracy_entry(pv["forecast_kwh"], pv["actual_kwh"]) if pv else
+                       {"pv_forecast_kwh": None, "pv_actual_kwh": None, "pv_error_kwh": None, "pv_error_pct": None})
         return jsonify({"status": "success", "granularity": granularity, "rows": rows})
     except Exception as e:
         print("[Shyft] Analyse: Zusammenfassung konnte nicht geladen werden:", repr(e))
@@ -617,54 +626,23 @@ def readAnalysisDayActions():
 
 
 
-# Unter dieser Prognose (kW bzw. kWh je Stunde) ist eine prozentuale Abweichung nicht aussagekraeftig (Daemmerung, Nacht:
-# 0,01 kW Prognose gegen 0,05 kW Ist waeren +400 %) - dort zeigt der Analyse-Tab nur die absolute Abweichung.
-PV_ACCURACY_MIN_FORECAST_FOR_PERCENT_KWH = 0.05
-# Stunden ohne nennenswerte Erzeugung UND Prognose (Nacht) nicht in der Stundenliste zeigen.
-PV_ACCURACY_MIN_SHOWN_KWH = 0.005
+# Unter dieser Prognose (kWh je Zeitraum, bei Stunden gleich kW) ist eine Abweichung nicht aussagekraeftig (Daemmerung,
+# Nacht: 0,01 kW Prognose gegen 0,05 kW Ist waeren +400 %) - dort zeigt der Analyse-Tab statt der Abweichung ein "-".
+PV_ACCURACY_MIN_FORECAST_FOR_DEVIATION_KWH = 0.5
 
 
-@app.route("/analysis/pv-forecast", methods=["GET"])
-def readAnalysisPvForecast():
-    """PV-Prognose vs. Ist fuer den Analyse-Tab (siehe record_pv_forecast_accuracy), je Kalendertag (lokale Zeit) mit
-    stuendlicher Aufschluesselung, neuester Tag zuerst. Abweichung = Ist - Prognose (positiv: mehr erzeugt als vorhergesagt),
-    in % bezogen auf die Prognose. Die Tagessumme addiert die stuendlichen Abweichungen MIT Vorzeichen (Nutzer-Vorgabe: zu
-    viel und zu wenig gleichen sich aus) - das ist zugleich Ist-Summe minus Prognose-Summe. Query-Parameter: days (Default 31)."""
-    days = max(1, min(366, request.args.get("days", default=31, type=int)))
-    try:
-        record_pv_forecast_accuracy()  # gerade abgeschlossene Stunden sofort mitnehmen, nicht erst beim naechsten Stunden-Job
-    except Exception as e:
-        print("[Shyft] Analyse: PV-Prognose-Aufzeichnung fehlgeschlagen:", repr(e))
-    try:
-        tz = get_ha_timezone()
-        start_local = _hour_floor(_local_now().replace(hour=0)) - timedelta(days=days - 1)
-        rows = energy_archive.query_pv_hours(energy_archive.hour_key(start_local))
-        by_day = {}
-        for row in rows:
-            forecast, actual = row.get("forecast_kw"), row.get("actual_kw")
-            if forecast is None or actual is None:
-                continue
-            hour_local = datetime.fromisoformat(row["hour_start_utc"]).replace(tzinfo=timezone.utc).astimezone(tz)
-            day = by_day.setdefault(hour_local.date().isoformat(), {"forecast_kwh": 0.0, "actual_kwh": 0.0, "hours": []})
-            day["forecast_kwh"] += forecast
-            day["actual_kwh"] += actual
-            if forecast >= PV_ACCURACY_MIN_SHOWN_KWH or actual >= PV_ACCURACY_MIN_SHOWN_KWH:
-                day["hours"].append(_pv_accuracy_entry(forecast, actual, {"hour": hour_local.strftime("%H:00")}))
-        result = []
-        for date_str in sorted(by_day, reverse=True):
-            day = by_day[date_str]
-            result.append(_pv_accuracy_entry(day["forecast_kwh"], day["actual_kwh"], {"date": date_str, "hours": day["hours"]}))
-        return jsonify({"status": "success", "days": result})
-    except Exception as e:
-        print("[Shyft] Analyse: PV-Prognose-Vergleich konnte nicht geladen werden:", repr(e))
-        return jsonify({"status": "error", "message": str(e)})
+def _pv_accuracy_entry(forecast_kwh, actual_kwh):
+    """PV-Prognose vs. Ist je Zeitraum fuer die Analyse-Tabelle. Abweichung = Ist - Prognose (positiv: mehr erzeugt als
+    vorhergesagt), in % bezogen auf die Prognose; die Summe addiert die stuendlichen Abweichungen MIT Vorzeichen (zu viel
+    und zu wenig gleichen sich aus), ist also zugleich Ist-Summe minus Prognose-Summe. Unter
+    PV_ACCURACY_MIN_FORECAST_FOR_DEVIATION_KWH Prognose gibt es keine Abweichung (None)."""
+    entry = {"pv_forecast_kwh": round(forecast_kwh, 3), "pv_actual_kwh": round(actual_kwh, 3), "pv_error_kwh": None, "pv_error_pct": None}
+    if forecast_kwh >= PV_ACCURACY_MIN_FORECAST_FOR_DEVIATION_KWH:
+        error_kwh = actual_kwh - forecast_kwh
+        entry["pv_error_kwh"] = round(error_kwh, 3)
+        entry["pv_error_pct"] = round(error_kwh / forecast_kwh * 100, 1)
+    return entry
 
-
-def _pv_accuracy_entry(forecast_kwh, actual_kwh, extra):
-    error_kwh = actual_kwh - forecast_kwh
-    error_pct = error_kwh / forecast_kwh * 100 if forecast_kwh >= PV_ACCURACY_MIN_FORECAST_FOR_PERCENT_KWH else None
-    return {**extra, "forecast_kwh": round(forecast_kwh, 3), "actual_kwh": round(actual_kwh, 3),
-            "error_kwh": round(error_kwh, 3), "error_pct": round(error_pct, 1) if error_pct is not None else None}
 
 def _persist_shyft_access_key(new_access_key):
     """Writes shyft_access_key into this addon's own Supervisor-managed options

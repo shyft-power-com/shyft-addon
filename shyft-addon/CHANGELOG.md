@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.345
+
+* **Analyse: PV-Prognose vs. Ist als Spalten in der Haupttabelle.** Die separate PV-Tabelle entfällt; je Zeitraum (stündlich bis jährlich) stehen jetzt PV Prognose, PV Ist und PV Abweichung (kWh und %) direkt neben Verbrauch, Kosten und Ersparnis. Bei einer Prognose unter 0,5 kWh wird keine Abweichung angezeigt, sondern „-“. Der Endpunkt `/analysis/pv-forecast` ist entfallen, `/analysis/summary` liefert die `pv_*`-Felder mit.
+* **Analyse: Kopfzeile und linke Spalte bleiben sichtbar.** Die Tabelle scrollt in einem eigenen Bereich (Höhe an das Fenster angepasst); die Spalte „Zeitraum“ und die Überschriften bleiben dabei stehen.
+
 ## 0.0.45.344
 
 * **Konfiguration: Toggle „shyft-power beim Öffnen von Home Assistant direkt starten“.** Ganz unten auf der Konfigurationsseite. Eingeschaltet setzt das Add-on sich als systemweites Standard-Panel von Home Assistant, sodass HA direkt shyft-power öffnet; ausgeschaltet wird die Startseite wieder zurückgesetzt (nur, wenn shyft-power selbst das Standard-Panel ist). Das Feature lag bisher nur auf einem eigenen Branch und war in keinem Test-Build enthalten.
