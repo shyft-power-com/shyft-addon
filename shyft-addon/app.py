@@ -2168,6 +2168,24 @@ def _local_day_offset(hour_start_utc):
     return (hour_local_date - today_local).days
 
 
+def _opt_ev_end_kwh(input_csv, output_csv):
+    """Ladestand des E-Autos (kWh) nach der letzten Stunde im Optimierer-Plan - Ziel fuer den Base Case (siehe
+    base_case.compute_base_case, ev_end_target_kwh): beide Szenarien muessen am Ende denselben Ladestand haben, sonst
+    stehen die Netzkosten eines Optimierers, der das Auto fuer p_min auffuellt, gegen einen Base Case, der es leer
+    zuruecklaesst. None, wenn nicht berechenbar (kein Output, kein Auto)."""
+    if not input_csv or not output_csv:
+        return None
+    try:
+        input_rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
+        output_rows = list(csv.DictReader(io.StringIO(output_csv)))
+        terms = _opt_end_value_terms(input_rows, output_rows)
+        end_kwh = (terms or {}).get("soc_ev_kwh_end")
+        return end_kwh if end_kwh is not None and end_kwh > 0 else None
+    except Exception as e:
+        print("[Shyft] Optimierer-Endstand des E-Autos nicht berechenbar:", repr(e))
+        return None
+
+
 def _opt_end_value_terms(input_rows, output_rows):
     """Debug-Gegenstueck zu base_case "endValue": Endzustaende des OPTIMIERERS nach der letzten Stunde
     samt der Endbedingungen aus run_SHEMS.jl. Der Julia-Output enthaelt nur die Zustaende zu Beginn jeder
@@ -12159,7 +12177,7 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
     # Warmwasser-Tank, Batterie) statt jede Stunde vom echten/optimierten Zustand zu "erben" -
     # siehe base_case.compute_base_case-Docstring fuer die Begruendung (Nutzer-Beobachtung).
     state_overrides = _read_base_case_state_overrides(creation_date_ms) if input_csv else None
-    base = base_case.compute_base_case(input_csv, state_overrides) if input_csv else None
+    base = base_case.compute_base_case(input_csv, state_overrides, _opt_ev_end_kwh(input_csv, output_csv)) if input_csv else None
     if base:
         payload.update(base)
         _write_base_case_state(creation_date_ms, base.get("nextState"))

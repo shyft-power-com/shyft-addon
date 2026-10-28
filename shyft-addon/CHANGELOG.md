@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.347
+
+* **Fix: Ersparnis aller Aktionen war negativ, weil der Optimierer das Auto fuller zuruecklaesst als der Base Case.** Der Optimierer bewertet gespeicherte Energie im Auto mit `p_min` und laedt dadurch in jeder Stunde mit `p_buy < p_min`, auch ueber den Bedarf hinaus. Seine Netzkosten (nur Bargeld) enthielten diese Ladung, der Base Case liess das Auto dagegen leer zurueck – im Log vom 27.10.: Optimierer 25,37 EUR gegen Base Case 19,06 EUR bei 56,9 gegen 36,8 kWh Ladestand am Ende (20,1 kWh x 0,31 EUR = 6,2 EUR der 6,3 EUR Differenz). Jetzt bringt der Base Case das Auto am Ende des Optimierungszeitraums auf denselben Ladestand wie der Optimierer: Er laedt dafuer in den letzten Stunden, in denen das Auto eingesteckt ist, und zahlt die Preise genau dieser Stunden (kein `p_min`, denn „genau dort laden, wo es billig ist“ waere selbst schon eine Optimierung). Ist der Zielstand nicht mehr erreichbar, wird der Rest zum letzten `p_buy` berechnet. In `base_end_value` steht der Zielstand als `soc_ev_kwh_target`.
+
 ## 0.0.45.346
 
 * **Log entschlackt.** Mit aktiviertem „detailed_logging“ stand jeder Home-Assistant-History-Abruf komplett in einer Zeile (10–20 kB) und verdrängte die Aktions- und Diagnosezeilen innerhalb weniger Minuten aus dem Log. Detail-Meldungen werden jetzt auf 600 Zeichen gekürzt (die Gesamtlänge bleibt im Text sichtbar), das Zugriffslog des Webservers (eine Zeile pro Dashboard-Abruf) ist abgeschaltet – Fehler bleiben erhalten – und die dauernd wiederkehrende Warnung „Akkustand konnte nicht gelesen werden“ der Anwesenheitsprognose erscheint höchstens alle 30 Minuten.
