@@ -148,7 +148,7 @@ const heatingRodHelpInformation = {
     },
     [HEATING_ROD_SWITCH_KEY]: {
         label: 'Heizstab ein-/ausschalten',
-        description: ' Die An-/Aus-Entität (z. B. ein Schalter oder Relais) aus deinem Heizstab-Gerät, über die Shyft den Heizstab ein- und ausschaltet.'
+        description: ' Die An-/Aus-Entität (z. B. ein Schalter oder Relais) aus deinem Heizstab-Gerät, über die Shyft den Heizstab ein- und ausschaltet. Alternativ kann eine Value-Entität (number bzw. input_number, z. B. die „Leistungsvorgabe“ der Integration askoheat) hinterlegt werden: Dann sendet Shyft beim Einschalten die „Heizstab, max. Leistung“ (in der Einheit der Entität, kW oder W) und zum Ausschalten 0.'
     },
 };
 
@@ -232,7 +232,8 @@ const SENSOR_ENTITY_FILTERS = {
     'heatpump_dhw_activated': {type: 'state_on_off'},
     'heatpump_dhw_on_off': {type: 'state_on_off'},
     // Das Addon SCHALTET hierueber den Heizstab: settable An-/Aus-Entitaet (Schalter/Relais/input_boolean).
-    [HEATING_ROD_SWITCH_KEY]: {type: 'domain', values: ['switch', 'input_boolean', 'light']},
+    // Alternativ eine Value-Entitaet (number/input_number, z.B. askoheat "Leistungsvorgabe"): an = max. Leistung des Heizstabs, aus = 0.
+    [HEATING_ROD_SWITCH_KEY]: {type: 'domain', values: ['switch', 'input_boolean', 'light', 'number', 'input_number']},
     'heatpump_heating_target_temp_normal': {type: 'device_class', value: 'temperature'},
     'heatpump_heating_activated': {type: 'state_on_off_or_mode'},
     // Nur Leistungssensoren in W/kW (device_class 'power' liess z.B. auch Einheiten-lose Entitaeten durch)
@@ -4066,7 +4067,7 @@ function buildHeatingRodControl() {
     const titleText = document.createElement('span');
     titleText.textContent = 'Heizstab ein-/ausschalten';
     title.appendChild(titleText);
-    title.appendChild(buildTooltip('Wenn Shyft Warmwasser bereiten will, schaltet es diese Entität ein und nach dem Ende der Aktion wieder aus. Shyft geht vorerst davon aus, dass der Heizstab dann mit voller Leistung läuft.'));
+    title.appendChild(buildTooltip('Wenn Shyft Warmwasser bereiten will, schaltet es diese Entität ein und nach dem Ende der Aktion wieder aus. Shyft geht vorerst davon aus, dass der Heizstab dann mit voller Leistung läuft. Bei einer Value-Entität (number/input_number, z. B. askoheat „Leistungsvorgabe“) sendet Shyft stattdessen die „Heizstab, max. Leistung“ und zum Beenden 0.'));
     wrapper.appendChild(title);
 
     const checkmark = document.createElement('span');  // nur fuer applyTestGate, wird nicht eingefuegt

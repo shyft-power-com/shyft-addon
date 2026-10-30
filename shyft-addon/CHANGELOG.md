@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.348
+
+* **Heizstab: „Heizstab ein-/ausschalten“ akzeptiert auch eine Value-Entität.** Neben Schalter/Relais kann jetzt eine `number`- bzw. `input_number`-Entität hinterlegt werden, z. B. die „Leistungsvorgabe“ der Integration askoheat. Beim Start der Aktion sendet Shyft dann die „Heizstab, max. Leistung“ an die Entität (in deren Einheit: kW bzw. W, ohne Einheit W), zum Beenden der Aktion 0. Test und Dashboard-Status (An = Wert größer 0) funktionieren ebenfalls mit Value-Entitäten.
+
 ## 0.0.45.347
 
 * **Fix: Ersparnis aller Aktionen war negativ, weil der Optimierer das Auto voller zuruecklaesst als der Base Case.** Der Optimierer bewertet gespeicherte Energie im Auto mit `p_min` und laedt dadurch in jeder Stunde mit `p_buy < p_min`, auch ueber den Bedarf hinaus. Seine Netzkosten (nur Bargeld) enthielten diese Ladung, der Base Case liess das Auto dagegen leer zurueck – im Log vom 27.10.: Optimierer 25,37 EUR gegen Base Case 19,06 EUR bei 56,9 gegen 36,8 kWh Ladestand am Ende (20,1 kWh x 0,31 EUR = 6,2 EUR der 6,3 EUR Differenz). Jetzt bringt der Base Case das Auto am Ende des Optimierungszeitraums auf denselben Ladestand wie der Optimierer: Er laedt dafuer in den letzten Stunden, in denen das Auto eingesteckt ist, und zahlt die Preise genau dieser Stunden (kein `p_min`, denn „genau dort laden, wo es billig ist“ waere selbst schon eine Optimierung). Ist der Zielstand nicht mehr erreichbar, wird der Rest zum letzten `p_buy` berechnet. In `base_end_value` steht der Zielstand als `soc_ev_kwh_target`.

@@ -5345,6 +5345,13 @@ def _read_mapped_bool_on(config, sensor_key, anything_but_off=False):
     raw = _read_mapped_raw_state(config, sensor_key)
     if raw is None:
         return None
+    entity_id = mapped_entity_id(config, sensor_key)
+    if entity_id.split(".")[0] in HEATING_ROD_VALUE_DOMAINS:
+        # Value-Entitaet (z.B. Heizstab-"Leistungsvorgabe"): an = Wert groesser 0
+        try:
+            return float(raw) > 0
+        except ValueError:
+            return None
     if anything_but_off:
         return raw.lower() != "off"
     return raw.lower() == "on"
@@ -6444,10 +6451,72 @@ def _heating_rod_entity(config):
     return (config.get("sensorMappings", {}) or {}).get(HEATING_ROD_SWITCH_SENSOR_FIELD, "") or ""
 
 
-def _set_heating_rod_and_verify(entity_id, on, retry_timeout_seconds, detail=None):
+HEATING_ROD_VALUE_DOMAINS = ("number", "input_number")
+
+
+def _heating_rod_value_for_entity(entity_id, config):
+    """Zielwert fuer "Heizstab an" bei einer Value-Entitaet (z.B. askoheat "Leistungsvorgabe"): die max. Leistung des Heizstabs
+    in der Einheit der Entitaet (kW -> kW, W bzw. ohne Einheit -> W). None, wenn keine Leistung hinterlegt ist."""
+    kw = heating_rod_power_kw(config)
+    if not kw:
+        return None
+    try:
+        unit = str(homeassistant_adapter.load_entity_state(entity_id).unit or "").strip().lower()
+    except Exception:
+        unit = ""
+    value = kw if unit == "kw" else kw * 1000.0
+    return round(value, 3)
+
+
+def _set_heating_rod_value_and_verify(entity_id, on, config, retry_timeout_seconds, detail=None):
+    "Wie _set_heating_rod_and_verify, aber fuer eine number-/input_number-Entitaet: an = max. Leistung des Heizstabs, aus = 0."
+    target = _heating_rod_value_for_entity(entity_id, config) if on else 0
+    if target is None:
+        if detail is not None:
+            detail["reason"] = "Keine „Heizstab, max. Leistung“ hinterlegt - sie wird als Wert an die Entität übergeben"
+        test_log(detail["reason"] if detail is not None else "Keine max. Leistung hinterlegt", "error")
+        return False
+    domain = entity_id.split(".")[0]
+    deadline = time.time() + retry_timeout_seconds
+    attempt = 0
+    last_error = None
+    last_state = None
+    state_log = _TestStateLog(f"Zustand von {entity_id}", target)
+    while True:
+        attempt += 1
+        test_log(f"Schreibe {target} auf {entity_id} (Versuch {attempt}) …")
+        try:
+            homeassistant_adapter.call_service(domain, "set_value", {"entity_id": entity_id, "value": target})
+            last_error = None
+        except Exception as e:
+            test_log(f"Home Assistant meldet beim Schreiben einen Fehler: {e}", "error")
+            last_error = str(e)
+            print(f"[Shyft] Heizstab: {domain}.set_value auf '{entity_id}' fehlgeschlagen (Versuch {attempt}):", repr(e))
+        try:
+            last_state = homeassistant_adapter.load_entity_state(entity_id).state
+            state_log(last_state)
+            if abs(float(last_state) - float(target)) < 1e-6:
+                test_log(f"{entity_id} hat den Wert {target} übernommen.", "ok")
+                return True
+        except Exception as e:
+            print(f"[Shyft] Heizstab: Status von '{entity_id}' nicht lesbar (Versuch {attempt}):", repr(e))
+        if time.time() >= deadline:
+            reason = _dhw_write_failure_reason(entity_id, last_error, last_state)
+            if detail is not None:
+                detail["reason"] = reason
+            test_log(f"Wert nicht übernommen: {reason}", "error")
+            return False
+        test_sleep(HEATING_ROD_RETRY_DELAY_SECONDS)
+
+
+def _set_heating_rod_and_verify(entity_id, on, retry_timeout_seconds, detail=None, config=None):
     """Schaltet die Heizstab-Entitaet an/aus (homeassistant.turn_on/turn_off, funktioniert fuer switch/input_boolean/...)
     und prueft per Live-Status, ob sie den Zustand uebernommen hat - Retry alle HEATING_ROD_RETRY_DELAY_SECONDS bis
-    retry_timeout_seconds. True bei Erfolg; sonst False und detail['reason'] mit einem Klartext."""
+    retry_timeout_seconds. Ist die Entitaet eine number-/input_number-Entitaet (Value-Sensor, z.B. askoheat "Leistungsvorgabe"),
+    wird stattdessen die max. Leistung (an) bzw. 0 (aus) geschrieben. True bei Erfolg; sonst False und detail['reason'] mit einem Klartext."""
+    if entity_id.split(".")[0] in HEATING_ROD_VALUE_DOMAINS:
+        return _set_heating_rod_value_and_verify(entity_id, on, config if config is not None else _read_current_config(),
+                                                 retry_timeout_seconds, detail)
     service = "turn_on" if on else "turn_off"
     expected = "on" if on else "off"
     word = "eingeschaltet" if on else "ausgeschaltet"
@@ -6496,7 +6565,7 @@ def execute_heating_rod(on, config, retry_timeout_seconds=HEATING_ROD_RETRY_TIME
     if not entity_id:
         raise Exception("Keine Entität zum Ein-/Ausschalten des Heizstabs zugeordnet")
     detail = {}
-    if not _set_heating_rod_and_verify(entity_id, on, retry_timeout_seconds, detail):
+    if not _set_heating_rod_and_verify(entity_id, on, retry_timeout_seconds, detail, config):
         raise Exception(f"Der Heizstab konnte nicht {'eingeschaltet' if on else 'ausgeschaltet'} werden ({detail.get('reason', 'Ursache unbekannt')})")
 
 
@@ -6781,7 +6850,7 @@ def testHeatingRod():
     status_entity_id = config.get("sensorMappings", {}).get("heatpump_dhw_on_off", "")
     try:
         test_log("Schritt 1/3: Heizstab einschalten …")
-        switch_on_ok = _set_heating_rod_and_verify(entity_id, True, HEATING_ROD_TEST_TIMEOUT_SECONDS, detail)
+        switch_on_ok = _set_heating_rod_and_verify(entity_id, True, HEATING_ROD_TEST_TIMEOUT_SECONDS, detail, config)
         if switch_on_ok:
             if not status_entity_id:
                 status_confirmed = True
@@ -6807,11 +6876,15 @@ def testHeatingRod():
 
     revert_ok = True
     with _test_uninterruptible():
-        if original_state == "on":
+        try:
+            was_on = original_state == "on" or (entity_id.split(".")[0] in HEATING_ROD_VALUE_DOMAINS and float(original_state) > 0)
+        except ValueError:
+            was_on = False
+        if was_on:
             test_log("Schritt 3/3: Der Heizstab war vor dem Test an – lasse ihn an.")
         else:
             test_log("Schritt 3/3: Schalte den Heizstab wieder aus …")
-            revert_ok = _set_heating_rod_and_verify(entity_id, False, HEATING_ROD_RETRY_TIMEOUT_SECONDS)
+            revert_ok = _set_heating_rod_and_verify(entity_id, False, HEATING_ROD_RETRY_TIMEOUT_SECONDS, config=config)
             if not revert_ok:
                 test_log("Der Heizstab konnte nicht wieder ausgeschaltet werden – bitte in Home Assistant prüfen.", "error")
 
