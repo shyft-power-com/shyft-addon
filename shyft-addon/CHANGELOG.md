@@ -1,5 +1,89 @@
 # Changelog
 
+## 0.0.45.348
+
+* **Heizstab: „Heizstab ein-/ausschalten“ akzeptiert auch eine Value-Entität.** Neben Schalter/Relais kann jetzt eine `number`- bzw. `input_number`-Entität hinterlegt werden, z. B. die „Leistungsvorgabe“ der Integration askoheat. Beim Start der Aktion sendet Shyft dann die „Heizstab, max. Leistung“ an die Entität (in deren Einheit: kW bzw. W, ohne Einheit W), zum Beenden der Aktion 0. Test und Dashboard-Status (An = Wert größer 0) funktionieren ebenfalls mit Value-Entitäten.
+
+## 0.0.45.347
+
+* **Fix: Ersparnis aller Aktionen war negativ, weil der Optimierer das Auto voller zuruecklaesst als der Base Case.** Der Optimierer bewertet gespeicherte Energie im Auto mit `p_min` und laedt dadurch in jeder Stunde mit `p_buy < p_min`, auch ueber den Bedarf hinaus. Seine Netzkosten (nur Bargeld) enthielten diese Ladung, der Base Case liess das Auto dagegen leer zurueck – im Log vom 27.10.: Optimierer 25,37 EUR gegen Base Case 19,06 EUR bei 56,9 gegen 36,8 kWh Ladestand am Ende (20,1 kWh x 0,31 EUR = 6,2 EUR der 6,3 EUR Differenz). Jetzt bringt der Base Case das Auto am Ende des Optimierungszeitraums auf denselben Ladestand wie der Optimierer: Er laedt dafuer in den letzten Stunden, in denen das Auto eingesteckt ist, und zahlt die Preise genau dieser Stunden (kein `p_min`, denn „genau dort laden, wo es billig ist“ waere selbst schon eine Optimierung). Ist der Zielstand nicht mehr erreichbar, wird der Rest zum letzten `p_buy` berechnet. In `base_end_value` steht der Zielstand als `soc_ev_kwh_target`.
+
+## 0.0.45.346
+
+* **Log entschlackt.** Mit aktiviertem „detailed_logging“ stand jeder Home-Assistant-History-Abruf komplett in einer Zeile (10–20 kB) und verdrängte die Aktions- und Diagnosezeilen innerhalb weniger Minuten aus dem Log. Detail-Meldungen werden jetzt auf 600 Zeichen gekürzt (die Gesamtlänge bleibt im Text sichtbar), das Zugriffslog des Webservers (eine Zeile pro Dashboard-Abruf) ist abgeschaltet – Fehler bleiben erhalten – und die dauernd wiederkehrende Warnung „Akkustand konnte nicht gelesen werden“ der Anwesenheitsprognose erscheint höchstens alle 30 Minuten.
+* **Fix: Base Case bewertet die Raumtemperatur am Horizont-Ende richtig.** Der Wärmespeicher des Gebäudes wurde mit der falschen Einheit (dT geteilt statt multipliziert durch C_STORE·Wohnfläche, ohne COP) bewertet – um etwa den Faktor 1900 zu klein. Ein ausgekühltes Haus kostete im Base Case dadurch fast nichts, und die Ersparnis der Heizungsaktionen fiel zu niedrig bis negativ aus.
+
+## 0.0.45.345
+
+* **Verbrauch geplant/Basisfall ohne Batterieladung.** Der geplante Verbrauch ist jetzt `X_sum` (Geräte), der Basisfall-Verbrauch die entsprechende Summe ohne Batterieladung. Vorher wurde die Energie, die in die Batterie geladen wird, mitgezählt, und kam beim späteren Entladen an einen Verbraucher nochmal vor. Die Werte sind damit mit „Verbrauch Ist“ (Haushalts-Leistungssensor) vergleichbar. Gilt auch für den Dashboard-Chart „Dein Stromverbrauch (Beta)“. Bereits archivierte Stunden behalten ihren alten Wert.
+* **Grundlast-Prognose: Mittelwert statt Median.** Das Profil je Werktag/Wochenende und Stunde (und der Ersatzwert ohne Slot-Messung) ist jetzt der Mittelwert der gespeicherten Messungen. Der Median lag bei Lastspitzen (Kochen, Trockner) unter dem Mittelwert, Plan und Basisfall waren dadurch im Schnitt zu billig. Die Prognose liegt damit öfter daneben, aber monetär im Mittel näher an der Realität. Gilt ab dem nächsten Optimierungslauf, die gespeicherten Messwerte bleiben unverändert.
+* **Analyse: Ersparnis neu definiert, auch rückwirkend.** „Ersparnis ggü. Basisfall“ ist jetzt Kosten Basisfall minus Kosten geplant (Ersparnis laut Optimierung, positiv = Plan billiger). Neue Spalte „Kosten geplant − Ist“ ersetzt „Ersparnis ggü. Planung“. Beide werden beim Abruf aus den gespeicherten Stundenkosten gerechnet und gelten damit für alle bereits archivierten Stunden, ohne Neuaufzeichnung. Die alte Variante (Basisfall minus Ist) vermischte Prognose und reale Werte und konnte so durch Prognosefehler negativ werden.
+* **Analyse: PV-Prognose vs. Ist als Spalten in der Haupttabelle.** Die separate PV-Tabelle entfällt; je Zeitraum (stündlich bis jährlich) stehen jetzt PV Prognose, PV Ist und PV Abweichung (kWh und %) direkt neben Verbrauch, Kosten und Ersparnis. Bei einer Prognose unter 0,5 kWh wird keine Abweichung angezeigt, sondern „-“. Der Endpunkt `/analysis/pv-forecast` ist entfallen, `/analysis/summary` liefert die `pv_*`-Felder mit.
+* **Analyse: Kopfzeile und linke Spalte bleiben sichtbar.** Die Tabelle scrollt in einem eigenen Bereich (Höhe an das Fenster angepasst); die Spalte „Zeitraum“ und die Überschriften bleiben dabei stehen.
+
+## 0.0.45.344
+
+* **Konfiguration: Toggle „shyft-power beim Öffnen von Home Assistant direkt starten“.** Ganz unten auf der Konfigurationsseite. Eingeschaltet setzt das Add-on sich als systemweites Standard-Panel von Home Assistant, sodass HA direkt shyft-power öffnet; ausgeschaltet wird die Startseite wieder zurückgesetzt (nur, wenn shyft-power selbst das Standard-Panel ist). Das Feature lag bisher nur auf einem eigenen Branch und war in keinem Test-Build enthalten.
+* **Heizungsaktionen in ganzen Grad, kaufmännisch gerundet.** Die Aktionen „Heizung Soll-Temperatur“ werden jetzt schon bei der Planung auf ganze Grad gerundet (x,5 nach oben, sonst zum nächsten ganzen Grad), Anzeige und Abweichungsprüfung zeigen also genau den Wert, der an die Wärmepumpe geht. Die Rückstellung nach einer Aktion geht auf die ebenso gerundete gewünschte Raumtemperatur (z. B. 21,5 → 22 °C); Aktionen, deren Sollwert darauf fällt, entfallen. Bisher rundete das Senden x,5 auf die gerade Zahl (22,5 → 22), wodurch eine Aktion bei 21,5 °C Wunschtemperatur wirkungslos sein konnte.
+
+## 0.0.45.343
+
+* **Heizung Soll-Temperatur: an das Gerät geht ein ganzzahliger Wert.** Die Solltemperatur in der Konfiguration darf weiterhin eine Nachkommastelle haben, und der Optimierer rechnet damit. Der Sollwert, den die Aktion „Heizung Soll-Temperatur“ an die Wärmepumpe sendet (Skript und eigene HA-Automation, auch beim Test), wird jedoch auf eine ganze Zahl gerundet, da nicht jede Integration Nachkommastellen verarbeitet.
+
+## 0.0.45.342
+
+* **Rotes „!“ neben „Sonstiger Verbraucher“ verschwindet nach bestandenem Test.** Ein früher gemeldetes Problem „Aktion konnte nicht … werden“ blieb auch nach erfolgreichem Test der Schalter-/Zahlensteuerung (Sonstiger Verbraucher, Heizung Soll-Temperatur u. a.) bestehen, sodass das „!“ in der Navigation nicht wieder zum grünen Haken wurde. Ein erfolgreicher Test gibt das Problem jetzt frei, und die Navigation wird direkt danach neu bewertet.
+
+## 0.0.45.341
+
+* **Sonstiger Verbraucher: Schalter-Auswahl zeigt nur noch Entitäten des gewählten Geräts.** Die Auswahl „Home-Assistant-Entität“ listete bisher alle Entitäten aus Home Assistant, unabhängig vom oben gewählten Gerät. Jetzt werden wie bei den übrigen Sensorfeldern nur die Entitäten der gewählten Geräte angeboten; bereits gewählte Entitäten bleiben sichtbar und abwählbar.
+
+## 0.0.45.340
+
+* **Gewünschte Raumtemperatur auf Zehntelgrad.** Das Feld „Gewünschte Raumtemperatur (mindestens)“ ist jetzt ein Zahlenfeld (15 bis 30 °C, Schritt 0,1) statt einer Auswahl in ganzen Grad. Der Optimierer bekommt den Wert mit einer Nachkommastelle (Server und Optimierer rechnen mit Dezimalzahlen). Die Heizungs-Sollwerte der Aktionen liegen in ganzen Grad Abstand zu diesem Wert (z. B. 20,5 / 21,5 / 22,5 bei 21,5), nach einer Aktion wird exakt auf den eingestellten Wert zurückgestellt.
+
+## 0.0.45.339
+
+* **Dashboard: Energiefluss (mobil).** Unter der Batterie stehen Ladestand und Modus mit mehr Abstand. Strommast und Batterie rücken symmetrisch zum Haus so weit nach außen, dass „Maximize Self Consumption“ weiterhin in eine Zeile mit Rand zum rechten Bildrand passt. Netzbezug und Batterieleistung stehen mittig über ihrer Leitung, auf gleicher Höhe; mit Aktualisierungszeit zweizeilig. „Auto: “ und „Wärmepumpe: “ entfallen, die Icons genügen.
+* **Wärmepumpe: Rotor dreht sich.** Das Pulsieren der eingeschalteten Wärmepumpe ist weg. Stattdessen dreht sich der Rotor im Lüftergitter langsam (eine Umdrehung in 6 Sekunden), solange die Wärmepumpe an ist.
+* **Charts: Einheiten an den Achsen.** Die Einheit steht nicht mehr im Titel, sondern oben an der jeweiligen Achse (links Hauptkurve, rechts zweite Kurve; „ct/kWh“ mobil zweizeilig). Der Strompreis-Chart heißt „Strompreis (Bezug)“. Die rechte Achse beschriftet nur gerade Werte (z. B. 5, 10, 15, 20). Bei der Raumtemperatur endet die linke Achse bei 25 und die rechte (Innenraum) beginnt beim niedrigsten dargestellten Wert (auf gerade Grad abgerundet); beide Achsen tragen die Farbe ihrer Kurve.
+* **Einsatzplan: Heute und Morgen aus Ist und Plan.** Die Kacheln zeigen statt reiner Prognose zwei Zahlen „Heute | Morgen“ für jeweils volle 24 Stunden. Heute besteht aus den gemessenen Werten bis jetzt (Verbrauch, Netzbezug, Einspeisung, PV; bewertet mit dem Strom- bzw. Einspeisepreis der jeweiligen Stunde) und ab jetzt aus dem Einsatzplan. Deckt der Plan morgen nicht komplett ab, entfällt Morgen; reicht er nicht bis zum Ende von heute, gilt Heute bis zum Planende („bis XX Uhr“). Einheit „ct/kWh“ statt „Cent/kWh“, die Kacheln sind kompakter.
+
+## 0.0.45.338
+
+* **Konfiguration geändert → neue Optimierung nach 3 Minuten.** Sobald in der Konfiguration etwas gespeichert wird, das sich tatsächlich geändert hat, wartet das Add-on 3 Minuten auf weitere Änderungen (jede weitere Änderung setzt die Frist zurück) und stößt dann einmal eine neue Optimierung an. Das passiert auch dann, wenn der letzte Plan sonst noch gepasst hätte und die stündliche Optimierung übersprungen worden wäre.
+* **Dashboard: Hinweis „Optimierung übersprungen“.** Wurde die stündliche Optimierung übersprungen, weil der Plan noch passt, steht bei „Berechnet um …“ jetzt „(um 15:55 Uhr geprüft: Optimierung übersprungen, der Plan passt noch)“.
+
+## 0.0.45.338 (Haushaltsstrom mobil)
+
+* **Energiefluss (Mobil): Haushaltsstrom-Verbrauch wird angezeigt.** Der Gesamt-Hausverbrauch stand bisher nur in der Desktop-Grafik. Im Mobil-Layout steht er jetzt links neben der Leitung vom Haus zu den Verbrauchern; die Leitung ist dafür etwas länger, die Grafik etwas höher.
+
+## 0.0.45.337
+
+* **Analyse: PV-Prognose vs. Ist.** Neuer Bereich im Analyse-Tab mit den letzten 31 Tagen: je Tag Prognose, tatsächliche PV-Erzeugung und Abweichung (Ist minus Prognose) in kWh und in Prozent der Prognose. Ein Tipp auf den Tag klappt die Stunden auf. Die Tagesabweichung addiert die stündlichen Abweichungen mit Vorzeichen, zu viel und zu wenig gleichen sich also aus. Stunden ohne Erzeugung und Prognose (Nacht) sind ausgeblendet; bei sehr kleiner Prognose (unter 0,05 kWh) steht statt einer Prozentangabe „–“.
+* **Aufzeichnung.** Prognose ist die letzte Vorhersage für die jeweilige Stunde (aus dem Tages-Snapshot), Ist das Stundenmittel des PV-Sensors wie im Dashboard. Das Add-on speichert beides stündlich im Energie-Archiv und holt verpasste Stunden der letzten 48 Stunden nach. Nach dem Start trägt es einmalig bis zu 10 Tage aus dem PV-Sync-Protokoll und der Home-Assistant-Historie nach, soweit diese noch vorliegen.
+
+## 0.0.45.336
+
+* **Mobil: Seite durch Herunterziehen aktualisieren.** Ganz oben auf der Seite nach unten ziehen, bis der Kreis-Pfeil grün wird, dann loslassen. Dashboard, Gerätesteuerung und Analyse laden ihre Daten neu; der Pfeil dreht sich, bis das Laden fertig ist. Auf der Konfigurationsseite wird die ganze Seite neu geladen (das gerade bearbeitete Feld wird vorher noch gespeichert). Wischen und Zoomen in den Charts bleibt unberührt.
+
+## 0.0.45.335
+
+* **Steuerungs-Schalter während einer laufenden Aktion umlegen: Start bzw. Stopp wird nachgeholt.** Wird die Steuerung eines Aktionstyps aktiviert, während eine Aktion läuft, sendet das Add-on den Startbefehl sofort nachträglich ans Gerät. Bisher passierte das nicht, wenn die Aktion deaktiviert gestartet und damit nur simuliert worden war. Beim Deaktivieren geht der Stoppbefehl sofort raus; die restliche Zeit wird nur simuliert. Mehrfaches Umlegen funktioniert in beide Richtungen, und das reguläre Ende zur Endzeit greift weiterhin. Schlägt ein nachgeholter Start oder Stopp fehl, wiederholt ihn jeder Poll, bis er gelingt.
+* **Log der Aktion.** Jeder dieser Schritte steht im Log der Aktion, ebenso ein Hinweis, wenn eine Aktion bei ausgeschalteter Steuerung nur simuliert gestartet wurde.
+
+## 0.0.45.334
+
+* **Strompreis-Chart: Netzbezug hängt nicht mehr in der Luft.** Die linke Preisachse endet unten immer auf Höhe der Null-Linie des Netzbezugs, auch wenn es zwischendurch Einspeisung gab. Die farbigen Preisflächen starten dort. Bei Einspeisung bricht die Netzkurve unter die Null-Linie aus, vor weißem Hintergrund. Die Null-Linie ist jetzt durchgehend als graue x-Achse markiert.
+
+* **Deaktivierte Steuerung im Dashboard sichtbar.** Ist auf der Gerätesteuerung die Steuerung eines Aktionstyps ausgeschaltet, trägt der zugehörige Chart-Titel ein Label „deaktiviert“: Warmwasser, Raumtemperatur (Heizung), Ladestand Heimspeicher, Ladestand Auto und Sonstiger Verbraucher. Beim Heimspeicher mit drei Aktionstypen heißt es „teilweise deaktiviert“, wenn nur einige aus sind. Der Tooltip nennt die betroffenen Aktionstypen.
+* **Deaktivierte Aktionen auf der Gerätesteuerung ausgegraut.** Aktionen eines ausgeschalteten Aktionstyps erscheinen ausgegraut und gestrichelt umrandet, mit dem Hinweis „(deaktiviert)“ und ohne grüne Hervorhebung, auch wenn sie gerade laufen. Bisher erkannte die Karte das nur am alten Status-Suffix von shyft-power, das seit dem Add-on-eigenen Schalter fehlt. Geplante und laufende Aktionen folgen dem aktuellen Schalter, beendete zeigen, was beim Start galt. Beim Umlegen des Schalters werden die Karten sofort aus- bzw. wieder eingegraut.
+* **„Fahrt planen“ sitzt im Desktop-Layout näher am Auto.** Der Button im Energiefluss-Widget rückt etwas nach oben, damit er optisch eindeutig zum Auto und nicht mehr zum „Sonstigen Gerät“ darunter gehört.
+
+## 0.0.45.333
+
+* **Auto laden: Preisgrenze `p_min` von +2 auf +3 Cent.** Die Preisgrenze, bis zu der der Optimierer das Auto lädt (`p_min`), liegt jetzt 3 Cent statt 2 Cent über dem niedrigsten kommenden Strompreis (`WB_P_MIN_MARGIN_EUR`). Bei +2 Cent war der Gewinn je kWh für den Optimierer so klein, dass er in der Rechengenauigkeit unterging und das Auto in sehr günstigen Nächten gar nicht lud. In Testrechnungen mit dem Optimierer lädt der Wagen ab +3 Cent in den günstigsten Stunden.
+
 ## 0.0.45.332
 
 * **Test-Add-on: automatisch angelegtes Konto in der Bubble-Testversion.** Ein vom `test`-Branch gebautes Add-on legt beim ersten echten Gerät (Wechsel aus dem Demomodus) das shyft-power-Konto jetzt in der Bubble-Testversion (`version-test`) an statt in PROD und speichert den Zugangsschlüssel mit dem Präfix `test_`. Dadurch verbindet sich das Test-Add-on auch danach mit der Testversion. Ein Add-on vom `main`-Branch legt das Konto wie bisher in PROD an.

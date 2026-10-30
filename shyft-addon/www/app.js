@@ -11,6 +11,7 @@ const integrationsUri = insideHomeAssistant + "/integrations";
 const integrationDomainHintsUri = insideHomeAssistant + "/integrationDomainHints.json";
 const shyftActionsUri = insideHomeAssistant + "/shyft/actions";
 const notificationTargetsUri = insideHomeAssistant + "/notification-targets";
+const openOnStartUri = insideHomeAssistant + "/open-on-start";
 const servicesUri = insideHomeAssistant + "/services";
 const systemHealthUri = insideHomeAssistant + "/system-health";
 const actionTestStatusUri = insideHomeAssistant + "/actions/test-status";
@@ -147,7 +148,7 @@ const heatingRodHelpInformation = {
     },
     [HEATING_ROD_SWITCH_KEY]: {
         label: 'Heizstab ein-/ausschalten',
-        description: ' Die An-/Aus-Entität (z. B. ein Schalter oder Relais) aus deinem Heizstab-Gerät, über die Shyft den Heizstab ein- und ausschaltet.'
+        description: ' Die An-/Aus-Entität (z. B. ein Schalter oder Relais) aus deinem Heizstab-Gerät, über die Shyft den Heizstab ein- und ausschaltet. Alternativ kann eine Value-Entität (number bzw. input_number, z. B. die „Leistungsvorgabe“ der Integration askoheat) hinterlegt werden: Dann sendet Shyft beim Einschalten die „Heizstab, max. Leistung“ (in der Einheit der Entität, kW oder W) und zum Ausschalten 0.'
     },
 };
 
@@ -231,7 +232,8 @@ const SENSOR_ENTITY_FILTERS = {
     'heatpump_dhw_activated': {type: 'state_on_off'},
     'heatpump_dhw_on_off': {type: 'state_on_off'},
     // Das Addon SCHALTET hierueber den Heizstab: settable An-/Aus-Entitaet (Schalter/Relais/input_boolean).
-    [HEATING_ROD_SWITCH_KEY]: {type: 'domain', values: ['switch', 'input_boolean', 'light']},
+    // Alternativ eine Value-Entitaet (number/input_number, z.B. askoheat "Leistungsvorgabe"): an = max. Leistung des Heizstabs, aus = 0.
+    [HEATING_ROD_SWITCH_KEY]: {type: 'domain', values: ['switch', 'input_boolean', 'light', 'number', 'input_number']},
     'heatpump_heating_target_temp_normal': {type: 'device_class', value: 'temperature'},
     'heatpump_heating_activated': {type: 'state_on_off_or_mode'},
     // Nur Leistungssensoren in W/kW (device_class 'power' liess z.B. auch Einheiten-lose Entitaeten durch)
@@ -1029,7 +1031,7 @@ async function saveConfigurationNow() {
         "hpDhwTankSize": configData["hpDhwTankSize"] ?? 'klein (200 Liter)',
         "hpMaxPower": configData["hpMaxPower"] ?? 'mittel (6 kW)',
         "hpMaxSupplyTempC": configData["hpMaxSupplyTempC"] ?? 55,
-        "hpHeatingTargetTempMin": configData["hpHeatingTargetTempMin"] ?? '21',
+        "hpHeatingTargetTempMin": configData["hpHeatingTargetTempMin"] ?? 21,
         "hpHeatingBuffer": configData["hpHeatingBuffer"] ?? 'mittel__0.2',
         "hpHeatingCurveLevel": configData["hpHeatingCurveLevel"] ?? 0,
         "hpHeatingCurveSlope": configData["hpHeatingCurveSlope"] ?? 1.2,
@@ -1831,6 +1833,7 @@ const loadConfiguration = async (event) => {
         renderGeneralConfigSection();
         renderIntegrationSections();
         renderNotificationSection();
+        renderOpenOnStartSection();
         renderSystemHealth();
         renderDashboardProblemBanner();
     } catch (err) {
@@ -2194,6 +2197,59 @@ function rerenderIntegrationSectionsKeepingScroll(anchorId = null) {
 // Aufklappen der Kachel wegen fehlender Einrichtung oder ausstehender Tests - die Aktion wird ja nur simuliert.
 function isActionToggleOff(toggleKey) {
     return (configData['actionTypeEnabled'] || {})[toggleKey] === false;
+}
+
+// Spiegel von ACTION_TYPE_TOGGLE_KEYS in app.py: shyft-power "Action Name" -> Steuerungs-Schalter (actionTypeEnabled-Key).
+const ACTION_NAME_TO_TOGGLE_KEY = {
+    'PV: Einspeisung begrenzen': 'pv_feed_in_limit',
+    'Verbrauch begrenzen (§14a)': 'consumption_limit_14a',
+    'Batterie-Laden verschieben (PV-Überschuss)': 'battery_charge_shift_pv_surplus',
+    'Batterie-Entladen verschieben': 'battery_discharge_shift',
+    'Batterie netzladen': 'battery_grid_charge',
+    'Warmwasser': 'hot_water',
+    'Heizung Soll-Temperatur': 'heating_target_temp',
+    'Auto laden': 'car_charge_start',
+    'Verbraucher an': 'consumer_on',
+};
+
+// Ist eine Aktion deaktiviert (wird nur simuliert)? Noch nicht beendete Aktionen folgen dem AKTUELLEN Schalter - der
+// Execution Status wird beim Anlegen gesetzt und kann veralten, wenn der Nutzer den Schalter danach umlegt. Beendete
+// Aktionen behalten, was beim Start galt (Execution Status "no, deactivated", siehe handle_shyft_action_start).
+function isShyftActionDeactivated(action) {
+    const status = (action['Status'] || '').toLowerCase();
+    if (status.includes('deaktiviert')) return true; // Altbestand: Suffix von shyft-power
+    const toggleKey = ACTION_NAME_TO_TOGGLE_KEY[action['Action Name']];
+    if (!toggleKey) return false;
+    const end = action['Date End'];
+    const ended = status.startsWith('beendet') || (end && new Date(end).getTime() <= Date.now());
+    if (!ended) return isActionToggleOff(toggleKey);
+    return (action['Execution Status'] || '').toLowerCase() === 'no, deactivated';
+}
+
+// Welche Aktionstypen ein Dashboard-Chart zeigt (Schluessel = Chart-Titel, wie an buildLineChart/buildForecastActualChart
+// uebergeben). Sind sie per Schalter aus, bekommt der Titel ein Label "deaktiviert" (bei mehreren nur teilweise: "teilweise
+// deaktiviert", der Tooltip nennt die betroffenen Aktionstypen).
+const CHART_TITLE_TO_TOGGLE_KEYS = {
+    'Warmwasser': ['hot_water'],
+    'Raumtemperatur': ['heating_target_temp'],
+    'Ladestand Heimspeicher': ['battery_grid_charge', 'battery_charge_shift_pv_surplus', 'battery_discharge_shift'],
+    'Ladestand Auto': ['car_charge_start'],
+    'Sonstiger Verbraucher': ['consumer_on'],
+};
+
+function appendChartDeactivatedBadge(titleEl, chartTitle) {
+    const keys = CHART_TITLE_TO_TOGGLE_KEYS[chartTitle];
+    if (!keys) return;
+    const off = keys.filter(isActionToggleOff);
+    if (off.length === 0) return;
+    const badge = document.createElement('span');
+    badge.className = 'dashboardChartTitleBadge deactivated hasValueTooltip';
+    const all = off.length === keys.length;
+    badge.textContent = all ? 'deaktiviert' : 'teilweise deaktiviert';
+    const names = off.map(key => (CONTROL_TOGGLE_CARDS.find(card => card.key === key) || {}).label || key);
+    attachTooltip(badge, (all && keys.length === 1 ? 'Die Steuerung ist' : `Deaktiviert: ${names.join(', ')}. Die Steuerung ist`)
+        + ' auf der Seite Gerätesteuerung ausgeschaltet - Shyft plant die Aktionen, führt sie aber nicht aus.');
+    titleEl.appendChild(badge);
 }
 
 // Ist eine sensorMappings-Zuordnung leer? Einzelfelder halten einen String, Mehrfachfelder (siehe
@@ -3431,6 +3487,70 @@ function renderNotificationSection() {
     container.appendChild(sectionDiv);
 }
 
+// Ganz unten auf der Konfigurationsseite: Toggle, der shyft-power zum system-weiten Standard-Panel von Home
+// Assistant macht (HA oeffnet dann direkt dieses Add-on). Der Zustand liegt in HA selbst (nicht in configData),
+// deshalb eigene Endpunkte /open-on-start statt autoSave.
+async function renderOpenOnStartSection() {
+    const container = document.getElementById('openOnStartSection');
+    if (!container) return;
+    container.innerHTML = '';
+
+    let enabled = false;
+    try {
+        const state = await getJson(openOnStartUri);
+        if (state.status !== 'success') return;
+        enabled = state.enabled;
+    } catch (err) {
+        console.log(err);
+        return;
+    }
+
+    const sectionDiv = document.createElement('div');
+    sectionDiv.className = 'integrationSection';
+    const heading = document.createElement('div');
+    heading.className = 'integrationHeading';
+    const headingTitle = document.createElement('h2');
+    headingTitle.textContent = 'Home Assistant';
+    heading.appendChild(headingTitle);
+    sectionDiv.appendChild(heading);
+
+    const row = document.createElement('tr');
+    const keyCell = document.createElement('td');
+    keyCell.textContent = 'shyft-power beim Öffnen von Home Assistant direkt starten';
+    keyCell.appendChild(buildTooltip('Macht shyft-power zur Startseite von Home Assistant (Standard-Panel für alle Nutzer). Beim Ausschalten wird die Startseite wieder auf Home Assistants Standard zurückgesetzt. Erfordert einen Administrator.'));
+    const toggleCell = document.createElement('td');
+    toggleCell.className = 'toggleCell';
+    const toggle = buildBareToggleSwitch(enabled);
+    const input = toggle.querySelector('input');
+    input.addEventListener('change', async () => {
+        const wanted = input.checked;
+        input.disabled = true;
+        try {
+            const response = await fetch(openOnStartUri, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({enabled: wanted})
+            });
+            const result = await response.json();
+            if (result.status !== 'success') throw new Error(result.message || 'unbekannter Fehler');
+        } catch (err) {
+            input.checked = !wanted;
+            alert('Die Einstellung konnte nicht gespeichert werden: ' + err.message);
+        } finally {
+            input.disabled = false;
+        }
+    });
+    toggleCell.appendChild(toggle);
+    row.appendChild(keyCell);
+    row.appendChild(toggleCell);
+    const table = document.createElement('table');
+    const tbody = document.createElement('tbody');
+    tbody.appendChild(row);
+    table.appendChild(tbody);
+    sectionDiv.appendChild(table);
+    container.appendChild(sectionDiv);
+}
+
 function buildIntegrationPicker(section, currentIds, onChange) {
     const wrapper = document.createElement('div');
     wrapper.className = 'integrationPicker';
@@ -3795,7 +3915,7 @@ function renderSectionBody(bodyDiv, section, entryIds) {
             bodyDiv.appendChild(buildEvSocMaxPvSurplusField());
         }
         if (section.key === 'sonstiger_verbraucher') {
-            bodyDiv.appendChild(buildMultiSensorField('sonstiger_verbraucher_switch_entities'));
+            bodyDiv.appendChild(buildMultiSensorField('sonstiger_verbraucher_switch_entities', candidateEntities));
             bodyDiv.appendChild(buildOdPriceThresholdField());
             bodyDiv.appendChild(buildOdPowerField());
         }
@@ -3947,7 +4067,7 @@ function buildHeatingRodControl() {
     const titleText = document.createElement('span');
     titleText.textContent = 'Heizstab ein-/ausschalten';
     title.appendChild(titleText);
-    title.appendChild(buildTooltip('Wenn Shyft Warmwasser bereiten will, schaltet es diese Entität ein und nach dem Ende der Aktion wieder aus. Shyft geht vorerst davon aus, dass der Heizstab dann mit voller Leistung läuft.'));
+    title.appendChild(buildTooltip('Wenn Shyft Warmwasser bereiten will, schaltet es diese Entität ein und nach dem Ende der Aktion wieder aus. Shyft geht vorerst davon aus, dass der Heizstab dann mit voller Leistung läuft. Bei einer Value-Entität (number/input_number, z. B. askoheat „Leistungsvorgabe“) sendet Shyft stattdessen die „Heizstab, max. Leistung“ und zum Beenden 0.'));
     wrapper.appendChild(title);
 
     const checkmark = document.createElement('span');  // nur fuer applyTestGate, wird nicht eingefuegt
@@ -4351,13 +4471,17 @@ function buildHpTypeField() {
 // sonst kann der Julia-Optimierer bei einem Rohwert an/ueber der Puffer-Obergrenze infeasible
 // werden und NaN ausgeben.
 function buildHpHeatingTargetTempMinField() {
-    return buildConfigSelectField({
+    return buildConfigNumberField({
         label: 'Gewünschte Raumtemperatur (mindestens)',
-        tooltip: 'Untergrenze für die Raumtemperatur. Die Optimierung hält die Innentemperatur immer mindestens auf diesem Wert (und höchstens den Heizungspuffer darüber).',
+        tooltip: 'Untergrenze für die Raumtemperatur, auf Zehntelgrad genau (z.B. 21,5). Die Optimierung hält die Innentemperatur immer mindestens auf diesem Wert (und höchstens den Heizungspuffer darüber).',
         id: 'hp_heating_target_temp_min',
         configKey: 'hpHeatingTargetTempMin',
-        options: [18, 19, 20, 21, 22, 23, 24].map(v => [String(v), `${v} °C`]),
-        defaultValue: '21',
+        placeholder: 'z.B. 21',
+        defaultValue: 21,
+        step: '0.1',
+        min: '15',
+        max: '30',
+        unit: '°C',
     });
 }
 
@@ -5284,6 +5408,8 @@ function buildAutoManagedNumberControl(control) {
         } finally {
             if (minusButton) minusButton.disabled = false;
             plusButton.disabled = false;
+            // Ein durch den Test erledigtes Problem ("!" in der Geraete-Navigation) sofort neu bewerten.
+            renderSystemHealth();
             await popup.finish(result);
         }
     }
@@ -5490,6 +5616,7 @@ function buildAutoManagedSwitchControl(control) {
             valueDisplay.className = 'autoActionValue';
         } finally {
             testButton.disabled = false;
+            renderSystemHealth();
             await popup.finish(outcome);
         }
     });
@@ -6444,6 +6571,9 @@ function buildToggleSwitch(id, checked) {
         input.addEventListener('change', () => {
             configData['actionTypeEnabled'] = {...(configData['actionTypeEnabled'] || {}), [toggleKey]: input.checked};
             reapplyTestGates();
+            // Aktionskarten sofort aus- bzw. wieder eingrauen (siehe isShyftActionDeactivated), nicht erst beim naechsten Refresh.
+            const actionsBody = document.getElementById('shyftActionsBody');
+            if (actionsBody && lastShyftActions.length) renderShyftActions(actionsBody, lastShyftActions, lastShyftDisplayMaxDays);
         });
     }
     input.addEventListener('change', autoSave);
@@ -7006,7 +7136,7 @@ function wrapEntityInputWithClear(dropdownEl, input, showArrow = true) {
 // Entitaet) speichert dieser Schluessel ein ARRAY - schreibt sich deshalb direkt in
 // configData['sensorMappings'] (wie buildBatteryCoupledEntityField), statt ueber den generischen
 // DOM-id-basierten Sammelmechanismus in saveConfigurationNow zu laufen.
-function buildMultiSensorField(sensorKey) {
+function buildMultiSensorField(sensorKey, entityPool = allSensorIdOptions) {
     const container = document.createElement('div');
     container.className = 'configField multiSensorField';
     // Gleiche Id-Konvention wie die Einzelfelder (siehe buildMappingRow) - damit der rote Rahmen bei fehlendem
@@ -7064,7 +7194,7 @@ function buildMultiSensorField(sensorKey) {
     let selectedIds = Array.isArray(existing) ? existing.filter(Boolean) : (typeof existing === 'string' && existing ? [existing] : []);
 
     const filter = SENSOR_ENTITY_FILTERS[sensorKey];
-    const candidates = allSensorIdOptions
+    const candidates = entityPool
         .filter(entity => entityMatchesSensorFilter(entity, filter))
         .map(entity => ({entity, score: scoreSensorEntityForField(entity, sensorKey, undefined)}));
 
@@ -7315,7 +7445,7 @@ function buildShyftActionCard(action) {
     // Kalendertag). Bekommt deshalb bewusst NIE die "is-active"-Hervorhebung (Nutzer-Vorgabe:
     // dezenter darstellen, nicht wie eine echte laufende Geraete-Aktion).
     const isActive = normalizedStatus.startsWith('aktiv') && !isHouseholdSavings;
-    const isDeactivated = normalizedStatus.includes('deaktiviert');
+    const isDeactivated = !isHouseholdSavings && isShyftActionDeactivated(action);
     const baseStatus = status.replace(/\s*\(deaktiviert\)/i, '').trim();
     // "no, error" = Start nicht moeglich (nicht eingerichtet/getestet ODER Geraetefehler),
     // "yes, not finished" = Beenden fehlgeschlagen - beides rot umranden (siehe .shyftActionCard.is-error).
@@ -7971,7 +8101,7 @@ const EINSATZPLAN_STALE_ERROR_MS = (2 * 60 + 10) * 60 * 1000;  // 2:10 h
 
 const EINSATZPLAN_STATS = [
     ['stromverbrauch_kwh', 'Stromverbrauch', 'kWh', 0],
-    ['netzstrom_preis_cent', 'ø Netzstrom', 'Cent/kWh', 1],
+    ['netzstrom_preis_cent', 'ø Netzstrom', 'ct/kWh', 1],
     ['autarkie_pct', 'Autarkie', '%', 0],
     ['eigenverbrauch_pct', 'Eigenverbrauch', '%', 0],
     ['stromertrag_eur', 'Stromertrag', '€', 2],
@@ -7987,7 +8117,8 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
     card.appendChild(title);
 
     const heute = einsatzplan.heute || {};
-    const morgen = einsatzplan.morgen || {};
+    // Morgen fehlt, wenn der Einsatzplan nicht den ganzen morgigen Tag abdeckt (siehe _compute_einsatzplan_summary in app.py)
+    const morgen = einsatzplan.morgen || null;
 
     const grid = document.createElement('div');
     grid.className = 'einsatzplanGrid';
@@ -7997,23 +8128,17 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
         const labelEl = document.createElement('div');
         labelEl.className = 'einsatzplanStatLabel';
         labelEl.textContent = label;
-        // Kompakte Kachel: grosse Hauptzahl OHNE Einheit, dahinter klein die Heute|Morgen-Werte in
-        // Klammern, dahinter klein die Einheit - "47 (2 | 30) kWh" statt vorher "47 kWh (2 | 30)"
-        // (Einheit doppelt so gross wie noetig mitgezogen) bzw. noch frueher einer eigenen Zeile
-        // darunter.
+        // Zwei grosse Zahlen "Heute | Morgen" (ohne Morgen nur eine), dahinter klein die Einheit.
         const valueRow = document.createElement('div');
         valueRow.className = 'einsatzplanStatValueRow';
         const valueEl = document.createElement('span');
         valueEl.className = 'einsatzplanStatValue';
-        valueEl.textContent = formatEinsatzplanValue(einsatzplan[key], null, decimals);
-        const subEl = document.createElement('span');
-        subEl.className = 'einsatzplanStatSub';
-        subEl.textContent = `(${formatEinsatzplanValue(heute[key], null, decimals)} | ${formatEinsatzplanValue(morgen[key], null, decimals)})`;
+        const heuteText = formatEinsatzplanValue(heute[key], null, decimals);
+        valueEl.textContent = morgen ? `${heuteText} | ${formatEinsatzplanValue(morgen[key], null, decimals)}` : heuteText;
         const unitEl = document.createElement('span');
         unitEl.className = 'einsatzplanStatUnit';
         unitEl.textContent = unit;
         valueRow.appendChild(valueEl);
-        valueRow.appendChild(subEl);
         valueRow.appendChild(unitEl);
         stat.appendChild(labelEl);
         stat.appendChild(valueRow);
@@ -8029,7 +8154,7 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
     const ageMs = Date.now() - (validatedAt || einsatzplan.creation_date);
     const timeSpan = document.createElement('span');
     timeSpan.textContent = `Berechnet um ${formatShyftTime(einsatzplan.creation_date)} Uhr`;
-    if (validatedAt) timeSpan.textContent += ` (um ${formatShyftTime(validatedAt)} Uhr geprüft: passt noch)`;
+    if (validatedAt) timeSpan.textContent += ` (um ${formatShyftTime(validatedAt)} Uhr geprüft: Optimierung übersprungen, der Plan passt noch)`;
     if (ageMs >= EINSATZPLAN_STALE_ERROR_MS) {
         timeSpan.className = 'einsatzplanLegendStaleError';
         timeSpan.textContent += '!';
@@ -8037,9 +8162,13 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
         timeSpan.className = 'einsatzplanLegendStaleWarn';
     }
     legend.appendChild(timeSpan);
-    // einsatzplan.hours = die noch verbleibenden Stunden des Plans ab jetzt (siehe _compute_einsatzplan_summary)
-    const horizonText = einsatzplan.hours === 1 ? 'die nächste Stunde' : `die nächsten ${einsatzplan.hours} Stunden`;
-    legend.appendChild(document.createTextNode(`, Kennzahlen jeweils für ${horizonText} (bzw. in Klammern für die restlichen heutigen Stunden | für morgen).`));
+    // heute_bis_hour: der Einsatzplan reicht nicht bis zum Ende des heutigen Tages - "heute" ist dann nur bis dorthin gerechnet (und morgen fehlt).
+    const daysText = einsatzplan.heute_bis_hour !== null && einsatzplan.heute_bis_hour !== undefined
+        ? `für heute (bis ${einsatzplan.heute_bis_hour} Uhr)`
+        : (morgen ? 'jeweils für heute und morgen' : 'für heute');
+    // Nach "Berechnet um 15:55 Uhr!" (veralteter Plan) folgt der Satz ohne zusaetzlichen Punkt.
+    const sentenceStart = timeSpan.textContent.endsWith('!') ? ' ' : '. ';
+    legend.appendChild(document.createTextNode(`${sentenceStart}Kennzahlen ${daysText}, berechnet aus Ist-Werten (heute, bis jetzt) plus den prognostizierten Daten aus dem Einsatzplan (ab jetzt).`));
     if (optimizerRunning) {
         const running = document.createElement('span');
         running.className = 'einsatzplanLegendRunning';
@@ -8614,6 +8743,49 @@ function nowDotSvg(cx, cy) {
     return `<circle class="dashboardChartNowRing" r="9" cx="${x}" cy="${y}" /><circle class="dashboardChartNowDot" r="4.5" cx="${x}" cy="${y}" />`;
 }
 
+// Einheit an den Achsen statt im Titel: oben ueber der jeweiligen Achse (links die der Hauptkurve, rechts die der zweiten Kurve). Auf
+// schmalen Bildschirmen (gleiche Grenze wie die vergroesserte Chart-Schrift in index.html) steht eine Einheit mit "/" (ct/kWh)
+// zweizeilig ("ct/" ueber "kWh"), weil sie sonst nicht in den Rand neben den Achsenwerten passt - der Kopfbereich wird dafuer hoeher.
+function chartAxisUnitText(unit) {
+    return unit === 'Cent/kWh' ? 'ct/kWh' : unit;
+}
+
+function chartCompactUnits() {
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 600px)').matches;
+}
+
+function chartTopPadding(unit) {
+    return chartCompactUnits() && String(chartAxisUnitText(unit) || '').includes('/') ? 38 : 20;
+}
+
+function chartAxisUnitMarkup(unit, x, anchor, paddingTop, color = 'var(--color-text-secondary)') {
+    const text = chartAxisUnitText(unit);
+    if (!text) return '';
+    const slash = text.indexOf('/');
+    const lines = chartCompactUnits() && slash > 0 ? [text.slice(0, slash + 1), text.slice(slash + 1)] : [text];
+    const lastBaseline = paddingTop - 8;
+    const lineStep = 17;
+    const tspans = lines.map((line, i) => `<tspan x="${x}" y="${lastBaseline - (lines.length - 1 - i) * lineStep}">${line}</tspan>`).join('');
+    return `<text x="${x}" y="${lastBaseline}" fill="${color}" text-anchor="${anchor}">${tspans}</text>`;
+}
+
+// Wie computeNiceTicks, aber nur "gerade" Schrittweiten (1, 2, 5, 10 ...) - fuer die rechte Achse: 5, 10, 15, 20 statt 2,5 / 7,5 / 12,5.
+function computeEvenTicks(min, max, targetCount = 4) {
+    const range = max - min;
+    if (!isFinite(range) || range <= 0) return [min];
+    const rawStep = range / targetCount;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const residual = rawStep / magnitude;
+    const step = ([1, 2, 5, 10].find(v => residual <= v) ?? 10) * magnitude;
+    const ticks = [];
+    for (let v = Math.ceil(min / step - 1e-9) * step; v <= max + step * 1e-6; v += step) {
+        let cleaned = Math.round(v / step) * step;
+        if (Object.is(cleaned, -0)) cleaned = 0;
+        ticks.push(cleaned);
+    }
+    return ticks.length ? ticks : [min];
+}
+
 function buildLineChart(title, unit, labels, values, options = {}) {
     const scaleHolder = {};
     return makeToggleableChart(options.chartKey, ctx => {
@@ -8640,13 +8812,13 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 }
 
 function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hidden: new Set(), toggle: null}) {
-    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, overlayForecast = null, curveLegend = false, bandPrimary = null, primaryFine = null} = options;
+    const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, overlayForecast = null, curveLegend = false, bandPrimary = null, primaryFine = null, axisMax = null} = options;
     const width = 600, height = CHART_SVG_HEIGHT;
     // presenceForecast reserves an extra strip just above the x-axis labels for the
     // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
     // eigener rechter Skala, siehe unten) braucht zusaetzlichen Platz rechts fuer ihre eigene
     // Achsenbeschriftung.
-    const paddingLeft = 52, paddingRight = secondSeries ? 42 : 15, paddingTop = 20, paddingBottom = presenceForecast ? 38 : 26;
+    const paddingLeft = 52, paddingRight = secondSeries ? 42 : 15, paddingTop = chartTopPadding(unit), paddingBottom = presenceForecast ? 38 : 26;
     ctx.plotLeft = paddingLeft;
     ctx.plotRight = paddingRight;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -8661,8 +8833,8 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     wrapper.className = 'dashboardChart dashboardChartHalf';
     const titleEl = document.createElement('div');
     titleEl.className = 'dashboardChartTitle';
-    const parenthetical = [subtitle, unit].filter(Boolean).join(', ');
-    titleEl.textContent = title + (parenthetical ? ` (${parenthetical})` : '');
+    titleEl.textContent = title + (subtitle ? ` (${subtitle})` : '');
+    appendChartDeactivatedBadge(titleEl, title);
     wrapper.appendChild(titleEl);
 
     // Legende (siehe chartLegendEntry): 'curves' = je Kurve ein Eintrag (Hauptkurve + optionale zweite Kurve, z.B.
@@ -8740,11 +8912,6 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     const yRange = (yMax - yMin) || 1;
     const lastIndex = scaledValues.length - 1 || 1;
 
-    const points = scaledValues.map((v, i) => [
-        paddingLeft + (i / lastIndex) * plotWidth,
-        paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight,
-    ]);
-
     // Zweite Kurve mit EIGENER rechter Skala (Nutzer-Vorgabe, siehe secondSeries oben) - unabhaengig
     // von der Hauptreihe skaliert (eigenes Min/Max +10% Puffer, gleiches Muster wie yMin/yMax),
     // damit beide Kurven trotz ggf. sehr unterschiedlicher Wertebereiche gut lesbar bleiben.
@@ -8753,7 +8920,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     // Sensorhistorie, durchgezogen) + Prognose (Rest, gestrichelt) aus secondSeries.actual/.forecast
     // (mutuell exklusiv je Index wie beim Hauptchart), optional mit slopeColors (grau/rot/gruen nach
     // Wertrichtung) statt einer festen Farbe.
-    let points2 = null, merged2 = null, yMin2 = 0, yMax2 = 1, yRange2 = 1, secondLineMarkup = '';
+    let points2 = null, merged2 = null, yMin2 = 0, yMax2 = 1, yRange2 = 1, dataMin2 = null, secondLineMarkup = '';
     if (secondSeries) {
         merged2 = secondSeries.actual ? labels.map((_, i) => (secondSeries.actual[i] ?? secondSeries.forecast[i])) : secondSeries.values;
         const defined2 = merged2.filter(v => v !== null && v !== undefined);
@@ -8761,6 +8928,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         if (secondSeries.actual && secondSeries.forecast) defined2.push(...secondSeries.forecast.filter(v => v !== null && v !== undefined));
         if (secondSeries.actualFine) defined2.push(...parseFinePoints(secondSeries.actualFine).map(p => p[1]));
         // signed (z.B. Netzbezug/Einspeisung): positive UND negative Werte - die Skala schliesst 0 immer ein und geht bei Einspeisung darunter.
+        dataMin2 = Math.min(...defined2);
         const rawMin2 = secondSeries.zeroBased ? 0 : (secondSeries.signed ? Math.min(0, ...defined2) : Math.min(...defined2));
         const rawMax2 = secondSeries.signed ? Math.max(0, ...defined2) : Math.max(...defined2);
         const valueRange2 = (rawMax2 - rawMin2) || 1;
@@ -8770,6 +8938,11 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         const pad2 = secondSeries.absolutePadding ?? valueRange2 * 0.1;
         yMin2 = secondSeries.zeroBased ? 0 : (secondSeries.signed ? (rawMin2 < 0 ? rawMin2 - pad2 : 0) : rawMin2 - pad2);
         yMax2 = rawMax2 + pad2;
+        if (secondSeries.signed && yMin2 < 0 && yMax2 < -yMin2 * 0.3 / 0.7) {
+            // Bei viel Einspeisung und kaum Bezug bliebe fuer die linke Skala (Preis) oberhalb der Nulllinie fast
+            // nichts uebrig - mindestens 30 % der Hoehe dafuer reservieren.
+            yMax2 = -yMin2 * 0.3 / 0.7;
+        }
         if (secondSeries.band) {
             const totalRange2 = (yMax2 - yMin2) / CHART_BAND_FRACTION_SECOND;
             if (secondSeries.band === 'upper') yMin2 = yMax2 - totalRange2; else yMax2 = yMin2 + totalRange2;
@@ -8865,6 +9038,20 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         }
     }
 
+    // Hauptkurve (linke Skala): endet unten auf Hoehe der Nulllinie der rechten, vorzeichenbehafteten Skala
+    // (z.B. Strompreis vs. Netzbezug/Einspeisung) - Bezug "haengt" so nicht in der Luft, sobald es Einspeisung
+    // gibt. Unterhalb der Nulllinie bleibt Platz nur fuer die Einspeisung (siehe belowZeroMarkup).
+    let primaryBottom = paddingTop + plotHeight;
+    if (secondSeries && secondSeries.signed && !hideSecond && yMin2 < 0 && yMax2 > 0) {
+        primaryBottom = paddingTop + plotHeight - ((0 - yMin2) / yRange2) * plotHeight;
+    }
+    const primaryHeight = primaryBottom - paddingTop;
+    const yPrimary = v => primaryBottom - ((v - yMin) / yRange) * primaryHeight;
+    const points = scaledValues.map((v, i) => [
+        paddingLeft + (i / lastIndex) * plotWidth,
+        yPrimary(v),
+    ]);
+
     function colorForValue(v) {
         if (!colorBands) return 'var(--color-accent)';
         if (colorBands.extremeThreshold !== undefined && v >= colorBands.extremeThreshold) return colorBands.extremeColor;
@@ -8921,7 +9108,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
             const [x0, y0] = points[i];
             const [x1] = points[i + 1];
             lineParts.push(`<path d="M${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y0.toFixed(1)}" fill="none" stroke="${color}" stroke-width="2" ${dashAttr} />`);
-            areaParts.push(`<path d="M${x0.toFixed(1)},${baseline.toFixed(1)} L${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${baseline.toFixed(1)} Z" fill="${color}" opacity="0.15" stroke="none" />`);
+            areaParts.push(`<path d="M${x0.toFixed(1)},${primaryBottom.toFixed(1)} L${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${primaryBottom.toFixed(1)} Z" fill="${color}" opacity="0.15" stroke="none" />`);
             const [, yNext] = points[i + 1];
             if (colorBands) {
                 for (const seg of splitJumpByBands(scaledValues[i], scaledValues[i + 1], y0, yNext)) {
@@ -8944,14 +9131,14 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
             const [x0, y0] = points[i];
             const [x1, y1] = points[i + 1];
             lineParts.push(`<path d="M${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)}" fill="none" stroke="${color}" stroke-width="2" ${dashAttr} />`);
-            areaParts.push(`<path d="M${x0.toFixed(1)},${baseline.toFixed(1)} L${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)} L${x1.toFixed(1)},${baseline.toFixed(1)} Z" fill="${color}" opacity="0.15" stroke="none" />`);
+            areaParts.push(`<path d="M${x0.toFixed(1)},${primaryBottom.toFixed(1)} L${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)} L${x1.toFixed(1)},${primaryBottom.toFixed(1)} Z" fill="${color}" opacity="0.15" stroke="none" />`);
         }
         lineMarkup = lineParts.join('');
         areaMarkup = areaParts.join('');
     } else {
         const color = colorForValue(scaledValues[0]);
         const linePath = points.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-        const areaPath = `${linePath} L${points[points.length - 1][0].toFixed(1)},${baseline.toFixed(1)} L${points[0][0].toFixed(1)},${baseline.toFixed(1)} Z`;
+        const areaPath = `${linePath} L${points[points.length - 1][0].toFixed(1)},${primaryBottom.toFixed(1)} L${points[0][0].toFixed(1)},${primaryBottom.toFixed(1)} Z`;
         areaMarkup = hidePrimarySeg(0) ? '' : `<path d="${areaPath}" fill="${color}" opacity="0.15" stroke="none" />`;
         lineMarkup = hidePrimarySeg(0) ? '' : `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2" />`;
     }
@@ -8963,11 +9150,11 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
             const fineAreaParts = [];
             lineMarkup += fineSeriesMarkup(fineP, {
                 xOfMs: ms => paddingLeft + ((ms - firstMs) / 3600000 / lastIndex) * plotWidth,
-                yOf: v => paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight,
+                yOf: yPrimary,
                 stepped,
                 colorFor: (vPrev, v) => (stepped ? 'var(--color-accent)' : colorForSlope(vPrev, v)),
                 areaParts: fineAreaParts,
-                baseline,
+                baseline: primaryBottom,
                 areaEndX: paddingLeft + (dashedFromIndex / lastIndex) * plotWidth,
             });
             areaMarkup += fineAreaParts.join('');
@@ -8982,7 +9169,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         const parts = [];
         const ov = overlayValues;
         const xOf = i => paddingLeft + (i / lastIndex) * plotWidth;
-        const yOf = v => paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight;
+        const yOf = yPrimary;
         for (let i = 0; i < Math.min(dashedFromIndex, ov.length, points.length - 1); i++) {
             if (ov[i] === null) continue;
             const next = i + 1 < ov.length ? ov[i + 1] : null;
@@ -9007,35 +9194,52 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         return `<text x="${x}" y="${height - 6}" fill="var(--color-text-secondary)" text-anchor="${i === lastIndex ? 'end' : 'middle'}">${text}</text>`;
     }).join('');
 
-    const yTicks = computeNiceTicks(yMin, yMax);
+    // Mit zweiter Kurve gehoeren die linke Achse zur Hauptkurve (Farbe der Hauptkurve) und die rechte zur zweiten Kurve (deren Farbe).
+    // axisMax: hoechster beschrifteter Wert der linken Achse (z.B. Raumtemperatur: die Hauptkurve belegt nur die untere Haelfte des Charts).
+    const leftAxisColor = secondSeries ? 'var(--color-accent)' : 'var(--color-text-secondary)';
+    const yTicks = computeNiceTicks(yMin, yMax).filter(v => axisMax === null || v <= axisMax);
     const yLabels = yTicks.map(v => {
-        const y = (paddingTop + plotHeight - ((v - yMin) / yRange) * plotHeight).toFixed(1);
-        return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="end">${round ? Math.round(v) : v.toFixed(1)}</text>`;
+        const y = yPrimary(v).toFixed(1);
+        return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="${leftAxisColor}" text-anchor="end">${round ? Math.round(v) : v.toFixed(1)}</text>`;
     }).join('');
 
     // Rechte Achsenbeschriftung fuer secondSeries - eigene Skala, also eigene Ticks (gleiches Muster
     // wie yLabels links), am rechten Rand nach aussen ausgerichtet.
     let yLabels2 = '';
     let zeroLine2Markup = '';
+    let axisUnitMarkup = chartAxisUnitMarkup(unit, paddingLeft - 6, 'end', paddingTop, leftAxisColor);
     if (secondSeries) {
-        let yTicks2 = [yMax2, (yMin2 + yMax2) / 2, yMin2];
+        const color2 = secondSeries.color || 'var(--color-text-secondary)';
         if (secondSeries.signed && yMin2 < 0) {
-            // Nulllinie der rechten Skala (Bezug darueber, Einspeisung darunter) samt "0"-Beschriftung statt der Mitte
-            yTicks2 = [yMax2, 0, yMin2];
+            // Nulllinie der rechten Skala (Bezug darueber, Einspeisung darunter)
             const zy2 = (paddingTop + plotHeight - ((0 - yMin2) / yRange2) * plotHeight).toFixed(1);
-            zeroLine2Markup = `<line x1="${paddingLeft}" y1="${zy2}" x2="${width - paddingRight}" y2="${zy2}" stroke="var(--color-border)" stroke-dasharray="2,3" />`;
+            // Nulllinie als durchgezogene graue x-Achse; darunter (Einspeisung) weisser Hintergrund
+            zeroLine2Markup = `<rect x="${paddingLeft + 1}" y="${zy2}" width="${(plotWidth - 1).toFixed(1)}" height="${(baseline - parseFloat(zy2)).toFixed(1)}" fill="var(--color-bg)" />`
+                + `<line x1="${paddingLeft}" y1="${zy2}" x2="${width - paddingRight}" y2="${zy2}" stroke="var(--color-border)" />`;
         }
+        // Beschriftet werden nur "gerade" Werte (5, 10, 15 ...), nicht die Raender des Wertebereichs.
+        let yTicks2 = computeEvenTicks(yMin2, yMax2);
         if (secondSeries.integerTicks) {
-            // Nur volle Zahlen als Achsenbeschriftung (hoechstens ~5 Stueck, bei grossem Bereich in groeberen Schritten)
-            const lowTick = Math.ceil(yMin2 - 1e-9), highTick = Math.floor(yMax2 + 1e-9);
-            const tickStep = Math.max(1, Math.ceil((highTick - lowTick) / 4));
+            // Nur gerade ganze Zahlen (z.B. Innenraum 16, 18, 20), beginnend beim niedrigsten dargestellten Wert (abgerundet) - darunter
+            // belegt die Hauptkurve den Chart, die Achse soll dort nichts beschriften.
+            const lowTick = Math.floor((dataMin2 ?? yMin2) / 2 + 1e-9) * 2, highTick = Math.floor(yMax2 + 1e-9);
+            const tickStep = 2 * Math.max(1, Math.ceil((highTick - lowTick) / 2 / 4));
             yTicks2 = [];
-            for (let v = lowTick; v <= highTick + 1e-9; v += tickStep) yTicks2.push(v);
+            for (let v = lowTick; v <= highTick + 1e-9; v += tickStep) {
+                if (v >= yMin2 - 1e-9) yTicks2.push(v);
+            }
+            if (yTicks2.length < 2) {
+                // Zu kleiner Bereich fuer zwei gerade Werte: alle ganzen Zahlen im Bereich
+                yTicks2 = [];
+                for (let v = Math.ceil(Math.max(yMin2, dataMin2 ?? yMin2) - 1e-9); v <= highTick + 1e-9; v += 1) yTicks2.push(v);
+            }
         }
+        const decimals2 = secondSeries.integerTicks ? 0 : (secondSeries.decimals ?? 1);
         yLabels2 = yTicks2.map(v => {
             const y = (paddingTop + plotHeight - ((v - yMin2) / yRange2) * plotHeight).toFixed(1);
-            return `<text x="${(width - paddingRight + 6).toFixed(1)}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="start">${v.toFixed(secondSeries.integerTicks ? 0 : (secondSeries.decimals ?? 1))}</text>`;
+            return `<text x="${(width - paddingRight + 6).toFixed(1)}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="${color2}" text-anchor="start">${Number.isInteger(v) ? v.toFixed(0) : v.toFixed(decimals2)}</text>`;
         }).join('');
+        axisUnitMarkup += chartAxisUnitMarkup(secondSeries.unit !== undefined ? secondSeries.unit : unit, width - paddingRight + 6, 'start', paddingTop, color2);
     }
 
     // vertical marker wherever the local calendar date changes between two consecutive hourly
@@ -9120,6 +9324,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
             ${dayBoundaryMarkup}
             ${yLabels}
             ${hideSecond ? '' : yLabels2}
+            ${axisUnitMarkup}
             ${xLabels}
             <circle class="dashboardChartMarker" r="4.5" cx="0" cy="0" visibility="hidden" />
             ${secondSeries && !hideSecond ? '<circle class="dashboardChartMarker dashboardChartMarkerSecond" r="4.5" cx="0" cy="0" visibility="hidden" />' : ''}
@@ -9336,7 +9541,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     // laufende Stunden befuellt).
     const prognose = plannedHistory ? labels.map((_, i) => (plannedHistory[i] ?? forecast[i])) : forecast;
     const width = 600, height = CHART_SVG_HEIGHT;
-    const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
+    const paddingLeft = 52, paddingRight = 15, paddingTop = chartTopPadding(unit), paddingBottom = 26;
     ctx.plotLeft = paddingLeft;
     ctx.plotRight = paddingRight;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -9351,7 +9556,8 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     wrapper.className = 'dashboardChart dashboardChartHalf';
     const titleEl = document.createElement('div');
     titleEl.className = 'dashboardChartTitle';
-    titleEl.textContent = `${title} (${unit})`;
+    titleEl.textContent = title;
+    appendChartDeactivatedBadge(titleEl, title);
     wrapper.appendChild(titleEl);
 
     const legend = document.createElement('div');
@@ -9535,6 +9741,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
             ${nowDotMarkup}
             ${dayBoundaryMarkup}
             ${yLabels}
+            ${chartAxisUnitMarkup(unit, paddingLeft - 6, 'end', paddingTop)}
             ${xLabels}
             <circle class="dashboardChartMarker" r="4.5" cx="0" cy="0" visibility="hidden" />
         </svg>`;
@@ -10628,6 +10835,47 @@ function heatDeviceName(data) {
     return data.heatpump && data.heatpump.isRod ? 'Heizstab' : 'Wärmepumpe';
 }
 
+// Waermepumpen-Icon mit drehendem Rotor: das JPG zeigt den Rotor starr hinter den Gitterringen. Darueber wird das Luftgitter
+// (dunkle Flaeche, drei Fluegel, weisse Ringe) als SVG nachgezeichnet; die Fluegel drehen sich langsam, solange die
+// Waermepumpe an ist. Alle Masse in Pixeln des Originalbilds (heatpump.jpg, 499x492; Gitter-Mitte 151,5/176). Der Heizstab hat
+// keinen Rotor und bleibt ein einfaches Bild.
+const HEATPUMP_IMG_W = 499, HEATPUMP_IMG_H = 492;
+const HEATPUMP_FAN_CENTER = [151.5, 176];
+const HEATPUMP_FAN_RING_RX = [20.5, 34.5, 48.5, 62.5, 77, 91];
+const HEATPUMP_FAN_RING_RY = [26.5, 43.5, 60.5, 78.5, 95.5, 112.5];
+const HEATPUMP_ROTOR_SECONDS = 6;
+const HEATPUMP_BLADE_PATH = 'M 0,-10 C -38,-25 -52,-62 -34,-84 C -18,-96 24,-90 40,-68 C 50,-50 28,-22 0,-10 Z';
+
+function buildHeatpumpImage(data, cx, cy, targetW) {
+    if (data.heatpump && data.heatpump.isRod) return buildFlowImage(heatDeviceImage(data), cx, cy, HEATPUMP_IMG_W, HEATPUMP_IMG_H, targetW);
+    const scale = targetW / HEATPUMP_IMG_W;
+    const g = svgEl('g', {transform: `translate(${cx - targetW / 2} ${cy - (HEATPUMP_IMG_H * scale) / 2}) scale(${scale})`});
+    g.appendChild(svgEl('image', {href: heatDeviceImage(data), x: 0, y: 0, width: HEATPUMP_IMG_W, height: HEATPUMP_IMG_H}));
+    const [fanX, fanY] = HEATPUMP_FAN_CENTER;
+    const outerRx = HEATPUMP_FAN_RING_RX[HEATPUMP_FAN_RING_RX.length - 1], outerRy = HEATPUMP_FAN_RING_RY[HEATPUMP_FAN_RING_RY.length - 1];
+    g.appendChild(svgEl('ellipse', {cx: fanX, cy: fanY, rx: outerRx, ry: outerRy, fill: '#8f7f7f'}));
+    // Der Rotor wird in Kreis-Koordinaten gezeichnet und per scale in die Ellipse (Blick schraeg von der Seite) gestaucht.
+    const squash = HEATPUMP_FAN_RING_RY[0] / HEATPUMP_FAN_RING_RX[0];
+    const rotorHolder = svgEl('g', {transform: `translate(${fanX} ${fanY}) scale(1 ${squash})`});
+    const rotor = svgEl('g');
+    if (data.heatpump && data.heatpump.on) {
+        rotor.setAttribute('class', 'energyFlowRotorSpin');
+        // Das Widget wird alle 30 s neu gebaut: die Startphase aus der Uhrzeit ableiten, damit die Drehung dabei nicht zurueckspringt.
+        rotor.style.animationDuration = `${HEATPUMP_ROTOR_SECONDS}s`;
+        rotor.style.animationDelay = `-${((Date.now() / 1000) % HEATPUMP_ROTOR_SECONDS).toFixed(2)}s`;
+    }
+    for (const angle of [0, 120, 240]) {
+        rotor.appendChild(svgEl('path', {d: HEATPUMP_BLADE_PATH, transform: `rotate(${angle})`, fill: '#c2b8b7'}));
+    }
+    rotorHolder.appendChild(rotor);
+    g.appendChild(rotorHolder);
+    g.appendChild(svgEl('ellipse', {cx: fanX, cy: fanY, rx: HEATPUMP_FAN_RING_RX[0], ry: HEATPUMP_FAN_RING_RY[0], fill: '#c2b8b7'}));
+    HEATPUMP_FAN_RING_RX.forEach((rx, i) => {
+        g.appendChild(svgEl('ellipse', {cx: fanX, cy: fanY, rx, ry: HEATPUMP_FAN_RING_RY[i], fill: 'none', stroke: '#ffffff', 'stroke-width': 3}));
+    });
+    return g;
+}
+
 function computeEnergyFlowKw(data) {
     const heatpumpOn = !!(data.heatpump && data.heatpump.configured && data.heatpump.on);
     const carCharging = !!(data.car && data.car.configured && data.car.state === 'charging');
@@ -10817,9 +11065,7 @@ function buildEnergyFlowSvgDesktop(data) {
         // laeuft - sonst wirkt es so, als flösse Strom zu einem ausgeschalteten Geraet.
         const line = buildFlowLineFromPath(buildFlowPath(busX, rowY, consumerAnchorX, rowY), heatpumpFlowKw);
         if (line) svg.appendChild(line);
-        const hp = buildFlowImage(heatDeviceImage(data), columnX, rowY, 499, 492, 80);
-        if (data.heatpump.on) hp.setAttribute('class', 'energyFlowPulse');
-        svg.appendChild(hp);
+        svg.appendChild(buildHeatpumpImage(data, columnX, rowY, 80));
         const statusLines = [
             withStaleness(data.heatpump.on === null ? heatDeviceName(data) : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES),
             data.heatpump.targetTempC !== null ? `Soll (aktuell): ${formatTemp(data.heatpump.targetTempC)}` : null,
@@ -10878,7 +11124,7 @@ function buildEnergyFlowSvgDesktop(data) {
 
         const tripPlanButtonW = 150, tripPlanButtonH = 34;
         const tripPlanFo = svgEl('foreignObject', {
-            x: carGroupCenterX - tripPlanButtonW / 2, y: carGroupBottomY + 14, width: tripPlanButtonW, height: tripPlanButtonH,
+            x: carGroupCenterX - tripPlanButtonW / 2, y: carGroupBottomY - 4, width: tripPlanButtonW, height: tripPlanButtonH,
         });
         const tripPlanFoDiv = document.createElement('div');
         tripPlanFoDiv.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
@@ -10942,6 +11188,38 @@ function placeLabelBelow(x, topY, lines, opts = {}) {
     return {el: buildEnergyFlowLabel(x, centerY, lines, opts), bottomY};
 }
 
+// Abstand (Mitte der untersten Zeile) einer Beschriftung ueber einer waagerechten Stromleitung im Mobil-Layout.
+const MOBILE_FLOW_LINE_LABEL_GAP = 22;
+
+// Wie placeLabelBelow, aber nach OBEN wachsend: die unterste Zeile steht immer im selben Abstand ueber der Leitung (lineY), ein
+// zusaetzlicher Zeitstempel (zweite Zeile) schiebt den Textblock also nach oben statt die Leitung zu verdecken.
+function placeLabelAbove(x, lineY, lines, opts = {}) {
+    const lineHeight = opts.lineHeight || FLOW_LABEL_LINE_HEIGHT;
+    const lineCount = wrapEnergyFlowLines(lines).length;
+    const centerY = lineY - MOBILE_FLOW_LINE_LABEL_GAP - ((lineCount - 1) * lineHeight) / 2;
+    return buildEnergyFlowLabel(x, centerY, lines, opts);
+}
+
+// Breite (SVG-Einheiten) eines Textes in der Mobil-Schrift (25px, siehe .energyFlowLabel-Media-Query) - vorab gemessen, um den Abstand von
+// Mast/Batterie zum Haus an die Textbreite anzupassen. Ohne Layout (z.B. in Tests) eine grobe Schaetzung.
+function measureEnergyFlowTextWidth(text, fontSizePx = 25) {
+    const host = document.createElement('div');
+    host.style.cssText = 'position:absolute;visibility:hidden;width:0;height:0;overflow:hidden;';
+    const svg = svgEl('svg');
+    const textEl = svgEl('text', {class: 'energyFlowLabel', style: `font-size:${fontSizePx}px`}, [document.createTextNode(text)]);
+    svg.appendChild(textEl);
+    host.appendChild(svg);
+    document.body.appendChild(host);
+    let width = 0;
+    try {
+        width = textEl.getBBox().width;
+    } catch (err) {
+        width = 0;
+    }
+    document.body.removeChild(host);
+    return width || text.length * fontSizePx * 0.56;
+}
+
 // Mobil-Layout: schmaler und hochkant statt breit (buildEnergyFlowSvgDesktop), damit bei derselben
 // Containerbreite mehr Bildschirmpixel pro SVG-Einheit zur Verfuegung stehen (= groesserer, lesbarer
 // Text - siehe .energyFlowLabel-Media-Query in index.html) statt auf einem schmalen Screen unleserlich
@@ -10979,27 +11257,6 @@ function buildEnergyFlowSvgMobile(data) {
 
     const flows = computeEnergyFlowKw(data);
 
-    if (data.grid && data.grid.configured) {
-        // 130 statt vorher 75 - bei 75 stand der Mast zu eng am Haus (siehe buildPylonIcon: der Mast
-        // selbst ist schon ca. 90 breit inkl. Freileitung oben). Der Mast reicht von cy-44 (oberste
-        // Freileitung) bis cy+42 (Fuss) - die kW-Beschriftung braucht deshalb deutlich mehr Abstand
-        // als der generische FLOW_LINE_LABEL_GAP, sonst haengt sie in der Freileitung (siehe
-        // pylonLabelGap unten), ebenso der Strompreis-Text noch darueber.
-        const pylonCx = houseX - 130, pylonCy = houseCy;
-        svg.appendChild(buildPylonIcon(pylonCx, pylonCy));
-        const line = buildFlowLine(pylonCx + 24, pylonCy, houseX, houseCy, data.grid.kw, {reversed: (data.grid.kw || 0) < 0, thresholdKw: 0.1});
-        if (line) svg.appendChild(line);
-        const priceColor = energyFlowPriceColor(data.grid.priceLevel);
-        const priceText = data.grid.priceCent !== null ? `${data.grid.priceCent.toLocaleString('de-DE')} Cent` : '';
-        const gridLabelX = (pylonCx + 24 + houseX) / 2;
-        const pylonTopY = pylonCy - 44;
-        const gridLabelY = pylonTopY - 16;
-        svg.appendChild(buildEnergyFlowLabel(gridLabelX, gridLabelY, [withStaleness(formatKwValue(data.grid.kw), data.grid.updatedAt, INVERTER_STALE_MINUTES)], {anchor: 'middle', noWrap: true}));
-        if (priceText) {
-            svg.appendChild(svgEl('text', {x: pylonCx, y: gridLabelY - 26, 'text-anchor': 'middle', class: 'energyFlowLabel', style: `fill:${priceColor}`}, [document.createTextNode(priceText)]));
-        }
-    }
-
     if (data.pv && data.pv.configured) {
         const pvLineTopY = sunCy + 40, pvLineBottomY = houseY;
         const pvLine = buildFlowLine(houseCx, pvLineTopY, houseCx, pvLineBottomY, data.pv.kw);
@@ -11009,26 +11266,6 @@ function buildEnergyFlowSvgMobile(data) {
     }
 
     const houseRightX = houseX + houseVisibleW;
-    // Batterie wandert auf Mobil rechts neben das Haus (horizontaler Fluss, wie Grid links) statt
-    // wie auf Desktop darunter - dort unten stehen stattdessen die vier Verbraucher nebeneinander.
-    if (data.battery && data.battery.configured) {
-        const batteryImgW = 42, batteryImgH = batteryImgW / 0.535;
-        // 130 statt vorher 95, symmetrisch zum Mast (siehe pylonCx oben) - sonst wirkt es zu eng.
-        const batteryCx = houseRightX + 130, batteryCy = houseCy;
-        const line = buildFlowLine(houseRightX, houseCy, batteryCx - batteryImgW / 2 - 4, houseCy, data.battery.kw, {reversed: (data.battery.kw || 0) < 0});
-        if (line) svg.appendChild(line);
-        svg.appendChild(buildFlowImage(batteryImageFor(data.battery.soc), batteryCx, batteryCy, 240, 448, batteryImgW));
-        // kW-Wert oberhalb des Icons (mit echtem Abstand zur Icon-Oberkante, nicht der generische
-        // FLOW_LINE_LABEL_GAP - der reichte bei diesem vergleichsweise hohen Batterie-Icon nicht und
-        // die Beschriftung haenge sichtbar ins Icon hinein). SOC+Modus dagegen unterhalb des Icons -
-        // dort ist auf Mobil mehr Platz in der Breite als seitlich neben dem Icon (dort wuerde z.B.
-        // "Maximize Self Consumption" ueber den rechten Bildrand hinauslaufen).
-        const batteryTopY = batteryCy - batteryImgH / 2;
-        svg.appendChild(buildEnergyFlowLabel(batteryCx, batteryTopY - 16, [withStaleness(formatKwValue(data.battery.kw), data.battery.updatedAt, INVERTER_STALE_MINUTES)], {anchor: 'middle', noWrap: true}));
-        const batterySocModeLines = [`${Math.round(data.battery.soc ?? 0)} %`];
-        if (data.battery.mode) batterySocModeLines.push(data.battery.mode);
-        svg.appendChild(placeLabelBelow(batteryCx, batteryCy + batteryImgH / 2 + 14, batterySocModeLines, {anchor: 'middle', lineHeight: MOBILE_FLOW_LABEL_LINE_HEIGHT}).el);
-    }
 
     // Waermepumpe/Auto/Sonstiges Geraet/Haushaltsstrom nebeneinander unter dem Haus - nur die
     // tatsaechlich konfigurierten, gleichmaessig ueber die Breite verteilt (dieselbe
@@ -11043,7 +11280,9 @@ function buildEnergyFlowSvgMobile(data) {
     let contentBottomY = trunkTopY + 20;
 
     if (devices.length > 0) {
-        const busY = trunkTopY + 55;
+        // 75 statt 55 - der Trunk (Haus -> Verbraucher-Bus) traegt jetzt links die Beschriftung des
+        // Gesamt-Hausverbrauchs (siehe unten) und braucht dafuer etwas mehr Hoehe.
+        const busY = trunkTopY + 75;
         const rowY = busY + 80;
         const n = devices.length;
         const colXs = devices.map((_, i) => (VIEW_W / (n + 1)) * (i + 1));
@@ -11063,6 +11302,12 @@ function buildEnergyFlowSvgMobile(data) {
         });
         const trunkLine = buildFlowLineFromPath(buildFlowPath(houseCx, trunkTopY, houseCx, busY), leftKw + rightKw, {thresholdKw: 0.1});
         if (trunkLine) svg.appendChild(trunkLine);
+        // Gesamt-Hausverbrauch (household.kw) links neben dem Trunk, vertikal mittig - wie im
+        // Desktop-Layout gehoert er auf den Trunk, nicht auf den Haushaltsstrom-Zweig (dort steckt
+        // nur der Rest-Anteil residualKw). Fehlte im Mobil-Layout bisher ganz.
+        if (data.household && data.household.configured) {
+            svg.appendChild(buildEnergyFlowLabel(houseCx - 14, (trunkTopY + busY) / 2, [withStaleness(formatKwValue(data.household.kw), data.household.updatedAt, INVERTER_STALE_MINUTES)], {anchor: 'end', noWrap: true}));
+        }
         if (n > 1) {
             for (const el of buildDeviceBusChain(houseCx, busY, leftXs, leftKws)) svg.appendChild(el);
             for (const el of buildDeviceBusChain(houseCx, busY, rightXs, rightKws)) svg.appendChild(el);
@@ -11082,11 +11327,9 @@ function buildEnergyFlowSvgMobile(data) {
                 const iconHalfH = 35;
                 const drop = buildFlowLineFromPath(`M ${colX},${busY} V ${rowY - iconHalfH}`, flows.heatpumpFlowKw);
                 if (drop) svg.appendChild(drop);
-                const hp = buildFlowImage(heatDeviceImage(data), colX, rowY, 499, 492, 70);
-                if (data.heatpump.on) hp.setAttribute('class', 'energyFlowPulse');
-                svg.appendChild(hp);
+                svg.appendChild(buildHeatpumpImage(data, colX, rowY, 70));
                 deviceDetailBlocks.push({colX, type, lines: [
-                    `${heatDeviceName(data)}: ${withStaleness(data.heatpump.on === null ? '–' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES)}`,
+                    withStaleness(data.heatpump.on === null ? '–' : (data.heatpump.on ? 'An' : 'Aus'), data.heatpump.updatedAt, OTHER_STALE_MINUTES),
                     data.heatpump.targetTempC !== null ? `Soll (aktuell): ${formatTemp(data.heatpump.targetTempC)}` : null,
                     !data.heatpump.isRod && data.indoorTemp && data.indoorTemp.configured && data.indoorTemp.tempC !== null ? withStaleness(`Ist: ${formatTemp(data.indoorTemp.tempC)}`, data.indoorTemp.updatedAt, OTHER_STALE_MINUTES) : null,
                     // Label und Wert auf zwei Zeilen statt einer zu langen - "WW-Speicher: 36,5 °C"
@@ -11113,12 +11356,13 @@ function buildEnergyFlowSvgMobile(data) {
                 // schmalen Pro-Spalte-Breite im Mobil-Layout (bis zu 4 Geraete nebeneinander) lief
                 // eine einzelne Zeile "Auto: Ladestand 55 % (183 km)" leicht in die Nachbarspalte.
                 if (data.car.soc !== null) {
-                    carLines.push(withStaleness(`Auto: Ladestand ${Math.round(data.car.soc)} %`, data.car.updatedAt, OTHER_STALE_MINUTES));
+                    carLines.push(withStaleness(`Ladestand ${Math.round(data.car.soc)} %`, data.car.updatedAt, OTHER_STALE_MINUTES));
                     if (data.car.rangeKm !== null) carLines.push(`(${data.car.rangeKm} km)`);
-                } else carLines.push('Auto');
+                }
                 if (data.car.state === 'away') carLines.push('abwesend');
                 else if (data.car.state === 'charging') carLines.push(data.car.chargingKw != null ? `Lädt (${formatKwValue(data.car.chargingKw)})` : 'lädt');
                 else if (data.car.state === 'connected') carLines.push('eingesteckt');
+                if (carLines.length === 0) carLines.push('–');
                 deviceDetailBlocks.push({colX, type, lines: carLines});
             } else if (type === 'sonstiger') {
                 const iconHalfH = 34;
@@ -11186,28 +11430,79 @@ function buildEnergyFlowSvgMobile(data) {
         }
     }
 
-    // Horizontal auf den tatsaechlich gezeichneten Inhalt zuschneiden (wie viewCropLeft im Desktop-
-    // Layout, hier zusaetzlich auch rechts) - VIEW_W=1150 ist bewusst grosszuegig bemessen (siehe
-    // Kommentar oben), aber je nach konfigurierten Geraeten bleibt links und/oder rechts ungenutzter
-    // Rand. Ungenutzt liess das Widget auf schmalen Bildschirmen kleiner wirken, als der verfuegbare
-    // Platz hergibt (Nutzer-Feedback). getBBox() braucht ein angehaengtes Element - kurz unsichtbar
+    // Huellkurve des bisher gezeichneten Inhalts. getBBox() braucht ein angehaengtes Element - kurz unsichtbar
     // ins DOM haengen, um die reale gezeichnete Breite zu messen, dann wieder entfernen.
-    const measureHost = document.createElement('div');
-    measureHost.style.cssText = 'position:absolute;visibility:hidden;width:0;height:0;overflow:hidden;';
-    document.body.appendChild(measureHost);
-    measureHost.appendChild(svg);
     // Die animierten Fluss-Punkte (buildFlowDots, <animateMotion>) wandern kontinuierlich entlang
     // ihrer Leitung - ihre Position IN DIESEM MOMENT ist zufaellig (der zweite Punkt je Leitung
     // startet per negativem "begin" sogar schon in der Mitte seines Laufs) und darf die Zuschnitt-
     // Berechnung nicht verzerren, sonst haengt der Rand vom Animationsstand statt vom tatsaechlichen
     // Inhalt ab (Nutzer-Feedback: sehr grosser, wechselnder Rand auf einer Seite). Fuer die Messung
     // kurz ausblenden (getBBox() ignoriert display:none), danach sofort wieder sichtbar machen.
-    const dots = svg.querySelectorAll('.energyFlowDot');
-    for (const dot of dots) dot.style.display = 'none';
-    const contentBox = svg.getBBox();
-    for (const dot of dots) dot.style.display = '';
-    document.body.removeChild(measureHost);
-    const cropMargin = 24;
+    const measureContentBox = () => {
+        const measureHost = document.createElement('div');
+        measureHost.style.cssText = 'position:absolute;visibility:hidden;width:0;height:0;overflow:hidden;';
+        document.body.appendChild(measureHost);
+        measureHost.appendChild(svg);
+        const dots = svg.querySelectorAll('.energyFlowDot');
+        for (const dot of dots) dot.style.display = 'none';
+        const box = svg.getBBox();
+        for (const dot of dots) dot.style.display = '';
+        document.body.removeChild(measureHost);
+        return box;
+    };
+
+    // Mast und Batterie stehen symmetrisch links/rechts vom Haus (Abstand sideDistance zur Hausmitte) und moeglichst weit aussen: so weit, dass
+    // die breiteste Beschriftung (Batterie-Modus, z.B. "Maximize Self Consumption", einzeilig) noch in die Breite passt, die die uebrigen Inhalte
+    // (Geraete unter dem Haus) ohnehin schon belegen. Mindestabstand, damit der kW-Wert ueber der Leitung zwischen Haus und Mast/Batterie Platz hat.
+    const hasGrid = !!(data.grid && data.grid.configured);
+    const hasBattery = !!(data.battery && data.battery.configured);
+    const batteryImgW = 42, batteryImgH = batteryImgW / 0.535;
+    if (hasGrid || hasBattery) {
+        const batterySocModeLines = [`${Math.round((data.battery && data.battery.soc) ?? 0)} %`];
+        if (hasBattery && data.battery.mode) batterySocModeLines.push(data.battery.mode);
+        const sideHalfWidth = Math.max(60, batteryImgW / 2, ...(hasBattery ? batterySocModeLines.map(line => measureEnergyFlowTextWidth(line) / 2) : []));
+        const contentBox = measureContentBox();
+        const availableHalfSpan = Math.max(houseCx - contentBox.x, (contentBox.x + contentBox.width) - houseCx);
+        const sideDistance = Math.min(420, Math.max(260, availableHalfSpan - sideHalfWidth));
+
+        if (hasGrid) {
+            // Mast: Haus-/Mast-Abstand symmetrisch zur Batterie (siehe sideDistance). Der Mast selbst ist ca. 90 breit inkl. Freileitung
+            // (siehe buildPylonIcon) und reicht von cy-44 (oberste Freileitung) bis cy+42 (Fuss).
+            const pylonCx = houseCx - sideDistance, pylonCy = houseCy;
+            svg.appendChild(buildPylonIcon(pylonCx, pylonCy));
+            const line = buildFlowLine(pylonCx + 24, pylonCy, houseX, houseCy, data.grid.kw, {reversed: (data.grid.kw || 0) < 0, thresholdKw: 0.1});
+            if (line) svg.appendChild(line);
+            const priceColor = energyFlowPriceColor(data.grid.priceLevel);
+            const priceText = data.grid.priceCent !== null ? `${data.grid.priceCent.toLocaleString('de-DE')} Cent` : '';
+            // kW-Wert mittig ueber der Leitung (ein-, mit Aktualisierungszeit zweizeilig), auf derselben Hoehe wie der Batterie-Wert.
+            const gridLabelX = (pylonCx + 24 + houseX) / 2;
+            svg.appendChild(placeLabelAbove(gridLabelX, houseCy, [withStaleness(formatKwValue(data.grid.kw), data.grid.updatedAt, INVERTER_STALE_MINUTES)], {anchor: 'middle', lineHeight: MOBILE_FLOW_LABEL_LINE_HEIGHT}));
+            if (priceText) {
+                svg.appendChild(svgEl('text', {x: pylonCx, y: pylonCy - 44 - 18, 'text-anchor': 'middle', class: 'energyFlowLabel', style: `fill:${priceColor}`}, [document.createTextNode(priceText)]));
+            }
+        }
+
+        // Batterie rechts neben dem Haus (horizontaler Fluss, wie Grid links) statt wie auf Desktop darunter - dort unten stehen
+        // stattdessen die vier Verbraucher nebeneinander.
+        if (hasBattery) {
+            const batteryCx = houseCx + sideDistance, batteryCy = houseCy;
+            const batteryLineEndX = batteryCx - batteryImgW / 2 - 4;
+            const line = buildFlowLine(houseRightX, houseCy, batteryLineEndX, houseCy, data.battery.kw, {reversed: (data.battery.kw || 0) < 0});
+            if (line) svg.appendChild(line);
+            svg.appendChild(buildFlowImage(batteryImageFor(data.battery.soc), batteryCx, batteryCy, 240, 448, batteryImgW));
+            // kW-Wert mittig ueber der Leitung, SOC + Modus mit Abstand unterhalb des Icons (dort ist auf Mobil mehr Platz in der Breite als seitlich).
+            svg.appendChild(placeLabelAbove((houseRightX + batteryLineEndX) / 2, houseCy, [withStaleness(formatKwValue(data.battery.kw), data.battery.updatedAt, INVERTER_STALE_MINUTES)], {anchor: 'middle', lineHeight: MOBILE_FLOW_LABEL_LINE_HEIGHT}));
+            svg.appendChild(placeLabelBelow(batteryCx, batteryCy + batteryImgH / 2 + 30, batterySocModeLines, {anchor: 'middle', lineHeight: MOBILE_FLOW_LABEL_LINE_HEIGHT}).el);
+        }
+    }
+
+    // Horizontal auf den tatsaechlich gezeichneten Inhalt zuschneiden (wie viewCropLeft im Desktop-
+    // Layout, hier zusaetzlich auch rechts) - VIEW_W=1150 ist bewusst grosszuegig bemessen (siehe
+    // Kommentar oben), aber je nach konfigurierten Geraeten bleibt links und/oder rechts ungenutzter
+    // Rand. Ungenutzt liess das Widget auf schmalen Bildschirmen kleiner wirken, als der verfuegbare
+    // Platz hergibt (Nutzer-Feedback).
+    const contentBox = measureContentBox();
+    const cropMargin = 32;
     // Symmetrisch um houseCx zuschneiden (nicht einfach die engste Huelle um den ganzen Inhalt) -
     // sonst waeren Haus/senkrechte Leitungen/Auto/Sonne nicht mittig, sobald z.B. der Mast samt
     // Preis-Beschriftung links weiter herausragt als die rechte Verbraucher-Spalte (Nutzer-Feedback:
@@ -11613,6 +11908,9 @@ async function loadDashboardImpl() {
             // Kein subtitle mehr (Nutzer-Vorgabe: Titel bleibt schlicht "Raumtemperatur (°C)"),
             // primaryLabel beschriftet stattdessen nur die Legende darunter.
             primaryLabel: 'Heizung-Soll',
+            // Linke Achse (Heizung-Soll, untere Kurve) nur bis 25 beschriften, die rechte (Innenraum, obere Kurve) erst ab dem niedrigsten Wert
+            // der Innenraum-Kurve - so ist an den Beschriftungen erkennbar, welche Achse zu welcher Kurve gehoert.
+            axisMax: 25,
             chartKey: 'raumtemperatur',
             bandPrimary: 'lower',
             stepped: true,
@@ -11894,6 +12192,29 @@ async function loadAnalyseDayActions(dateStr, container) {
     container.innerHTML = `<div class="analyseDayActions">Aktionen am ${heading}<ul>${items}</ul></div>`;
 }
 
+// PV-Prognose vs. Ist: Spalten der Analyse-Tabelle (Felder pv_* aus /analysis/summary, siehe _pv_accuracy_entry in app.py).
+// Abweichung = Ist - Prognose; bei kleiner Prognose liefert der Server keine Abweichung (null) -> "-".
+function formatPvKwh(value) {
+    return Number.isFinite(value) ? value.toLocaleString('de-DE', {minimumFractionDigits: 1, maximumFractionDigits: 1}) + ' kWh' : '–';
+}
+
+function formatSignedKwh(value) {
+    if (!Number.isFinite(value)) return '-';
+    const text = Math.abs(value).toLocaleString('de-DE', {minimumFractionDigits: 1, maximumFractionDigits: 1});
+    return (value >= 0.05 ? '+' : value <= -0.05 ? '−' : '±') + text + ' kWh';
+}
+
+function formatSignedPercent(value) {
+    if (!Number.isFinite(value)) return '-';
+    const text = Math.abs(value).toLocaleString('de-DE', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+    return (value >= 0.5 ? '+' : value <= -0.5 ? '−' : '±') + text + ' %';
+}
+
+function pvDeviationClass(value) {
+    if (!Number.isFinite(value) || Math.abs(value) < 0.05) return '';
+    return value > 0 ? 'analysePvAbove' : 'analysePvBelow';
+}
+
 async function loadAnalyse() {
     const body = document.getElementById('analyseBody');
     if (!body) return;
@@ -11937,7 +12258,11 @@ async function loadAnalyse() {
             <td>${formatEuro(r.base_cost_eur)}</td>
             <td>${formatEuro(r.actual_cost_eur)}</td>
             <td class="${analyseSavingsClass(r.savings_vs_base_eur)}">${formatEuro(r.savings_vs_base_eur)}</td>
-            <td class="${analyseSavingsClass(r.savings_vs_planned_eur)}">${formatEuro(r.savings_vs_planned_eur)}</td>
+            <td class="${analyseSavingsClass(r.planned_minus_actual_eur)}">${formatEuro(r.planned_minus_actual_eur)}</td>
+            <td>${formatPvKwh(r.pv_forecast_kwh)}</td>
+            <td>${formatPvKwh(r.pv_actual_kwh)}</td>
+            <td class="${pvDeviationClass(r.pv_error_kwh)}">${formatSignedKwh(r.pv_error_kwh)}</td>
+            <td class="${pvDeviationClass(r.pv_error_kwh)}">${formatSignedPercent(r.pv_error_pct)}</td>
         </tr>`).join('');
 
     summaryCard.innerHTML = `
@@ -11946,10 +12271,12 @@ async function loadAnalyse() {
                 <th>Zeitraum</th>
                 <th>Verbrauch geplant</th><th>Verbrauch Basisfall</th><th>Verbrauch Ist</th>
                 <th>Kosten geplant</th><th>Kosten Basisfall</th><th>Kosten Ist</th>
-                <th>Ersparnis ggü. Basisfall</th><th>Ersparnis ggü. Planung</th>
+                <th>Ersparnis ggü. Basisfall (Basisfall − geplant)</th><th>Kosten geplant − Ist</th>
+                <th>PV Prognose</th><th>PV Ist</th><th colspan="2">PV Abweichung</th>
             </tr></thead>
             <tbody>${rowsHtml}</tbody>
         </table>
+        <p class="analysePvNote">PV-Abweichung = Ist minus Prognose (+ = mehr erzeugt als vorhergesagt), in % der Prognose; die Summen über mehrere Stunden gleichen zu viel und zu wenig mit Vorzeichen aus. Prognose = letzte Vorhersage für die jeweilige Stunde. Bei einer Prognose unter 0,5 kWh wird keine Abweichung angezeigt (-).</p>
     `;
 
     if (clickable) {
@@ -12077,12 +12404,114 @@ function setupFullscreenToggle() {
     button.hidden = false;
 }
 
+// --- Mobil: Seite durch Herunterziehen aktualisieren (Pull-to-Refresh) --------------------------------------------
+// Nur auf Touch-Geraeten und nur ganz oben auf der Seite. Aktualisiert den aktiven Tab wie refreshActiveTabNow, wartet
+// aber auf das Laden (Spinner bis fertig). Die Konfiguration hat keinen eigenen Nachlade-Pfad - dort wird die Seite neu
+// geladen (vorher das fokussierte Feld verlassen, damit dessen change-Event noch speichert, siehe autoSave).
+const PULL_REFRESH_THRESHOLD_PX = 64;
+const PULL_REFRESH_MAX_PX = 96;
+const PULL_REFRESH_TIMEOUT_MS = 20000;
+
+async function refreshActiveTabForPull() {
+    const activeButton = document.querySelector('.tabButton.active');
+    const tab = activeButton ? activeButton.dataset.tab : null;
+    if (tab === 'dashboard') return loadDashboard();
+    if (tab === 'geraetesteuerung') return loadShyftActions();
+    if (tab === 'analyse') return loadAnalyse();
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    await new Promise(resolve => setTimeout(resolve, 400));
+    window.location.reload();
+    return new Promise(() => {}); // Spinner bleibt bis zum Neuladen stehen
+}
+
+function setupPullToRefresh() {
+    if (!('ontouchstart' in window) && !(navigator.maxTouchPoints > 0)) return;
+    if (document.getElementById('pullRefreshIndicator')) return;
+    const indicator = document.createElement('div');
+    indicator.id = 'pullRefreshIndicator';
+    indicator.setAttribute('aria-hidden', 'true');
+    indicator.innerHTML = '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    document.body.appendChild(indicator);
+
+    let startX = 0, startY = null, pull = 0, tracking = false, refreshing = false;
+    const atTop = () => (window.scrollY || document.documentElement.scrollTop || 0) <= 0;
+    const render = () => {
+        const progress = Math.min(1, pull / PULL_REFRESH_THRESHOLD_PX);
+        indicator.style.transform = `translate(-50%, ${pull - 48}px) rotate(${progress * 270}deg)`;
+        indicator.style.opacity = String(Math.min(1, progress * 1.4));
+        indicator.classList.toggle('is-ready', pull >= PULL_REFRESH_THRESHOLD_PX);
+    };
+    const reset = () => {
+        tracking = false;
+        startY = null;
+        pull = 0;
+        indicator.classList.add('is-settling');
+        render();
+        setTimeout(() => indicator.classList.remove('is-settling'), 250);
+    };
+
+    window.addEventListener('touchstart', e => {
+        if (refreshing || e.touches.length !== 1 || !atTop() || e.target.closest?.('input, textarea, select, dialog')) {
+            startY = null;
+            return;
+        }
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        tracking = false;
+    }, {passive: true});
+
+    window.addEventListener('touchmove', e => {
+        if (startY === null) return;
+        // Ein Chart-Gesture (Wischen/Zoomen/Tooltip-Schieben, siehe makeToggleableChart) hat Vorrang
+        if (e.defaultPrevented || e.touches.length !== 1) { if (tracking) reset(); else startY = null; return; }
+        const dx = e.touches[0].clientX - startX;
+        const dy = e.touches[0].clientY - startY;
+        if (!tracking) {
+            if (dy > 10 && dy > Math.abs(dx) * 1.5 && atTop()) {
+                tracking = true;
+                startY = e.touches[0].clientY; // ab hier zaehlen, kein Sprung
+                indicator.classList.remove('is-settling', 'is-spinning');
+            } else if (Math.abs(dx) > 10 || dy < -4) {
+                startY = null; // horizontale Geste oder normales Scrollen nach unten
+            }
+            return;
+        }
+        e.preventDefault(); // kein Gummiband-/Browser-Refresh waehrend wir ziehen
+        const raw = Math.max(0, e.touches[0].clientY - startY);
+        pull = Math.min(PULL_REFRESH_MAX_PX, raw * 0.55);
+        render();
+    }, {passive: false});
+
+    const onEnd = async () => {
+        if (!tracking) { startY = null; return; }
+        if (pull < PULL_REFRESH_THRESHOLD_PX) { reset(); return; }
+        tracking = false;
+        startY = null;
+        refreshing = true;
+        pull = PULL_REFRESH_THRESHOLD_PX;
+        indicator.classList.add('is-settling', 'is-spinning');
+        indicator.style.transform = `translate(-50%, ${pull - 48}px)`;
+        indicator.style.opacity = '1';
+        try {
+            await Promise.race([refreshActiveTabForPull(), new Promise(resolve => setTimeout(resolve, PULL_REFRESH_TIMEOUT_MS))]);
+        } catch (err) {
+            console.log('[Shyft] Aktualisieren per Herunterziehen fehlgeschlagen:', err);
+        }
+        refreshing = false;
+        indicator.classList.remove('is-spinning');
+        reset();
+    };
+    window.addEventListener('touchend', onEnd, {passive: true});
+    window.addEventListener('touchcancel', onEnd, {passive: true});
+}
+
 // loadShyftActions waits for loadConfiguration so the action cards' brand icons (getActionIconUrl)
 // have integrationsData/currentIntegrationSelections available on the very first render
 if (document.readyState === 'complete') {
     loadConfiguration().then(loadShyftActions);
     loadDashboard();
     setupTabs();
+    setupPullToRefresh();
     syncTopBarHeightVar();
     setupFullscreenToggle();
     applyAnalyseTabVisibility();
@@ -12094,6 +12523,7 @@ if (document.readyState === 'complete') {
         loadConfiguration().then(loadShyftActions);
         loadDashboard();
         setupTabs();
+        setupPullToRefresh();
         syncTopBarHeightVar();
         setupFullscreenToggle();
         applyAnalyseTabVisibility();

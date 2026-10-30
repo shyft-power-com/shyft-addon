@@ -1,6 +1,6 @@
 from typing import Any
 
-from constants import HOMEASSISTANT_URI
+from constants import HOMEASSISTANT_URI, shorten_log_detail
 
 from datetime import datetime, timedelta, timezone
 import os
@@ -210,7 +210,7 @@ class HomeAssistantAdapter:
 
     def _log_info(self, log_message: str):
         if self.detailed_logging:
-            logger.info(log_message)
+            logger.info(shorten_log_detail(log_message))
 
     def _calculate_state(self, state: str, unit: str) -> Any:
         try:
@@ -243,6 +243,39 @@ class HomeAssistantAdapter:
             ws.close()
 
         return self._build_integrations_and_entities(config_entries, entities, devices)
+
+    def _ws_run(self, commands, timeout=10):
+        "Fuehrt die Websocket-Kommandos (Liste von (Typ, Payload)) nacheinander auf einer frischen, authentifizierten Verbindung aus und gibt die Ergebnisse zurueck."
+        ws_uri = self.homeassistant_uri.replace("https://", "wss://").replace("http://", "ws://") + WEBSOCKET_PATH
+        ws = websocket.create_connection(ws_uri, timeout=timeout)
+        try:
+            ws.recv()  # auth_required
+            ws.send(json.dumps({"type": "auth", "access_token": self._token()}))
+            if json.loads(ws.recv()).get("type") != "auth_ok":
+                raise Exception("Home Assistant websocket authentication failed")
+            return [self._ws_command(ws, index + 1, command_type, payload) for index, (command_type, payload) in enumerate(commands)]
+        finally:
+            ws.close()
+
+    def get_default_panel(self):
+        "System-weites Standard-Panel von Home Assistant (frontend/get_system_data, Key core, Feld default_panel) oder None."
+        (result,) = self._ws_run([("frontend/get_system_data", {"key": "core"})])
+        return ((result or {}).get("value") or {}).get("default_panel")
+
+    def set_default_panel(self, panel, only_if_current=None):
+        """Setzt das system-weite Standard-Panel (panel=None entfernt es). Die uebrigen Felder des core-Objekts
+        bleiben erhalten, weil frontend/set_system_data das ganze value-Objekt ersetzt. Mit only_if_current wird
+        nur geaendert, wenn aktuell genau dieses Panel gesetzt ist (beim Ausschalten kein fremdes Panel entfernen)."""
+        (result,) = self._ws_run([("frontend/get_system_data", {"key": "core"})])
+        value = dict((result or {}).get("value") or {})
+        if only_if_current is not None and value.get("default_panel") != only_if_current:
+            return False
+        if panel is None:
+            value.pop("default_panel", None)
+        else:
+            value["default_panel"] = panel
+        self._ws_run([("frontend/set_system_data", {"key": "core", "value": value})])
+        return True
 
     def latest_script_error(self, script_id):
         """Neueste Fehlermeldung des HA-Skripts script.<script_id> aus dem System-Log (Websocket

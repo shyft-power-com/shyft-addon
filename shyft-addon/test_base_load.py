@@ -48,14 +48,14 @@ def test_measure_hour_invalid_when_other_device_on_or_implausible_or_gap():
     assert base_load.measure_hour(h, half, [], []) is None  # Historie deckt nur halbe Stunde
 
 
-def test_profile_median_per_slot_and_fallbacks():
+def test_profile_mean_per_slot_and_fallbacks():
     assert base_load.hourly_kwh_array(datetime(2026, 7, 1, tzinfo=UTC), 3, BERLIN) == [0.5] * 3  # Default ohne Messung
-    # Mittwoch 10:00 lokal (08:00 UTC, Sommerzeit): Median aus 0.3/0.5/0.9 = 0.5
-    for day, kw in ((1, 0.3), (8, 0.5), (15, 0.9)):
+    # Mittwoch 10:00 lokal (08:00 UTC, Sommerzeit): Mittelwert aus 0.3/0.5/1.3 = 0.7
+    for day, kw in ((1, 0.3), (8, 0.5), (15, 1.3)):
         base_load.add_sample(datetime(2026, 7, day, 8, tzinfo=UTC), base_load.slot_for(datetime(2026, 7, day, 10, tzinfo=BERLIN)), kw)
     arr = base_load.hourly_kwh_array(datetime(2026, 7, 22, 8, tzinfo=UTC), 2, BERLIN)  # Mi 10:00, 11:00
-    assert arr[0] == pytest.approx(0.5)
-    assert arr[1] == pytest.approx(0.5)  # Slot leer -> Gesamtmedian
+    assert arr[0] == pytest.approx(0.7)
+    assert arr[1] == pytest.approx(0.7)  # Slot leer -> Gesamtmittelwert
 
 
 def test_weekend_slot_is_separate():
@@ -68,7 +68,7 @@ def test_slot_keeps_only_newest_samples():
     for day in range(1, 13):
         base_load.add_sample(datetime(2026, 7, day, 8, tzinfo=UTC), "wd:10", float(day))
     profile, _ = base_load.load_profile()
-    # nur die letzten 8 (Tage 5..12) zählen -> Median 8.5
+    # nur die letzten 8 (Tage 5..12) zählen -> Mittelwert 8.5
     assert profile["wd:10"] == pytest.approx(8.5)
 
 

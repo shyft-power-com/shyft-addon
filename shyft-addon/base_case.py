@@ -36,8 +36,8 @@ Rueckgabe (Excel-Referenzen in Klammern):
                                       == sum(netProfitBaseList)
   netProfitBaseList        : [float] - Netto-Netzkosten je Stunde, + = Kosten (O58:O105);
                                       die Endwert-Korrektur steckt komplett in der letzten Stunde
-  PowerUsageBaseList       : [float] - Brutto-Stromverbrauch je Stunde inkl. EV- und
-                                       Batterieladung (P58:P105, neu definiert)
+  PowerUsageBaseList       : [float] - Stromverbrauch je Stunde inkl. EV-Ladung, aber OHNE Batterieladung
+                                       (wie X_sum im Optimierer, vergleichbar mit dem Haushalts-Verbrauchssensor)
   T_iBaseList/T_HWBaseList/SOC_BBaseList/SOC_EVBaseList : [float] je Stunde - reine Debug-/
                                        Vergleichs-Traces, kein Excel-Aequivalent; direkt vergleichbar
                                        mit den gleichnamigen Optimierer-Output-Spalten T_i/T_HW/
@@ -142,7 +142,7 @@ def _fh_heat_pump_power(q_thermal, heatdis, t_i_min, t_out_cap, hp_max_power):
     return 0.5 * (lo + hi)
 
 
-def compute_base_case(input_csv, state_overrides=None):
+def compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None):
     """Berechnet den Base Case aus dem Optimierer-``input_csv`` (``;``-getrennt).
 
     state_overrides (optional): {"T_i_0", "T_hw_0", "ev_soc_0", "SOC_b_0_percent"} - ersetzt die
@@ -160,12 +160,20 @@ def compute_base_case(input_csv, state_overrides=None):
     tatsaechlichen/optimierten Zustand - dadurch wird eine einzelne Stunde weniger direkt mit dem
     Optimierer vergleichbar, aber der Vergleich ueber laengere Zeitraeume (siehe Analyse-Tab) korrekt.
 
+    ev_end_target_kwh (optional): Ladestand des E-Autos (kWh) am Ende des Horizonts im Optimierer-Plan. Der Optimierer
+    bewertet gespeicherte Energie im Auto mit p_min und laedt dadurch oft deutlich mehr ins Auto, als der Base Case
+    braucht - ohne diesen Ausgleich stehen die reinen Netzkosten des Optimierers gegen einen Base Case, der das Auto
+    leerer zuruecklaesst, und JEDE Aktion zeigt eine negative Ersparnis. Mit dem Ziel muss auch der Base Case das
+    Auto am Ende auf denselben Ladestand bringen: er laedt dafuer in den letzten Stunden, in denen das Auto
+    eingesteckt ist (Rueckwaerts-Pflicht-SOC wie bei den Fahrten), und zahlt die Preise genau dieser Stunden - kein
+    p_min, denn "genau dort laden, wo es billig ist" waere selbst schon eine Optimierung.
+
     Gibt ein Dict mit ``netProfitBase48HoursSum`` / ``netProfitBaseList`` / ``PowerUsageBaseList`` /
     ``nextState`` (Zustand NACH Stunde 0 - Basis fuer den naechsten Aufruf) zurueck, oder ``None``,
     wenn das CSV nicht auswertbar ist (nie eine Exception nach aussen).
     """
     try:
-        return _compute_base_case(input_csv, state_overrides)
+        return _compute_base_case(input_csv, state_overrides, ev_end_target_kwh)
     except Exception as exc:  # pragma: no cover - defensiv, Aufrufer soll nie brechen
         print("[Shyft] Base-Case-Berechnung fehlgeschlagen:", repr(exc))
         return None
@@ -174,7 +182,7 @@ def compute_base_case(input_csv, state_overrides=None):
 _STATE_OVERRIDE_KEYS = ("T_i_0", "T_hw_0", "ev_soc_0", "SOC_b_0_percent")
 
 
-def _compute_base_case(input_csv, state_overrides=None):
+def _compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None):
     rows = list(csv.DictReader(io.StringIO(input_csv or ""), delimiter=";"))
     if not rows:
         return None
@@ -329,6 +337,8 @@ def _compute_base_case(input_csv, state_overrides=None):
         # - d_ev[h]), INKL. des variablen Verlusts; ohne ihn landete der SOC vor einer Fahrt knapp
         # unter 0 (Rundungs-Verletzung der Nebenbedingung SOC_EV >= 0 fuer eine erfuellbare Fahrt).
         required = [0.0] * (horizon + 1)
+        if ev_end_target_kwh is not None and ev_end_target_kwh > 0.0:
+            required[horizon] = min(ev_end_target_kwh, ev_b_size)  # Endstand wie im Optimierer-Plan (siehe Docstring)
         for i in range(horizon - 1, -1, -1):
             plugged_i = (i + 1) not in ev_away_hours
             need = required[i + 1] + d_ev[i] - (eff_rate if plugged_i else 0.0)
@@ -424,7 +434,7 @@ def _compute_base_case(input_csv, state_overrides=None):
         grid -= ev_charge_gross[i]  # E-Auto-Ladung immer aus dem Netz
         # grid > 0: Einspeisung (Ertrag, negative Kosten) | grid < 0: Bezug (Kosten)
         net_cost_list[i] = (-grid * (p_sell[i] if grid > 0 else p_buy[i])) or 0.0  # or 0.0: kein -0.0
-        power_usage_list[i] = d_e[i] + hp_heat[i] + hp_dhw[i] + ev_charge_gross[i] + batt_charge_gross + od_load[i]
+        power_usage_list[i] = d_e[i] + hp_heat[i] + hp_dhw[i] + ev_charge_gross[i] + od_load[i]  # ohne Batterieladung (wie X_sum)
     soc_b_end = soc_b
     if soc_b_after_hour0 is None:
         soc_b_after_hour0 = soc_b_end
@@ -439,12 +449,20 @@ def _compute_base_case(input_csv, state_overrides=None):
     mean_p_buy = statistics.fmean(p_buy) if p_buy else 0.0
     term_battery = -max(0.0, soc_b_target - soc_b_end) * mean_p_buy  # <= 0; residual = ... - term_battery
     term_ev = 0.0
+    if ev_active and ev_end_target_kwh is not None and ev_end_target_kwh > soc_ev_end + 1e-6:
+        # Ziel-Ladestand physikalisch nicht mehr erreichbar (Ladeleistung/Steckzeit zu knapp): Rest zum letzten p_buy
+        # nachrechnen (<= 0 = Kosten, siehe residual unten).
+        term_ev = -(min(ev_end_target_kwh, ev_b_size) - soc_ev_end) / EV_ETA * last_p_buy
     term_hw = 0.0
     if hw_active and c_hw > 0.0 and cop_hw_last > 0.0:
         term_hw = max(0.0, t_hw_0 - t_hw_end) / (c_hw * cop_hw_last) * last_p_buy
     term_i = 0.0
     if heating_hours and fh_size > 0:
-        term_i = (t_i_end - t_i_0) / (C_STORE * fh_size) * last_p_buy
+        # Gebaeudespeicher: dT * C_STORE * fh_size = thermische kWh (dieselbe Bilanz wie dT_i oben), durch den COP
+        # = elektrische kWh, bewertet zum letzten p_buy. (Frueher stand dT / (C_STORE * fh_size) ohne COP da -
+        # um den Faktor (C_STORE*fh_size)^2 zu klein, der abgekuehlte Speicher kostete im Base Case praktisch nichts.)
+        cop_i = max(COP_MIN, 5.5 - (t_i_min - t_out[horizon - 1]) / 20.0)
+        term_i = (t_i_end - t_i_0) * C_STORE * fh_size / cop_i * last_p_buy
 
     # Endwert-Korrektur (Excel BasePrice3!O106: -AR8 + S108 - T109 - S110) wird komplett auf die
     # LETZTE Stunde des Optimierungszeitraums aufgeschlagen - so ist sum(netProfitBaseList) exakt
@@ -479,6 +497,7 @@ def _compute_base_case(input_csv, state_overrides=None):
             "soc_b_kwh_end": round(soc_b_end, 4),
             "soc_ev_kwh_start": round(soc_ev_0, 4),
             "soc_ev_kwh_end": round(soc_ev_end, 4),
+            "soc_ev_kwh_target": round(ev_end_target_kwh, 4) if ev_end_target_kwh is not None else None,
             "t_hw_start": round(t_hw_0, 3),
             "t_hw_end": round(t_hw_end, 3),
             "t_i_start": round(t_i_0, 3),
