@@ -1,4 +1,4 @@
-name: "shyft-power (TEST)"
+name: "shyft-power (Test-Onboarding)"
 description: >-
   Home-Energy-Management-System für Home Assistant. Steuere deine großen Stromverbraucher optimal und minimiere so deine Stromkosten - inkl. PV-Prognose, Auto-Anwesenheitsprognose, Wärmepumpen- und Batteriesteuerung
 version: "0.0.45.348"
@@ -22,7 +22,7 @@ ingress: true
 ingress_port: 8080
 panel_icon: mdi:home-lightning-bolt-outline
 # Titel des Seitenleisten-Eintrags in Home Assistant - auf test "(TEST)", auf main "shyft-power" (siehe name oben, Absicherung im pre-push-Hook und builder.yaml).
-panel_title: "shyft-power (TEST)"
+panel_title: "shyft-power (Test-Onboarding)"
 # Titel des Seitenleisten-Eintrags in Home Assistant - auf test "(TEST)", auf main "shyft-power" (siehe name oben, Absicherung im pre-push-Hook und builder.yaml).
 startup: services
 boot: auto
