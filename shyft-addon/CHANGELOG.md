@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.334
+
+* **Heizung Soll-Temperatur: echte Fehlerursache statt „400: Bad Request“.** Lehnt Home Assistant den Skriptaufruf ab (z.B. Wert außerhalb des erlaubten Bereichs), stand die Ursache weder in der REST-Antwort noch im System-Log – die Aktionskarte zeigte nur `POST /api/services/script/... failed: 400 400: Bad Request`. Das Add-on liest die Ursache jetzt zusätzlich aus dem Skript-Trace von Home Assistant, hängt Zielwert und Entität an die Meldung an und schreibt den Fehler ins Add-on-Log sowie ins Home-Assistant-Log (Logger `shyft`).
+
 ## 0.0.45.333
 
 * **Auto laden: Preisgrenze `p_min` von +2 auf +3 Cent.** Die Preisgrenze, bis zu der der Optimierer das Auto lädt (`p_min`), liegt jetzt 3 Cent statt 2 Cent über dem niedrigsten kommenden Strompreis (`WB_P_MIN_MARGIN_EUR`). Bei +2 Cent war der Gewinn je kWh für den Optimierer so klein, dass er in der Rechengenauigkeit unterging und das Auto in sehr günstigen Nächten gar nicht lud. In Testrechnungen mit dem Optimierer lädt der Wagen ab +3 Cent in den günstigsten Stunden.

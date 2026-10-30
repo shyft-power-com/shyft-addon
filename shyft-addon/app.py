@@ -4242,7 +4242,20 @@ def _script_failure_reason(script_id, error):
     except Exception as e:
         print(f"[Shyft] Fehlerursache von script.{script_id} nicht aus dem HA-Log lesbar:", repr(e))
     if not reason:
-        return str(error)
+        # Ablehnungen (z.B. Wert ausserhalb des Bereichs) stehen nicht im System-Log, nur im Trace des Skripts
+        try:
+            reason = homeassistant_adapter.latest_script_trace_error(script_id)
+        except Exception as e:
+            print(f"[Shyft] Fehlerursache von script.{script_id} nicht aus dem HA-Trace lesbar:", repr(e))
+    if not reason:
+        reason = str(error)
+        print(f"[Shyft] script.{script_id} fehlgeschlagen, Ursache in Home Assistant nicht auffindbar: {reason}")
+        return reason
+    print(f"[Shyft] script.{script_id} fehlgeschlagen: {reason} (Antwort: {error})")
+    try:  # auch im Home-Assistant-Log (Einstellungen > System > Protokolle) sichtbar machen
+        homeassistant_adapter.call_service("system_log", "write", {"logger": "shyft", "level": "error", "message": f"script.{script_id} fehlgeschlagen: {reason}"})
+    except Exception as e:
+        print(f"[Shyft] Eintrag ins HA-Log fehlgeschlagen:", repr(e))
     text = f"Home Assistant meldet: {reason}"
     if "GATEWAY_OFFLINE" in reason:
         text += " (die Cloud des Herstellers erreicht das Gateway der Wärmepumpe nicht - Internetverbindung/Gateway der Wärmepumpe prüfen)"
@@ -4347,7 +4360,7 @@ def execute_auto_managed_action(control_key, phase, target_value):
         try:
             homeassistant_adapter.call_service("script", control["script_id"], {"target_value": target_value})
         except Exception as e:
-            raise Exception(_script_failure_reason(control["script_id"], e))
+            raise Exception(f"{_script_failure_reason(control['script_id'], e)} (Zielwert {target_value} für {entity_id})")
         return clamp_note
     elif control["type"] == "switch":
         service = "turn_on" if phase == "start" else "turn_off"

@@ -272,6 +272,27 @@ class HomeAssistantAdapter:
             return message[:400] or None
         return None
 
+    def latest_script_trace_error(self, script_id):
+        """Fehlermeldung des neuesten fehlgeschlagenen Laufs von script.<script_id> aus den Skript-Traces (Websocket
+        trace/list). Faengt Fehler ab, die NICHT im System-Log stehen - z.B. eine abgelehnte Eingabe (ServiceValidationError,
+        Wert ausserhalb des Bereichs): die REST-Antwort ist dann nur ein nacktes "400: Bad Request", die Ursache steht nur im
+        Trace. None, wenn kein fehlgeschlagener Lauf gefunden/lesbar."""
+        ws_uri = self.homeassistant_uri.replace("https://", "wss://").replace("http://", "ws://") + WEBSOCKET_PATH
+        ws = websocket.create_connection(ws_uri, timeout=10)
+        try:
+            ws.recv()  # auth_required
+            ws.send(json.dumps({"type": "auth", "access_token": self._token()}))
+            if json.loads(ws.recv()).get("type") != "auth_ok":
+                return None
+            runs = self._ws_command(ws, 1, "trace/list", {"domain": "script", "item_id": script_id})
+        finally:
+            ws.close()
+        failed = [run for run in runs or [] if run.get("error")]
+        if not failed:
+            return None
+        failed.sort(key=lambda run: (run.get("timestamp") or {}).get("start") or "")
+        return str(failed[-1]["error"])[:400]
+
     def _ws_command(self, ws, msg_id, command_type, payload=None):
         ws.send(json.dumps({"id": msg_id, "type": command_type, **(payload or {})}))
         response = json.loads(ws.recv())
