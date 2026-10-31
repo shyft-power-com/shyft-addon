@@ -700,82 +700,82 @@ def _is_real_device(mapping):
     return bool(mapping) and mapping != [DEMO_INTEGRATION_ID]
 
 
-def maybe_create_real_account(new_integration_mappings):
-    """Legt im Hintergrund einen echten shyft-power-Account an (create_user_addon), sobald ein
-    Demo-Modus-Nutzer (siehe is_demo_mode) ein echtes Geraet fuer irgendeine DEMO_CAPABLE_SECTIONS
-    hinterlegt hat (also von "Demo" auf eine echte HA-Integration gewechselt ist) - kein Popup,
-    keine E-Mail/Passwort-Abfrage, Bubble erzeugt beides selbst (siehe ShyftAdapter.create_user).
-    No-op, wenn schon ein echter Account existiert, oder wenn in der neuen Config gar keine Section
-    ein echtes Geraet hat. Wird von writeConfig nach jedem Config-Speichern aufgerufen.
+# Mindestabstand zwischen zwei create_user_addon-Versuchen. Jeder Aufruf legt in Bubble sofort einen
+# neuen User an - auch wenn das Add-on die Antwort danach nicht verwerten kann. Ohne Sperre erzeugte ein
+# Fehler in der Antwort (31.10.2026: kein Token in der Live-Antwort) bei jedem Speichern einen weiteren
+# Account (48 in 30 Minuten).
+ACCOUNT_CREATION_RETRY_SECONDS = 60 * 60
+_account_creation_lock = threading.Lock()
 
-    Bewusst NICHT nur beim exakten Uebergangsmoment (alt=Demo/leer, neu=echt) - sondern bei JEDEM
-    Speichern, solange mindestens eine Section ein echtes Geraet hat, is_demo_mode() noch True ist
-    UND shyftAccountCreated noch nicht gesetzt ist. Sonst waere ein fehlgeschlagener Versuch (z.B.
-    weil der Bubble-Workflow gerade kaputt war) nur durch Hin- und Herschalten eines Geraets erneut
-    ausloesbar - ein simples erneutes Speichern soll reichen.
 
-    create_user_addon darf im gesamten Lebenszyklus des Addons nur EIN EINZIGES MAL erfolgreich
-    aufgerufen werden - ein zweiter erfolgreicher Aufruf wuerde bei Bubble einen weiteren, komplett
-    neuen Account (neue E-Mail-Adresse) anlegen, unabhaengig vom bereits bestehenden. Sich allein auf
-    is_demo_mode() zu verlassen waere dafuer nicht robust genug: sollte der Supervisor-Options-Wert
-    shyft_access_key durch irgendein aeusseres Ereignis (z.B. ein Options-Schema-Reset bei einem
-    Addon-Update) wieder auf "notset" zurueckfallen, wuerde is_demo_mode() faelschlich wieder True
-    liefern und beim naechsten Demo->Echt-Wechsel eine zweite Kontoerstellung ausloesen. Deshalb
-    zusaetzlich ein eigener, dauerhafter Merker (shyftAccountCreated) in der addon-eigenen Config
-    (config.json, NICHT von Supervisor verwaltet) - der bleibt auch dann bestehen, wenn der
-    Zugangsschluessel selbst verloren geht."""
+def _extract_account_token(result):
+    """Zugangstoken aus der create_user_addon-Antwort. Bubble verschachtelt die Werte unter "response";
+    der Schluessel heisst je nach Workflow-Stand "token" oder "access_key". Fallback auf die oberste Ebene."""
+    payload = result.get("response") if isinstance(result.get("response"), dict) else result
+    for source in (payload, result):
+        for key in ("token", "access_key"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def maybe_create_real_account(ready_key):
+    """Legt einmalig einen echten shyft-power-Account an (create_user_addon), sobald im Demomodus ein
+    STEUERBARES echtes Geraet erfolgreich getestet wurde. Aufgerufen aus _record_action_test_result
+    nach einem bestandenen Test (ready_key, siehe _READY_KEY_TO_LABEL_SECTION). Reine Sensor-Geraete
+    (Wechselrichter/PV) und Demo-Geraete loesen nichts aus. Bubble erzeugt E-Mail/Passwort selbst.
+
+    create_user_addon darf im Lebenszyklus des Addons nur EINMAL erfolgreich aufgerufen werden: jeder
+    Aufruf legt einen neuen Bubble-User an. Deshalb
+      - der dauerhafte Merker shyftAccountCreated in der addon-eigenen Config (bleibt auch dann, wenn der
+        Supervisor-Wert shyft_access_key verloren geht),
+      - hoechstens ein Versuch pro ACCOUNT_CREATION_RETRY_SECONDS (shyftAccountCreateAttemptAt wird VOR
+        dem Aufruf geschrieben - auch ein abgebrochener Versuch zaehlt),
+      - ein Lock gegen zwei gleichzeitige Tests."""
     if not is_demo_mode():
         return
-    config = _read_current_config()
-    if config.get("shyftAccountCreated"):
-        print("[Shyft] shyftAccountCreated bereits gesetzt - kein erneuter create_user_addon-Aufruf (unabhaengig vom aktuellen Zugangsschluessel).")
+    label_section = _READY_KEY_TO_LABEL_SECTION.get(ready_key)
+    if not label_section:
         return
-    has_real_device = any(
-        _is_real_device(new_integration_mappings.get(section, []))
-        for section in DEMO_CAPABLE_SECTIONS
-    )
-    if not has_real_device:
-        return
-    # Vom test-Branch gebautes Add-on (siehe BUILD_BRANCH): Konto in der Bubble-Testversion anlegen und den Schluessel
-    # mit DEV_ACCESS_KEY_PREFIX ("test_") speichern - damit verbindet sich das Test-Add-on auch danach mit der Testversion
-    # (siehe ShyftAdapter.set_access_key). Ein main-Build legt wie bisher ein Konto in PROD an.
-    use_test_environment = BUILD_BRANCH == "test"
-    try:
-        result = shyft_adapter.create_user(test_environment=use_test_environment)
-    except Exception as e:
-        print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
-        return
-    # Der eigentliche Inhalt steckt unter "response" (siehe live beobachtete Antwort:
-    # {"status": "success", "response": {"has_account": bool, "token": "bus|user_id|secret", ...}}) -
-    # "token" wird 1:1 als shyft_access_key uebernommen (Format <prefix>|<user_id>|<secret>, siehe
-    # extract_shyft_user_id). Fallback auf die alten, oberste-Ebene-Feldnamen (access_key/"has an
-    # account") falls der Workflow das je wieder anders liefert.
-    payload = result.get("response") if isinstance(result.get("response"), dict) else result
-    has_account = payload.get("has_account")
-    if has_account is None:
-        has_account = str(result.get("has an account", "")).strip().lower() in ("yes", "true", "1")
-    if has_account:
-        # Sollte im automatischen Ablauf eigentlich nicht vorkommen (Bubble erzeugt ja jedes Mal eine
-        # neue E-Mail-Adresse) - lieber nichts uebernehmen als versehentlich falsch ueberschreiben.
-        # Kein shyftAccountCreated gesetzt: Addon bleibt im Demomodus, ein spaeterer Demo->Echt-
-        # Wechsel darf es erneut versuchen (siehe Docstring: "Ist der Aufruf nicht erfolgreich,
-        # bleibt das Addon im Demomodus").
-        print("[Shyft] create_user_addon meldet has_account=true - unerwartet, kein Zugangstoken uebernommen.")
-        return
-    new_access_key = payload.get("token") or result.get("access_key")
-    if not new_access_key:
-        print("[Shyft] create_user_addon lieferte keinen Token/access_key:", result)
-        return
-    if use_test_environment and not new_access_key.startswith(DEV_ACCESS_KEY_PREFIX):
-        new_access_key = DEV_ACCESS_KEY_PREFIX + new_access_key
-    try:
-        _persist_shyft_access_key(new_access_key)
-        config["shyftAccountCreated"] = True
+    with _account_creation_lock:
+        config = _read_current_config()
+        if config.get("shyftAccountCreated"):
+            return
+        if not _is_real_device(config.get("integrationMappings", {}).get(label_section[1], [])):
+            return
+        last_attempt = config.get("shyftAccountCreateAttemptAt") or 0
+        if time.time() - last_attempt < ACCOUNT_CREATION_RETRY_SECONDS:
+            print("[Shyft] Konto-Erstellung kuerzlich versucht - naechster Versuch fruehestens in "
+                  f"{int((ACCOUNT_CREATION_RETRY_SECONDS - (time.time() - last_attempt)) / 60) + 1} Min.")
+            return
+        config["shyftAccountCreateAttemptAt"] = time.time()
         _write_current_config(config)
-        print("[Shyft] Echter Account automatisch angelegt, Zugangstoken uebernommen.")
-    except Exception as e:
-        print("[Shyft] Zugangstoken nach automatischer Konto-Erstellung konnte nicht gespeichert werden:", repr(e))
-        return
+
+        # Vom test-Branch gebautes Add-on (siehe BUILD_BRANCH): Konto in der Bubble-Testversion anlegen und den
+        # Schluessel mit DEV_ACCESS_KEY_PREFIX ("test_") speichern (siehe ShyftAdapter.set_access_key).
+        use_test_environment = BUILD_BRANCH == "test"
+        print(f"[Shyft] Erstes steuerbares Geraet erfolgreich getestet ({label_section[0]}) - lege shyft-power-Konto an.")
+        try:
+            result = shyft_adapter.create_user(test_environment=use_test_environment)
+        except Exception as e:
+            print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
+            return
+        new_access_key = _extract_account_token(result if isinstance(result, dict) else {})
+        if not new_access_key:
+            print("[Shyft] create_user_addon lieferte keinen Token - Add-on bleibt im Demomodus:", result)
+            return
+        if use_test_environment and not new_access_key.startswith(DEV_ACCESS_KEY_PREFIX):
+            new_access_key = DEV_ACCESS_KEY_PREFIX + new_access_key
+        try:
+            _persist_shyft_access_key(new_access_key)
+            config = _read_current_config()
+            config["shyftAccountCreated"] = True
+            _write_current_config(config)
+            print("[Shyft] Echter Account automatisch angelegt, Zugangstoken uebernommen.")
+        except Exception as e:
+            print("[Shyft] Zugangstoken nach automatischer Konto-Erstellung konnte nicht gespeichert werden:", repr(e))
+            return
     try:
         # Erster echter Wetter-Abruf genau in dem Moment, in dem der Demomodus verlassen wird - nicht
         # erst auf den naechsten 3h-Cron-Tick warten (siehe fetch_weather_forecast_periodically):
@@ -6724,8 +6724,18 @@ def _record_action_test_result(ready_key, ok):
         _write_current_config(cfg)
         if ok:
             _clear_not_ready_problem(ready_key)
+            # Erstes erfolgreich getestetes steuerbares Geraet beendet den Demomodus (Konto anlegen).
+            # Im Hintergrund, damit die Testantwort nicht auf Bubble wartet.
+            threading.Thread(target=_create_account_after_test, args=(ready_key,), daemon=True).start()
     except Exception as e:
         print("[Shyft] actionTestPassed konnte nicht aktualisiert werden:", repr(e))
+
+
+def _create_account_after_test(ready_key):
+    try:
+        maybe_create_real_account(ready_key)
+    except Exception as e:
+        print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
 
 
 def _clear_not_ready_problem(ready_key):
@@ -7454,11 +7464,6 @@ def writeConfig():
             maybe_detect_battery_flow_sign_convention()
         except Exception as e:
             print("[Shyft] Batterie-Vorzeichen-Erkennung fehlgeschlagen:", repr(e))
-
-    try:
-        maybe_create_real_account(data.get("integrationMappings", {}))
-    except Exception as e:
-        print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
 
     # Speichern der Zuordnung kann das Problem beheben (oder ausloesen) - nicht bis zum naechsten stuendlichen
     # Sync warten. Im Hintergrund, die Neubewertung liest alle Sensoren aus Home Assistant.

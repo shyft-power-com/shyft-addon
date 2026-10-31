@@ -82,11 +82,10 @@ class ShyftAdapter:
 
     def create_user(self, test_environment=False):
         """Signs a new shyft-power account up (create_user_addon workflow) in the background, the
-        first time a demo-mode addon user configures a real device (see maybe_create_real_account in
-        app.py) - no parameters: Bubble generates its own email/username/password server-side (the
-        addon never asks the user for these). Returns the parsed response dict, expected to contain
-        'access_key' and a 'has an account' yes/no flag (see maybe_create_real_account for how
-        that's interpreted). Raises on a network/HTTP failure, unlike _call_workflow.
+        first time a demo-mode addon user successfully tests a controllable real device (see
+        maybe_create_real_account in app.py) - no parameters: Bubble generates its own email/username/
+        password server-side. Returns the parsed response dict; the token is read from
+        response.token or response.access_key (see _extract_account_token in app.py). Raises on a network/HTTP failure, unlike _call_workflow.
 
         Routet ueber _create_complete_uri, richtet sich also nach development_mode: ein "notset"-
         (bzw. jeder nicht mit test_ praefixierte) Schluessel zaehlt als Produktivumgebung und trifft

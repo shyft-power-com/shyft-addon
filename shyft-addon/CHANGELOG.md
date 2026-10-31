@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.45.349
+
+* **Fix: Automatische Konto-Erstellung legte bei jeder Änderung auf der Konfigurationsseite einen neuen shyft-power-Account an.** Sobald ein echtes Gerät ausgewählt war, rief jedes automatische Speichern `create_user_addon` auf. Die Live-Antwort von Bubble enthielt keinen Token, das Add-on blieb deshalb im Demomodus und versuchte es beim nächsten Speichern erneut – am 31.10.2026 entstanden so 48 Accounts in 30 Minuten. Jetzt gilt:
+  * Der Demomodus endet erst, wenn ein **steuerbares** echtes Gerät (Warmwasser, Heizstab, Heizung, Wallbox, Verbraucher, Batterie) mit dem Testen-Button **erfolgreich getestet** wurde. Speichern, reine Sensor-Geräte (Wechselrichter/PV) und Demo-Geräte lösen nichts mehr aus.
+  * Höchstens ein Versuch pro Stunde (`shyftAccountCreateAttemptAt`), auch bei Netzwerkfehlern oder einer Antwort ohne Token; gleichzeitige Tests sind gegeneinander gesperrt.
+  * Der Token wird unter `response.token` und `response.access_key` gelesen; `has_account` wird nicht mehr ausgewertet (der Merker `shyftAccountCreated` verhindert weiterhin ein zweites Konto).
+
 ## 0.0.45.348
 
 * **Heizstab: „Heizstab ein-/ausschalten“ akzeptiert auch eine Value-Entität.** Neben Schalter/Relais kann jetzt eine `number`- bzw. `input_number`-Entität hinterlegt werden, z. B. die „Leistungsvorgabe“ der Integration askoheat. Beim Start der Aktion sendet Shyft dann die „Heizstab, max. Leistung“ an die Entität (in deren Einheit: kW bzw. W, ohne Einheit W), zum Beenden der Aktion 0. Test und Dashboard-Status (An = Wert größer 0) funktionieren ebenfalls mit Value-Entitäten.
