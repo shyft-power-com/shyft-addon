@@ -704,7 +704,7 @@ def _is_real_device(mapping):
 # neuen User an - auch wenn das Add-on die Antwort danach nicht verwerten kann. Ohne Sperre erzeugte ein
 # Fehler in der Antwort (31.10.2026: kein Token in der Live-Antwort) bei jedem Speichern einen weiteren
 # Account (48 in 30 Minuten).
-ACCOUNT_CREATION_RETRY_SECONDS = 60 * 60
+ACCOUNT_CREATION_RETRY_SECONDS = 5 * 60
 _account_creation_lock = threading.Lock()
 
 

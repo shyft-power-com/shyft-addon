@@ -65,7 +65,7 @@ def test_demo_device_or_unknown_key_does_nothing(env):
     assert adapter.calls == 0
 
 
-def test_failed_response_is_not_retried_within_an_hour(env):
+def test_failed_response_is_not_retried_within_five_minutes(env):
     cfg, saved, use = env
     adapter = use({"response": {"has_account": True, "access_key": ""}})
     for _ in range(5):
