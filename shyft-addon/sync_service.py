@@ -404,6 +404,12 @@ class SyncService:
         add("HP - Max. Power", "hpMaxPower")
         add("HP - Max Supply Temp", "hpMaxSupplyTempC")
         add("HP - Heating Target Temp (min)", "hpHeatingTargetTempMin")
+        # Zehntelgrad: auf eine Nachkommastelle runden (kein Float-Rauschen wie 21.200000000000003 in der Optimierer-Eingabe)
+        try:
+            if "HP - Heating Target Temp (min)" in static_config:
+                static_config["HP - Heating Target Temp (min)"] = round(float(static_config["HP - Heating Target Temp (min)"]), 1)
+        except (TypeError, ValueError):
+            pass
         add("HP - Heating Buffer", "hpHeatingBuffer")
         add("HP - Heating Curve, level", "hpHeatingCurveLevel")
         add("HP - Heating Curve, slope", "hpHeatingCurveSlope")

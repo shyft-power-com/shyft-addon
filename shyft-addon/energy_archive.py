@@ -101,6 +101,18 @@ def _ensure_schema(conn):
     # vorbei ist und die naechste Momentaufnahme unter einem neuen Datum landet. Dadurch haelt der
     # letzte Aufruf vor Mitternacht automatisch den finalen Tageswert fest, ohne eigene
     # Tageswechsel-Erkennung.
+    # PV-Prognose vs. Ist je abgeschlossener Stunde (Analyse-Tab, siehe app.record_pv_forecast_accuracy): forecast_kw = die
+    # letzte PV-Prognose vor Eintritt der Stunde, actual_kw = mittlere gemessene PV-Leistung der Stunde - beides in kW, ueber
+    # eine volle Stunde also zugleich kWh. forecast_source: 'snapshot' (Tages-Snapshot) bzw. 'sync_log' (nachgetragen).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pv_hourly (
+            hour_start_utc TEXT PRIMARY KEY,
+            forecast_kw REAL,
+            actual_kw REAL,
+            forecast_source TEXT,
+            recorded_at TEXT NOT NULL
+        )
+    """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS household_savings_daily (
             date TEXT PRIMARY KEY,
@@ -110,6 +122,42 @@ def _ensure_schema(conn):
             updated_at TEXT NOT NULL
         )
     """)
+
+
+
+def pv_hours_recorded(start_iso):
+    "hour_start_utc-Schluessel (siehe hour_key) aller PV-Stunden ab start_iso, fuer die schon Prognose UND Ist gespeichert sind."
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        rows = conn.execute("SELECT hour_start_utc FROM pv_hourly WHERE hour_start_utc >= ? AND forecast_kw IS NOT NULL AND actual_kw IS NOT NULL",
+                            (start_iso,)).fetchall()
+        return {r[0] for r in rows}
+
+
+def record_pv_hour(hour_start_iso, forecast_kw, actual_kw, forecast_source, at=None):
+    "Upsert einer PV-Stunde (siehe Tabelle pv_hourly); ein schon gespeicherter Wert wird nicht mit None ueberschrieben."
+    at = (at or datetime.now(timezone.utc)).isoformat()
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        conn.execute("""
+            INSERT INTO pv_hourly (hour_start_utc, forecast_kw, actual_kw, forecast_source, recorded_at) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(hour_start_utc) DO UPDATE SET
+                forecast_kw = COALESCE(excluded.forecast_kw, pv_hourly.forecast_kw),
+                actual_kw = COALESCE(excluded.actual_kw, pv_hourly.actual_kw),
+                forecast_source = COALESCE(excluded.forecast_source, pv_hourly.forecast_source),
+                recorded_at = excluded.recorded_at
+        """, (hour_start_iso, forecast_kw, actual_kw, forecast_source, at))
+
+
+def query_pv_hours(start_iso=None):
+    "Alle PV-Stunden ab start_iso (siehe hour_key), aelteste zuerst."
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        if start_iso:
+            rows = conn.execute("SELECT * FROM pv_hourly WHERE hour_start_utc >= ? ORDER BY hour_start_utc", (start_iso,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM pv_hourly ORDER BY hour_start_utc").fetchall()
+        return [dict(r) for r in rows]
 
 
 def _accumulate_open_segment(row, at):
@@ -258,7 +306,7 @@ _GROUP_EXPR_BY_GRANULARITY = {
 
 
 def query_summary(granularity, start_iso=None, end_iso=None):
-    "Je Periode (siehe _GROUP_EXPR_BY_GRANULARITY) aufsummierte Verbrauchs-/Kosten-/Ersparnis-Werte, neuestes zuerst (Nutzer-Vorgabe). start_iso/end_iso (siehe hour_key) grenzen optional auf hour_start_utc >= start_iso bzw. < end_iso ein."
+    "Je Periode (siehe _GROUP_EXPR_BY_GRANULARITY) aufsummierte Verbrauchs-/Kosten-Werte, neuestes zuerst (Nutzer-Vorgabe). savings_vs_base_eur = Kosten Basisfall minus Kosten geplant (Ersparnis laut Optimierung, positiv = Plan billiger), planned_minus_actual_eur = Kosten geplant minus Kosten Ist - beides wird hier aus den gespeicherten Stundenkosten gerechnet, gilt also auch rueckwirkend fuer alle archivierten Stunden (die gespeicherten savings_*-Spalten werden nicht mehr gelesen). start_iso/end_iso (siehe hour_key) grenzen optional auf hour_start_utc >= start_iso bzw. < end_iso ein."
     group_expr = _GROUP_EXPR_BY_GRANULARITY.get(granularity, _GROUP_EXPR_BY_GRANULARITY["daily"])
     where, params = [], []
     if start_iso:
@@ -274,8 +322,9 @@ def query_summary(granularity, start_iso=None, end_iso=None):
             SELECT {group_expr} AS period,
                    SUM(planned_usage_kwh) AS planned_usage_kwh, SUM(planned_cost_eur) AS planned_cost_eur,
                    SUM(base_usage_kwh) AS base_usage_kwh, SUM(base_cost_eur) AS base_cost_eur,
-                   SUM(actual_usage_kwh) AS actual_usage_kwh, SUM(actual_cost_eur) AS actual_cost_eur,
-                   SUM(savings_vs_base_eur) AS savings_vs_base_eur, SUM(savings_vs_planned_eur) AS savings_vs_planned_eur,
+                   SUM(actual_usage_kwh) AS actual_usage_kwh, SUM(actual_import_kwh) AS actual_import_kwh, SUM(actual_export_kwh) AS actual_export_kwh,
+                   SUM(actual_cost_eur) AS actual_cost_eur,
+                   SUM(base_cost_eur - planned_cost_eur) AS savings_vs_base_eur, SUM(planned_cost_eur - actual_cost_eur) AS planned_minus_actual_eur,
                    COUNT(*) AS hours_recorded
             FROM hourly_archive
             {where_clause}
@@ -283,6 +332,27 @@ def query_summary(granularity, start_iso=None, end_iso=None):
             ORDER BY period DESC
         """, params).fetchall()
         return [dict(r) for r in rows]
+
+
+def query_pv_summary(granularity, start_iso=None, end_iso=None):
+    "{period: {forecast_kwh, actual_kwh}} aus pv_hourly (nur Stunden mit Prognose UND Ist), gruppiert wie query_summary - kW je Stunde entspricht kWh."
+    group_expr = _GROUP_EXPR_BY_GRANULARITY.get(granularity, _GROUP_EXPR_BY_GRANULARITY["daily"])
+    where, params = ["forecast_kw IS NOT NULL", "actual_kw IS NOT NULL"], []
+    if start_iso:
+        where.append("hour_start_utc >= ?")
+        params.append(start_iso)
+    if end_iso:
+        where.append("hour_start_utc < ?")
+        params.append(end_iso)
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        rows = conn.execute(f"""
+            SELECT {group_expr} AS period, SUM(forecast_kw) AS forecast_kwh, SUM(actual_kw) AS actual_kwh
+            FROM pv_hourly
+            WHERE {" AND ".join(where)}
+            GROUP BY period
+        """, params).fetchall()
+        return {r["period"]: {"forecast_kwh": r["forecast_kwh"], "actual_kwh": r["actual_kwh"]} for r in rows}
 
 
 def query_day_actions(date_str):

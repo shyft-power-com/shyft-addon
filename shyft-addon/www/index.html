@@ -1437,11 +1437,29 @@
             background: rgba(231, 76, 60, 0.08);
             border-color: var(--color-error);
         }
+        /* Deaktivierter Aktionstyp (Schalter auf der Gerätesteuerung aus, Aktion wird nur simuliert, siehe
+           isShyftActionDeactivated in app.js): ausgegraut - auch eine gerade "aktive" Aktion bekommt dann keine gruene
+           Hervorhebung, weil am Geraet nichts passiert. */
+        .shyftActionCard.is-deactivated {
+            background: rgba(127, 127, 127, 0.08);
+            border-color: var(--color-border, rgba(127, 127, 127, 0.3));
+            border-style: dashed;
+        }
+        .shyftActionCard.is-deactivated .shyftActionIcon,
+        .shyftActionCard.is-deactivated .shyftActionSavings,
+        .shyftActionCard.is-deactivated .shyftActionTime {
+            filter: grayscale(1);
+            opacity: 0.55;
+        }
         .shyftActionCard.is-deactivated .shyftActionName,
         .shyftActionCard.is-deactivated .shyftActionSubtitle,
         .shyftActionCard.is-deactivated .shyftActionStatus {
             color: var(--color-text-secondary);
             font-weight: 400;
+        }
+        .shyftActionCard.is-deactivated .shyftActionStatusSub {
+            font-weight: 600;
+            opacity: 1;
         }
         .shyftActionTime {
             /* Kein fester width mehr (war 4.5em) - Nutzer-Vorgabe: gleicher Abstand links und
@@ -1932,16 +1950,15 @@
             fill: var(--color-accent);
             filter: drop-shadow(0 0 3px var(--color-accent));
         }
-        @keyframes energyFlowPulse {
-            0%, 100% {
-                filter: brightness(1);
-            }
-            50% {
-                filter: brightness(1.12);
+        /* Rotor der Waermepumpe (siehe buildHeatpumpImage in app.js): dreht sich langsam, solange die Waermepumpe an ist. */
+        @keyframes energyFlowRotor {
+            to {
+                transform: rotate(360deg);
             }
         }
-        .energyFlowPulse {
-            animation: energyFlowPulse 1.8s ease-in-out infinite;
+        .energyFlowRotorSpin {
+            transform-origin: 0 0;
+            animation: energyFlowRotor 6s linear infinite;
         }
         /* PV-Ertrag Heute|Morgen unter dem PV-Prognose-Chart (siehe buildPvForecastActualChart) -
            direkt im Chart-Wrapper verankert (statt frueher lose irgendwo im Dashboard-Flow), damit
@@ -2075,8 +2092,8 @@
         }
         .einsatzplanGrid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 0.8em;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 0.6em;
             margin-top: 0.8em;
         }
         @media (max-width: 700px) {
@@ -2087,7 +2104,7 @@
         .einsatzplanStat {
             background: var(--color-accent);
             border-radius: 10px;
-            padding: 0.6em 0.8em;
+            padding: 0.45em 0.7em;
             color: #ffffff;
         }
         .einsatzplanStatLabel {
@@ -2095,10 +2112,9 @@
             opacity: 0.9;
             margin-bottom: 0.25em;
         }
-        /* Heute|Morgen (.einsatzplanStatSub) und die Einheit (.einsatzplanStatUnit) stehen in
-           derselben Zeile hinter der grossen Zahl statt darunter bzw. an der grossen Zahl selbst -
-           baseline-Ausrichtung, damit die kleinere Schrift nicht mittig neben der grossen Zahl
-           "schwebt". flex-wrap fuer sehr schmale Kacheln/lange Werte. */
+        /* Die beiden grossen Zahlen Heute | Morgen (.einsatzplanStatValue) und die Einheit (.einsatzplanStatUnit)
+           stehen in einer Zeile - baseline-Ausrichtung, damit die kleinere Schrift nicht mittig neben der
+           grossen Zahl "schwebt". flex-wrap fuer sehr schmale Kacheln/lange Werte. */
         .einsatzplanStatValueRow {
             display: flex;
             align-items: baseline;
@@ -2109,7 +2125,6 @@
             font-size: 1.15em;
             font-weight: 700;
         }
-        .einsatzplanStatSub,
         .einsatzplanStatUnit {
             font-size: 0.75em;
             opacity: 0.85;
@@ -2208,6 +2223,46 @@
         .dashboardConsumptionForecastRowDeleted .dashboardConsumptionForecastDelete {
             visibility: hidden;
         }
+        /* Pull-to-Refresh (Mobil, siehe setupPullToRefresh in app.js): Kreis-Pfeil oben mittig, der beim Herunterziehen
+           einfaehrt und sich dreht; ab der Schwelle gruen, beim Laden dreht er sich, bis der Tab aktualisiert ist. */
+        html {
+            overscroll-behavior-y: contain;
+        }
+        #pullRefreshIndicator {
+            position: fixed;
+            top: 0;
+            left: 50%;
+            z-index: 2000;
+            width: 40px;
+            height: 40px;
+            padding: 8px;
+            box-sizing: border-box;
+            border-radius: 50%;
+            background: var(--color-bg);
+            color: var(--color-text-secondary);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+            transform: translate(-50%, -48px);
+            opacity: 0;
+            pointer-events: none;
+        }
+        #pullRefreshIndicator svg {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #pullRefreshIndicator.is-ready,
+        #pullRefreshIndicator.is-spinning {
+            color: var(--color-accent);
+        }
+        #pullRefreshIndicator.is-settling {
+            transition: transform 0.25s ease, opacity 0.25s ease;
+        }
+        #pullRefreshIndicator.is-spinning svg {
+            animation: pullRefreshSpin 0.8s linear infinite;
+        }
+        @keyframes pullRefreshSpin {
+            to { transform: rotate(360deg); }
+        }
         .dashboardChartTitle {
             font-family: var(--font-heading);
             font-weight: 600;
@@ -2231,6 +2286,13 @@
         .dashboardChartTitleBadge.positive {
             color: var(--color-accent);
             background: rgba(46, 204, 113, 0.15);
+        }
+        /* "deaktiviert" hinter dem Chart-Titel, wenn die Steuerung des zugehoerigen Aktionstyps aus ist
+           (siehe appendChartDeactivatedBadge in app.js). */
+        .dashboardChartTitleBadge.deactivated {
+            font-family: var(--font-body, inherit);
+            background: rgba(127, 127, 127, 0.18);
+            cursor: help;
         }
         .dashboardChartCaption {
             font-size: 0.85em;
@@ -2503,7 +2565,9 @@
             border: 1px solid var(--color-border);
             border-radius: 8px;
             padding: 0.6em 1em;
-            overflow-x: auto;
+            /* Eigener Scrollbereich in beide Richtungen: Kopfzeile und linke Spalte (Zeitraum/Uhrzeit) bleiben dabei sichtbar (sticky) */
+            overflow: auto;
+            max-height: calc(100vh - 14em);
         }
         .analyseTable {
             border-collapse: collapse;
@@ -2518,6 +2582,20 @@
         }
         .analyseTable th:first-child, .analyseTable td:first-child {
             text-align: left;
+        }
+        .analyseTable thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: var(--color-bg-card);
+        }
+        .analyseTable th:first-child, .analyseTable td:first-child {
+            position: sticky;
+            left: 0;
+            background: var(--color-bg-card);
+        }
+        .analyseTable thead th:first-child {
+            z-index: 3;
         }
         .analyseTable tbody tr {
             cursor: pointer;
@@ -2542,6 +2620,19 @@
         .analyseDayActions ul {
             margin: 0.4em 0 0;
             padding-left: 1.2em;
+        }
+        /* PV-Prognose vs. Ist: Spalten der Analyse-Tabelle (siehe loadAnalyse in app.js) */
+        .analysePvAbove {
+            color: var(--color-accent);
+        }
+        .analysePvBelow {
+            color: var(--color-error);
+        }
+        .analysePvNote {
+            font-size: 0.82em;
+            color: var(--color-text-secondary);
+            white-space: normal;
+            margin: 0.6em 0 0.2em;
         }
     
         /* Hilfe-Assistent (KI-Chat, siehe assistant.js) - schwebendes Icon unten rechts auf allen Seiten */
@@ -2823,6 +2914,7 @@
     </datalist>
     <div id="deviceSections"></div>
     <div id="notificationSection"></div>
+    <div id="openOnStartSection"></div>
     <div class="actionMenu">
         <button id="triggerOptimizationButton" onclick="trigger()">Optimierung anstoßen</button>
         <span id="triggerOptimizationHint" class="triggerOptimizationHint" hidden>Bitte zuerst ein eigenes Gerät hinterlegen.</span>

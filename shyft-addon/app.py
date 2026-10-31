@@ -14,6 +14,7 @@ import os
 from flask import Flask, send_from_directory, jsonify, request, Response
 import json
 import math
+import decimal
 import re
 import shutil
 import time
@@ -117,9 +118,25 @@ class _TimestampedStream:
         return getattr(self._stream, name)
 
 
+_throttled_print_last = {}
+
+
+def _print_throttled(key, message, min_interval_seconds=1800):
+    """Schreibt eine wiederkehrende Meldung (z.B. ein dauerhaft nicht verfuegbarer Sensor, der bei jedem Lauf dieselbe Zeile
+    erzeugt) hoechstens alle min_interval_seconds - sonst fuellt sie das Log, ohne etwas Neues zu sagen."""
+    now = time.time()
+    if now - _throttled_print_last.get(key, 0.0) < min_interval_seconds:
+        return
+    _throttled_print_last[key] = now
+    print(message)
+
+
 sys.stdout = _TimestampedStream(sys.stdout)
 sys.stderr = _TimestampedStream(sys.stderr)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+# Zugriffslog von Flask/werkzeug (je eine Zeile pro Dashboard-/Chart-Abruf des Frontends) enthaelt keine Fehler- oder Aktionsinformation
+# und fuellt das Log - Fehler (WARNING+) bleiben erhalten.
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
 app = Flask(__name__, static_folder="www", static_url_path="")
 
 VERSION = load_addon_version()
@@ -592,10 +609,19 @@ def assistantSupportStatus():
 
 @app.route("/analysis/summary", methods=["GET"])
 def readAnalysisSummary():
-    "Aggregierte Verbrauchs-/Kosten-/Ersparnis-Werte fuer den Analyse-Tab, siehe energy_archive.query_summary. Query-Parameter: granularity (hourly/daily/weekly/monthly/yearly, Default daily), optional from/to (siehe energy_archive.hour_key-Format)."
+    "Aggregierte Verbrauchs-/Kosten-/Ersparnis-Werte plus PV-Prognose vs. Ist (pv_*-Felder, siehe _pv_accuracy_entry) fuer den Analyse-Tab, siehe energy_archive.query_summary. Query-Parameter: granularity (hourly/daily/weekly/monthly/yearly, Default daily), optional from/to (siehe energy_archive.hour_key-Format)."
     granularity = request.args.get("granularity", "daily")
     try:
+        record_pv_forecast_accuracy()  # gerade abgeschlossene PV-Stunden sofort mitnehmen, nicht erst beim naechsten Stunden-Job
+    except Exception as e:
+        print("[Shyft] Analyse: PV-Prognose-Aufzeichnung fehlgeschlagen:", repr(e))
+    try:
         rows = energy_archive.query_summary(granularity, request.args.get("from"), request.args.get("to"))
+        pv_by_period = energy_archive.query_pv_summary(granularity, request.args.get("from"), request.args.get("to"))
+        for row in rows:
+            pv = pv_by_period.get(row["period"])
+            row.update(_pv_accuracy_entry(pv["forecast_kwh"], pv["actual_kwh"]) if pv else
+                       {"pv_forecast_kwh": None, "pv_actual_kwh": None, "pv_error_kwh": None, "pv_error_pct": None})
         return jsonify({"status": "success", "granularity": granularity, "rows": rows})
     except Exception as e:
         print("[Shyft] Analyse: Zusammenfassung konnte nicht geladen werden:", repr(e))
@@ -613,6 +639,25 @@ def readAnalysisDayActions():
     except Exception as e:
         print("[Shyft] Analyse: Tages-Aktionen konnten nicht geladen werden:", repr(e))
         return jsonify({"status": "error", "message": str(e)})
+
+
+
+# Unter dieser Prognose (kWh je Zeitraum, bei Stunden gleich kW) ist eine Abweichung nicht aussagekraeftig (Daemmerung,
+# Nacht: 0,01 kW Prognose gegen 0,05 kW Ist waeren +400 %) - dort zeigt der Analyse-Tab statt der Abweichung ein "-".
+PV_ACCURACY_MIN_FORECAST_FOR_DEVIATION_KWH = 0.5
+
+
+def _pv_accuracy_entry(forecast_kwh, actual_kwh):
+    """PV-Prognose vs. Ist je Zeitraum fuer die Analyse-Tabelle. Abweichung = Ist - Prognose (positiv: mehr erzeugt als
+    vorhergesagt), in % bezogen auf die Prognose; die Summe addiert die stuendlichen Abweichungen MIT Vorzeichen (zu viel
+    und zu wenig gleichen sich aus), ist also zugleich Ist-Summe minus Prognose-Summe. Unter
+    PV_ACCURACY_MIN_FORECAST_FOR_DEVIATION_KWH Prognose gibt es keine Abweichung (None)."""
+    entry = {"pv_forecast_kwh": round(forecast_kwh, 3), "pv_actual_kwh": round(actual_kwh, 3), "pv_error_kwh": None, "pv_error_pct": None}
+    if forecast_kwh >= PV_ACCURACY_MIN_FORECAST_FOR_DEVIATION_KWH:
+        error_kwh = actual_kwh - forecast_kwh
+        entry["pv_error_kwh"] = round(error_kwh, 3)
+        entry["pv_error_pct"] = round(error_kwh / forecast_kwh * 100, 1)
+    return entry
 
 
 def _persist_shyft_access_key(new_access_key):
@@ -655,82 +700,82 @@ def _is_real_device(mapping):
     return bool(mapping) and mapping != [DEMO_INTEGRATION_ID]
 
 
-def maybe_create_real_account(new_integration_mappings):
-    """Legt im Hintergrund einen echten shyft-power-Account an (create_user_addon), sobald ein
-    Demo-Modus-Nutzer (siehe is_demo_mode) ein echtes Geraet fuer irgendeine DEMO_CAPABLE_SECTIONS
-    hinterlegt hat (also von "Demo" auf eine echte HA-Integration gewechselt ist) - kein Popup,
-    keine E-Mail/Passwort-Abfrage, Bubble erzeugt beides selbst (siehe ShyftAdapter.create_user).
-    No-op, wenn schon ein echter Account existiert, oder wenn in der neuen Config gar keine Section
-    ein echtes Geraet hat. Wird von writeConfig nach jedem Config-Speichern aufgerufen.
+# Mindestabstand zwischen zwei create_user_addon-Versuchen. Jeder Aufruf legt in Bubble sofort einen
+# neuen User an - auch wenn das Add-on die Antwort danach nicht verwerten kann. Ohne Sperre erzeugte ein
+# Fehler in der Antwort (31.10.2026: kein Token in der Live-Antwort) bei jedem Speichern einen weiteren
+# Account (48 in 30 Minuten).
+ACCOUNT_CREATION_RETRY_SECONDS = 5 * 60
+_account_creation_lock = threading.Lock()
 
-    Bewusst NICHT nur beim exakten Uebergangsmoment (alt=Demo/leer, neu=echt) - sondern bei JEDEM
-    Speichern, solange mindestens eine Section ein echtes Geraet hat, is_demo_mode() noch True ist
-    UND shyftAccountCreated noch nicht gesetzt ist. Sonst waere ein fehlgeschlagener Versuch (z.B.
-    weil der Bubble-Workflow gerade kaputt war) nur durch Hin- und Herschalten eines Geraets erneut
-    ausloesbar - ein simples erneutes Speichern soll reichen.
 
-    create_user_addon darf im gesamten Lebenszyklus des Addons nur EIN EINZIGES MAL erfolgreich
-    aufgerufen werden - ein zweiter erfolgreicher Aufruf wuerde bei Bubble einen weiteren, komplett
-    neuen Account (neue E-Mail-Adresse) anlegen, unabhaengig vom bereits bestehenden. Sich allein auf
-    is_demo_mode() zu verlassen waere dafuer nicht robust genug: sollte der Supervisor-Options-Wert
-    shyft_access_key durch irgendein aeusseres Ereignis (z.B. ein Options-Schema-Reset bei einem
-    Addon-Update) wieder auf "notset" zurueckfallen, wuerde is_demo_mode() faelschlich wieder True
-    liefern und beim naechsten Demo->Echt-Wechsel eine zweite Kontoerstellung ausloesen. Deshalb
-    zusaetzlich ein eigener, dauerhafter Merker (shyftAccountCreated) in der addon-eigenen Config
-    (config.json, NICHT von Supervisor verwaltet) - der bleibt auch dann bestehen, wenn der
-    Zugangsschluessel selbst verloren geht."""
+def _extract_account_token(result):
+    """Zugangstoken aus der create_user_addon-Antwort. Bubble verschachtelt die Werte unter "response";
+    der Schluessel heisst je nach Workflow-Stand "token" oder "access_key". Fallback auf die oberste Ebene."""
+    payload = result.get("response") if isinstance(result.get("response"), dict) else result
+    for source in (payload, result):
+        for key in ("token", "access_key"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def maybe_create_real_account(ready_key):
+    """Legt einmalig einen echten shyft-power-Account an (create_user_addon), sobald im Demomodus ein
+    STEUERBARES echtes Geraet erfolgreich getestet wurde. Aufgerufen aus _record_action_test_result
+    nach einem bestandenen Test (ready_key, siehe _READY_KEY_TO_LABEL_SECTION). Reine Sensor-Geraete
+    (Wechselrichter/PV) und Demo-Geraete loesen nichts aus. Bubble erzeugt E-Mail/Passwort selbst.
+
+    create_user_addon darf im Lebenszyklus des Addons nur EINMAL erfolgreich aufgerufen werden: jeder
+    Aufruf legt einen neuen Bubble-User an. Deshalb
+      - der dauerhafte Merker shyftAccountCreated in der addon-eigenen Config (bleibt auch dann, wenn der
+        Supervisor-Wert shyft_access_key verloren geht),
+      - hoechstens ein Versuch pro ACCOUNT_CREATION_RETRY_SECONDS (shyftAccountCreateAttemptAt wird VOR
+        dem Aufruf geschrieben - auch ein abgebrochener Versuch zaehlt),
+      - ein Lock gegen zwei gleichzeitige Tests."""
     if not is_demo_mode():
         return
-    config = _read_current_config()
-    if config.get("shyftAccountCreated"):
-        print("[Shyft] shyftAccountCreated bereits gesetzt - kein erneuter create_user_addon-Aufruf (unabhaengig vom aktuellen Zugangsschluessel).")
+    label_section = _READY_KEY_TO_LABEL_SECTION.get(ready_key)
+    if not label_section:
         return
-    has_real_device = any(
-        _is_real_device(new_integration_mappings.get(section, []))
-        for section in DEMO_CAPABLE_SECTIONS
-    )
-    if not has_real_device:
-        return
-    # Vom test-Branch gebautes Add-on (siehe BUILD_BRANCH): Konto in der Bubble-Testversion anlegen und den Schluessel
-    # mit DEV_ACCESS_KEY_PREFIX ("test_") speichern - damit verbindet sich das Test-Add-on auch danach mit der Testversion
-    # (siehe ShyftAdapter.set_access_key). Ein main-Build legt wie bisher ein Konto in PROD an.
-    use_test_environment = BUILD_BRANCH == "test"
-    try:
-        result = shyft_adapter.create_user(test_environment=use_test_environment)
-    except Exception as e:
-        print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
-        return
-    # Der eigentliche Inhalt steckt unter "response" (siehe live beobachtete Antwort:
-    # {"status": "success", "response": {"has_account": bool, "token": "bus|user_id|secret", ...}}) -
-    # "token" wird 1:1 als shyft_access_key uebernommen (Format <prefix>|<user_id>|<secret>, siehe
-    # extract_shyft_user_id). Fallback auf die alten, oberste-Ebene-Feldnamen (access_key/"has an
-    # account") falls der Workflow das je wieder anders liefert.
-    payload = result.get("response") if isinstance(result.get("response"), dict) else result
-    has_account = payload.get("has_account")
-    if has_account is None:
-        has_account = str(result.get("has an account", "")).strip().lower() in ("yes", "true", "1")
-    if has_account:
-        # Sollte im automatischen Ablauf eigentlich nicht vorkommen (Bubble erzeugt ja jedes Mal eine
-        # neue E-Mail-Adresse) - lieber nichts uebernehmen als versehentlich falsch ueberschreiben.
-        # Kein shyftAccountCreated gesetzt: Addon bleibt im Demomodus, ein spaeterer Demo->Echt-
-        # Wechsel darf es erneut versuchen (siehe Docstring: "Ist der Aufruf nicht erfolgreich,
-        # bleibt das Addon im Demomodus").
-        print("[Shyft] create_user_addon meldet has_account=true - unerwartet, kein Zugangstoken uebernommen.")
-        return
-    new_access_key = payload.get("token") or result.get("access_key")
-    if not new_access_key:
-        print("[Shyft] create_user_addon lieferte keinen Token/access_key:", result)
-        return
-    if use_test_environment and not new_access_key.startswith(DEV_ACCESS_KEY_PREFIX):
-        new_access_key = DEV_ACCESS_KEY_PREFIX + new_access_key
-    try:
-        _persist_shyft_access_key(new_access_key)
-        config["shyftAccountCreated"] = True
+    with _account_creation_lock:
+        config = _read_current_config()
+        if config.get("shyftAccountCreated"):
+            return
+        if not _is_real_device(config.get("integrationMappings", {}).get(label_section[1], [])):
+            return
+        last_attempt = config.get("shyftAccountCreateAttemptAt") or 0
+        if time.time() - last_attempt < ACCOUNT_CREATION_RETRY_SECONDS:
+            print("[Shyft] Konto-Erstellung kuerzlich versucht - naechster Versuch fruehestens in "
+                  f"{int((ACCOUNT_CREATION_RETRY_SECONDS - (time.time() - last_attempt)) / 60) + 1} Min.")
+            return
+        config["shyftAccountCreateAttemptAt"] = time.time()
         _write_current_config(config)
-        print("[Shyft] Echter Account automatisch angelegt, Zugangstoken uebernommen.")
-    except Exception as e:
-        print("[Shyft] Zugangstoken nach automatischer Konto-Erstellung konnte nicht gespeichert werden:", repr(e))
-        return
+
+        # Vom test-Branch gebautes Add-on (siehe BUILD_BRANCH): Konto in der Bubble-Testversion anlegen und den
+        # Schluessel mit DEV_ACCESS_KEY_PREFIX ("test_") speichern (siehe ShyftAdapter.set_access_key).
+        use_test_environment = BUILD_BRANCH == "test"
+        print(f"[Shyft] Erstes steuerbares Geraet erfolgreich getestet ({label_section[0]}) - lege shyft-power-Konto an.")
+        try:
+            result = shyft_adapter.create_user(test_environment=use_test_environment)
+        except Exception as e:
+            print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
+            return
+        new_access_key = _extract_account_token(result if isinstance(result, dict) else {})
+        if not new_access_key:
+            print("[Shyft] create_user_addon lieferte keinen Token - Add-on bleibt im Demomodus:", result)
+            return
+        if use_test_environment and not new_access_key.startswith(DEV_ACCESS_KEY_PREFIX):
+            new_access_key = DEV_ACCESS_KEY_PREFIX + new_access_key
+        try:
+            _persist_shyft_access_key(new_access_key)
+            config = _read_current_config()
+            config["shyftAccountCreated"] = True
+            _write_current_config(config)
+            print("[Shyft] Echter Account automatisch angelegt, Zugangstoken uebernommen.")
+        except Exception as e:
+            print("[Shyft] Zugangstoken nach automatischer Konto-Erstellung konnte nicht gespeichert werden:", repr(e))
+            return
     try:
         # Erster echter Wetter-Abruf genau in dem Moment, in dem der Demomodus verlassen wird - nicht
         # erst auf den naechsten 3h-Cron-Tick warten (siehe fetch_weather_forecast_periodically):
@@ -740,6 +785,9 @@ def maybe_create_real_account(new_integration_mappings):
         fetch_weather_forecast()
     except Exception as e:
         print("[Shyft] Erster Wetter-Abruf nach Verlassen des Demomodus fehlgeschlagen:", repr(e))
+    # Erste echte Uebertragung an shyft-power sofort, nicht erst beim naechsten stuendlichen Lauf -
+    # damit das Dashboard nach dem Verlassen des Demomodus gleich echte Optimierungsdaten bekommt.
+    threading.Thread(target=sync_site_data, daemon=True).start()
 
 # Zeitpunkt (UTC) des letzten update_site_addon-Sends - fuer die "Neue Optimierung laeuft..."-Anzeige
 # im Dashboard (siehe _optimizer_result_pending / readDashboardChartData). Nur In-Memory: nach einem
@@ -1680,6 +1728,40 @@ def readNotificationTargets():
         return jsonify([])
 
 
+def _own_panel_path():
+    "Panel-Pfad dieses Add-ons in der HA-Seitenleiste (der Supervisor registriert das Ingress-Panel unter dem Add-on-Slug)."
+    return ((homeassistant_adapter.get_from_supervisor("/addons/self/info") or {}).get("data") or {}).get("slug")
+
+
+@app.route("/open-on-start", methods=["GET"])
+def readOpenOnStart():
+    "Ist dieses Add-on das system-weite Standard-Panel von Home Assistant (oeffnet es sich also direkt beim Oeffnen von HA)?"
+    try:
+        panel = _own_panel_path()
+        return jsonify({"status": "success", "enabled": bool(panel) and homeassistant_adapter.get_default_panel() == panel})
+    except Exception as e:
+        print("[Shyft] Standard-Panel nicht lesbar:", repr(e))
+        return jsonify({"status": "error", "message": str(e)})
+
+
+@app.route("/open-on-start", methods=["PUT"])
+def writeOpenOnStart():
+    "Setzt dieses Add-on als system-weites Standard-Panel von Home Assistant bzw. entfernt es wieder (nur wenn es selbst das Standard-Panel ist). Body: {\"enabled\": bool}."
+    enabled = bool((request.get_json(silent=True) or {}).get("enabled"))
+    try:
+        panel = _own_panel_path()
+        if not panel:
+            raise Exception("Panel-Pfad des Add-ons nicht ermittelbar")
+        if enabled:
+            homeassistant_adapter.set_default_panel(panel)
+        else:
+            homeassistant_adapter.set_default_panel(None, only_if_current=panel)
+        return jsonify({"status": "success", "enabled": enabled})
+    except Exception as e:
+        print("[Shyft] Standard-Panel nicht setzbar:", repr(e))
+        return jsonify({"status": "error", "message": str(e)})
+
+
 # Der lokale Aktions-Store (COMPUTED_ACTIONS_PATH) wird bewusst NICHT beschnitten - Aktionen bleiben
 # ueber Jahre erhalten, um sie spaeter auswerten zu koennen. Nur die Gerätesteuerung-Anzeige zeigt
 # ein begrenztes Fenster, damit die Liste nicht endlos waechst.
@@ -1954,10 +2036,10 @@ def readDashboardChartData():
                 soc_b.append(_safe_float(row.get("SOC_B")))
                 soc_ev.append(_safe_float(row.get("SOC_EV")))
                 # Beta-Vergleich "mit Shyft" vs. Base Case (siehe base_case.compute_base_case):
-                # Kosten je Stunde = profits_net_opt; Brutto-Verbrauch = Geraetelast (X_sum) +
-                # Batterieladung (B_sum_in_45), gleiche Definition wie PowerUsageBaseList.
+                # Kosten je Stunde = profits_net_opt; Verbrauch = Geraetelast (X_sum), ohne
+                # Batterieladung, gleiche Definition wie PowerUsageBaseList.
                 opt_cost.append(_safe_float(row.get("profits_net_opt")))
-                opt_usage.append(_safe_float(row.get("X_sum")) + _safe_float(row.get("B_sum_in_45")))
+                opt_usage.append(_safe_float(row.get("X_sum")))
                 # Netzsaldo (GR_sum: positiv = Bezug, negativ = Einspeisung) - Netz-Linie "Netzbezug/Einspeisung" im Strompreis-Chart
                 opt_grid_import.append(_safe_float(row.get("GR_sum")))
         except Exception as e:
@@ -2089,6 +2171,24 @@ def _local_day_offset(hour_start_utc):
     return (hour_local_date - today_local).days
 
 
+def _opt_ev_end_kwh(input_csv, output_csv):
+    """Ladestand des E-Autos (kWh) nach der letzten Stunde im Optimierer-Plan - Ziel fuer den Base Case (siehe
+    base_case.compute_base_case, ev_end_target_kwh): beide Szenarien muessen am Ende denselben Ladestand haben, sonst
+    stehen die Netzkosten eines Optimierers, der das Auto fuer p_min auffuellt, gegen einen Base Case, der es leer
+    zuruecklaesst. None, wenn nicht berechenbar (kein Output, kein Auto)."""
+    if not input_csv or not output_csv:
+        return None
+    try:
+        input_rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
+        output_rows = list(csv.DictReader(io.StringIO(output_csv)))
+        terms = _opt_end_value_terms(input_rows, output_rows)
+        end_kwh = (terms or {}).get("soc_ev_kwh_end")
+        return end_kwh if end_kwh is not None and end_kwh > 0 else None
+    except Exception as e:
+        print("[Shyft] Optimierer-Endstand des E-Autos nicht berechenbar:", repr(e))
+        return None
+
+
 def _opt_end_value_terms(input_rows, output_rows):
     """Debug-Gegenstueck zu base_case "endValue": Endzustaende des OPTIMIERERS nach der letzten Stunde
     samt der Endbedingungen aus run_SHEMS.jl. Der Julia-Output enthaelt nur die Zustaende zu Beginn jeder
@@ -2146,58 +2246,60 @@ def _series_day_split(values, start):
     return {"total": round(total, 4), "today": round(today, 4), "tomorrow": round(tomorrow, 4)}
 
 
-def _compute_einsatzplan_kpis(rows, pv_values):
-    """Reine Kennzahlen-Berechnung fuer eine beliebige Teilmenge von output_csv-Zeilen (+
-    zugehoerige PV-Erzeugung aus input_csv) - Basis sowohl fuer den vollen Zeitraum als auch fuer
-    die Heute/Morgen-Aufschluesselung in _compute_einsatzplan_summary. X_sum/GR_sum/costs_opt/
-    profits_opt sind Pro-Stunde-Spalten in output_csv (siehe OptimizerOutputHeader.java).
+def _plan_hour_energy(row, pv_value):
+    """Eine Plan-Stunde (output_csv-Zeile) als Energie-/Geldfluesse fuer _compute_einsatzplan_kpis. Fehlen die PV-Fluss-Spalten
+    (aeltere Laeufe), gilt als PV-Nutzung die Prognose pv_value, davon wird der nicht im Haus verbrauchte Teil als eingespeist gezaehlt."""
+    usage = _safe_float(row.get("X_sum"))
+    purchased = max(0.0, _safe_float(row.get("GR_sum")))
+    if row.get("PV_sum_44") not in (None, "") and row.get("PV_GR") not in (None, ""):
+        pv_used = _safe_float(row.get("PV_sum_44"))
+        pv_fed = max(0.0, _safe_float(row.get("PV_GR")))
+    else:
+        pv_used = pv_value
+        pv_fed = pv_used - max(0.0, min(usage - purchased, pv_used))
+    return {"usage": usage, "purchased": purchased, "cost": _safe_float(row.get("costs_opt")),
+            "revenue": _safe_float(row.get("profits_opt")), "pv_used": pv_used, "pv_fed": pv_fed}
+
+
+def _compute_einsatzplan_kpis(hours):
+    """Kennzahlen fuer eine Liste von Stunden (siehe _plan_hour_energy / _actual_hour_flows: je Stunde usage, purchased, cost, revenue,
+    pv_used, pv_fed; cost/revenue/pv_fed duerfen None sein, wenn nicht ermittelbar) - Basis der Heute/Morgen-Kacheln in
+    _compute_einsatzplan_summary. Plan-Stunden stammen aus output_csv (X_sum/GR_sum/costs_opt/profits_opt sind Pro-Stunde-Spalten, siehe
+    OptimizerOutputHeader.java), vergangene Stunden aus den gemessenen Ist-Werten.
 
     GR_sum ist laut Optimierer (run_SHEMS.jl: "net load / feed in from / to the grid") ein NETTO-
     Wert und wird in Stunden mit Netzeinspeisung negativ. Fuer ø Netzstrom UND Autarkie wird jede
     Stunde mit Einspeisung (negativer GR_sum) auf 0 gesetzt, d.h. Einspeisung wird gar nicht
     beruecksichtigt und nicht gegen Bezug gegengerechnet (Nutzer-Vorgabe):
-      - Stromverbrauch (kWh) = Summe(X_sum)
+      - Stromverbrauch (kWh) = Summe(Verbrauch)
       - o Netzstrom (Cent/kWh): NUR tatsaechlich eingekaufter (positiver) Netzstrom zaehlt -
         eingespeister Strom wird fuer diese Kennzahl ignoriert (nicht gegengerechnet), pro Stunde
         bei 0 gekappt. "-" wenn gar keine Energie eingekauft wurde (z.B. 100% Autarkie).
-      - Autarkie (%) = (Summe(X_sum) - Summe(eingekaufter Netzenergie)) / Summe(X_sum) * 100 -
-        eingekaufte Netzenergie = GR_sum pro Stunde bei 0 gekappt (Einspeisung ignoriert). Dadurch
+      - Autarkie (%) = (Summe(Verbrauch) - Summe(eingekaufter Netzenergie)) / Summe(Verbrauch) * 100 -
+        eingekaufte Netzenergie pro Stunde bei 0 gekappt (Einspeisung ignoriert). Dadurch
         von Natur aus zwischen 0% und 100%: kein Deckel noetig, aber Netzladen des Hausspeichers
         kann die Kennzahl bis auf 0% druecken (dessen Bezug steckt in GR_sum, nicht in X_sum).
-      - Eigenverbrauch (%) = (1 - Summe(PV_GR) / Summe(PV_sum_44)) * 100 - die uebliche Eigenverbrauchsquote:
-        der Anteil der tatsaechlich genutzten PV-Erzeugung, der NICHT ins Netz eingespeist wird (PV_GR =
-        PV -> Netz, PV_sum_44 = alle PV-Fluesse: Haus, Batterie, Waermepumpe, Zusatzgeraet, Auto, Netz).
-        PV, die in die Batterie geladen wird, zaehlt damit sofort als Eigenverbrauch. Die frueher genutzte
-        Formel (Verbrauch - Netzbezug) / PV-Prognose wertete eingespeicherte PV erst bei der spaeteren
-        Entladung und zog Netzladen der Batterie ab - sie lag dadurch oft deutlich zu niedrig. Fehlen die
-        beiden Spalten (aeltere Laeufe), gilt weiterhin die alte Formel.
-      - Stromertrag (EUR) = Summe(profits_opt) - der Verguetungserloes aus Netzeinspeisung, direkt
-        vom Optimierer berechnet (separate Spalte, nicht aus GR_sum abgeleitet)."""
-    if not rows:
+      - Eigenverbrauch (%) = (1 - Summe(PV -> Netz) / Summe(PV-Nutzung)) * 100 - die uebliche Eigenverbrauchsquote:
+        der Anteil der tatsaechlich genutzten PV-Erzeugung, der NICHT ins Netz eingespeist wird (Plan: PV_GR bzw.
+        PV_sum_44 = alle PV-Fluesse: Haus, Batterie, Waermepumpe, Zusatzgeraet, Auto, Netz; Ist: Einspeisung gedeckelt auf die
+        PV-Erzeugung der Stunde). PV, die in die Batterie geladen wird, zaehlt damit sofort als Eigenverbrauch.
+      - Stromertrag (EUR) = Summe(Einspeiseerloes) - der Verguetungserloes aus Netzeinspeisung, im Plan direkt
+        vom Optimierer berechnet (profits_opt), im Ist Einspeisung mal Einspeisepreis der Stunde."""
+    if not hours:
         return {"stromverbrauch_kwh": None, "netzstrom_preis_cent": None, "autarkie_pct": None,
                 "eigenverbrauch_pct": None, "stromertrag_eur": None}
 
-    def _sum_column(name, clamp_non_negative=False):
-        total = 0.0
-        for row in rows:
-            try:
-                value = _safe_float(row.get(name))
-            except (TypeError, ValueError):
-                continue
-            if clamp_non_negative:
-                value = max(0.0, value)
-            total += value
-        return total
-
-    x_sum = _sum_column("X_sum")
-    gr_purchased_sum = _sum_column("GR_sum", clamp_non_negative=True)
-    costs_opt_sum = _sum_column("costs_opt")
-    profits_opt_sum = _sum_column("profits_opt")
-    pv_sum = sum(pv_values)
+    x_sum = sum(h["usage"] for h in hours)
+    gr_purchased_sum = sum(h["purchased"] for h in hours)
+    priced = [h for h in hours if h["cost"] is not None]
+    priced_purchased_sum = sum(h["purchased"] for h in priced)
+    costs_sum = sum(h["cost"] for h in priced)
+    profits_sum = sum(h["revenue"] for h in hours if h["revenue"] is not None)
+    with_pv = [h for h in hours if h["pv_fed"] is not None]
 
     netzstrom_preis_cent = None
-    if gr_purchased_sum > EINSATZPLAN_ZERO_THRESHOLD:
-        netzstrom_preis_cent = round(costs_opt_sum / gr_purchased_sum * 100, 1)
+    if priced_purchased_sum > EINSATZPLAN_ZERO_THRESHOLD:
+        netzstrom_preis_cent = round(costs_sum / priced_purchased_sum * 100, 1)
 
     autarkie_pct = None
     if x_sum > EINSATZPLAN_ZERO_THRESHOLD:
@@ -2207,65 +2309,166 @@ def _compute_einsatzplan_kpis(rows, pv_values):
     # sondern eindeutig 0% Eigenverbrauch (von nichts kann nichts selbst verbraucht worden sein) -
     # deshalb 0 statt None/"-".
     eigenverbrauch_pct = 0
-    has_pv_flow_columns = any(row.get("PV_sum_44") not in (None, "") and row.get("PV_GR") not in (None, "") for row in rows)
-    if has_pv_flow_columns:
-        pv_used_sum = _sum_column("PV_sum_44")
-        if pv_used_sum > EINSATZPLAN_ZERO_THRESHOLD:
-            pv_fed_in_sum = _sum_column("PV_GR", clamp_non_negative=True)
-            eigenverbrauch_pct = round(max(0.0, min(100.0, (1 - pv_fed_in_sum / pv_used_sum) * 100)))
-    elif pv_sum > EINSATZPLAN_ZERO_THRESHOLD:
-        self_consumed = max(0.0, min(x_sum - gr_purchased_sum, pv_sum))
-        eigenverbrauch_pct = round(max(0.0, min(100.0, self_consumed / pv_sum * 100)))
+    pv_used_sum = sum(h["pv_used"] for h in with_pv)
+    if pv_used_sum > EINSATZPLAN_ZERO_THRESHOLD:
+        pv_fed_in_sum = sum(h["pv_fed"] for h in with_pv)
+        eigenverbrauch_pct = round(max(0.0, min(100.0, (1 - pv_fed_in_sum / pv_used_sum) * 100)))
 
     return {
         "stromverbrauch_kwh": round(x_sum, 1),
         "netzstrom_preis_cent": netzstrom_preis_cent,
         "autarkie_pct": autarkie_pct,
         "eigenverbrauch_pct": eigenverbrauch_pct,
-        "stromertrag_eur": round(profits_opt_sum, 2),
+        "stromertrag_eur": round(profits_sum, 2),
     }
 
 
-def _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, start):
-    """Fasst den aktuellen Optimierungslauf (output_csv) zur "Einsatzplan"-Karte im Dashboard-Tab
-    zusammen: die vier Kennzahlen (siehe _compute_einsatzplan_kpis) ueber die volle Laufzeit des
-    Optimizer-Runs (Anzahl output_csv-Zeilen), UND zusaetzlich getrennt fuer "heute" (restliche
-    Stunden inkl. der gerade laufenden) und "morgen" (jeweils in der lokalen Zeitzone) - "übermorgen"
-    wird bewusst nicht ausgewiesen, da der Zeitraum dafuer nie vollstaendig abgedeckt ist. Gibt None
-    zurueck (Karte bleibt im Frontend verborgen), wenn output_csv (noch) leer ist.
+# Gemessene Energie vergangener Stunden (nie wieder veraenderlich, sobald die Stunde um ist) - je hour_key (Abrufzeit, Ergebnis); ein
+# Ergebnis None (Sensordaten fehlen) wird nach EINSATZPLAN_ACTUAL_RETRY_SECONDS erneut versucht.
+_einsatzplan_actual_cache = {}
+EINSATZPLAN_ACTUAL_RETRY_SECONDS = 600
 
-    Der Lauf beginnt an der Stunde seiner Erstellung; ist er schon ein paar Stunden alt, sind die ersten
-    Zeilen laengst Vergangenheit. Die Kennzahlen zaehlen deshalb nur noch die Stunden ab der aktuellen
-    Stunde (inkl. der laufenden), und "hours" ist genau diese verbleibende Stundenzahl (nicht mehr pauschal
-    die 48 h des Optimierungszeitraums) - das Frontend nennt sie im Text der Karte."""
-    elapsed = max(0, int((_hour_floor(datetime.now(timezone.utc)) - start).total_seconds() // 3600))
-    if elapsed:
-        output_rows = output_rows[elapsed:]
-        pv_generation = pv_generation[elapsed:]
-        start = start + timedelta(hours=elapsed)
-    hours = len(output_rows)
-    if hours == 0:
+
+def _actual_hour_energy(hour_start_utc, archive_by_hour, pv_by_hour):
+    """Gemessene Energie einer abgeschlossenen Stunde: Verbrauch, Netzbezug/-einspeisung und PV-Erzeugung (alles kWh). Quelle ist das
+    Energie-Archiv (siehe finalize_completed_hour_periodically/record_pv_forecast_accuracy); fehlt dort etwas (Stunde nie archiviert),
+    wird es aus der Home-Assistant-Historie berechnet. None, wenn Verbrauch oder Netzbezug/-einspeisung nicht ermittelbar sind."""
+    key = energy_archive.hour_key(hour_start_utc)
+    cached = _einsatzplan_actual_cache.get(key)
+    if cached is not None and (cached[1] is not None or time.time() - cached[0] < EINSATZPLAN_ACTUAL_RETRY_SECONDS):
+        return cached[1]
+    row = archive_by_hour.get(key) or {}
+    usage, imp, exp = row.get("actual_usage_kwh"), row.get("actual_import_kwh"), row.get("actual_export_kwh")
+    pv = (pv_by_hour.get(key) or {}).get("actual_kw")
+    end = hour_start_utc + timedelta(hours=1)
+    if usage is None:
+        usage = _household_usage_kwh(hour_start_utc, end)
+    if imp is None or exp is None:
+        imp, exp = _grid_import_export_kwh(hour_start_utc, end)
+    if pv is None:
+        pv = _sensor_history_kwh("photovoltaic_powerflow_pv", hour_start_utc, end)[0]
+    result = None
+    if usage is not None and imp is not None and exp is not None:
+        result = {"usage": usage, "import": imp, "export": exp, "pv": pv}
+    _einsatzplan_actual_cache[key] = (time.time(), result)
+    return result
+
+
+def _price_sell_hourly(config, base_utc, hours):
+    "Einspeisepreis (EUR/kWh) je Stunde ab base_utc gemaess Einspeise-Modus der Konfiguration (siehe sync_site_data); None, wenn nicht ermittelbar."
+    mode = electricity_sell_mode(config)
+    if mode == ELECTRICITY_SELL_MODE_NONE:
+        return [0.0] * hours
+    if mode == ELECTRICITY_SELL_MODE_DIRECT_MARKETING:
+        return compute_price_sell_array(config, base_utc, hours)
+    try:
+        sell_cent = config.get("electricitySellCent")
+        return [float(sell_cent) / 100.0] * hours if sell_cent not in (None, "") else None
+    except (TypeError, ValueError):
         return None
 
-    full = _compute_einsatzplan_kpis(output_rows, pv_generation[:hours])
 
-    heute_rows, heute_pv, morgen_rows, morgen_pv = [], [], [], []
-    for i, row in enumerate(output_rows):
-        offset = _local_day_offset(start + timedelta(hours=i))
-        pv_value = pv_generation[i] if i < len(pv_generation) else 0.0
+def _local_day_hours(day_offset):
+    "Anzahl Stunden des lokalen Kalendertags (heute + day_offset) - 24, an Zeitumstellungen 23 bzw. 25."
+    tz = get_ha_timezone()
+    day = _local_now().date() + timedelta(days=day_offset)
+    next_day = day + timedelta(days=1)
+    day_start = datetime(day.year, day.month, day.day, tzinfo=tz)
+    day_end = datetime(next_day.year, next_day.month, next_day.day, tzinfo=tz)
+    return round((day_end.astimezone(timezone.utc) - day_start.astimezone(timezone.utc)).total_seconds() / 3600)
+
+
+def _actual_hour_flows(hours_utc, midnight_utc, config):
+    """Ist-Stunden fuer _compute_einsatzplan_kpis: {hour_start_utc: {usage, purchased, cost, revenue, pv_used, pv_fed}}. cost/revenue aus
+    Netzbezug/-einspeisung mal Strom-/Einspeisepreis der Stunde (None, wenn der Preis fehlt); Stunden ohne ermittelbare Messwerte fehlen."""
+    if not hours_utc or is_demo_mode():
+        return {}
+    first_key, end_key = energy_archive.hour_key(hours_utc[0]), energy_archive.hour_key(hours_utc[-1] + timedelta(hours=1))
+    archive_by_hour, pv_by_hour = {}, {}
+    try:
+        archive_by_hour = {r["period"]: r for r in energy_archive.query_summary("hourly", first_key, end_key)}
+        pv_by_hour = {r["hour_start_utc"]: r for r in energy_archive.query_pv_hours(first_key)}
+    except Exception as e:
+        print("[Shyft] Einsatzplan: Energie-Archiv konnte nicht gelesen werden:", repr(e))
+    count = int((hours_utc[-1] - midnight_utc).total_seconds() // 3600) + 1
+    try:
+        buy = compute_price_buy_array(config, midnight_utc, count)
+        sell = _price_sell_hourly(config, midnight_utc, count)
+    except Exception as e:
+        print("[Shyft] Einsatzplan: Preise vergangener Stunden nicht ermittelbar:", repr(e))
+        buy = sell = None
+    result = {}
+    for hour in hours_utc:
+        energy = _actual_hour_energy(hour, archive_by_hour, pv_by_hour)
+        if energy is None:
+            continue
+        idx = int((hour - midnight_utc).total_seconds() // 3600)
+        buy_price = buy[idx] if buy and idx < len(buy) else None
+        sell_price = sell[idx] if sell and idx < len(sell) else None
+        pv = energy["pv"]
+        result[hour] = {
+            "usage": energy["usage"], "purchased": energy["import"],
+            "cost": None if buy_price is None else energy["import"] * buy_price,
+            "revenue": None if sell_price is None else energy["export"] * sell_price,
+            "pv_used": pv or 0.0, "pv_fed": None if pv is None else min(energy["export"], pv),
+        }
+    return result
+
+
+def _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, start):
+    """Fasst Ist und Plan zur "Einsatzplan"-Karte im Dashboard-Tab zusammen: Kennzahlen (siehe _compute_einsatzplan_kpis) fuer "heute" und
+    "morgen" (jeweils die vollen 24 Stunden der lokalen Zeitzone). "Heute" besteht aus den Ist-Werten der bereits abgeschlossenen Stunden
+    (siehe _actual_hour_flows) und ab der laufenden Stunde aus dem Plan des letzten Optimierungslaufs (output_csv); "morgen" komplett aus dem
+    Plan und fehlt (None), wenn der Plan nicht den ganzen Tag abdeckt. Deckt der Plan den heutigen Tag nicht bis zum Ende ab, reicht "heute"
+    nur bis zum Planende - "heute_bis_hour" ist dann die (lokale) Stunde, bis zu der gerechnet wurde (sonst None). Gibt None zurueck (Karte
+    bleibt im Frontend verborgen), wenn der Plan keine Stunde ab jetzt enthaelt.
+
+    Der Lauf beginnt an der Stunde seiner Erstellung; ist er schon ein paar Stunden alt, sind die ersten Zeilen laengst Vergangenheit. Als
+    Plan zaehlen deshalb nur die Stunden ab der aktuellen Stunde (inkl. der laufenden); "hours" ist genau diese verbleibende Stundenzahl.
+    Fuer eine vergangene Stunde ohne ermittelbare Messwerte springt der damalige Plan-Wert ein (soweit der Lauf so weit zurueckreicht)."""
+    now_hour = _hour_floor(datetime.now(timezone.utc))
+    elapsed = max(0, int((now_hour - start).total_seconds() // 3600))
+    plan_rows = output_rows[elapsed:]
+    hours = len(plan_rows)
+    if hours == 0:
+        return None
+    plan_start = start + timedelta(hours=elapsed)
+
+    midnight_utc = _hour_floor(_local_now().replace(hour=0)).astimezone(timezone.utc)
+    past_hours_utc = [midnight_utc + timedelta(hours=i) for i in range(max(0, int((now_hour - midnight_utc).total_seconds() // 3600)))]
+    actual = _actual_hour_flows(past_hours_utc, midnight_utc, _read_current_config())
+
+    heute, morgen = [], []
+    for hour in past_hours_utc:
+        if hour in actual:
+            heute.append(actual[hour])
+            continue
+        idx = int((hour - start).total_seconds() // 3600)
+        if 0 <= idx < len(output_rows):
+            heute.append(_plan_hour_energy(output_rows[idx], pv_generation[idx] if idx < len(pv_generation) else 0.0))
+    heute_plan_hours = 0
+    last_heute_hour = None
+    for i, row in enumerate(plan_rows):
+        hour = plan_start + timedelta(hours=i)
+        offset = _local_day_offset(hour)
+        pv_index = elapsed + i
+        flows = _plan_hour_energy(row, pv_generation[pv_index] if pv_index < len(pv_generation) else 0.0)
         if offset == 0:
-            heute_rows.append(row)
-            heute_pv.append(pv_value)
+            heute.append(flows)
+            heute_plan_hours += 1
+            last_heute_hour = hour
         elif offset == 1:
-            morgen_rows.append(row)
-            morgen_pv.append(pv_value)
+            morgen.append(flows)
 
+    heute_bis_hour = None
+    if heute_plan_hours < _local_day_hours(0) - len(past_hours_utc) and last_heute_hour is not None:
+        heute_bis_hour = (last_heute_hour + timedelta(hours=1)).astimezone(get_ha_timezone()).hour
     return {
         "creation_date": creation_date_ms,
         "hours": hours,
-        **full,
-        "heute": _compute_einsatzplan_kpis(heute_rows, heute_pv),
-        "morgen": _compute_einsatzplan_kpis(morgen_rows, morgen_pv),
+        "heute": _compute_einsatzplan_kpis(heute),
+        "heute_bis_hour": heute_bis_hour,
+        "morgen": _compute_einsatzplan_kpis(morgen) if len(morgen) >= _local_day_hours(1) else None,
     }
 
 
@@ -3813,7 +4016,7 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
         try:
             soc_factor = car_soc_connect_factor(homeassistant_adapter.read_entity_numeric_value(soc_entity_id))
         except Exception as e:
-            print("[Shyft] Anwesenheitsprognose: Akkustand konnte nicht gelesen werden:", repr(e))
+            _print_throttled("anwesenheit_akkustand", "[Shyft] Anwesenheitsprognose: Akkustand konnte nicht gelesen werden: " + repr(e))
 
     start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     labels = [(start + timedelta(hours=i)).isoformat() for i in range(hours)]
@@ -4309,6 +4512,18 @@ def _sonstiger_verbraucher_status(config):
     }
 
 
+def _round_half_up(value):
+    "Kaufmaennisch auf eine ganze Zahl runden (x,5 -> weg von 0, z.B. 20,5 -> 21, 22,5 -> 23). Pythons round() rundet x,5 dagegen auf die gerade Zahl (22,5 -> 22)."
+    return int(decimal.Decimal(str(float(value))).quantize(decimal.Decimal("1"), rounding=decimal.ROUND_HALF_UP))
+
+
+def _round_target_for_device(control, target_value):
+    "Rundet den Zielwert kaufmaennisch ganzzahlig, wenn die Steuerung nur ganze Werte an das Geraet senden darf (round_to_integer)."
+    if control.get("round_to_integer") and target_value is not None:
+        return _round_half_up(target_value)
+    return target_value
+
+
 def execute_auto_managed_action(control_key, phase, target_value):
     """Executes the concrete Start/Ende-Verhalten for an AUTO_MANAGED_CONTROLS Aktionstyp - either
     "direct" (the addon writes the mapped entity itself, the original/default behavior) or
@@ -4319,6 +4534,7 @@ def execute_auto_managed_action(control_key, phase, target_value):
     config = _read_current_config()
     control = AUTO_MANAGED_CONTROLS[control_key]
     variant = resolve_control_variant(control_key, config)
+    target_value = _round_target_for_device(control, target_value)
 
     if variant == "ha_automation":
         actor_mappings = config.get("actorMappings", {})
@@ -5132,6 +5348,13 @@ def _read_mapped_bool_on(config, sensor_key, anything_but_off=False):
     raw = _read_mapped_raw_state(config, sensor_key)
     if raw is None:
         return None
+    entity_id = mapped_entity_id(config, sensor_key)
+    if entity_id.split(".")[0] in HEATING_ROD_VALUE_DOMAINS:
+        # Value-Entitaet (z.B. Heizstab-"Leistungsvorgabe"): an = Wert groesser 0
+        try:
+            return float(raw) > 0
+        except ValueError:
+            return None
     if anything_but_off:
         return raw.lower() != "off"
     return raw.lower() == "on"
@@ -6231,10 +6454,72 @@ def _heating_rod_entity(config):
     return (config.get("sensorMappings", {}) or {}).get(HEATING_ROD_SWITCH_SENSOR_FIELD, "") or ""
 
 
-def _set_heating_rod_and_verify(entity_id, on, retry_timeout_seconds, detail=None):
+HEATING_ROD_VALUE_DOMAINS = ("number", "input_number")
+
+
+def _heating_rod_value_for_entity(entity_id, config):
+    """Zielwert fuer "Heizstab an" bei einer Value-Entitaet (z.B. askoheat "Leistungsvorgabe"): die max. Leistung des Heizstabs
+    in der Einheit der Entitaet (kW -> kW, W bzw. ohne Einheit -> W). None, wenn keine Leistung hinterlegt ist."""
+    kw = heating_rod_power_kw(config)
+    if not kw:
+        return None
+    try:
+        unit = str(homeassistant_adapter.load_entity_state(entity_id).unit or "").strip().lower()
+    except Exception:
+        unit = ""
+    value = kw if unit == "kw" else kw * 1000.0
+    return round(value, 3)
+
+
+def _set_heating_rod_value_and_verify(entity_id, on, config, retry_timeout_seconds, detail=None):
+    "Wie _set_heating_rod_and_verify, aber fuer eine number-/input_number-Entitaet: an = max. Leistung des Heizstabs, aus = 0."
+    target = _heating_rod_value_for_entity(entity_id, config) if on else 0
+    if target is None:
+        if detail is not None:
+            detail["reason"] = "Keine „Heizstab, max. Leistung“ hinterlegt - sie wird als Wert an die Entität übergeben"
+        test_log(detail["reason"] if detail is not None else "Keine max. Leistung hinterlegt", "error")
+        return False
+    domain = entity_id.split(".")[0]
+    deadline = time.time() + retry_timeout_seconds
+    attempt = 0
+    last_error = None
+    last_state = None
+    state_log = _TestStateLog(f"Zustand von {entity_id}", target)
+    while True:
+        attempt += 1
+        test_log(f"Schreibe {target} auf {entity_id} (Versuch {attempt}) …")
+        try:
+            homeassistant_adapter.call_service(domain, "set_value", {"entity_id": entity_id, "value": target})
+            last_error = None
+        except Exception as e:
+            test_log(f"Home Assistant meldet beim Schreiben einen Fehler: {e}", "error")
+            last_error = str(e)
+            print(f"[Shyft] Heizstab: {domain}.set_value auf '{entity_id}' fehlgeschlagen (Versuch {attempt}):", repr(e))
+        try:
+            last_state = homeassistant_adapter.load_entity_state(entity_id).state
+            state_log(last_state)
+            if abs(float(last_state) - float(target)) < 1e-6:
+                test_log(f"{entity_id} hat den Wert {target} übernommen.", "ok")
+                return True
+        except Exception as e:
+            print(f"[Shyft] Heizstab: Status von '{entity_id}' nicht lesbar (Versuch {attempt}):", repr(e))
+        if time.time() >= deadline:
+            reason = _dhw_write_failure_reason(entity_id, last_error, last_state)
+            if detail is not None:
+                detail["reason"] = reason
+            test_log(f"Wert nicht übernommen: {reason}", "error")
+            return False
+        test_sleep(HEATING_ROD_RETRY_DELAY_SECONDS)
+
+
+def _set_heating_rod_and_verify(entity_id, on, retry_timeout_seconds, detail=None, config=None):
     """Schaltet die Heizstab-Entitaet an/aus (homeassistant.turn_on/turn_off, funktioniert fuer switch/input_boolean/...)
     und prueft per Live-Status, ob sie den Zustand uebernommen hat - Retry alle HEATING_ROD_RETRY_DELAY_SECONDS bis
-    retry_timeout_seconds. True bei Erfolg; sonst False und detail['reason'] mit einem Klartext."""
+    retry_timeout_seconds. Ist die Entitaet eine number-/input_number-Entitaet (Value-Sensor, z.B. askoheat "Leistungsvorgabe"),
+    wird stattdessen die max. Leistung (an) bzw. 0 (aus) geschrieben. True bei Erfolg; sonst False und detail['reason'] mit einem Klartext."""
+    if entity_id.split(".")[0] in HEATING_ROD_VALUE_DOMAINS:
+        return _set_heating_rod_value_and_verify(entity_id, on, config if config is not None else _read_current_config(),
+                                                 retry_timeout_seconds, detail)
     service = "turn_on" if on else "turn_off"
     expected = "on" if on else "off"
     word = "eingeschaltet" if on else "ausgeschaltet"
@@ -6283,7 +6568,7 @@ def execute_heating_rod(on, config, retry_timeout_seconds=HEATING_ROD_RETRY_TIME
     if not entity_id:
         raise Exception("Keine Entität zum Ein-/Ausschalten des Heizstabs zugeordnet")
     detail = {}
-    if not _set_heating_rod_and_verify(entity_id, on, retry_timeout_seconds, detail):
+    if not _set_heating_rod_and_verify(entity_id, on, retry_timeout_seconds, detail, config):
         raise Exception(f"Der Heizstab konnte nicht {'eingeschaltet' if on else 'ausgeschaltet'} werden ({detail.get('reason', 'Ursache unbekannt')})")
 
 
@@ -6442,8 +6727,18 @@ def _record_action_test_result(ready_key, ok):
         _write_current_config(cfg)
         if ok:
             _clear_not_ready_problem(ready_key)
+            # Erstes erfolgreich getestetes steuerbares Geraet beendet den Demomodus (Konto anlegen).
+            # Im Hintergrund, damit die Testantwort nicht auf Bubble wartet.
+            threading.Thread(target=_create_account_after_test, args=(ready_key,), daemon=True).start()
     except Exception as e:
         print("[Shyft] actionTestPassed konnte nicht aktualisiert werden:", repr(e))
+
+
+def _create_account_after_test(ready_key):
+    try:
+        maybe_create_real_account(ready_key)
+    except Exception as e:
+        print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
 
 
 def _clear_not_ready_problem(ready_key):
@@ -6568,7 +6863,7 @@ def testHeatingRod():
     status_entity_id = config.get("sensorMappings", {}).get("heatpump_dhw_on_off", "")
     try:
         test_log("Schritt 1/3: Heizstab einschalten …")
-        switch_on_ok = _set_heating_rod_and_verify(entity_id, True, HEATING_ROD_TEST_TIMEOUT_SECONDS, detail)
+        switch_on_ok = _set_heating_rod_and_verify(entity_id, True, HEATING_ROD_TEST_TIMEOUT_SECONDS, detail, config)
         if switch_on_ok:
             if not status_entity_id:
                 status_confirmed = True
@@ -6594,11 +6889,15 @@ def testHeatingRod():
 
     revert_ok = True
     with _test_uninterruptible():
-        if original_state == "on":
+        try:
+            was_on = original_state == "on" or (entity_id.split(".")[0] in HEATING_ROD_VALUE_DOMAINS and float(original_state) > 0)
+        except ValueError:
+            was_on = False
+        if was_on:
             test_log("Schritt 3/3: Der Heizstab war vor dem Test an – lasse ihn an.")
         else:
             test_log("Schritt 3/3: Schalte den Heizstab wieder aus …")
-            revert_ok = _set_heating_rod_and_verify(entity_id, False, HEATING_ROD_RETRY_TIMEOUT_SECONDS)
+            revert_ok = _set_heating_rod_and_verify(entity_id, False, HEATING_ROD_RETRY_TIMEOUT_SECONDS, config=config)
             if not revert_ok:
                 test_log("Der Heizstab konnte nicht wieder ausgeschaltet werden – bitte in Home Assistant prüfen.", "error")
 
@@ -7082,6 +7381,7 @@ def writeConfig():
     # merge onto the existing config instead of replacing it outright, so backend-managed
     # fields the frontend doesn't know about (startedShyftActionIds, endedShyftActionIds) survive
     data = _read_current_config()
+    config_before_put = json.loads(json.dumps(data))
     _keep_valid_entity_ids(incoming, data)
     old_action_type_enabled = data.get("actionTypeEnabled", {})
     old_wallbox_mapping = data.get("wallboxConnectionStatusMapping", {})
@@ -7121,6 +7421,9 @@ def writeConfig():
             print("[Shyft] Sofort-Abgleich nach Toggle-Aenderung fehlgeschlagen:", repr(e))
 
     _write_current_config(data)
+
+    if data != config_before_put and not is_demo_mode():
+        schedule_optimization_after_config_change()
 
     # Ein neu zugeordneter/entfernter Sensor macht ein evtl. noch offenes "sensor_unavailable"- bzw.
     # "sensor_stale"-Problem fuer die alte Entity gegenstandslos - aktiv freigeben, statt auf ein
@@ -7164,11 +7467,6 @@ def writeConfig():
             maybe_detect_battery_flow_sign_convention()
         except Exception as e:
             print("[Shyft] Batterie-Vorzeichen-Erkennung fehlgeschlagen:", repr(e))
-
-    try:
-        maybe_create_real_account(data.get("integrationMappings", {}))
-    except Exception as e:
-        print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
 
     # Speichern der Zuordnung kann das Problem beheben (oder ausloesen) - nicht bis zum naechsten stuendlichen
     # Sync warten. Im Hintergrund, die Neubewertung liest alle Sensoren aus Home Assistant.
@@ -7289,6 +7587,7 @@ def _write_and_verify_auto_managed_number(control_key, entity_id, target_value, 
     Frist, "timeout" wenn der Wert nicht rechtzeitig uebernommen wurde, "call_failed" wenn schon der Skriptaufruf
     selbst fehlschlug (detail = Ursache aus dem HA-Log) - dann wurde nichts an das Geraet gesendet."""
     control = AUTO_MANAGED_CONTROLS[control_key]
+    target_value = _round_target_for_device(control, target_value)
     test_log(f"Rufe script.{control['script_id']} mit Zielwert {target_value} auf …")
     try:
         homeassistant_adapter.call_service("script", control["script_id"], {"target_value": target_value})
@@ -7423,7 +7722,7 @@ def testHeatingTargetTempBoost():
         _record_action_test_result(control_key, False)
         return jsonify({"success": False, "message": "Aktueller Wert nicht lesbar"}), 500
 
-    boosted_value = original_value + HEATING_TARGET_TEMP_TEST_STEP_C
+    boosted_value = _round_target_for_device(AUTO_MANAGED_CONTROLS[control_key], original_value + HEATING_TARGET_TEMP_TEST_STEP_C)
     session = _current_test_session()
     with _heating_test_lock:
         if _heating_test_job["state"] == "running":
@@ -7467,6 +7766,13 @@ def _test_watch_switch_states(entity_ids, expected, timeout_seconds=12, interval
         test_sleep(interval_seconds)
 
 
+def _clear_control_action_problems(control_key):
+    "Ein erfolgreicher Test einer Entitaets-/Automations-Steuerung gibt ein zuvor gemeldetes 'action_failed:<Aktion>'-Problem wieder frei - sonst blieb z.B. das rote '!' neben 'Sonstiger Verbraucher' trotz bestandenem Test stehen (wie bei Warmwasser/Batterie ueber _note_action_outcome)."
+    for label, key in ACTION_NAME_TO_CONTROL_KEY.items():
+        if key == control_key:
+            _note_action_outcome(label, "getestet", None)
+
+
 @app.route("/actions/<control_key>/test", methods=["POST"])
 @_records_action_test()
 @_with_test_session
@@ -7488,6 +7794,7 @@ def testAutoManagedControl(control_key):
                 test_log(f"Löse die Automation {automation_entity_id} aus (Zielwert {delta}) …")
                 trigger_ha_automation(automation_entity_id, "start", delta)
                 test_log("Automation ausgelöst – was sie danach tut, kann Shyft nicht prüfen.", "ok")
+                _clear_control_action_problems(control_key)
                 return jsonify({"success": True, "value": delta, "confirmed": False})
             except Exception as e:
                 test_log(f"Auslösen fehlgeschlagen: {e}", "error")
@@ -7501,6 +7808,7 @@ def testAutoManagedControl(control_key):
                 test_log(f"Löse die Automation {automation_entity_id} aus (Phase: {phase}) …")
                 trigger_ha_automation(automation_entity_id, phase, None)
                 test_log("Automation ausgelöst – was sie danach tut, kann Shyft nicht prüfen.", "ok")
+                _clear_control_action_problems(control_key)
                 return jsonify({"success": True, "value": phase, "confirmed": False})
             except Exception as e:
                 test_log(f"Auslösen fehlgeschlagen: {e}", "error")
@@ -7518,7 +7826,7 @@ def testAutoManagedControl(control_key):
         delta = body.get("delta", 0)
         try:
             current_value = homeassistant_adapter.read_entity_numeric_value(entity_id)
-            new_value = current_value + delta
+            new_value = _round_target_for_device(control, current_value + delta)
             test_log(f"Entität {entity_id}: aktueller Wert {current_value}, Zielwert {new_value}")
             test_log(f"Rufe script.{control['script_id']} mit Zielwert {new_value} auf …")
             homeassistant_adapter.call_service("script", control["script_id"], {"target_value": new_value})
@@ -7527,6 +7835,7 @@ def testAutoManagedControl(control_key):
             # cloud API) can take much longer than a second or two to actually report the new
             # value back, so we return the optimistic value immediately instead of blocking
             # here and risking showing the stale one. The frontend re-checks shortly after.
+            _clear_control_action_problems(control_key)
             return jsonify({"success": True, "value": new_value, "confirmed": False})
         except Exception as e:
             test_log(f"Fehlgeschlagen: {e}", "error")
@@ -7542,6 +7851,7 @@ def testAutoManagedControl(control_key):
             homeassistant_adapter.call_service("homeassistant", "turn_on" if turn_on else "turn_off", {"entity_id": entity_ids})
             test_log("Befehl an Home Assistant gesendet.", "ok")
             _test_watch_switch_states(entity_ids, "on" if turn_on else "off")
+            _clear_control_action_problems(control_key)
             return jsonify({"success": True, "value": "on" if turn_on else "off", "confirmed": False})
         except Exception as e:
             test_log(f"Fehlgeschlagen: {e}", "error")
@@ -8260,7 +8570,10 @@ AUTO_MANAGED_CONTROLS = {
         "script_alias": "Shyft: Heizung Soll-Temperatur",
         "field_label": "Zieltemperatur",
         "field_description": "Die von Shyft berechnete Soll-Temperatur in °C.",
-        "min": 0, "max": 100, "step": 0.5,
+        "min": 0, "max": 100, "step": 0.1,
+        # An das Geraet geht nur ein ganzzahliger Sollwert (nicht jede Integration nimmt Nachkommastellen an);
+        # die Optimierung selbst arbeitet weiter mit der konfigurierten Solltemperatur inkl. Nachkommastelle.
+        "round_to_integer": True,
     },
     "pv_feed_in_limit": {
         "type": "number",
@@ -8688,6 +9001,8 @@ def handle_shyft_action_start(action, actions_enabled, config):
         _note_action_outcome(label, "gestartet")  # deaktiviert = kein Ausfuehrungsfehler, evtl. alten Eintrag freigeben
         action["Execution Status"] = "no, deactivated"
         action.pop("Error Message", None)
+        # An der Aktion sichtbar machen, warum am Geraet nichts passiert (sonst nur im Add-on-Log)
+        _append_action_log(action, "Steuerung deaktiviert - nur simuliert, kein Befehl ans Gerät gesendet.")
         _update_computed_action(action)
         notify_action_event(config, action, "gestartet (nur simuliert)")
         return
@@ -9678,8 +9993,10 @@ HEIZUNG_TARGET_MAX_C = 25
 
 
 def _heizung_default_temp(config):
-    "Standard-Temperatur der Heizung (°C, ganzzahlig): die gewuenschte Raumtemperatur (hpHeatingTargetTempMin) - darauf wird nach einer Heizungs-Aktion zurueckgestellt, Aktionen mit genau diesem Sollwert gibt es nicht."
-    return round(_safe_float(config.get("hpHeatingTargetTempMin"), HEIZUNG_T_I_MIN_DEFAULT_C))
+    """Standard-Temperatur der Heizung (°C, ganze Grad): die gewuenschte Raumtemperatur (hpHeatingTargetTempMin, darf
+    eine Nachkommastelle haben) kaufmaennisch gerundet - das ist der Sollwert, der am Geraet ankommt. Darauf wird nach
+    einer Heizungs-Aktion zurueckgestellt, Aktionen mit genau diesem Sollwert gibt es nicht."""
+    return _round_half_up(_safe_float(config.get("hpHeatingTargetTempMin"), HEIZUNG_T_I_MIN_DEFAULT_C))
 
 
 def _end_heizung_restore_default(action, config):
@@ -9722,7 +10039,7 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
         return result
 
     t_i_min = _safe_float(config.get("hpHeatingTargetTempMin"), HEIZUNG_T_I_MIN_DEFAULT_C)
-    target_min = round(t_i_min - HEIZUNG_TARGET_MIN_OFFSET_C)
+    target_min = round(t_i_min - HEIZUNG_TARGET_MIN_OFFSET_C, 1)
     default_temp = _heizung_default_temp(config)
 
     row_count = len(output_rows)
@@ -9731,7 +10048,10 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
         is_current_hour = (i == 0)
 
         t_i_target = _safe_float(output_row.get("T_i_Target"))
-        target_value = max(target_min, min(HEIZUNG_TARGET_MAX_C, round(t_i_target)))
+        # Ganze Grad, kaufmaennisch gerundet (wie der Wert, der am Geraet ankommt): so bleibt es bei wenigen, ruhigen
+        # Sollwert-Stufen, und die Aktion zeigt genau den Sollwert, der gesendet wird. Faellt der gerundete Wert auf die
+        # (ebenfalls gerundete) Standard-Temperatur, gibt es keine Aktion.
+        target_value = _round_half_up(max(target_min, min(HEIZUNG_TARGET_MAX_C, t_i_target)))
         if target_value == default_temp:
             continue  # Standard-Temperatur: keine Aktion noetig (siehe Docstring)
 
@@ -9759,7 +10079,7 @@ def compute_heizung_actions(config, output_rows, input_rows, start, optimizer_ru
             "Date End": date_end_ms,
             "Optimizer Run": optimizer_run_id,
             "Execution Status": "yes, planned" if is_action_type_enabled(config, HEIZUNG_ACTION_NAME) else "no, deactivated",
-            "Subtitle": f"Soll: {target_value} °C ({energy:.1f} kWh elektr.)",
+            "Subtitle": f"Soll: {format(target_value, 'g').replace('.', ',')} °C ({energy:.1f} kWh elektr.)",
         }
         result[i] = action
 
@@ -11033,6 +11353,17 @@ def _process_shyft_actions_unlocked():
             if action.get("Execution Status") != "no, error":
                 started_ids.add(action_id)
 
+    # Laufende Aktionen mit dem Steuerungs-Schalter abgleichen (Start/Stopp nachholen bzw. fehlgeschlagene
+    # Nachhol-Versuche wiederholen, siehe reconcile_running_actions_with_toggles).
+    config["startedShyftActionIds"] = sorted(started_ids)
+    config["endedShyftActionIds"] = sorted(ended_ids)
+    try:
+        reconcile_running_actions_with_toggles(config)
+    except Exception as e:
+        print("[Shyft] Abgleich laufender Aktionen mit den Steuerungs-Schaltern fehlgeschlagen:", repr(e))
+    started_ids = set(config.get("startedShyftActionIds", []))
+    ended_ids = set(config.get("endedShyftActionIds", []))
+
     # only keep ids that could still turn up in a future poll, so these don't grow forever
     config["startedShyftActionIds"] = sorted(started_ids & seen_ids)
     config["endedShyftActionIds"] = sorted(ended_ids & seen_ids)
@@ -11050,16 +11381,28 @@ def _process_shyft_actions_unlocked():
 def apply_action_type_toggle_changes(old_map, new_map, config):
     """Called from writeConfig when the actionTypeEnabled toggles changed. A currently running
     action of an affected Aktionstyp must be stopped/started right away instead of waiting for
-    the next scheduled poll (up to 15 min later).
+    the next scheduled poll (up to 15 min later) - see reconcile_running_actions_with_toggles.
     """
     changed_keys = [k for k in new_map if new_map.get(k, True) != old_map.get(k, True)]
-    if not changed_keys:
-        return
-
     changed_names = {ACTION_TYPE_TOGGLE_KEYS[k] for k in changed_keys if k in ACTION_TYPE_TOGGLE_KEYS}
-    if not changed_names:
-        return
+    if changed_names:
+        reconcile_running_actions_with_toggles(config, changed_names, toggled_now=True)
 
+
+# Execution Status, bei denen der Startbefehl am Geraet angekommen ist und noch kein erfolgreicher Stopp folgte
+# ("yes, not finished" = ein Stoppbefehl schlug fehl, das Geraet laeuft also vermutlich noch).
+_DEVICE_RUNNING_EXEC_STATUSES = ("yes, started", "yes, not finished")
+
+
+def reconcile_running_actions_with_toggles(config, action_names=None, toggled_now=False):
+    """Gleicht LAUFENDE Aktionen mit dem Steuerungs-Schalter ihres Aktionstyps ab (beide Richtungen):
+    - Schalter an, Aktion lief bisher nur simuliert (oder wurde per Schalter gestoppt): Startbefehl nachtraeglich senden.
+    - Schalter aus, Startbefehl war am Geraet angekommen: Stoppbefehl senden.
+    Entscheidend ist der Execution Status (was am Geraet wirklich passiert ist), NICHT startedShyftActionIds - eine
+    deaktiviert gestartete Aktion steht dort schon drin (nur simuliert), sonst wuerde sie beim Aktivieren nie gestartet.
+    Laeuft sofort nach dem Umlegen (toggled_now=True, aus writeConfig) und bei jedem Poll fuer alle Aktionstypen
+    (siehe process_shyft_actions) - so wird ein fehlgeschlagener Start/Stopp spaetestens beim naechsten Poll wiederholt.
+    Jeder Schritt landet im Log der Aktion. Schreibt die Id-Listen in config; persistieren muss der Aufrufer."""
     actions = _read_computed_actions()
     now_ms = time.time() * 1000
     started_ids = set(config.get("startedShyftActionIds", []))
@@ -11067,34 +11410,74 @@ def apply_action_type_toggle_changes(old_map, new_map, config):
 
     for action in actions:
         action_name = action.get("Action Name")
-        if action_name not in changed_names:
+        if action_name not in ACTION_NAME_TO_ACTOR_KEY:
             continue
-
+        if action_names is not None and action_name not in action_names:
+            continue
         action_id = action.get("_id")
         status = (action.get("Status") or "").lower()
-        is_active = status.startswith("aktiv")
         date_start = action.get("Date Start")
         date_end = action.get("Date End")
-
-        # only a currently running action needs immediate action - anything else is handled by
-        # the normal poll (a future action just picks up the new toggle state when it starts)
-        if not (is_active and date_start is not None and date_start <= now_ms):
+        # nur gerade laufende Aktionen - eine kuenftige uebernimmt den Schalter beim normalen Start im Poll
+        if not (action_id and status.startswith("aktiv") and date_start is not None and date_start <= now_ms):
             continue
         if date_end is not None and date_end <= now_ms:
             continue
+        # noch nie im Poll gestartet (z.B. Fehlerwiederholung "no, error" laeuft): das erledigt der normale Startpfad
+        if action_id not in started_ids:
+            continue
 
-        # actions_enabled=True in both branches: this whole block only runs for a type whose
-        # toggle just changed, so the newly-on type must really start and the newly-off type
-        # must really stop - neither call is "simulate only"
-        now_enabled = is_action_type_enabled(config, action_name)
-        if now_enabled and action_id and action_id not in started_ids:
+        exec_status = action.get("Execution Status")
+        device_running = exec_status in _DEVICE_RUNNING_EXEC_STATUSES
+        enabled = is_action_type_enabled(config, action_name)
+
+        if enabled and not device_running:
+            # "no, deactivated" = lief bisher nur simuliert; "no, error" = nachtraeglicher Start schlug fehl (Wiederholung).
+            # "yes, finished" nur direkt nach dem Umlegen bzw. bei offenem Nachhol-Start - im Poll koennte das auch ein
+            # regulaer vorzeitig beendeter Lauf sein (z.B. Auto voll), der nicht neu gestartet werden darf.
+            if exec_status == "yes, finished" and not (toggled_now or action.get("_toggleStartPending")):
+                continue
+            if exec_status not in ("no, deactivated", "no, error", "yes, finished"):
+                continue
+            if exec_status != "no, error":  # Wiederholungen nicht jedes Mal erneut ins Log schreiben
+                _append_action_log(action, "Steuerung aktiviert - Startbefehl wird nachträglich ans Gerät gesendet.")
+            ended_ids.discard(action_id)
             handle_shyft_action_start(action, True, config)
-            if action.get("Execution Status") != "no, error":
-                started_ids.add(action_id)
-        elif not now_enabled and action_id and action_id not in ended_ids:
+            if action.get("Execution Status") == "no, error":
+                if exec_status != "no, error":
+                    _append_action_log(action, "Nachträglicher Start fehlgeschlagen - neuer Versuch beim nächsten Poll.")
+                action["_toggleStartPending"] = True
+            else:
+                if exec_status == "no, error":
+                    _append_action_log(action, "Nachträglicher Start jetzt gelungen.")
+                action.pop("_toggleStartPending", None)
+            _update_computed_action(action)
+        elif enabled and device_running and exec_status == "yes, not finished" and toggled_now:
+            # Stopp nach dem Deaktivieren war fehlgeschlagen, jetzt wieder aktiviert: das Geraet laeuft noch - einfach weiterlaufen lassen.
+            action["Execution Status"] = "yes, started"
+            action.pop("Error Message", None)
+            ended_ids.discard(action_id)
+            _append_action_log(action, "Steuerung wieder aktiviert - Aktion läuft am Gerät weiter.")
+            _update_computed_action(action)
+        elif not enabled and device_running:
+            if exec_status == "yes, started":  # Wiederholungen nicht jedes Mal erneut ins Log schreiben
+                _append_action_log(action, "Steuerung deaktiviert - Stoppbefehl wird ans Gerät gesendet.")
             handle_shyft_action_end(action, True, config)
-            if action.get("Execution Status") != "yes, not finished":
+            if action.get("Execution Status") == "yes, not finished":
+                ended_ids.discard(action_id)
+                if exec_status == "yes, started":
+                    _append_action_log(action, "Stoppbefehl nach dem Deaktivieren fehlgeschlagen - neuer Versuch beim nächsten Poll.")
+            else:
                 ended_ids.add(action_id)
+                _append_action_log(action, "Am Gerät gestoppt, die restliche Zeit wird nur simuliert.")
+            _update_computed_action(action)
+        elif not enabled and toggled_now and exec_status == "no, error":
+            # Start schlug fehl und wird nicht mehr gebraucht: kein Fehler mehr, nur noch simuliert
+            action["Execution Status"] = "no, deactivated"
+            action.pop("Error Message", None)
+            action.pop("_toggleStartPending", None)
+            _append_action_log(action, "Steuerung deaktiviert - Aktion wird nur noch simuliert.")
+            _update_computed_action(action)
 
     config["startedShyftActionIds"] = sorted(started_ids)
     config["endedShyftActionIds"] = sorted(ended_ids)
@@ -11520,7 +11903,7 @@ def _record_energy_archive_plan_contribution(input_csv, output_csv, creation_dat
         input_row0 = input_rows[0] if input_rows else {}
         output_row0 = output_rows[0]
         hour_start = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
-        planned_usage = _safe_float(output_row0.get("X_sum")) + _safe_float(output_row0.get("B_sum_in_45"))
+        planned_usage = _safe_float(output_row0.get("X_sum"))  # ohne Batterieladung: vergleichbar mit dem Ist-Verbrauch des Haushalts
         planned_cost = _safe_float(output_row0.get("profits_net_opt"))
         base_usage_list = (base or {}).get("PowerUsageBaseList") or []
         base_cost_list = (base or {}).get("netProfitBaseList") or []
@@ -11721,7 +12104,7 @@ def update_base_load_periodically():
 
 
 def compute_base_load_array(base_utc, hours):
-    "Stündliche Grundlast (kWh je Stunde) ab base_utc für die 'hours' Stunden, siehe base_load.hourly_kwh_array - Werktag/Wochenende-Median, ersatzweise Gesamtmedian bzw. 0,5 kW."
+    "Stündliche Grundlast (kWh je Stunde) ab base_utc für die 'hours' Stunden, siehe base_load.hourly_kwh_array - Werktag/Wochenende-Mittelwert, ersatzweise Gesamtmittelwert bzw. 0,5 kW."
     return base_load.hourly_kwh_array(base_utc, hours, get_ha_timezone())
 
 
@@ -11737,6 +12120,99 @@ def finalize_completed_hour_periodically():
         energy_archive.finalize_hour(energy_archive.hour_key(hour_start), hour_end, import_kwh, export_kwh, usage_kwh)
     except Exception as e:
         print("[Shyft] Energie-Archiv: Stundenabschluss fehlgeschlagen:", repr(e))
+    try:
+        record_pv_forecast_accuracy()
+    except Exception as e:
+        print("[Shyft] PV-Prognose-Aufzeichnung fehlgeschlagen:", repr(e))
+
+
+# PV-Prognose vs. Ist (Analyse-Tab): der stuendliche Job holt die letzten PV_ACCURACY_LOOKBACK_HOURS nach (deckt Neustarts
+# und verpasste Laeufe ab), einmal nach dem Start werden PV_ACCURACY_BACKFILL_DAYS Tage aus dem PV-Sync-Protokoll nachgetragen.
+PV_ACCURACY_LOOKBACK_HOURS = 48
+PV_ACCURACY_BACKFILL_DAYS = 10
+
+
+def _pv_forecast_by_hour_key():
+    """hour_key (UTC, siehe energy_archive.hour_key) -> (Prognose in kW, Quelle) fuer jede Stunde, fuer die eine Prognose
+    bekannt ist - jeweils die LETZTE vor bzw. waehrend der Stunde (wie im Tages-Snapshot, siehe
+    _maybe_freeze_pv_forecast_snapshot). Quelle 1: PV-Sync-Protokoll (pv_forecast.PV_SYNC_LOG_PATH, die gesendeten Listen
+    der letzten Syncs, reicht einige Tage zurueck); Quelle 2 und vorrangig: der Tages-Snapshot - unabhaengig von seinem
+    Datum, damit auch die letzte Stunde des Vortags nach Mitternacht (Snapshot noch nicht gewechselt) noch gefunden wird."""
+    result = {}
+    for entry in pv_forecast.read_jsonl(pv_forecast.PV_SYNC_LOG_PATH):  # aelteste zuerst - spaetere ueberschreiben
+        start_ms, sent = entry.get("start_ms"), entry.get("sent_at")
+        if start_ms is None or not sent:
+            continue
+        try:
+            sent_hour = _hour_floor(datetime.fromisoformat(sent).astimezone(timezone.utc))
+        except ValueError:
+            continue
+        start = _hour_floor(datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc))
+        for i, value in enumerate(entry.get("pv") or []):
+            hour = start + timedelta(hours=i)
+            if hour >= sent_hour and value is not None:
+                result[energy_archive.hour_key(hour)] = (float(value), "sync_log")
+    snapshot = _read_pv_forecast_snapshot() or {}
+    for label, value in zip(snapshot.get("labels", []), snapshot.get("pv_generation", [])):
+        if value is None:
+            continue
+        try:
+            result[energy_archive.hour_key(datetime.fromisoformat(label))] = (float(value), "snapshot")
+        except (ValueError, TypeError):
+            continue
+    return result
+
+
+def record_pv_forecast_accuracy(lookback_hours=PV_ACCURACY_LOOKBACK_HOURS):
+    """Speichert fuer jede abgeschlossene Stunde der letzten lookback_hours, die noch fehlt, Prognose und Ist der PV-Erzeugung
+    (energy_archive.record_pv_hour). Ist = Mittel der zeitgewichteten 20-Minuten-Werte des PV-Sensors in dieser Stunde, wie im
+    Dashboard-Chart (siehe readPvForecastVsActual); eine Stunde ohne Messwerte nach dem ersten Messwert im Zeitraum zaehlt
+    als 0 (schlafender Wechselrichter meldet nachts nichts). Stunden ohne bekannte Prognose oder vor dem ersten Messwert
+    (z.B. aelter als die Home-Assistant-Historie) werden nicht gespeichert. Gibt die Zahl gespeicherter Stunden zurueck."""
+    if is_demo_mode():
+        return 0
+    entity_id = _read_current_config().get("sensorMappings", {}).get("photovoltaic_powerflow_pv", "")
+    if not entity_id:
+        return 0
+    now_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    start = now_hour - timedelta(hours=lookback_hours)
+    done = energy_archive.pv_hours_recorded(energy_archive.hour_key(start))
+    forecasts = _pv_forecast_by_hour_key()
+    todo = [h for h in (start + timedelta(hours=i) for i in range(lookback_hours))
+            if energy_archive.hour_key(h) not in done and energy_archive.hour_key(h) in forecasts]
+    if not todo:
+        return 0
+    sums, counts, first_hour = {}, {}, None
+    for event in homeassistant_adapter.load_power_history(entity_id, todo[0], now_hour):
+        try:
+            value = float(event.state)
+        except (ValueError, TypeError):
+            continue
+        hour = _hour_floor(event.last_changed.astimezone(timezone.utc))
+        sums[hour] = sums.get(hour, 0.0) + value
+        counts[hour] = counts.get(hour, 0) + 1
+        first_hour = hour if first_hour is None or hour < first_hour else first_hour
+    if first_hour is None:
+        return 0
+    recorded = 0
+    for hour in todo:
+        if hour < first_hour or hour >= now_hour:
+            continue
+        actual = sums[hour] / counts[hour] if hour in counts else 0.0
+        forecast, source = forecasts[energy_archive.hour_key(hour)]
+        energy_archive.record_pv_hour(energy_archive.hour_key(hour), round(forecast, 4), round(max(0.0, actual), 4), source)
+        recorded += 1
+    return recorded
+
+
+def backfill_pv_forecast_accuracy():
+    "Einmalig kurz nach dem Start: die letzten PV_ACCURACY_BACKFILL_DAYS Tage nachtragen, soweit Prognose (Sync-Protokoll) und Ist (HA-Historie) noch vorliegen."
+    try:
+        recorded = record_pv_forecast_accuracy(PV_ACCURACY_BACKFILL_DAYS * 24)
+        if recorded:
+            print(f"[Shyft] PV-Prognose vs. Ist: {recorded} Stunden nachgetragen.")
+    except Exception as e:
+        print("[Shyft] PV-Prognose vs. Ist: Nachtragen fehlgeschlagen:", repr(e))
 
 
 BASE_CASE_RUNNING_STATE_PATH = "/data/base_case_running_state.json"
@@ -11782,7 +12258,7 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
     # Warmwasser-Tank, Batterie) statt jede Stunde vom echten/optimierten Zustand zu "erben" -
     # siehe base_case.compute_base_case-Docstring fuer die Begruendung (Nutzer-Beobachtung).
     state_overrides = _read_base_case_state_overrides(creation_date_ms) if input_csv else None
-    base = base_case.compute_base_case(input_csv, state_overrides) if input_csv else None
+    base = base_case.compute_base_case(input_csv, state_overrides, _opt_ev_end_kwh(input_csv, output_csv)) if input_csv else None
     if base:
         payload.update(base)
         _write_base_case_state(creation_date_ms, base.get("nextState"))
@@ -12473,6 +12949,36 @@ def sync_sensors_periodically():
             return
         sync_site_data()
 
+# Nach einer Aenderung der Konfiguration wird 3 Minuten gewartet (weitere Aenderungen setzen die Frist zurueck), dann einmal
+# neu optimiert - unabhaengig davon, ob der letzte Plan noch passen wuerde (skip_hourly_optimization_if_plan_fits).
+CONFIG_CHANGE_REOPTIMIZE_DELAY_SECONDS = 3 * 60
+_config_reoptimize_timer = None
+_config_reoptimize_lock = threading.Lock()
+
+
+def _run_config_change_reoptimization():
+    global _config_reoptimize_timer
+    with _config_reoptimize_lock:
+        _config_reoptimize_timer = None
+    with app.app_context():
+        try:
+            print("[Shyft] Konfiguration wurde geändert - stosse Neu-Optimierung an.")
+            sync_site_data()
+        except Exception as e:
+            print("[Shyft] Neu-Optimierung nach Konfigurationsänderung fehlgeschlagen:", repr(e))
+
+
+def schedule_optimization_after_config_change():
+    "Plant (bzw. verschiebt) die Neu-Optimierung CONFIG_CHANGE_REOPTIMIZE_DELAY_SECONDS nach der letzten Konfigurationsänderung."
+    global _config_reoptimize_timer
+    with _config_reoptimize_lock:
+        if _config_reoptimize_timer is not None:
+            _config_reoptimize_timer.cancel()
+        _config_reoptimize_timer = threading.Timer(CONFIG_CHANGE_REOPTIMIZE_DELAY_SECONDS, _run_config_change_reoptimization)
+        _config_reoptimize_timer.daemon = True
+        _config_reoptimize_timer.start()
+
+
 def sync_pv_history_periodically():
     with app.app_context():
         sync_pv_history()
@@ -12647,6 +13153,7 @@ scheduler.add_job(monitor_ev_charging_periodically, 'interval', seconds=EV_CHARG
 # abgelaufenen Stunde schon abgegeben hat, bevor sie hier abgeschlossen wird (siehe
 # finalize_completed_hour_periodically/energy_archive.finalize_hour).
 scheduler.add_job(finalize_completed_hour_periodically, 'cron', minute="3")
+scheduler.add_job(backfill_pv_forecast_accuracy, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=150))
 scheduler.add_job(refresh_input_csv_health_if_problem_active, 'interval', minutes=5)
 scheduler.add_job(update_base_load_periodically, 'cron', minute="7", next_run_time=datetime.now(timezone.utc) + timedelta(seconds=120))
 scheduler.add_job(backfill_household_usage_periodically, 'interval', minutes=30, next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90))

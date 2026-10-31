@@ -229,3 +229,64 @@ def test_ev_reaches_norm_at_start_of_last_hour_after_late_return():
     soc = result["SOC_EVBaseList"]
     assert soc[-1] >= 0.5 - 1e-3  # Beginn der letzten Stunde: Norm erreicht
     assert min(soc) >= -1e-9
+
+
+def test_room_temperature_end_value_is_charged_in_kwh_not_inverted():
+    # Haus startet 0.3 K ueber T_i_min und kuehlt im Base Case bis T_i_min aus (Warmstart ohne Heizstunden-Bedarf).
+    # Der Speicher-Abbau muss mit dT * C_STORE * fh_size / COP * p_buy bewertet werden (180 m2 -> ca. 87 kWh/K),
+    # nicht mit dT / (C_STORE * fh_size) - sonst bleibt der Wert ~0 und die Optimierung sieht unnoetig teuer aus.
+    result = base_case.compute_base_case(_csv(6, heating="1", fh_size=180, fh_eff=120, T_i_0=20.3, T_i_min=20,
+                                              T_i_buffer=0.3, curve_level=30, curve_slope=1.0, Temperature=0, p_buy=0.3))
+    ev = result["endValue"]
+    if ev["t_i_end"] < ev["t_i_start"] - 1e-6:
+        thermal_kwh = (ev["t_i_start"] - ev["t_i_end"]) * base_case.C_STORE * 180
+        assert ev["term_i"] >= thermal_kwh / 6.0 * 0.3 - 1e-6  # COP <= 5.5 -> mindestens thermal/5.5 el. kWh
+
+
+def _with_p_buy(csv_text, prices):
+    lines = csv_text.split("\n")
+    cols = lines[0].split(";")
+    idx = cols.index("p_buy")
+    out = [lines[0]]
+    for line, price in zip(lines[1:], prices):
+        cells = line.split(";")
+        cells[idx] = str(price)
+        out.append(";".join(cells))
+    return "\n".join(out)
+
+
+def test_ev_end_target_charges_in_last_plugged_hour_at_that_hours_price():
+    # Der Optimierer endet mit mehr Ladestand im Auto als der Base Case braucht. Mit ev_end_target_kwh muss der Base Case
+    # denselben Endstand erreichen - durch Laden in der LETZTEN Stunde mit eingestecktem Auto, zum Preis dieser Stunde
+    # (nicht zum billigeren der Stunde davor und nicht zu p_min).
+    prices = [0.30, 0.30, 0.30, 0.30, 0.30, 0.30, 0.10, 0.50]
+    csv_text = _with_p_buy(_ev_csv(soc0=0.9, trips={3: 6.0}, norm=0.1), prices)
+    without = base_case.compute_base_case(csv_text)
+    with_target = base_case.compute_base_case(csv_text, ev_end_target_kwh=52.0)
+    base_load_only = [round(0.5 * p, 6) for p in prices]  # Grundlast 0.5 kW kommt in jeder Stunde aus dem Netz
+    assert without["netProfitBaseList"] == base_load_only  # ohne Ziel laedt der Base Case gar nicht
+    assert without["endValue"]["soc_ev_kwh_end"] < 52.0
+    end = with_target["endValue"]
+    assert abs(end["soc_ev_kwh_end"] - 52.0) < 1e-3
+    assert end["soc_ev_kwh_target"] == 52.0
+    costs = with_target["netProfitBaseList"]
+    # nur die letzte Stunde kostet etwas zusaetzlich
+    extra = [round(c - b, 6) for c, b in zip(costs, base_load_only)]
+    assert extra[:7] == [0.0] * 7
+    soc_start_last = with_target["SOC_EVBaseList"][7] * 60.0
+    gain = 52.0 - soc_start_last * (1 - base_case.EV_LOSS)
+    expected = (gain + base_case.EV_FIXED_LOSS_KWH) / base_case.EV_ETA * 0.50
+    assert abs(extra[7] - expected) < 1e-4
+
+
+def test_ev_end_target_skips_hours_when_car_is_away():
+    # Auto ist in den Stunden 7 und 8 unterwegs (je 1 kWh) -> geladen wird in Stunde 6 (die letzte mit eingestecktem Auto),
+    # nie in den Fahrt-Stunden.
+    csv_text = _ev_csv(soc0=0.9, trips={7: 1.0, 8: 1.0}, norm=0.1)
+    result = base_case.compute_base_case(csv_text, ev_end_target_kwh=56.0)  # 54 kWh - 2 kWh Fahrten = 52 -> 4 kWh nachladen
+    soc = result["SOC_EVBaseList"]
+    assert abs(result["endValue"]["soc_ev_kwh_end"] - 56.0) < 1e-3
+    usage = result["PowerUsageBaseList"]
+    assert usage[5] > 0.5 + 4.0          # Stunde 6: Grundlast + Ladung (ca. 4,5 kWh brutto)
+    assert usage[6] == 0.5 and usage[7] == 0.5  # Stunden 7/8: nur Grundlast
+    assert max(soc) <= 1.0 + 1e-9
