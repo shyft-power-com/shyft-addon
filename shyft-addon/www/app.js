@@ -1307,6 +1307,55 @@ async function applyAnalyseTabVisibility() {
     }
 }
 
+// Verlassen des Demomodus ohne Neuladen: Das Konto legt der Server im Hintergrund an, sobald ein
+// steuerbares echtes Geraet erfolgreich getestet wurde (siehe maybe_create_real_account in app.py).
+// Solange der Server isDemo meldet, fragt die Seite alle ACCOUNT_STATUS_POLL_MS nach; springt der
+// Status auf "echtes Konto", werden alle vom Demomodus abhaengigen Teile sofort neu aufgebaut.
+const ACCOUNT_STATUS_POLL_MS = 3000;
+let accountStatusPollTimer = null;
+
+async function watchForAccountCreation() {
+    if (accountStatusPollTimer) return;
+    let status;
+    try {
+        status = await getJson(insideHomeAssistant + '/account-status');
+    } catch (err) {
+        console.log(err);
+        return;
+    }
+    if (!status.isDemo) return;
+    accountStatusPollTimer = setInterval(async () => {
+        if (document.visibilityState !== 'visible') return;
+        try {
+            const current = await getJson(insideHomeAssistant + '/account-status');
+            if (current.isDemo) return;
+            clearInterval(accountStatusPollTimer);
+            accountStatusPollTimer = null;
+            onDemoModeLeft();
+        } catch (err) {
+            console.log(err);
+        }
+    }, ACCOUNT_STATUS_POLL_MS);
+}
+
+function onDemoModeLeft() {
+    renderSystemHealth();
+    renderDashboardProblemBanner();
+    applyAnalyseTabVisibility();
+    refreshActiveTabNow();
+    const statusElement = document.getElementById('saveStatus');
+    if (statusElement) {
+        statusElement.classList.remove('status-error');
+        statusElement.classList.add('status-saved');
+        statusElement.textContent = 'shyft-power-Konto angelegt – Demomodus beendet';
+        clearTimeout(saveStatusTimeout);
+        saveStatusTimeout = setTimeout(() => {
+            statusElement.textContent = '';
+            statusElement.classList.remove('status-saved');
+        }, 6000);
+    }
+}
+
 // Hilfe-Assistent (KI-Chat, siehe assistant.js), auf allen Seiten.
 // uiHelp gibt der KI die Feldbeschreibungen der Oberflaeche mit (Tooltips), damit sie die Begriffe kennt.
 function buildAssistantUiHelp() {
@@ -12518,6 +12567,7 @@ if (document.readyState === 'complete') {
     applyAssistantWidget();
     renderUpdateBanner();
     renderEnvironmentBadge();
+    watchForAccountCreation();
 } else {
     window.addEventListener('load', () => {
         loadConfiguration().then(loadShyftActions);
@@ -12530,6 +12580,7 @@ if (document.readyState === 'complete') {
         applyAssistantWidget();
         renderUpdateBanner();
         renderEnvironmentBadge();
+        watchForAccountCreation();
     });
 }
 

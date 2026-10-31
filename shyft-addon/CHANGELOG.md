@@ -5,6 +5,7 @@
 * **Fix: Automatische Konto-Erstellung legte bei jeder Änderung auf der Konfigurationsseite einen neuen shyft-power-Account an.** Sobald ein echtes Gerät ausgewählt war, rief jedes automatische Speichern `create_user_addon` auf. Die Live-Antwort von Bubble enthielt keinen Token, das Add-on blieb deshalb im Demomodus und versuchte es beim nächsten Speichern erneut – am 31.10.2026 entstanden so 48 Accounts in 30 Minuten. Jetzt gilt:
   * Der Demomodus endet erst, wenn ein **steuerbares** echtes Gerät (Warmwasser, Heizstab, Heizung, Wallbox, Verbraucher, Batterie) mit dem Testen-Button **erfolgreich getestet** wurde. Speichern, reine Sensor-Geräte (Wechselrichter/PV) und Demo-Geräte lösen nichts mehr aus.
   * Höchstens ein Versuch alle 5 Minuten (`shyftAccountCreateAttemptAt`), auch bei Netzwerkfehlern oder einer Antwort ohne Token; gleichzeitige Tests sind gegeneinander gesperrt.
+  * **Demomodus endet ohne Neuladen.** Sobald Bubble das Konto bestätigt und der Token im Add-on hinterlegt ist, baut die Seite Statuskarte, Dashboard-Hinweis, „Optimierung anstoßen“ und den aktiven Tab neu auf und meldet „shyft-power-Konto angelegt – Demomodus beendet“. Dazu fragt sie im Demomodus alle 3 Sekunden `/account-status` ab. Die erste Übertragung an shyft-power startet sofort statt beim nächsten stündlichen Lauf.
   * Der Token wird unter `response.token` und `response.access_key` gelesen; `has_account` wird nicht mehr ausgewertet (der Merker `shyftAccountCreated` verhindert weiterhin ein zweites Konto).
 
 ## 0.0.45.348

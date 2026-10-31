@@ -785,6 +785,9 @@ def maybe_create_real_account(ready_key):
         fetch_weather_forecast()
     except Exception as e:
         print("[Shyft] Erster Wetter-Abruf nach Verlassen des Demomodus fehlgeschlagen:", repr(e))
+    # Erste echte Uebertragung an shyft-power sofort, nicht erst beim naechsten stuendlichen Lauf -
+    # damit das Dashboard nach dem Verlassen des Demomodus gleich echte Optimierungsdaten bekommt.
+    threading.Thread(target=sync_site_data, daemon=True).start()
 
 # Zeitpunkt (UTC) des letzten update_site_addon-Sends - fuer die "Neue Optimierung laeuft..."-Anzeige
 # im Dashboard (siehe _optimizer_result_pending / readDashboardChartData). Nur In-Memory: nach einem
