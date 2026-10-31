@@ -4403,6 +4403,15 @@ def build_number_script_config(entity_id, control):
     }
 
 
+def _not_writable_entity_message(entity_id):
+    "Klartext, warum aus entity_id kein Steuer-Skript entsteht (nur number.* und climate.* lassen sich beschreiben)."
+    domain = entity_id.split(".")[0]
+    kind = "ein reiner Sensor (nur lesbar)" if domain == "sensor" else f"eine {domain}-Entität"
+    return (f"„{entity_id}“ ist {kind} und kann nicht beschrieben werden. Für „Direkt steuern“ bitte eine number.- oder "
+            f"climate.-Entität zuordnen (bei Viessmann/ViCare meist die Solltemperatur-Einstellung des Heizkreises) "
+            f"oder die Steuerung über eine eigene Home-Assistant-Automation wählen.")
+
+
 def sync_number_script(control_key, entity_id):
     "Creates/updates or removes an auto-managed control's script so it always targets the currently mapped entity. Returns the resulting actorMappings value."
     control = AUTO_MANAGED_CONTROLS[control_key]
@@ -4414,7 +4423,7 @@ def sync_number_script(control_key, entity_id):
 
     config = build_number_script_config(entity_id, control)
     if config is None:
-        raise Exception(f"Entity {entity_id} ist weder eine number- noch eine climate-Entity")
+        raise Exception(_not_writable_entity_message(entity_id))
 
     homeassistant_adapter.put_script_config(script_id, config)
     # writing the config alone doesn't make HA (re-)register the script entity - it needs an explicit reload
@@ -4445,6 +4454,12 @@ def _script_failure_reason(script_id, error):
     except Exception as e:
         print(f"[Shyft] Fehlerursache von script.{script_id} nicht aus dem HA-Log lesbar:", repr(e))
     if not reason:
+        if "failed: 400" in str(error):
+            # HA antwortet mit 400, wenn der Dienst script.<id> gar nicht existiert - das Skript wird beim Speichern der
+            # Zuordnung angelegt (sync_number_script) und fehlt, wenn dabei ein Fehler auftrat.
+            return (f"Das Hilfsskript script.{script_id} existiert in Home Assistant nicht. Es wird beim Speichern der "
+                    f"Entitäts-Zuordnung angelegt – das geht nur für number.- und climate.-Entitäten, nicht für Sensoren. "
+                    f"Bitte die Zuordnung prüfen und neu speichern")
         return str(error)
     text = f"Home Assistant meldet: {reason}"
     if "GATEWAY_OFFLINE" in reason:
@@ -7715,6 +7730,11 @@ def testHeatingTargetTempBoost():
     if not entity_id:
         test_log("Keine Entität zugeordnet.", "error")
         return jsonify({"success": False, "message": "Keine Entity zugeordnet"}), 400
+    if entity_id.split(".")[0] not in ("number", "climate"):
+        message = _not_writable_entity_message(entity_id)
+        test_log(message, "error")
+        _record_action_test_result(control_key, False)
+        return jsonify({"success": False, "message": message}), 400
 
     original_value = _read_mapped_numeric(config, control["sensor_field"])
     if original_value is None:

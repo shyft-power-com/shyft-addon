@@ -2010,6 +2010,14 @@ function scoreSensorEntityForField(entity, key, historySignal) {
     const keywords = SENSOR_MATCH_KEYWORDS[key] || [];
     if (keywords.some(k => haystack.includes(k))) score += 3;
 
+    // Die Heizungs-Solltemperatur wird bei "Direkt steuern" GESCHRIEBEN - nur number./climate.-Entitäten
+    // lassen sich beschreiben (siehe build_number_script_config in app.py). Sensoren bleiben wählbar
+    // (z. B. wenn eine eigene Automation schreibt), rutschen aber nach "Sonstige Sensoren".
+    if (key === 'heatpump_heating_target_temp_normal') {
+        const domain = entity.entity_id.split('.')[0];
+        score += (domain === 'number' || domain === 'climate') ? 5 : -7;
+    }
+
     if (historySignal) {
         if (key === 'photovoltaic_powerflow_pv') {
             // PV-Erzeugung darf nie negativ sein; das vom Nutzer beschriebene Muster (nachts ~0,
@@ -12384,6 +12392,18 @@ function syncTopBarHeightVar() {
     document.documentElement.style.setProperty('--topbar-height', topBar.offsetHeight + 'px');
 }
 
+// Setzt --devicenav-height auf die Hoehe der sticky Sprungmarken-Leiste (#deviceNav, inkl. evtl.
+// horizontaler Scrollleiste) - .integrationSection addiert sie zu --topbar-height in scroll-margin-top,
+// damit die Kachelueberschrift beim Anspringen nicht hinter der Leiste verschwindet. Die Leiste wird
+// erst nach dem Laden der Konfiguration befuellt, daher per ResizeObserver statt einmalig.
+function syncDeviceNavHeightVar() {
+    const nav = document.getElementById('deviceNav');
+    if (!nav) return;
+    const update = () => document.documentElement.style.setProperty('--devicenav-height', nav.offsetHeight + 'px');
+    update();
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(update).observe(nav);
+}
+
 // Vollbild: das Add-on laeuft in einem iframe der Home-Assistant-Seite (gleiche Adresse, daher Zugriff auf
 // window.top). Im Vollbild wird dieser iframe ueber das ganze Fenster gelegt (verdeckt Home-Assistant-Seitenleiste
 // und -Kopfzeile) und, wo der Browser es erlaubt, zusaetzlich der echte Browser-Vollbildmodus eingeschaltet.
@@ -12562,6 +12582,7 @@ if (document.readyState === 'complete') {
     setupTabs();
     setupPullToRefresh();
     syncTopBarHeightVar();
+    syncDeviceNavHeightVar();
     setupFullscreenToggle();
     applyAnalyseTabVisibility();
     applyAssistantWidget();
@@ -12575,6 +12596,7 @@ if (document.readyState === 'complete') {
         setupTabs();
         setupPullToRefresh();
         syncTopBarHeightVar();
+        syncDeviceNavHeightVar();
         setupFullscreenToggle();
         applyAnalyseTabVisibility();
         applyAssistantWidget();

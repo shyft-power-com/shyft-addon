@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.350
+
+* **Verständliche Fehlermeldung, wenn die Heizungs-Solltemperatur einem Sensor zugeordnet ist.** Bei „Direkt steuern“ lässt sich nur eine number.- oder climate.-Entität beschreiben; war ein reiner Sensor (z. B. `sensor.vicare_zieltemperatur`) zugeordnet, entstand kein Hilfsskript, und der Test endete mit dem kryptischen „400: Bad Request“. Der Test nennt jetzt direkt den Grund und was zu tun ist, ebenso das Speichern der Zuordnung und ein fehlendes Hilfsskript.
+* **Auswahl der Heizungs-Solltemperatur schlägt zuerst number.- und climate.-Entitäten vor.** Sensoren bleiben wählbar, stehen aber unter „Sonstige Sensoren“.
+
 ## 0.0.45.349
 
 * **Fix: Automatische Konto-Erstellung legte bei jeder Änderung auf der Konfigurationsseite einen neuen shyft-power-Account an.** Sobald ein echtes Gerät ausgewählt war, rief jedes automatische Speichern `create_user_addon` auf. Die Live-Antwort von Bubble enthielt keinen Token, das Add-on blieb deshalb im Demomodus und versuchte es beim nächsten Speichern erneut – am 31.10.2026 entstanden so 48 Accounts in 30 Minuten. Jetzt gilt:

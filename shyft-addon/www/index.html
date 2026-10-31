@@ -113,7 +113,7 @@
             margin-top: 4px;
         }
         /* Fehlertext in eigener Tabellenzeile (siehe applyConfigFieldErrorHighlights): die Trennlinie gehoert unter den Text, nicht zwischen Feld und Text. */
-        tr:has(+ .configFieldErrorRow) > td {
+        #deviceSections tbody tr:has(+ .configFieldErrorRow) > td {
             border-bottom: none;
         }
         /* Mehrfachauswahl (buildMultiSensorField): die Markierung landet auf dem Container, der Rahmen sitzt
@@ -742,9 +742,10 @@
             background: var(--color-bg-card);
             border-radius: 12px;
             /* Sorgt dafuer, dass scrollToIntegrationSection (app.js, scrollIntoView block:'start')
-               unter dem sticky .topBar anhaelt statt Ueberschrift+Anfang der Kachel darunter zu
-               verstecken - +16px, damit zusaetzlich noch etwas Rand sichtbar bleibt. */
-            scroll-margin-top: calc(var(--topbar-height, 60px) + 16px);
+               unter dem sticky .topBar UND der sticky Sprungmarken-Leiste (.deviceNav) anhaelt statt
+               Ueberschrift+Anfang der Kachel darunter zu verstecken - +16px, damit zusaetzlich noch
+               etwas Rand sichtbar bleibt. */
+            scroll-margin-top: calc(var(--topbar-height, 60px) + var(--devicenav-height, 0px) + 16px);
         }
         .integrationHeading {
             display: flex;
