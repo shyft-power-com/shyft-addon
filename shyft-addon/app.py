@@ -7970,14 +7970,15 @@ BATTERY_UNAVAILABLE_STATES = ("unavailable", "unknown")
 # las sich wie eine Fehlerursache ("Zeitueberschreitung"), gemeint ist aber die Entitaet, die nicht gesetzt werden konnte.
 BATTERY_TIMEOUT_LABEL = "Command-Timeout (Watchdog)"
 BATTERY_UNAVAILABLE_GRACE_SECONDS = 30
-# Watchdog-Wert (Sekunden) fuer die "Command Timeout"-Entitaet, je Aktionstyp verschieden:
-# beim Netzladen reicht 1 h, beim Entlade-Stopp soll der Befehl bis zu 10 h stehen bleiben.
+# Watchdog-Wert (Sekunden) fuer die "Command Timeout"-Entitaet: fuer beide Aktionstypen 10 h (Nutzer-Vorgabe).
+# Frueher 1 h beim Netzladen - lief eine Netzlade-Aktion ueber den Stundenwechsel weiter (ohne neuen Befehl),
+# fiel der Wechselrichter nach genau einer Stunde auf den Standardmodus zurueck (01.11.2026, 04:00:49).
 # Wird nur bei "Batterie netzladen" und "Batterie-Entladen verschieben" aufgefrischt (siehe deren
 # Referenz-Automationen), und auch dort nur, wenn ueberhaupt eine Timeout-Entitaet zugeordnet ist -
 # kein Pflichtfeld, manche Wechselrichter-Integrationen haben keine (das Konfig-Feld dafuer ist
 # ausgeblendet, ein bestehendes Mapping bleibt aber erhalten und wird weiter genutzt).
 BATTERY_COMMAND_TIMEOUT_SECONDS = {
-    "battery_grid_charge": 3600,       # 60 min
+    "battery_grid_charge": 36000,      # 10 h
     "battery_discharge_shift": 36000,  # 10 h
 }
 
@@ -8135,7 +8136,27 @@ def _battery_retry_kwargs(action):
             "normalize_others": bool(action.get("_supersedes"))}
 
 
-def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_seconds=BATTERY_RETRY_TIMEOUT_SECONDS, notify_on_failure=True, unavailable_grace_seconds=None, normalize_others=False):
+# Laufende/zuletzt beendete Schreibvorgaenge von execute_battery_direct - der Entladen-verschieben-Watchdog
+# (siehe check_battery_discharge_shift_watchdog) greift waehrend und kurz nach einem eigenen Schreibvorgang nicht
+# ein: beim Beenden/Abloesen steht die Entladeleistung schon wieder auf dem Ruhewert, waehrend die Aktion im
+# Store noch "aktiv" ist - das waere sonst eine scheinbare Abweichung.
+_battery_write_activity = {"busy": 0, "last_end": 0.0}
+_battery_write_activity_lock = threading.Lock()
+
+
+def execute_battery_direct(*args, **kwargs):
+    "Siehe _execute_battery_direct_unguarded - zusaetzlich wird die Schreibaktivitaet fuer den Watchdog vermerkt."
+    with _battery_write_activity_lock:
+        _battery_write_activity["busy"] += 1
+    try:
+        return _execute_battery_direct_unguarded(*args, **kwargs)
+    finally:
+        with _battery_write_activity_lock:
+            _battery_write_activity["busy"] -= 1
+            _battery_write_activity["last_end"] = time.time()
+
+
+def _execute_battery_direct_unguarded(action_key, phase, target_kw, config, retry_timeout_seconds=BATTERY_RETRY_TIMEOUT_SECONDS, notify_on_failure=True, unavailable_grace_seconds=None, normalize_others=False):
     """Fuehrt die 'direkte Entitaets-Steuerung'-Variante eines Batterie-Aktionstyps aus (siehe
     Modulkommentar oben). target_kw ist der Target Value der Aktion (kW) - fuer "Batterie netzladen"
     der Ladezielwert, fuer "Batterie-Laden verschieben" der (kleine) Begrenzungswert, sonst
@@ -13041,6 +13062,116 @@ def retry_failed_battery_actions_periodically():
     with app.app_context():
         retry_failed_battery_actions()
 
+
+# ============================================================================
+# Watchdog fuer "Batterie-Entladen verschieben" (Nutzer-Vorgabe, nach 01.11.2026 05:16: der Wechselrichter setzte
+# Entladeleistung und Command-Timeout von sich aus zurueck, die Batterie entlud sich trotz laufender Aktion, ohne
+# Eintrag im Log). Waehrend die Aktion am Geraet laeuft, wird die Entladeleistung ueberwacht - sofort per Live-
+# Watcher (Zustandsaenderung der Entitaet, mit kurzer Bestaetigungs-Wartezeit) und zusaetzlich alle
+# BATTERY_WATCHDOG_INTERVAL_SECONDS. Weicht sie von 0 W ab, werden die Startbefehle der Aktion erneut gesendet
+# (inkl. Command-Timeout) und ein Eintrag im Log der Aktion gesetzt. Gelingt das, gilt die Aktion weiterhin als
+# erfolgreich; misslingt es, wird sie als fehlerhaft markiert. Push-Benachrichtigung ueber notify_action_event
+# (is_error=True, also wenn "Aktionen starten / beenden" - alle oder nur bei Fehlern - eingeschaltet ist).
+# ============================================================================
+BATTERY_WATCHDOG_INTERVAL_SECONDS = 60
+BATTERY_WATCHDOG_CONFIRM_SECONDS = 20       # Live-Watcher: so lange warten, ob die Abweichung bestehen bleibt
+BATTERY_WATCHDOG_START_GRACE_SECONDS = 60   # nach dem Start der Aktion
+BATTERY_WATCHDOG_END_MARGIN_SECONDS = 90    # vor dem geplanten Ende (Stundenwechsel setzt den Ruhewert)
+BATTERY_WATCHDOG_QUIET_SECONDS = 90         # nach einem eigenen Schreibvorgang (Beenden/Abloesen/Start)
+BATTERY_WATCHDOG_MIN_REPEAT_SECONDS = 300   # hoechstens so oft je Aktion erneut senden
+_battery_watchdog_lock = threading.Lock()
+
+
+def _battery_watchdog_target_action(config, now_ms):
+    "Die laufende 'Batterie-Entladen verschieben'-Aktion, die der Watchdog gerade ueberwachen darf - sonst None."
+    if _battery_control_variant(config, "battery_discharge_shift") != "direct":
+        return None
+    if not is_action_type_enabled(config, BATTERY_DISCHARGE_SHIFT_ACTION_NAME):
+        return None
+    action = _active_computed_action(_read_computed_actions(), BATTERY_DISCHARGE_SHIFT_ACTION_NAME)
+    if action is None or action.get("Execution Status") != "yes, started" or action.get("_dischargeShiftHeld"):
+        return None
+    start, end = action.get("Date Start"), action.get("Date End")
+    if start is not None and now_ms - start < BATTERY_WATCHDOG_START_GRACE_SECONDS * 1000:
+        return None
+    if end is not None and end - now_ms < BATTERY_WATCHDOG_END_MARGIN_SECONDS * 1000:
+        return None
+    last = action.get("_watchdogLastAt")
+    if last is not None and now_ms - last < BATTERY_WATCHDOG_MIN_REPEAT_SECONDS * 1000:
+        return None
+    return action
+
+
+def check_battery_discharge_shift_watchdog():
+    """Prueft einmal, ob die laufende 'Batterie-Entladen verschieben'-Aktion am Geraet noch wirkt (Entladeleistung
+    0 W), und sendet die Startbefehle sonst erneut (siehe Modulkommentar oben). Gibt True zurueck, wenn eine
+    Abweichung erkannt und behandelt wurde."""
+    if is_demo_mode():
+        return False
+    if not _battery_watchdog_lock.acquire(blocking=False):
+        return False  # laeuft schon (Live-Watcher und Intervall gleichzeitig)
+    try:
+        with _battery_write_activity_lock:
+            busy = _battery_write_activity["busy"]
+            last_write = _battery_write_activity["last_end"]
+        if busy or time.time() - last_write < BATTERY_WATCHDOG_QUIET_SECONDS:
+            return False
+        config = _read_current_config()
+        now_ms = int(time.time() * 1000)
+        action = _battery_watchdog_target_action(config, now_ms)
+        if action is None:
+            return False
+        live_kw = _read_mapped_numeric(config, "battery_discharge_limit_current")
+        if live_kw is None or abs(live_kw) <= BATTERY_DEVIATION_TOLERANCE_KW:
+            return False
+
+        live_w = round(live_kw * 1000)
+        print(f"[Shyft] Watchdog 'Batterie-Entladen verschieben': Entladeleistung steht auf {live_w} W statt 0 W - "
+              f"Befehle werden erneut gesendet (Aktion {action.get('_id')}).")
+        action["_watchdogLastAt"] = now_ms
+        _update_computed_action(action)
+
+        error = None
+        try:
+            execute_battery_direct("battery_discharge_shift", "Watchdog", 0, config, notify_on_failure=False)
+        except Exception as e:
+            error = str(e) or repr(e)
+
+        # Frisch lesen: waehrend der (bis zu 2 Minuten langen) Wiederholversuche kann ein Poll die Aktion geaendert haben.
+        fresh = next((a for a in _read_computed_actions() if a.get("_id") == action.get("_id")), None) or action
+        fresh["_watchdogLastAt"] = now_ms
+        if error is None:
+            _append_action_log(fresh, f"Watchdog: Entladeleistung stand auf {live_w} W statt 0 W – Befehle erneut gesendet, "
+                                      f"Wert wieder übernommen.")
+            verb = "Abweichung erkannt, Befehle erneut gesendet"
+        else:
+            reason = error.strip().rstrip(".") + "."
+            _append_action_log(fresh, f"Watchdog: Entladeleistung stand auf {live_w} W statt 0 W – erneutes Senden "
+                                      f"fehlgeschlagen. Grund: {reason}")
+            fresh["Had Error"] = True
+            verb = "Abweichung erkannt, erneutes Senden fehlgeschlagen"
+        _update_computed_action(fresh)
+        notify_action_event(config, fresh, verb, is_error=True)
+        return True
+    finally:
+        _battery_watchdog_lock.release()
+
+
+def check_battery_discharge_shift_watchdog_periodically():
+    with app.app_context():
+        try:
+            check_battery_discharge_shift_watchdog()
+        except Exception as e:
+            print("[Shyft] Watchdog 'Batterie-Entladen verschieben' fehlgeschlagen:", repr(e))
+
+
+def _on_battery_discharge_limit_live_update(entity_id, old_state, new_state):
+    "Reagiert auf eine Aenderung der Entladeleistungs-Entitaet: nach BATTERY_WATCHDOG_CONFIRM_SECONDS pruefen (eigener Thread, der Live-Watcher wird nicht blockiert)."
+    def delayed():
+        time.sleep(BATTERY_WATCHDOG_CONFIRM_SECONDS)
+        check_battery_discharge_shift_watchdog_periodically()
+    threading.Thread(target=delayed, daemon=True, name="battery-discharge-watchdog").start()
+
 def run_hourly_action_transition_periodically():
     with app.app_context():
         run_hourly_action_transition()
@@ -13147,6 +13278,7 @@ live_entity_watcher.register("photovoltaic_powerflow_grid", _on_grid_power_live_
 live_entity_watcher.register("electricity_grid_power_sensors", _on_grid_power_live_update)
 live_entity_watcher.register("wallbox_plugged", _on_wallbox_state_live_update)
 live_entity_watcher.register("battery_state_of_charge", _on_battery_soc_live_update)
+live_entity_watcher.register("battery_discharge_limit_current", _on_battery_discharge_limit_live_update)
 
 
 scheduler = BackgroundScheduler()
@@ -13167,6 +13299,7 @@ scheduler.add_job(process_shyft_actions_periodically, 'cron', minute="0,15,30,45
 # Allgemeiner Beenden/Starten/Verlaengern-Mechanismus zur vollen Stunde, siehe run_hourly_action_transition
 scheduler.add_job(run_hourly_action_transition_periodically, 'cron', minute="0")
 scheduler.add_job(retry_failed_battery_actions_periodically, 'interval', seconds=BATTERY_ACTION_RETRY_INTERVAL_SECONDS, max_instances=1, coalesce=True)
+scheduler.add_job(check_battery_discharge_shift_watchdog_periodically, 'interval', seconds=BATTERY_WATCHDOG_INTERVAL_SECONDS, max_instances=1, coalesce=True)
 scheduler.add_job(monitor_ev_charging_periodically, 'interval', seconds=EV_CHARGE_CHECK_INTERVAL_SECONDS, max_instances=1, coalesce=True)
 # Energie-Archiv (Analyse-Tab): 3 Minuten nach der Stunde, damit der frische Optimierungslauf von
 # sync_dashboard_chart_data_periodically (Minute 0) den letzten Plan-Beitrag der GERADE

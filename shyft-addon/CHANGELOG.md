@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.45.351
+
+* **Batterie: Command-Timeout auch beim Netzladen 36000 s (10 h).** Bisher setzte „Batterie netzladen“ 3600 s. Lief die Aktion über den Stundenwechsel weiter, ohne dass ein neuer Befehl gesendet wurde, fiel der Wechselrichter nach genau einer Stunde auf „Maximize Self Consumption“ zurück (01.11.2026: Laden endete um 04:00:49 statt 05:00).
+* **Watchdog für „Batterie-Entladen verschieben“.** Solange die Aktion am Gerät läuft, prüft das Add-on die Entladeleistung sofort bei jeder Änderung der Entität (nach 20 s Bestätigung) und zusätzlich jede Minute. Steht sie nicht mehr auf 0 W (z. B. weil der Wechselrichter Entladeleistung und Timeout von sich aus zurückgesetzt hat, 01.11.2026 05:16), werden die Startbefehle inkl. Command-Timeout erneut gesendet und im Log der Aktion vermerkt.
+  * Gelingt das erneute Senden, bleibt die Aktion erfolgreich; schlägt es fehl, wird sie als Fehler markiert.
+  * Push-Benachrichtigung, wenn „Aktionen starten / beenden“ (alle oder nur bei Fehlern) eingeschaltet ist.
+  * Keine Prüfung in der ersten Minute nach dem Start, in den letzten 90 s vor dem geplanten Ende und bis 90 s nach einem eigenen Schreibvorgang des Add-ons (Beenden/Ablösen setzt den Ruhewert, während die Aktion noch als aktiv gespeichert ist). Erneutes Senden höchstens alle 5 Minuten je Aktion.
+
 ## 0.0.45.350
 
 * **Verständliche Fehlermeldung, wenn die Heizungs-Solltemperatur einem Sensor zugeordnet ist.** Bei „Direkt steuern“ lässt sich nur eine number.- oder climate.-Entität beschreiben; war ein reiner Sensor (z. B. `sensor.vicare_zieltemperatur`) zugeordnet, entstand kein Hilfsskript, und der Test endete mit dem kryptischen „400: Bad Request“. Der Test nennt jetzt direkt den Grund und was zu tun ist, ebenso das Speichern der Zuordnung und ein fehlendes Hilfsskript.
