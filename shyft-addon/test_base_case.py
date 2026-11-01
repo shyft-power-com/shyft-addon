@@ -294,7 +294,8 @@ def test_ev_end_target_skips_hours_when_car_is_away():
 
 def test_comfort_soc_is_the_target_of_immediate_charging():
     # Ohne Optimierung laedt das Auto sofort bis zum Komfort-Ladestand der Laderegel (nicht nur bis zur 10-%-Reserve).
-    csv_text = _ev_csv(soc0=0.2, trips={}, norm=0.1)
+    csv_text = _ev_csv(soc0=0.2, trips={8: 1.0}, norm=0.1)
     low = base_case.compute_base_case(csv_text)
     high = base_case.compute_base_case(csv_text, ev_comfort_soc=0.7)
-    assert high["SOC_EVBaseList"][-1] > low["SOC_EVBaseList"][-1] + 0.2
+    assert max(high["SOC_EVBaseList"]) > max(low["SOC_EVBaseList"]) + 0.2
+    assert max(high["SOC_EVBaseList"]) >= 0.69
