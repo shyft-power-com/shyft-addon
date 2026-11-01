@@ -7,6 +7,7 @@ import problem_registry
 import assistant
 import pv_forecast
 import base_case
+import ev_tiers
 import energy_archive
 import base_load
 
@@ -1540,6 +1541,19 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
     wb_p_min = compute_wb_p_min()
     if wb_p_min is not None:
         live_values["WB - p_min"] = wb_p_min
+    # Laderegel: Endwert-Stufen des Autos (ev_tier_p1..p6 in EUR/kWh, ev_tier_soc1..soc5 als Anteil der Batterie). WB - p_min bleibt als
+    # Rueckfall fuer aeltere Server mit.
+    try:
+        if (config.get("electricityTariffMode") or "fixed") in SPOT_HISTORY_TARIFF_MODES:
+            update_spot_price_history()
+        ev_tier_values = compute_ev_tiers(config)
+        if ev_tier_values:
+            for i, value in enumerate(ev_tier_values["p"], start=1):
+                live_values[f"ev_tier_p{i}"] = value
+            for i, value in enumerate(ev_tier_values["soc"], start=1):
+                live_values[f"ev_tier_soc{i}"] = value
+    except Exception as e:
+        print("[Shyft] Laderegel-Stufen konnten nicht berechnet werden:", repr(e))
     try:
         live_values["HP - Temp Indoor T_i_0"] = compute_ti0_field(config)
     except Exception as e:
@@ -5646,6 +5660,173 @@ def compute_wb_p_min():
     return p_min
 
 
+# ---- Laderegel: Endwert-Stufen des E-Autos (siehe ev_tiers.py) ----------------------------------------------------------------------------
+# Preis-Historie fuer die Quantile: Boersenpreis (brutto, ohne Netzentgelt/Aufschlag) je Stunde. Gespeichert wird der Boersenpreis statt
+# des fertigen Einkaufspreises, damit eine spaetere Tarif-Aenderung (Netzentgelt, Aufschlag) rueckwirkend gilt.
+SPOT_HISTORY_PATH = "/data/spot_price_history.json"
+SPOT_HISTORY_DAYS = 35
+SPOT_HISTORY_KEEP_DAYS = 42
+SPOT_HISTORY_BACKFILL_CHUNK_DAYS = 7
+SPOT_HISTORY_BACKFILL_RETRY_SECONDS = 3600
+SPOT_HISTORY_TARIFF_MODES = ("dynamic", "dynamic_variable")
+_spot_history_lock = threading.Lock()
+
+
+def _load_spot_history():
+    "({hour_start_epoch_ms: EUR/kWh brutto}, meta) - leer, wenn die Datei fehlt oder unlesbar ist."
+    try:
+        with open(SPOT_HISTORY_PATH, "r") as f:
+            data = json.load(f)
+        return {int(k): float(v) for k, v in (data.get("prices") or {}).items()}, data.get("meta") or {}
+    except Exception:
+        return {}, {}
+
+
+def _save_spot_history(prices, meta):
+    tmp_path = SPOT_HISTORY_PATH + ".tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump({"prices": {str(k): v for k, v in sorted(prices.items())}, "meta": meta}, f)
+        os.replace(tmp_path, SPOT_HISTORY_PATH)
+    except Exception as e:
+        print("[Shyft] Preis-Historie konnte nicht gespeichert werden:", repr(e))
+
+
+def update_spot_price_history():
+    """Haelt die Boersenpreis-Historie der letzten SPOT_HISTORY_DAYS Tage aktuell: uebernimmt die bereits vergangenen Stunden aus dem
+    Awattar-Fenster des stuendlichen Syncs und fuellt Luecken (erster Start, laengere Pause) in Wochen-Abschnitten bei Awattar nach -
+    hoechstens einmal je SPOT_HISTORY_BACKFILL_RETRY_SECONDS, damit ein Ausfall der API den Sync nicht ausbremst."""
+    with _spot_history_lock:
+        prices, meta = _load_spot_history()
+        hour_ms = int(time.time() // 3600) * 3600 * 1000
+        day_ms = 24 * 3600 * 1000
+        for ts, price in _fetch_awattar_prices().items():
+            if ts < hour_ms:
+                prices[ts] = price
+        window_start = hour_ms - SPOT_HISTORY_DAYS * day_ms
+        have = sum(1 for ts in prices if window_start <= ts < hour_ms)
+        if have < 0.95 * SPOT_HISTORY_DAYS * 24 and time.time() - meta.get("last_backfill_attempt", 0) > SPOT_HISTORY_BACKFILL_RETRY_SECONDS:
+            meta["last_backfill_attempt"] = time.time()
+            chunk_ms = SPOT_HISTORY_BACKFILL_CHUNK_DAYS * day_ms
+            start = window_start
+            while start < hour_ms:
+                end = min(start + chunk_ms, hour_ms)
+                try:
+                    resp = requests.get(AWATTAR_URL, params={"start": start, "end": end}, timeout=20)
+                    resp.raise_for_status()
+                    for row in resp.json().get("data", []):
+                        ts = int(row["start_timestamp"])
+                        if ts < hour_ms:
+                            prices[ts] = round(float(row["marketprice"]) / 1000.0 * AWATTAR_VAT_FACTOR, 5)
+                except Exception as e:
+                    print("[Shyft] Preis-Historie: Nachfuellen bei Awattar fehlgeschlagen:", repr(e))
+                    break
+                start = end
+        cutoff = hour_ms - SPOT_HISTORY_KEEP_DAYS * day_ms
+        prices = {ts: v for ts, v in prices.items() if ts >= cutoff}
+        _save_spot_history(prices, meta)
+
+
+def _dynamic_tariff_adder(config):
+    "Funktion (Stunden-Start UTC) -> Aufschlag in EUR/kWh auf den Brutto-Boersenpreis im dynamischen Tarif; None fuer andere Tarife oder unvollstaendige Eingaben (wie compute_price_buy_array)."
+    mode = config.get("electricityTariffMode") or "fixed"
+
+    def _cent(key):
+        v = config.get(key)
+        try:
+            return float(v) / 100.0 if v is not None and v != "" else None
+        except (TypeError, ValueError):
+            return None
+
+    if mode == "dynamic":
+        surcharge = _cent("electricityDynamicSurchargeCent")
+        return (lambda hour_utc: surcharge) if surcharge is not None else None
+    if mode == "dynamic_variable":
+        ht, nt = _cent("electricityNetzentgeltHtCent"), _cent("electricityNetzentgeltNtCent")
+        standard = _cent("electricityNetzentgeltStandardCent")
+        if ht is None or nt is None or standard is None:
+            return None
+        windows = config.get("electricityNetzentgeltWindows") or []
+        quarters = set(config.get("electricityNetzentgeltQuarters") or [])
+
+        def adder(hour_utc):
+            tariff = _netzentgelt_tariff_for_hour(hour_utc.astimezone(get_ha_timezone()), windows, quarters)
+            return ht if tariff == "ht" else (nt if tariff == "nt" else standard)
+        return adder
+    return None
+
+
+def spot_history_buy_prices(config):
+    "Einkaufspreise (brutto, EUR/kWh) je Stunde der letzten SPOT_HISTORY_DAYS Tage mit dem heutigen Tarif; None ohne dynamischen Tarif."
+    adder = _dynamic_tariff_adder(config)
+    if adder is None:
+        return None
+    prices, _ = _load_spot_history()
+    hour_ms = int(time.time() // 3600) * 3600 * 1000
+    out = []
+    for ts in range(hour_ms - SPOT_HISTORY_DAYS * 24 * 3600 * 1000, hour_ms, 3600 * 1000):
+        raw = prices.get(ts)
+        if raw is not None:
+            out.append(raw + adder(datetime.fromtimestamp(ts / 1000, tz=timezone.utc)))
+    return out
+
+
+def _cache_upcoming_prices(price_column):
+    "Noch bevorstehende Stunden (ab jetzt, inklusive der aktuellen) der Spalte price_column aus der zuletzt gecachten input.csv; [] ohne Cache."
+    try:
+        with open(DASHBOARD_CACHE_PATH, "r") as f:
+            cache = json.load(f)
+        input_csv, creation_date_ms = cache.get("input_csv"), cache.get("creation_date")
+        if not input_csv or creation_date_ms is None:
+            return []
+        start = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+        now_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        current_index = int((now_hour - start).total_seconds() // 3600)
+        rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
+        return [_safe_float(row.get(price_column)) for i, row in enumerate(rows) if i >= current_index and row.get(price_column) not in (None, "")]
+    except Exception:
+        return []
+
+
+def compute_ev_tiers(config):
+    """Endwert-Stufen des E-Autos fuer den Optimierer (siehe ev_tiers.build_tiers), abhaengig von der Laderegel des Nutzers. None, wenn noch
+    keine bevorstehenden Preise bekannt sind (dann sendet der Sync nur WB - p_min)."""
+    rule = ev_tiers.charge_rule(config)
+    price_column = _wb_p_min_basis()[0]
+    pv_mode = price_column == "p_sell"
+    upcoming_buy = _cache_upcoming_prices("p_buy")
+    sell_ref = None
+    if pv_mode:
+        upcoming_sell = _cache_upcoming_prices("p_sell")
+        sell_ref = min(upcoming_sell) if upcoming_sell else None
+    history = spot_history_buy_prices(config)
+    tiers = ev_tiers.build_tiers(rule, history, upcoming_buy, pv_mode, sell_ref)
+    if tiers is None:
+        return None
+    values = ", ".join(f"{k} {v * 100:.1f} ct" for k, v in tiers["values"].items())
+    print(f"[Shyft] Laderegel '{rule}': {tiers['basis']} ({values}); Stufen {tiers['p']} bis Ladestand {tiers['soc']}")
+    return tiers
+
+
+def ev_pv_surplus_soc_cap(config):
+    "Ladestand (%), bis zu dem mit PV-Ueberschuss geladen wird - aus der Laderegel (ersetzt die fruehere Einstellung 'Limit PV-Ueberschussladen')."
+    return float(ev_tiers.pv_surplus_soc_cap_percent(config))
+
+
+def _migrate_ev_charge_rule():
+    """Einmal-Migration: der fruehere 'Mindestladestand' (evSocNormal) wird auf die neue Laderegel abgebildet (ev_tiers.
+    charge_rule_from_legacy_soc_normal); das fruehere 'Limit PV-Ueberschussladen' (evSocMaxPvSurplus) entfaellt, die Grenze ergibt sich nun
+    aus der Laderegel."""
+    config = _read_current_config()
+    if config.get("evChargeRule") in ev_tiers.EV_CHARGE_RULES:
+        return
+    if config.get("evSocNormal") is None and config.get("evSocMaxPvSurplus") is None:
+        return  # nie angefasst - der Standard greift ohnehin (ev_tiers.charge_rule)
+    config["evChargeRule"] = ev_tiers.charge_rule(config)
+    _write_current_config(config)
+    print("[Shyft] Laderegel aus Mindestladestand", config.get("evSocNormal"), "uebernommen:", config["evChargeRule"])
+
+
 def compute_energy_flow_data():
     """Aggregiert alle Live-Werte fuers Energiefluss-Widget auf dem Dashboard (siehe
     buildEnergyFlowWidget im Frontend) in einem Response - jedes Geraet nur, wenn es ueberhaupt als
@@ -6024,7 +6205,7 @@ def _can_extend_pv_surplus_session(session, config):
     if has_battery and battery_soc <= PV_SURPLUS_BATTERY_STOP_SOC:
         return False
     ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
-    max_ev_soc = config.get("evSocMaxPvSurplus")
+    max_ev_soc = ev_pv_surplus_soc_cap(config)
     if ev_soc is not None and max_ev_soc is not None and ev_soc >= float(max_ev_soc):
         return False
     grid_kw = read_grid_power_kw(config)
@@ -6139,11 +6320,11 @@ def _run_pv_surplus_charging_tick_impl():
             stop_pv_surplus_charging(actions, session, config, reason=f"Heimspeicher-SOC auf {battery_soc:.0f}% gefallen")
             return
         ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
-        max_ev_soc = config.get("evSocMaxPvSurplus")
+        max_ev_soc = ev_pv_surplus_soc_cap(config)
         if ev_soc is not None and max_ev_soc is not None and ev_soc >= float(max_ev_soc):
             stop_pv_surplus_charging(
                 actions, session, config,
-                reason=f"Auto-Ladestand {ev_soc:.0f}% ≥ Limit PV-Überschussladen ({float(max_ev_soc):.0f}%)")
+                reason=f"Auto-Ladestand {ev_soc:.0f}% ≥ PV-Grenze der Laderegel ({float(max_ev_soc):.0f}%)")
             return
         if grid_kw is None:
             return  # kein aktueller Messwert - Zielwert unveraendert bis zum naechsten Tick
@@ -6218,7 +6399,7 @@ def _run_pv_surplus_charging_tick_impl():
         if has_battery and battery_soc <= PV_SURPLUS_BATTERY_STOP_SOC:
             return
         start_ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
-        start_max_ev_soc = config.get("evSocMaxPvSurplus")
+        start_max_ev_soc = ev_pv_surplus_soc_cap(config)
         if start_ev_soc is not None and start_max_ev_soc is not None and start_ev_soc >= float(start_max_ev_soc):
             return
         # Der Ablauf der geplanten Stunde ist ein regulaerer, gewollter Uebergang (siehe oben,
@@ -9714,7 +9895,7 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
         soc_now = _safe_float(output_row.get("SOC_EV")) * 100
 
         if is_current_hour and pv_surplus:
-            max_soc_pct = config.get("evSocMaxPvSurplus")
+            max_soc_pct = ev_pv_surplus_soc_cap(config)
             if max_soc_pct is not None and soc_now >= float(max_soc_pct):
                 continue  # Ausnahme: Ziel-Ladestand (PV-Ueberschuss) fuer die laufende Stunde schon erreicht
             # soc_now oben ist der (evtl. veraltete) SOC_EV aus der letzten output.csv - zusaetzlich
@@ -12555,7 +12736,8 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
     # Warmwasser-Tank, Batterie) statt jede Stunde vom echten/optimierten Zustand zu "erben" -
     # siehe base_case.compute_base_case-Docstring fuer die Begruendung (Nutzer-Beobachtung).
     state_overrides = _read_base_case_state_overrides(creation_date_ms) if input_csv else None
-    base = base_case.compute_base_case(input_csv, state_overrides, _opt_ev_end_kwh(input_csv, output_csv)) if input_csv else None
+    ev_comfort_soc = ev_tiers.EV_CHARGE_RULES[ev_tiers.charge_rule(_read_current_config())][1]
+    base = base_case.compute_base_case(input_csv, state_overrides, _opt_ev_end_kwh(input_csv, output_csv), ev_comfort_soc) if input_csv else None
     if base:
         payload.update(base)
         _write_base_case_state(creation_date_ms, base.get("nextState"))
@@ -13735,6 +13917,11 @@ if __name__ == "__main__":
         _migrate_battery_pv_surplus_charge_limit()
     except Exception as e:
         print("Failed to migrate battery pv-surplus charge limit at startup:", repr(e))
+
+    try:
+        _migrate_ev_charge_rule()
+    except Exception as e:
+        print("Failed to migrate ev charge rule at startup:", repr(e))
 
     live_entity_watcher.start()
 

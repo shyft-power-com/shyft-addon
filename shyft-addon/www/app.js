@@ -1033,8 +1033,7 @@ async function saveConfigurationNow() {
         "wallboxMaxPhases": configData["wallboxMaxPhases"] ?? 3,
         "wallboxMaxCurrentAmps": configData["wallboxMaxCurrentAmps"] ?? 16,
         "batteryFlowSignOverride": configData["batteryFlowSignOverride"] ?? null,
-        "evSocNormal": configData["evSocNormal"] ?? '10 %',
-        "evSocMaxPvSurplus": configData["evSocMaxPvSurplus"] ?? null,
+        "evChargeRule": configData["evChargeRule"] ?? evChargeRuleFromLegacy(configData["evSocNormal"]),
         // Bis 0.0.44.33 fehlten alle uebrigen "einfachen" staticConfig-Felder (Waermepumpe/Batterie/
         // Strompreise/Optimierung) hier komplett - sie wurden per change-Handler nur lokal in
         // configData gesetzt, aber nie tatsaechlich per PUT mitgeschickt. writeConfig in app.py
@@ -3990,8 +3989,7 @@ function renderSectionBody(bodyDiv, section, entryIds) {
             bodyDiv.appendChild(buildCarBatteryCapacityField());
             bodyDiv.appendChild(buildCarConsumptionField());
             bodyDiv.appendChild(buildCarAvgDailyDistanceField());
-            bodyDiv.appendChild(buildEvSocNormalField());
-            bodyDiv.appendChild(buildEvSocMaxPvSurplusField());
+            bodyDiv.appendChild(buildEvChargeRuleField());
         }
         if (section.key === 'sonstiger_verbraucher') {
             bodyDiv.appendChild(buildMultiSensorField('sonstiger_verbraucher_switch_entities', candidateEntities));
@@ -4422,7 +4420,7 @@ function buildConfigSelectField({label, tooltip, id, configKey, options, default
     // Den effektiven (Default-aufgeloesten) Wert sofort in configData festhalten, nicht erst beim
     // ersten 'change'. Sonst wird ein nie angefasstes Dropdown beim Speichern als null/undefined
     // geschrieben (writeConfig uebernimmt nur, was im PUT-Body steht) und der sichtbare Default
-    // greift nie - z.B. evSocNormal landete so dauerhaft als null in der Config.
+    // greift nie - z.B. evChargeRule landete so dauerhaft als null in der Config.
     if (configData[configKey] === undefined || configData[configKey] === null) {
         configData[configKey] = select.value;
     }
@@ -4656,32 +4654,28 @@ function buildBatterySocMinField() {
     });
 }
 
-function buildEvSocNormalField() {
-    return buildConfigSelectField({
-        label: 'Mindestladestand',
-        tooltip: 'Wie viel Prozent der Batterie sollen unabhängig von den geplanten Fahrten möglichst schnell geladen und für spontane Fahrten vorgehalten werden?',
-        id: 'ev_soc_normal',
-        configKey: 'evSocNormal',
-        options: ['10 %', '20 %', '30 %', '40 %', '50 %', '60 %', '70 %', '80 %'].map(v => [v, v]),
-        defaultValue: '10 %',
-    });
+// Laderegel (ersetzt 'Mindestladestand' und 'Limit PV-Überschussladen'): Bestandsnutzer bekommen die Regel aus ihrem bisherigen
+// Mindestladestand abgeleitet - dieselbe Abbildung wie ev_tiers.charge_rule_from_legacy_soc_normal im Add-on (Migration beim Start).
+function evChargeRuleFromLegacy(legacyEvSocNormal) {
+    if (legacyEvSocNormal === undefined || legacyEvSocNormal === null) return 'mittel';
+    const pct = parseFloat(String(legacyEvSocNormal).replace('%', '').replace(',', '.'));
+    if (Number.isNaN(pct)) return 'mittel';
+    if (pct <= 20) return 'sehr günstig';
+    if (pct <= 50) return 'mittel';
+    return 'Komfort';
 }
 
-// Deckelt nur das PV-Ueberschussladen (siehe run_pv_surplus_charging_tick in app.py) - geplante
-// Strecken und sehr guenstiger Netzstrom laden trotzdem bis zum vollen/gewuenschten Ladestand,
-// diese Grenze soll die Autobatterie nur vor unnoetig haeufigem Vollladen durch PV-Ueberschuss
-// schuetzen. 60-95%, da darunter der Nutzen fraglich waere und 100% die Grenze ohnehin sinnlos macht.
-function buildEvSocMaxPvSurplusField() {
-    return buildConfigNumberField({
-        label: 'Limit PV-Überschussladen',
-        tooltip: 'Setze für PV-Überschussladen einen maximalen Ladestand, um die Autobatterie zu schonen. Für geplante Strecken gilt diese Grenze nicht. Auch wird bei sehr günstigem Netzstrom vollgeladen.',
-        id: 'ev_soc_max_pv_surplus',
-        configKey: 'evSocMaxPvSurplus',
-        placeholder: 'z.B. 80 %',
-        min: '60',
-        max: '95',
-        step: '1',
-        unit: '%',
+function buildEvChargeRuleField() {
+    return buildConfigSelectField({
+        label: 'Laderegel',
+        tooltip: 'Die Laderegel entscheidet, wie voll dein Auto bei günstigen Strompreisen geladen wird. ' +
+            'Bis 10 % lädt Shyft immer sofort. Darüber lädt Shyft in den günstigsten Stunden der nächsten Tage: Je nach Regel bis ca. 25 % / 35 % / 45 % auch bei normalen Preisen (als Reserve), bis 50 % / 70 % / 90 % bei guten Preisen, darüber nur bei sehr günstigem Strom (unter 5 Cent brutto, also fast nur bei negativen Preisen), um den Akku zu schonen. ' +
+            '„sehr günstig“ spart einige Euro im Jahr: Shyft wartet auf die allergünstigsten Stunden und lädt dann voll. Dafür steht das Auto öfter bei niedrigem Ladestand. „Komfort“ hält das Auto voller für spontane Fahrten. ' +
+            'Beim Laden mit PV-Überschuss lädt Shyft bis 70 % („sehr günstig“), 80 % („mittel“) bzw. 90 % („Komfort“) – das ersetzt die frühere Einstellung „Limit PV-Überschussladen“.',
+        id: 'ev_charge_rule',
+        configKey: 'evChargeRule',
+        options: ['sehr günstig', 'mittel', 'Komfort'].map(v => [v, v]),
+        defaultValue: evChargeRuleFromLegacy(configData["evSocNormal"]),
     });
 }
 

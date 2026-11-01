@@ -420,8 +420,9 @@ class SyncService:
         # app.py) - fehlt (kein add()), solange noch kein Wert berechnet werden konnte (z.B. keine
         # Entitaet zugeordnet oder noch keine Historie vorhanden).
         add("hw_soc_min", "hwSocMinC")
-        add("EV - SOC Normal", "evSocNormal")
-        add("EV - SOC Max PV Surplus", "evSocMaxPvSurplus")
+        # Harte Reserve des Autos fest 10 % (frueher die Einstellung 'Mindestladestand'); wie weit darueber geladen wird, steuert die Laderegel
+        # ueber die Endwert-Stufen (ev_tier_*, siehe ev_tiers.py) - der Server liest die Reserve weiter aus diesem Feld.
+        static_config["EV - SOC Normal"] = "10 %"
         add("CO - Price Gas", "coPriceGas")
         # "Sonstiger Verbraucher": Preisschwelle (Cent/kWh) -> Optimierer-Spalte OD_running_hours
         # (Julia teilt selbst durch 100), Dauerleistung (kW) -> otherDevice_P. add() laesst leere
