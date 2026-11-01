@@ -3912,7 +3912,8 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
     steuert Hinweistext und ~-Markierung im Dashboard.
 
     return_meta=True haengt der Rueckgabe ein dict an: {"simulatedHours": [Indizes der Stunden, deren Verbrauch der
-    "Notnagel" (siehe oben) simuliert hat]} - fuer die Kennzeichnung in "Prognose im Detail".
+    "Notnagel" (siehe oben) simuliert hat], "atHomeUnplugged": True, wenn das Auto laut Sensor "Auto - Zuhause?" zu Hause, aber nicht
+    eingesteckt ist (Stunde 0 zaehlt dann als "zu Hause")} - fuer die Kennzeichnung in "Prognose im Detail".
     """
     try:
         with open(CAR_PRESENCE_LOG_PATH, "r") as f:
@@ -4134,7 +4135,8 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
 
     result = (labels, probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, low_data_basis, consumption_basis)
     if return_meta:
-        return result + ({"simulatedHours": sorted(i for i in simulated_hours if consumption_kwh_forecast[i] > 0)},)
+        return result + ({"simulatedHours": sorted(i for i in simulated_hours if consumption_kwh_forecast[i] > 0),
+                          "atHomeUnplugged": at_home_unplugged},)
     return result
 
 
@@ -4288,6 +4290,11 @@ def carPresenceForecast():
             return "fährt"
         return "eingesteckt" if c >= s else "steht"
 
+    # Stunde 0 mit Zustand "zu Hause": Auto da, aber nicht eingesteckt (zaehlt fuer den Optimierer als abwesend, siehe compute_car_presence_forecast).
+    at_home = [False] * len(labels)
+    if meta.get("atHomeUnplugged") and at_home and probabilities[0] == 0.0 and consumption_kwh_forecast[0] == 0.0:
+        at_home[0] = True
+
     # Die an den Optimierer gehenden Felder (build_ev_optimizer_fields) MIT ausgeben, damit die
     # Prognose 1:1 gegen die tatsaechliche input.csv geprueft werden kann.
     optimizer_input = {}
@@ -4302,7 +4309,8 @@ def carPresenceForecast():
         "probabilities": [round(p, 3) for p in probabilities],
         "standingProbabilities": [round(p, 3) for p in standing_probabilities],
         "drivingProbabilities": [round(p, 3) for p in driving_probabilities],
-        "state": [_state(i) for i in range(len(labels))],
+        "state": ["zu Hause" if at_home[i] else _state(i) for i in range(len(labels))],
+        "atHome": at_home,
         "consumptionKwh": [round(v, 3) for v in consumption_kwh_forecast],
         "simulatedHours": [i in simulated for i in range(len(labels))],
         "consumptionBasis": consumption_basis,

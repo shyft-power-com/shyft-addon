@@ -8939,7 +8939,9 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     // Legende zur farbigen Anwesenheits-Leiste im Chart (die Ueberschrift + Erklaerung "Anwesenheitsprognose" sitzt unter
     // dem Chart, siehe buildPresenceForecastHeading am Aufrufort) - reine Beschriftung, nicht ausblendbar.
     if (presenceForecast) {
-        for (const [color, label] of [['var(--color-accent)', 'eingesteckt'], ['var(--color-text-secondary)', 'steht'], ['var(--color-error)', 'fährt']]) {
+        const presenceLegend = [['var(--color-accent)', 'eingesteckt'], ['var(--color-text-secondary)', 'steht'], ['var(--color-error)', 'fährt']];
+        if (presenceForecast.hasAtHome) presenceLegend.push([PRESENCE_STATE_COLORS['zu Hause'], 'zu Hause']);
+        for (const [color, label] of presenceLegend) {
             legendEntries.push(chartLegendEntry(ctx, {label, color, style: 'square'}));
         }
     }
@@ -10177,9 +10179,12 @@ const PRESENCE_STATE_COLORS = {
     eingesteckt: 'var(--color-accent)',
     steht: 'var(--color-text-secondary)',
     fährt: 'var(--color-error)',
+    'zu Hause': 'var(--color-warning)',
 };
 function mostLikelyPresenceState(entry) {
     if (!entry) return null;
+    // "zu Hause": Auto da, aber nicht eingesteckt (Sensor "Auto - Zuhause?", nur die laufende Stunde) - hat Vorrang vor der Wahrscheinlichkeit.
+    if (entry.atHome) return {label: 'zu Hause', p: 1};
     // Reihenfolge fährt -> steht -> eingesteckt und ">=" statt ">": bei Gleichstand gewinnt
     // "fährt". Genau dieselbe Bruch-Entscheidung nutzt die Verbrauchszuteilung in app.py
     // (_is_predicted_driving), damit eine Stunde mit kWh > 0 in der Liste nie "eingesteckt"/"steht"
@@ -12082,9 +12087,10 @@ async function loadDashboardImpl() {
                         connected: presenceData.probabilities[i],
                         standing: presenceData.standingProbabilities[i],
                         driving: presenceData.drivingProbabilities[i],
+                        atHome: !!(presenceData.atHome && presenceData.atHome[i]),
                     };
                 });
-                presenceForecast = {byLabel};
+                presenceForecast = {byLabel, hasAtHome: Object.values(byLabel).some(entry => entry.atHome)};
                 consumptionForecast = {labels: presenceData.labels, consumptionKwh: presenceData.consumptionKwh, consumptionBasis: presenceData.consumptionBasis, simulatedHours: presenceData.simulatedHours || []};
             }
         } catch (err) {

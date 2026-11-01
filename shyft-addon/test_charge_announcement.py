@@ -171,3 +171,18 @@ def test_forecast_at_home_unplugged_counts_as_away_first_hour_then_can_charge(en
     assert at_home[1:] != away[1:]                # Abwesend bleibt bei der alten Prognose
     assert no_sensor_info == away                 # unbekannter Sensorwert: Verhalten wie ohne Sensor
     assert plugged[0] == 1.0
+
+
+def test_dashboard_route_marks_first_hour_as_zu_hause(env, monkeypatch, tmp_path):
+    monkeypatch.setattr(app, "CAR_PRESENCE_LOG_PATH", str(tmp_path / "no_log.json"))
+    monkeypatch.setattr(app, "_apply_manual_absence_overrides", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app, "_apply_planned_car_trips", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app, "build_ev_optimizer_fields", lambda *args, **kwargs: {})
+    env.config["optimizationPeriodsSite"] = 6
+    with app.app.test_request_context():
+        data = app.carPresenceForecast().get_json()
+        assert data["atHome"][0] is True and not any(data["atHome"][1:])
+        assert data["state"][0] == "zu Hause" and data["state"][1] == "eingesteckt"
+        env.states["sensor.home"] = "Abwesend"
+        data = app.carPresenceForecast().get_json()
+        assert not any(data["atHome"]) and "zu Hause" not in data["state"]
