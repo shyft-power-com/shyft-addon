@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.0.45.353 – Laderegel: Auto laden nach Preis-Historie statt „günstigster Preis + 3 Cent“
+
+Die Einstellungen „Mindestladestand“ und „Limit PV-Überschussladen“ werden durch **eine** Einstellung ersetzt: **Laderegel** (sehr günstig / mittel / Komfort). Sie entscheidet, wie voll das Auto bei günstigen Strompreisen geladen wird.
+
+* **Neue Zielfunktion im Optimierer (Server ab 0.46.29.0).** Der Ladestand am Ende des Planungsfensters ist keine Gerade (`p_min` pro kWh) mehr, sondern eine Treppe: Ladestandsbereiche mit jeweils einem Preis, unter dem sich das Laden lohnt. Der Optimierer sucht dafür die günstigsten Stunden des Fensters heraus und wartet auf die allergünstigsten, statt loszuladen, sobald es sich irgendwie lohnt.
+  * Bis 10 % lädt das Auto immer sofort (fest, früher „Mindestladestand“).
+  * Reserve-Stufe (Preisgrenze: 70-%-Quantil der letzten 35 Tage, sehr günstig bis 25 %, mittel bis 35 %, Komfort bis 45 %), Komfort-Stufe (20-%-Quantil, bis 50 / 70 / 90 %), Spar-Stufe (10-%-Quantil, bis 90 %), darüber nur bei sehr billigem Strom (unter 5 Cent brutto – das gibt es fast nur bei negativen Preisen, schont den Akku).
+  * Rückblick-Rechnung über zwei Jahre (Börsenpreise 2024–2026, typisches Fahrprofil, 64-kWh-Auto): 514 € (sehr günstig) / 517 € (mittel) / 532 € (Komfort) Netzkosten pro Jahr gegenüber 567 € mit der bisherigen Regel. „sehr günstig“ spart einige Euro, dafür steht das Auto öfter bei niedrigem Ladestand (Ø 60 % gegenüber 73 % bei Komfort).
+* **Preis-Historie.** Das Add-on speichert die Börsenpreise der letzten 35 Tage (beim ersten Start von Awattar nachgeladen) und rechnet sie mit deinem aktuellen Tarif (Netzentgelt-Fenster, Aufschlag) in Brutto-Einkaufspreise um. Bei Festpreis, HT/NT oder noch fehlender Historie (unter 14 Tage) werden die Stufen aus den bekannten Preisen berechnet: günstigster Preis + 3 Cent bis zum Komfort-Ladestand, darüber nur unter 5 Cent.
+* **PV-Überschuss.** Der Schalter (PV-Überschuss im letzten Plan, `p_sell`-Basis) bleibt: Dann deckelt die Einspeisevergütung die Stufen oberhalb der Reserve, und oberhalb der PV-Grenze (70 % / 80 % / 90 %) lädt PV nicht mehr. Dieselbe Grenze gilt für das Laden mit PV-Überschuss durch das Add-on selbst.
+* **Bestandsnutzer.** Der bisherige Mindestladestand wird einmalig auf die Laderegel abgebildet: bis 20 % → sehr günstig, 30–50 % → mittel, ab 60 % → Komfort. Das „Limit PV-Überschussladen“ entfällt. Ohne bisherige Einstellung gilt „mittel“.
+* **Referenzfall (Ersparnis-Anzeige):** Ohne Optimierung lädt das Auto sofort bis zum Komfort-Ladestand der Laderegel.
+* **Server:** Das Add-on sendet die Stufen als `ev_tier_p1`…`p6` und `ev_tier_soc1`…`soc5` (Live-Werte) und weiterhin `WB - p_min`. Ein Server ohne Stufen-Unterstützung (< 0.46.29.0) nutzt weiter `WB - p_min`, die Reserve ist dort aber fest 10 % (`EV - SOC Normal`). Server daher erst nach dem Add-on-Update umstellen.
+
 ## 0.0.45.352
 
 * **Neu: optionaler Sensor „Auto - Zuhause?“ und Zustand „zu Hause“ in der Anwesenheitsprognose.** Der Sensor (Kachel „Auto“) liefert die Zustände „Zuhause“ bzw. „Abwesend“ (z. B. bei der Tesla-Integration direkt vorhanden; auch `home`/`not_home`, Groß-/Kleinschreibung egal). Liefert dein Auto etwas anderes, richte dir einen Hilfssensor mit diesen beiden Zuständen ein. Ist das Auto zu Hause, aber nicht eingesteckt, zählt die laufende Stunde in der Prognose als abwesend, ab der Folgestunde als „kann laden“. Bei `unknown`/`unavailable` oder ohne Sensor bleibt alles wie bisher. Der Sensor wird nur intern im Add-on benutzt und nicht an shyft-power übertragen.
