@@ -3458,6 +3458,26 @@ def classify_wallbox_connection_state(state_value, config=None):
     return config.get("wallboxConnectionStatusMapping", {}).get(state_value)
 
 
+CAR_HOME_STATES = {"zuhause": True, "home": True, "abwesend": False, "not_home": False, "away": False}
+
+
+def classify_car_home_state(state_value):
+    """True = Auto ist zu Hause ("Zuhause"/"home"), False = Auto ist nicht zu Hause ("Abwesend"/"not_home"/"away"), None = unbekannt (unknown/unavailable/anderer Wert).
+    Gross-/Kleinschreibung egal. Zustand des optionalen Sensors "Auto - Zuhause?" (electronicvehicle_home), der nur intern im Add-on benutzt wird."""
+    return CAR_HOME_STATES.get(str(state_value or "").strip().lower())
+
+
+def read_car_home_state(config):
+    "Aktueller Zustand des optionalen Sensors 'Auto - Zuhause?' (True/False), None wenn nicht zugeordnet oder nicht lesbar/unbekannt - dann gilt das Verhalten wie ohne Sensor."
+    entity_id = (config.get("sensorMappings") or {}).get("electronicvehicle_home", "")
+    if not entity_id or isinstance(entity_id, list):
+        return None
+    try:
+        return classify_car_home_state(homeassistant_adapter.load_entity_state(entity_id).state)
+    except Exception:
+        return None
+
+
 _car_presence_log_lock = threading.Lock()
 
 
@@ -4020,7 +4040,10 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
 
     start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     labels = [(start + timedelta(hours=i)).isoformat() for i in range(hours)]
-    hours_away_now = compute_hours_away(by_hour, current_connected, start)
+    # Zustand "zu Hause": Auto ist da, aber nicht eingesteckt (Sensor "Auto - Zuhause?"). Die laufende Stunde zaehlt als
+    # abwesend (Zeit zum Einstecken), ab der Folgestunde als "kann laden" - die Prognose startet dann so, als waere es eingesteckt.
+    at_home_unplugged = current_connected is False and read_car_home_state(config) is True
+    hours_away_now = 0 if at_home_unplugged else compute_hours_away(by_hour, current_connected, start)
 
     probabilities = []
     if current_connected is None:
@@ -4028,6 +4051,8 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
     else:
         p = 1.0 if current_connected else 0.0
     probabilities.append(p)
+    if at_home_unplugged:
+        p = 1.0  # Ausgangspunkt der Markov-Kette fuer die Folgestunden; probabilities[0] bleibt 0.0
     for i in range(1, hours):
         source_ts = start + timedelta(hours=i - 1)
         p_home_given_home, _ = transition_rate(source_ts.weekday(), source_ts.hour, True)
@@ -8596,6 +8621,7 @@ NOTIFICATION_TYPES = {
     "action_start_end": "Aktionen starten / beenden (alle)",
     "action_start_end_errors_only": "Aktionen starten / beenden (nur bei Fehlern)",
     "device_status_deviation": "Geräteverhalten abweichend von Shyft-Steuerung",
+    "charge_announcement": "Geplante Ladevorgänge ankündigen",
 }
 
 # Aktionstypen the addon controls directly (writes the mapped entity itself), no user-side
@@ -8702,6 +8728,224 @@ def notify_action_event(config, action, verb, is_error=False):
         homeassistant_adapter.send_notification(target, f"Shyft-Aktion {verb}: {label}")
     except Exception as e:
         print(f"[Shyft] Benachrichtigung fehlgeschlagen: {e!r}")
+
+
+# ============================================================================
+# Geplante Ladevorgaenge ankuendigen (Benachrichtigungs-Toggle "charge_announcement", Standard aus):
+#   - Um 6 und 18 Uhr (lokal, siehe announce_planned_charges_periodically) sowie sofort beim Wechsel des optionalen
+#     Sensors "Auto - Zuhause?" auf "Zuhause" (siehe _on_car_home_live_update) eine Nachricht, wenn in den naechsten
+#     CHARGE_ANNOUNCEMENT_HORIZON_HOURS Stunden eine "Auto laden"-Aktion geplant ist, das Auto NICHT eingesteckt ist und
+#     (falls der Sensor zugeordnet ist) nicht abwesend ist. Jede Ladung wird nur EINMAL angekuendigt, keine Erinnerung.
+#   - Aendert sich eine angekuendigte, noch nicht gestartete Ladung (verschoben/abgesagt), geht nach dem naechsten
+#     Optimierungslauf eine Update-Nachricht raus (siehe update_charge_announcements).
+# ============================================================================
+
+CHARGE_ANNOUNCEMENT_PATH = "/data/charge_announcements.json"
+CHARGE_ANNOUNCEMENT_HORIZON_HOURS = 12
+CHARGE_ANNOUNCEMENT_HOURS_LOCAL = (6, 18)
+# Verschiebung erst ab dieser Abweichung des Startzeitpunkts melden (Rundungs-/Lauf-Rauschen ignorieren).
+CHARGE_ANNOUNCEMENT_MOVE_TOLERANCE_MS = 30 * 60 * 1000
+# Nach einer Ankunft zu Hause wird die Neu-Optimierung abgewartet: neue Ladungen, die erst dann im Plan stehen, werden noch angekuendigt.
+CHARGE_ANNOUNCEMENT_ARRIVAL_WINDOW_SECONDS = 2 * 3600
+_charge_announcement_lock = threading.RLock()
+_charge_announcement_arrival = {"until": 0.0}
+
+
+def _read_announced_charges():
+    "Bereits angekuendigte Ladevorgaenge: [{startMs, endMs, kwh}]"
+    try:
+        with open(CHARGE_ANNOUNCEMENT_PATH, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_announced_charges(blocks):
+    try:
+        with open(CHARGE_ANNOUNCEMENT_PATH, "w") as f:
+            json.dump(blocks, f)
+    except Exception as e:
+        print("[Shyft] Ladevorgang-Ankuendigungen konnten nicht gespeichert werden:", repr(e))
+
+
+def _charge_blocks(statuses):
+    """Zusammenhaengende 'Auto laden'-Aktionen (Stunde fuer Stunde geplant bzw. verlaengert) als Bloecke
+    [{startMs, endMs, kwh, savings}], nach Start sortiert. Nur Aktionen mit einem der Status in statuses, die nicht per Steuerungs-Schalter
+    deaktiviert sind ("no, deactivated"). savings ist None, wenn keine der Aktionen eine Ersparnis hat."""
+    actions = [
+        a for a in _read_computed_actions()
+        if a.get("Action Name") == EV_CHARGE_ACTION_NAME
+        and (a.get("Status") or "").lower() in statuses
+        and a.get("Date Start") is not None and a.get("Date End") is not None
+        and a.get("Execution Status") != "no, deactivated"
+    ]
+    actions.sort(key=lambda a: a["Date Start"])
+    blocks = []
+    for a in actions:
+        savings = a.get("Savings")
+        if blocks and a["Date Start"] <= blocks[-1]["endMs"]:
+            block = blocks[-1]
+            block["endMs"] = max(block["endMs"], a["Date End"])
+            block["kwh"] += _safe_float(a.get("Energy (electr)"))
+            if savings is not None:
+                block["savings"] = (block["savings"] or 0.0) + _safe_float(savings)
+        else:
+            blocks.append({"startMs": a["Date Start"], "endMs": a["Date End"], "kwh": _safe_float(a.get("Energy (electr)")),
+                           "savings": None if savings is None else _safe_float(savings)})
+    return blocks
+
+
+def _blocks_overlap(a, b):
+    return a["startMs"] <= b["endMs"] and a["endMs"] >= b["startMs"]
+
+
+def _send_phone_notification(config, message):
+    "True, wenn die Nachricht verschickt wurde; False ohne Zielgeraet oder bei Fehler (der Aufrufer wiederholt es dann beim naechsten Anlass)."
+    target = (config.get("notificationTargets") or {}).get("phone", "")
+    if not target:
+        return False
+    try:
+        homeassistant_adapter.send_notification(target, message)
+        return True
+    except Exception as e:
+        print("[Shyft] Benachrichtigung fehlgeschlagen:", repr(e))
+        return False
+
+
+def _format_local_time(ms):
+    return datetime.fromtimestamp(ms / 1000, get_ha_timezone()).strftime("%H:%M")
+
+
+def _format_decimal(value, digits):
+    return f"{value:.{digits}f}".replace(".", ",")
+
+
+def _charge_announcement_enabled(config):
+    return bool((config.get("notificationsEnabled") or {}).get("charge_announcement", False))
+
+
+def announce_planned_charges(config=None, reason="geplant"):
+    """Schickt die Ankuendigung 'Verbinde dein Fahrzeug, geplante Ladung: ...' fuer alle in den naechsten
+    CHARGE_ANNOUNCEMENT_HORIZON_HOURS geplanten, noch nicht angekuendigten Ladevorgaenge - aber nur, wenn das Auto sicher NICHT eingesteckt ist
+    und nicht abwesend ist (Sensor 'Auto - Zuhause?'; ohne Sensor/bei unbekanntem Zustand wird nicht gebremst). True, wenn eine Nachricht rausging."""
+    with _charge_announcement_lock:
+        config = config or _read_current_config()
+        if not _charge_announcement_enabled(config) or is_demo_mode():
+            return False
+        # Nur ein sicher als "nicht eingesteckt" erkannter Wallbox-Zustand zaehlt (unbekannt/nicht zugeordnet: nichts senden).
+        wallbox_entity = (config.get("sensorMappings") or {}).get("wallbox_plugged", "")
+        if not wallbox_entity:
+            return False
+        try:
+            plugged = classify_wallbox_connection_state(homeassistant_adapter.load_entity_state(wallbox_entity).state, config)
+        except Exception:
+            return False
+        if plugged is not False:
+            return False
+        if read_car_home_state(config) is False:
+            return False  # Auto ist unterwegs - die Nachricht kommt, sobald es nach Hause kommt (siehe _on_car_home_live_update)
+
+        now_ms = time.time() * 1000
+        horizon_ms = now_ms + CHARGE_ANNOUNCEMENT_HORIZON_HOURS * 3600 * 1000
+        announced = [a for a in _read_announced_charges() if a.get("endMs", 0) > now_ms]
+        new_blocks = [
+            b for b in _charge_blocks(("geplant",))
+            if now_ms < b["startMs"] <= horizon_ms and not any(_blocks_overlap(b, a) for a in announced)
+        ]
+        if not new_blocks:
+            return False
+
+        kwh = sum(b["kwh"] for b in new_blocks)
+        savings_values = [b["savings"] for b in new_blocks if b["savings"] is not None]
+        savings = sum(savings_values) if savings_values else None
+        message = f"Verbinde dein Fahrzeug, geplante Ladung: {_format_decimal(kwh, 1)} kWh um {_format_local_time(new_blocks[0]['startMs'])} Uhr."
+        if savings is not None and savings > 0:
+            message += f" Ersparnis: {_format_decimal(savings, 2)} €"
+        if not _send_phone_notification(config, message):
+            return False
+        _write_announced_charges(announced + [{"startMs": b["startMs"], "endMs": b["endMs"], "kwh": b["kwh"]} for b in new_blocks])
+        print(f"[Shyft] Ladevorgang angekuendigt ({reason}): {message}")
+        return True
+
+
+def update_charge_announcements(config=None):
+    """Gleicht die angekuendigten, noch nicht gestarteten Ladevorgaenge mit dem aktuellen Plan ab (nach jedem Optimierungslauf) und schickt
+    'Ladevorgang auf HH:MM Uhr verschoben' bzw. 'Ladevorgang abgesagt'. Verschwindet eine Ladung, gilt sie als verschoben, wenn eine noch nicht
+    angekuendigte Ladung vergleichbarer Menge (mind. die halbe kWh) im Abstand von hoechstens CHARGE_ANNOUNCEMENT_HORIZON_HOURS dazu geplant ist,
+    sonst als abgesagt. Gestartete Ladungen bleiben unveraendert bis zu ihrem Ende. Danach, falls das Auto gerade zu Hause angekommen ist,
+    noch einmal die Ankuendigung neu geplanter Ladungen."""
+    with _charge_announcement_lock:
+        config = config or _read_current_config()
+        if is_demo_mode():
+            return
+        if not _charge_announcement_enabled(config):
+            if _read_announced_charges():
+                _write_announced_charges([])
+            return
+        now_ms = time.time() * 1000
+        announced = [a for a in _read_announced_charges() if a.get("endMs", 0) > now_ms]
+        current = _charge_blocks(("geplant", "aktiv"))
+        claimed = set()
+        result = []
+        pending = []
+
+        for a in announced:
+            if a["startMs"] <= now_ms:
+                result.append(a)  # laeuft bereits - keine Updates mehr
+                continue
+            match_index = next((i for i, b in enumerate(current) if i not in claimed and _blocks_overlap(a, b)), None)
+            if match_index is None:
+                pending.append(a)
+                continue
+            claimed.add(match_index)
+            match = current[match_index]
+            if abs(match["startMs"] - a["startMs"]) >= CHARGE_ANNOUNCEMENT_MOVE_TOLERANCE_MS:
+                message = f"Ladevorgang auf {_format_local_time(match['startMs'])} Uhr verschoben"
+                if not _send_phone_notification(config, message):
+                    result.append(a)  # beim naechsten Lauf erneut versuchen
+                    continue
+                print("[Shyft] Ladevorgang-Update:", message)
+            result.append({"startMs": match["startMs"], "endMs": match["endMs"], "kwh": match["kwh"]})
+
+        for a in pending:
+            candidates = [
+                (abs(b["startMs"] - a["startMs"]), i) for i, b in enumerate(current)
+                if i not in claimed and b["startMs"] > now_ms
+                and abs(b["startMs"] - a["startMs"]) <= CHARGE_ANNOUNCEMENT_HORIZON_HOURS * 3600 * 1000
+                and b["kwh"] >= 0.5 * a.get("kwh", 0)
+                and not any(_blocks_overlap(b, other) for other in announced if other is not a)
+            ]
+            if candidates:
+                _, i = min(candidates)
+                claimed.add(i)
+                b = current[i]
+                message = f"Ladevorgang auf {_format_local_time(b['startMs'])} Uhr verschoben"
+                replacement = {"startMs": b["startMs"], "endMs": b["endMs"], "kwh": b["kwh"]}
+            else:
+                message = "Ladevorgang abgesagt"
+                replacement = None
+            if not _send_phone_notification(config, message):
+                result.append(a)  # beim naechsten Lauf erneut versuchen
+                continue
+            print("[Shyft] Ladevorgang-Update:", message)
+            if replacement:
+                result.append(replacement)
+
+        _write_announced_charges(result)
+
+        if time.time() < _charge_announcement_arrival["until"]:
+            announce_planned_charges(config, reason="Ankunft")
+
+
+def announce_planned_charges_periodically():
+    "Stuendlicher Job (Minute 0): schickt die Ankuendigung nur zu den Uhrzeiten CHARGE_ANNOUNCEMENT_HOURS_LOCAL der (von Home Assistant konfigurierten) lokalen Zeit."
+    if _local_now().hour not in CHARGE_ANNOUNCEMENT_HOURS_LOCAL:
+        return
+    try:
+        announce_planned_charges(reason="Uhrzeit")
+    except Exception as e:
+        print("[Shyft] Ladevorgang-Ankuendigung fehlgeschlagen:", repr(e))
 
 
 # ============================================================================
@@ -11085,6 +11329,10 @@ def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms
         process_shyft_actions(blocking=False)
     except Exception as e:
         print("[Shyft] Sofortstart nach Optimierungslauf fehlgeschlagen:", repr(e))
+    try:
+        update_charge_announcements()
+    except Exception as e:
+        print("[Shyft] Ladevorgang-Ankuendigung: Aktualisierung nach Optimierungslauf fehlgeschlagen:", repr(e))
 
 
 def _find_next_hour_action(group, current):
@@ -13276,7 +13524,34 @@ def _on_battery_soc_live_update(entity_id, old_state, new_state):
 
 live_entity_watcher.register("photovoltaic_powerflow_grid", _on_grid_power_live_update)
 live_entity_watcher.register("electricity_grid_power_sensors", _on_grid_power_live_update)
+def _on_car_home_live_update(entity_id, old_state, new_state):
+    """Reagiert sofort auf einen Wechsel des optionalen Sensors "Auto - Zuhause?": kommt das Auto nach Hause (-> "Zuhause") und ist nicht
+    eingesteckt, geht SOFORT (ohne Wartezeit - lieber zu frueh als zu spaet) die Ankuendigung geplanter Ladevorgaenge raus, die bisher wegen
+    "Auto abwesend" unterdrueckt wurde. Da sich die Prognose mit dem Zustand "zu Hause" aendert (siehe compute_car_presence_forecast), folgt bei
+    nicht eingestecktem Auto eine Neu-Optimierung; neu dadurch geplante Ladungen werden danach noch angekuendigt (siehe update_charge_announcements)."""
+    with app.app_context():
+        was_home = classify_car_home_state((old_state or {}).get("state"))
+        is_home = classify_car_home_state((new_state or {}).get("state"))
+        if is_home is None or is_home == was_home:
+            return
+        try:
+            config = _read_current_config()
+            if is_home:
+                _charge_announcement_arrival["until"] = time.time() + CHARGE_ANNOUNCEMENT_ARRIVAL_WINDOW_SECONDS
+                announce_planned_charges(config, reason="Ankunft")
+            wallbox_entity = (config.get("sensorMappings") or {}).get("wallbox_plugged", "")
+            plugged = None
+            if wallbox_entity:
+                plugged = classify_wallbox_connection_state(homeassistant_adapter.load_entity_state(wallbox_entity).state, config)
+            if plugged is not True:
+                print(f"[Shyft] Auto: '{'Zuhause' if is_home else 'Abwesend'}' - stosse Neu-Optimierung an.")
+                sync_site_data()
+        except Exception as e:
+            print("[Shyft] Live-getriggerte Behandlung des Sensors 'Auto - Zuhause?' fehlgeschlagen:", repr(e))
+
+
 live_entity_watcher.register("wallbox_plugged", _on_wallbox_state_live_update)
+live_entity_watcher.register("electronicvehicle_home", _on_car_home_live_update)
 live_entity_watcher.register("battery_state_of_charge", _on_battery_soc_live_update)
 live_entity_watcher.register("battery_discharge_limit_current", _on_battery_discharge_limit_live_update)
 
@@ -13296,6 +13571,8 @@ scheduler.add_job(sync_dashboard_chart_data_periodically, 'date', run_date=datet
 # on the hour and every 15 min after - actions can be created mid-hour for the current hour
 # and start immediately, so a coarser schedule would miss those until the next hour
 scheduler.add_job(process_shyft_actions_periodically, 'cron', minute="0,15,30,45")
+# Ankuendigung geplanter Ladevorgaenge: stuendlich pruefen, gesendet wird nur um 6 und 18 Uhr lokaler Zeit (siehe announce_planned_charges_periodically)
+scheduler.add_job(announce_planned_charges_periodically, 'cron', minute="0")
 # Allgemeiner Beenden/Starten/Verlaengern-Mechanismus zur vollen Stunde, siehe run_hourly_action_transition
 scheduler.add_job(run_hourly_action_transition_periodically, 'cron', minute="0")
 scheduler.add_job(retry_failed_battery_actions_periodically, 'interval', seconds=BATTERY_ACTION_RETRY_INTERVAL_SECONDS, max_instances=1, coalesce=True)

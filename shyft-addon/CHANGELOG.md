@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.352
+
+* **Neu: optionaler Sensor „Auto - Zuhause?“ und Zustand „zu Hause“ in der Anwesenheitsprognose.** Der Sensor (Kachel „Auto“) liefert die Zustände „Zuhause“ bzw. „Abwesend“ (z. B. bei der Tesla-Integration direkt vorhanden; auch `home`/`not_home`, Groß-/Kleinschreibung egal). Liefert dein Auto etwas anderes, richte dir einen Hilfssensor mit diesen beiden Zuständen ein. Ist das Auto zu Hause, aber nicht eingesteckt, zählt die laufende Stunde in der Prognose als abwesend, ab der Folgestunde als „kann laden“. Bei `unknown`/`unavailable` oder ohne Sensor bleibt alles wie bisher. Der Sensor wird nur intern im Add-on benutzt und nicht an shyft-power übertragen.
+* **Neu: Benachrichtigung „Geplante Ladevorgänge ankündigen“ (Standard aus).** Um 18 und 6 Uhr (lokale Zeit) kommt eine Nachricht, wenn in den nächsten 12 Stunden eine Ladung geplant ist und das Auto nicht eingesteckt ist: „Verbinde dein Fahrzeug, geplante Ladung: XX kWh um XX Uhr. Ersparnis: XX €“. Ist das Auto abwesend, entfällt die Nachricht und kommt sofort beim Wechsel auf „Zuhause“ (ohne Wartezeit); dabei wird auch neu optimiert. Jede Ladung wird nur einmal angekündigt. Wird eine angekündigte, noch nicht gestartete Ladung verschoben oder abgesagt, folgt nach dem nächsten Optimierungslauf eine Update-Nachricht („Ladevorgang auf XX:XX Uhr verschoben“ / „Ladevorgang abgesagt“).
+
 ## 0.0.45.351
 
 * **Batterie: Command-Timeout auch beim Netzladen 36000 s (10 h).** Bisher setzte „Batterie netzladen“ 3600 s. Lief die Aktion über den Stundenwechsel weiter, ohne dass ein neuer Befehl gesendet wurde, fiel der Wechselrichter nach genau einer Stunde auf „Maximize Self Consumption“ zurück (01.11.2026: Laden endete um 04:00:49 statt 05:00).

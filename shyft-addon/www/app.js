@@ -118,6 +118,10 @@ const helpinformation = {
         label: 'Auto - Ladestand',
         description: ' Ladestand deines Autos (in %)'
     },
+    'electronicvehicle_home': {
+        label: 'Auto - Zuhause?',
+        description: ' Optional. Zeigt, ob dein Auto zu Hause ist: Der Sensor muss die Zustände "Zuhause" bzw. "Abwesend" liefern (z.B. bei der Tesla-Integration direkt vorhanden). Liefert dein Auto etwas anderes, richte dir in Home Assistant einen Hilfssensor (z.B. Template-Sensor) mit genau diesen beiden Zuständen ein. Ein Auto, das zu Hause, aber nicht eingesteckt ist, zählt in der Prognose in der nächsten Stunde als abwesend, danach als "kann laden". Außerdem schickt Shyft keine Lade-Ankündigung, solange das Auto unterwegs ist. Die Information wird nur intern im Add-on benutzt und nicht an shyft-power übertragen.'
+    },
     'wallbox_current_charging_power': {
         label: 'Wallbox - Ladestrom',
         description: ' Aktueller Ladestrom (in kW)'
@@ -248,6 +252,8 @@ const SENSOR_ENTITY_FILTERS = {
     // kein schaltbares Element - ein binary_sensor mit on/off bleibt aber gueltig.
     'wallbox_plugged': {type: 'exclude_units', values: ['kWh', 'kW', 'W', 'A', 'V', '°C', '%', 'Wh'],
         excludeDomains: ['switch', 'input_boolean', 'button', 'input_button', 'number', 'input_number', 'select', 'input_select', 'input_text']},
+    'electronicvehicle_home': {type: 'exclude_units', values: ['kWh', 'kW', 'W', 'A', 'V', '°C', '%', 'Wh'],
+        excludeDomains: ['switch', 'input_boolean', 'button', 'input_button', 'number', 'input_number', 'select', 'input_select', 'input_text']},
     'sonstiger_verbraucher_switch_entities': {type: 'state_on_off'},
 }
 
@@ -278,6 +284,7 @@ const SENSOR_MATCH_KEYWORDS = {
     'electronicvehicle_state_of_charge': ['soc', 'ladestand', 'akkustand', 'battery', 'charge_level'],
     'wallbox_current_charging_power': ['ladeleist', 'charging_power', 'charge_power', 'wallbox'],
     'wallbox_plugged': ['status', 'verbunden', 'connected', 'plugged', 'stecker', 'plug'],
+    'electronicvehicle_home': ['standort', 'location', 'zuhause', 'home', 'tracker', 'presence'],
     'sonstiger_verbraucher_switch_entities': ['switch', 'schalter', 'steckdose', 'plug', 'relay'],
 }
 
@@ -332,7 +339,7 @@ const INTEGRATION_SECTIONS = [
     {
         key: 'auto',
         label: 'Auto',
-        sensors: ['electronicvehicle_state_of_charge'],
+        sensors: ['electronicvehicle_state_of_charge', 'electronicvehicle_home'],
         actions: [],
         hasDemo: true,
         description: 'Tipp, wenn du Schwierigkeiten hast, dein Auto in Home Assistant einzubinden und Tibber als Stromanbieter nutzt: Hinterlege dein Auto in der Tibber App, dann kannst du über die Tibber-Integration den Ladestand deines Autos auslesen.'
@@ -773,7 +780,16 @@ const CONFIG_PAGE_TOGGLE_KEYS = new Set(['pv_feed_in_limit', 'consumption_limit_
 const NOTIFICATION_TYPES = {
     'action_start_end': 'Aktionen starten / beenden (alle)',
     'action_start_end_errors_only': 'Aktionen starten / beenden (nur bei Fehlern)',
-    'device_status_deviation': 'Geräteverhalten abweichend von Shyft-Steuerung'
+    'device_status_deviation': 'Geräteverhalten abweichend von Shyft-Steuerung',
+    'charge_announcement': 'Geplante Ladevorgänge ankündigen'
+};
+
+// Neue Benachrichtigungen, die ohne explizite Zustimmung aus sind (statt der Standardregel "an, solange nicht ausdruecklich aus").
+const NOTIFICATION_TYPES_DEFAULT_OFF = new Set(['action_start_end_errors_only', 'charge_announcement']);
+
+// Erklaerung unter der Zeile des jeweiligen Benachrichtigungs-Toggles (optional).
+const NOTIFICATION_TYPE_DESCRIPTIONS = {
+    'charge_announcement': 'Schickt um 18 Uhr und um 6 Uhr eine Nachricht, wenn in den nächsten 12 Stunden ein Ladevorgang geplant ist und das Auto nicht eingesteckt ist ("Verbinde dein Fahrzeug, geplante Ladung: XX kWh um XX Uhr. Ersparnis: XX €"). Ist das Auto abwesend (Sensor "Auto - Zuhause?"), kommt die Nachricht sofort bei der Ankunft zu Hause. Wird der Ladevorgang verschoben oder abgesagt, folgt eine Update-Nachricht. Jede Nachricht wird nur einmal gesendet.'
 };
 
 // "Alle" und "nur bei Fehlern" schliessen sich gegenseitig aus (Nutzer-Vorgabe: entweder/oder) -
@@ -2409,7 +2425,7 @@ function isSectionComplete(section, currentIds) {
 // blockiert ohne Zuordnung nichts (compute_heizung_actions/collect_live_values in app.py bzw.
 // sync_service.py behandeln nicht-zugeordnet wie "an", nicht wie "aus"), und die Vorlauftemperatur
 // ist rein informativ, kein Pflichtfeld (Nutzer-Vorgabe).
-const REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS = new Set(['heatpump_current_power_elect', 'heatpump_temp_indoor_measured', 'heatpump_heating_activated', 'heatpump_supply_temp_hp', 'heatpump_dhw_activated']);
+const REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS = new Set(['heatpump_current_power_elect', 'heatpump_temp_indoor_measured', 'heatpump_heating_activated', 'heatpump_supply_temp_hp', 'heatpump_dhw_activated', 'electronicvehicle_home']);
 const REQUIRED_FIELD_OPTIONAL_ACTION_KEYS = new Set(['consumption_limit_14a', 'pv_feed_in_limit']);
 
 // Ausfuehrlichere Schwester von isSectionComplete oben: statt nur true/false liefert das hier je
@@ -3511,6 +3527,12 @@ function renderNotificationSection() {
         const row = document.createElement('tr');
         const keyCell = document.createElement('td');
         keyCell.textContent = label;
+        if (NOTIFICATION_TYPE_DESCRIPTIONS[key]) {
+            const hint = document.createElement('div');
+            hint.className = 'electricityHint';
+            hint.textContent = NOTIFICATION_TYPE_DESCRIPTIONS[key];
+            keyCell.appendChild(hint);
+        }
         const toggleCell = document.createElement('td');
         toggleCell.className = 'toggleCell';
         const toggleId = 'notification_' + key + ACTION_TOGGLE_POSTFIX;
@@ -3518,7 +3540,7 @@ function renderNotificationSection() {
         // "nur bei Fehlern" ist neu und faellt ohne explizite Zustimmung standardmaessig aus (anders
         // als die generische "!== false"-Standardregel unten) - sonst wuerden bestehende Nutzer nach
         // diesem Update ploetzlich BEIDE Toggles an dieser Stelle als aktiv sehen.
-        const checked = key === 'action_start_end_errors_only' ? notificationsEnabled[key] === true : notificationsEnabled[key] !== false;
+        const checked = NOTIFICATION_TYPES_DEFAULT_OFF.has(key) ? notificationsEnabled[key] === true : notificationsEnabled[key] !== false;
         if (pairedKey) {
             const bareToggle = buildBareToggleSwitch(checked);
             const input = bareToggle.querySelector('input');
