@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+* **Fix: Dashboard aktualisierte sich nach dem Öffnen nicht mehr automatisch.** `getJson` hatte kein Timeout. Blieb ein Request hängen (Standby, WLAN-Wechsel, Ingress antwortet nicht), blieb `loadDashboard` dauerhaft „in Arbeit“ und der 30-Sekunden-Refresh sowie der Refresh beim Sichtbarwerden kamen nie mehr durch – bis zum manuellen Neuladen. Jetzt bricht jeder Request nach 30 s ab (der nächste Refresh versucht es neu), und beim Wiederherstellen der Seite aus dem Back-Forward-Cache (`pageshow`) wird sofort aktualisiert.
+
 ## 0.0.45.349
 
 * **Fix: Automatische Konto-Erstellung legte bei jeder Änderung auf der Konfigurationsseite einen neuen shyft-power-Account an.** Sobald ein echtes Gerät ausgewählt war, rief jedes automatische Speichern `create_user_addon` auf. Die Live-Antwort von Bubble enthielt keinen Token, das Add-on blieb deshalb im Demomodus und versuchte es beim nächsten Speichern erneut – am 31.10.2026 entstanden so 48 Accounts in 30 Minuten. Jetzt gilt:
