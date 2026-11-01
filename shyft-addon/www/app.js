@@ -412,16 +412,30 @@ function isFullyDemoMode() {
     return hasAnyDemo;
 }
 
-async function getJson(url) {
-    const response = await fetch(url);
+// Ohne Timeout bliebe ein haengender Request (Standby, WLAN-Wechsel, Ingress antwortet nicht) fuer immer offen - und
+// damit z.B. dashboardLoadInFlight in loadDashboard gesetzt, sodass kein periodischer Refresh mehr durchkommt
+// (Daten aktualisieren sich dann nie wieder, bis man die Seite neu laedt).
+const GET_JSON_TIMEOUT_MS = 30000;
 
-    if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
+async function getJson(url, timeoutMs = GET_JSON_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(url, {signal: controller.signal});
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+
+        return await response.json();
+    } catch (err) {
+        if (err && err.name === 'AbortError') {
+            throw new Error(`Timeout nach ${timeoutMs} ms: ${url}`);
+        }
+        throw err;
+    } finally {
+        clearTimeout(timer);
     }
-
-    const result = await response.json();
-
-    return result;
 }
 
 // Test-Popup fuer die "Testen"-Buttons der Konfigurationsseite: zeigt Zeile fuer Zeile, was der Test gerade tut
@@ -12365,6 +12379,16 @@ function setupTabs() {
     // refreshLiveSensorValues), ohne dies koennten seit der letzten Sichtbarkeit Stunden vergangen sein.
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
+            refreshActiveTabNow();
+            refreshLiveSensorValues();
+            renderSystemHealth();
+            renderDashboardProblemBanner();
+        }
+    });
+    // Wiederherstellung aus dem Back-Forward-Cache / eingefrorener Seite (mobile App, iframe): visibilitychange
+    // feuert dort nicht zuverlaessig, die Timer standen aber still - also ebenfalls sofort auffrischen.
+    window.addEventListener('pageshow', event => {
+        if (event.persisted && document.visibilityState === 'visible') {
             refreshActiveTabNow();
             refreshLiveSensorValues();
             renderSystemHealth();
