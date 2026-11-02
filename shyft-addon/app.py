@@ -3746,8 +3746,10 @@ CAR_PRESENCE_RECENCY_HALF_LIFE_DAYS = 30
 
 # Cold-Start-Fahrprofil, solange ueberhaupt kein eigener Fahrtag vorliegt (n_driving_days == 0 - z.B.
 # Auto gerade erst eingerichtet, oder Akkukapazitaet fehlt, ohne die sich SOC-Rueckgaenge nicht in
-# kWh umrechnen lassen). Tagesfahrleistung aus carAvgDailyDistanceKm (Config, sonst
-# EV_DEFAULT_DAILY_KM), km->kWh ueber carConsumptionKwhPer100km (Config, sonst
+# kWh umrechnen lassen). Tagesfahrleistung fix EV_DEFAULT_DAILY_KM (seit 0.0.45.354 keine
+# Konfigurationsfrage mehr - der Wert zaehlt nur, bis backfill_car_presence_log aus der HA-Historie
+# des Akkustands den ersten echten Fahrtag rekonstruiert hat; ein evtl. noch gespeichertes
+# carAvgDailyDistanceKm aelterer Versionen wird ignoriert), km->kWh ueber carConsumptionKwhPer100km (Config, sonst
 # EV_DEFAULT_KWH_PER_100KM). Verteilung: an Werktagen je zur Haelfte auf 7-8 und 17-18 Uhr, am
 # Wochenende gleichmaessig auf 15-18 Uhr. Sobald echte Fahrtage vorliegen, wird dieses Profil nicht
 # mehr genutzt - dann zaehlt der recency-gewichtete historische Tagesdurchschnitt je Wochentag
@@ -3989,7 +3991,7 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
     coldstart = n_driving_days == 0
 
     config = _read_current_config()
-    default_km = config.get("carAvgDailyDistanceKm") or EV_DEFAULT_DAILY_KM
+    default_km = EV_DEFAULT_DAILY_KM
     default_kwh_per_100 = config.get("carConsumptionKwhPer100km") or EV_DEFAULT_KWH_PER_100KM
     default_e_day = max(0.0, float(default_km) * float(default_kwh_per_100) / 100.0)
 

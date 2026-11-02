@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.354
+
+* **Dashboard: PV-Ertrag „Heute“ ist jetzt der Gesamttag.** Unter dem Chart „PV-Leistung“ stand bei „Heute“ bisher nur der Rest-Ertrag ab jetzt. Jetzt zählt wie bei Morgen/Übermorgen der ganze Tag: vergangene Stunden mit der gemessenen PV-Leistung, die laufende Stunde anteilig (gemessen seit Stundenbeginn + Prognose für den Rest der Stunde), kommende Stunden mit der Prognose.
+* **Konfiguration Auto: Frage „Ø Fahrleistung (km/Tag)“ entfernt.** Der Wert wurde nur als Startwert für die Verbrauchsprognose genutzt, solange noch kein Fahrtag bekannt ist. Beim Einrichten rekonstruiert das Add-on die letzten 30 Tage ohnehin aus der Home-Assistant-Historie von Wallbox-Status und Akkustand und lernt die Fahrleistung daraus. Bis dahin gelten fest 50 km/Tag; ein früher gespeicherter Wert wird ignoriert.
+* **Benachrichtigungen: Erklärung zu „Geplante Ladevorgänge ankündigen“** steht jetzt im Info-Fragezeichen statt als Text unter dem Schalter.
+
 ## 0.0.45.353 – Laderegel: Auto laden nach Preis-Historie statt „günstigster Preis + 3 Cent“
 
 Die Einstellungen „Mindestladestand“ und „Limit PV-Überschussladen“ werden durch **eine** Einstellung ersetzt: **Laderegel** (sehr günstig / mittel / Komfort). Sie entscheidet, wie voll das Auto bei günstigen Strompreisen geladen wird.

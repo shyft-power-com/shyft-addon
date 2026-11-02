@@ -787,7 +787,7 @@ const NOTIFICATION_TYPES = {
 // Neue Benachrichtigungen, die ohne explizite Zustimmung aus sind (statt der Standardregel "an, solange nicht ausdruecklich aus").
 const NOTIFICATION_TYPES_DEFAULT_OFF = new Set(['action_start_end_errors_only', 'charge_announcement']);
 
-// Erklaerung unter der Zeile des jeweiligen Benachrichtigungs-Toggles (optional).
+// Erklaerung im Info-Fragezeichen neben dem jeweiligen Benachrichtigungs-Toggle (optional).
 const NOTIFICATION_TYPE_DESCRIPTIONS = {
     'charge_announcement': 'Schickt um 18 Uhr und um 6 Uhr eine Nachricht, wenn in den nächsten 12 Stunden ein Ladevorgang geplant ist und das Auto nicht eingesteckt ist ("Verbinde dein Fahrzeug, geplante Ladung: XX kWh um XX Uhr. Ersparnis: XX €"). Ist das Auto abwesend (Sensor "Auto - Zuhause?"), kommt die Nachricht sofort bei der Ankunft zu Hause. Wird der Ladevorgang verschoben oder abgesagt, folgt eine Update-Nachricht. Jede Nachricht wird nur einmal gesendet.'
 };
@@ -1029,7 +1029,6 @@ async function saveConfigurationNow() {
         "wallboxConnectionStatusMapping": configData["wallboxConnectionStatusMapping"] || {},
         "carBatteryCapacityKwh": configData["carBatteryCapacityKwh"] ?? null,
         "carConsumptionKwhPer100km": configData["carConsumptionKwhPer100km"] ?? null,
-        "carAvgDailyDistanceKm": configData["carAvgDailyDistanceKm"] ?? 50,
         "wallboxMaxPhases": configData["wallboxMaxPhases"] ?? 3,
         "wallboxMaxCurrentAmps": configData["wallboxMaxCurrentAmps"] ?? 16,
         "batteryFlowSignOverride": configData["batteryFlowSignOverride"] ?? null,
@@ -3527,10 +3526,7 @@ function renderNotificationSection() {
         const keyCell = document.createElement('td');
         keyCell.textContent = label;
         if (NOTIFICATION_TYPE_DESCRIPTIONS[key]) {
-            const hint = document.createElement('div');
-            hint.className = 'electricityHint';
-            hint.textContent = NOTIFICATION_TYPE_DESCRIPTIONS[key];
-            keyCell.appendChild(hint);
+            keyCell.appendChild(buildTooltip(NOTIFICATION_TYPE_DESCRIPTIONS[key]));
         }
         const toggleCell = document.createElement('td');
         toggleCell.className = 'toggleCell';
@@ -3988,7 +3984,6 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         if (section.key === 'auto') {
             bodyDiv.appendChild(buildCarBatteryCapacityField());
             bodyDiv.appendChild(buildCarConsumptionField());
-            bodyDiv.appendChild(buildCarAvgDailyDistanceField());
             bodyDiv.appendChild(buildEvChargeRuleField());
         }
         if (section.key === 'sonstiger_verbraucher') {
@@ -4834,21 +4829,6 @@ function buildCarConsumptionField() {
         configKey: 'carConsumptionKwhPer100km',
         placeholder: 'z.B. 18',
         step: '1',
-    });
-}
-
-// Nur als Ausgangswert fuer die Verbrauchsprognose des Autos, solange noch keine eigene
-// Fahrhistorie (SOC-Verlauf) vorliegt - siehe compute_car_presence_forecast / EV_DEFAULT_DAILY_KM
-// in app.py. Sobald echte Fahrtage aufgezeichnet sind, wird dieser Wert nicht mehr verwendet.
-function buildCarAvgDailyDistanceField() {
-    return buildConfigNumberField({
-        label: 'Ø Fahrleistung (km/Tag)',
-        tooltip: 'Nur als Startwert, solange noch keine eigene Fahrhistorie vorliegt: geschätzte durchschnittliche tägliche Fahrleistung. Sobald genug Ladeverlauf deines Autos aufgezeichnet ist, lernt die Verbrauchsprognose daraus und dieser Wert wird nicht mehr genutzt.',
-        id: 'car_avg_daily_distance_km',
-        configKey: 'carAvgDailyDistanceKm',
-        placeholder: 'z.B. 50',
-        step: '5',
-        defaultValue: 50,
     });
 }
 
@@ -8138,9 +8118,9 @@ function showShyftActionsError(container) {
     container.appendChild(error);
 }
 
-// "Heute: 3 kWh | Morgen: 23 kWh | Übermorgen: 22 kWh" - the remaining/full PV-Ertrag per
-// Kalendertag (lokale Zeit), summiert aus den stündlichen kW-Werten (ein kW-Wert über eine Stunde
-// ist per Definition eine kWh). "Heute" zählt nur noch nicht vergangene Stunden.
+// "Heute: 3 kWh | Morgen: 23 kWh | Übermorgen: 22 kWh" - der volle PV-Ertrag pro Kalendertag
+// (lokale Zeit), summiert aus den stündlichen kW-Werten (ein kW-Wert über eine Stunde ist per
+// Definition eine kWh). "Heute" ist seit 0.0.45.354 ebenfalls der Gesamttag (Ist bis jetzt + Prognose).
 //
 // "Übermorgen" wird erst ab 21 Uhr ausgewiesen (siehe computePvEnergySummary) - vorher deckt das
 // 48h-Fenster diesen Tag nicht vollstaendig ab, die Summe wirkte irrefuehrend unvollstaendig. "Vollstaendig" heißt hier
@@ -8148,8 +8128,7 @@ function showShyftActionsError(container) {
 // gefallen": sobald ab PV_COMPLETE_CHECK_FROM_HOUR (17 Uhr - spätestens 21 Uhr wäre auch im
 // Hochsommer sicher, im Winter geht die Sonne aber teils schon um 17 Uhr unter) ein Wert nahe 0
 // auftaucht, gilt der Tag als abgeschlossen; ein erneuter Anstieg danach ist im selben Kalendertag
-// praktisch ausgeschlossen. Nur "Heute" ist von dieser Prüfung ausgenommen, da dort absichtlich
-// nur die Teilsumme gezeigt wird.
+// praktisch ausgeschlossen. Nur "Heute" ist von dieser Prüfung ausgenommen (enthaelt ohnehin schon die Ist-Werte bis jetzt).
 // Die "Einsatzplan"-Karte direkt unter dem PV-Prognose-Chart: Kennzahlen des aktuellen
 // Optimierungslaufs (siehe _compute_einsatzplan_summary in app.py), einmal pro Dashboard-Ladung
 // aus /dashboard/chart-data gelesen (keine eigene Live-Berechnung im Frontend noetig).
@@ -8253,16 +8232,19 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
     return card;
 }
 
-// Restliche/volle PV-Ertrag pro Kalendertag (lokale Zeit), summiert aus den stuendlichen kW-Werten
-// (ein kW-Wert ueber eine Stunde ist per Definition eine kWh). "Heute" zaehlt nur noch nicht
-// vergangene Stunden. Wird direkt IN buildPvForecastActualChart eingezeichnet (neben der
+// Voller PV-Ertrag pro Kalendertag (lokale Zeit), summiert aus den stuendlichen kW-Werten
+// (ein kW-Wert ueber eine Stunde ist per Definition eine kWh). "Heute" ist - wie die uebrigen
+// Tageswerte - der GESAMTTAG (Nutzer-Vorgabe, vorher nur der Rest ab jetzt): vergangene Stunden mit
+// ihrem Ist-Wert (actual, sonst Prognose), die laufende Stunde zeitanteilig (Ist-Energie seit
+// Stundenbeginn aus actualFine + Prognose * verbleibender Stundenanteil), kommende Stunden mit der
+// Prognose. Um 12:30 also: Ist 0-12 Uhr + Ist 12:00-12:30 + halbe Prognose der 12-Uhr-Stunde + Prognose ab 13 Uhr. Wird direkt IN buildPvForecastActualChart eingezeichnet (neben der
 // "Jetzt"-Linie bzw. der jeweiligen Tagesgrenze), nicht mehr als eigener Text unter dem Chart -
 // stand dort vorher ohne erkennbaren Bezug zum Chart direkt neben der (inhaltlich anderen)
 // Einsatzplan-Karte und wurde faelschlich fuer deren "Stromverbrauch"-Kennzahl gehalten.
 //
 // Heute/Morgen immer, "Übermorgen" erst ab PV_DAY_AFTER_TOMORROW_FROM_HOUR Uhr (21 Uhr): das 48h-Fenster deckt diesen Tag
 // erst dann (nahezu) vollstaendig ab - frueher wirkte die Summe irrefuehrend unvollstaendig.
-function computePvEnergySummary(labels, values) {
+function computePvEnergySummary(labels, values, actual = null, actualFine = null) {
     const PV_ZERO_THRESHOLD_KW = 0.05;
     const PV_COMPLETE_CHECK_FROM_HOUR = 17;
     const PV_DAY_AFTER_TOMORROW_FROM_HOUR = 21;
@@ -8279,8 +8261,15 @@ function computePvEnergySummary(labels, values) {
         const startOfThatDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
         const dayOffset = Math.round((startOfThatDay - startOfToday) / (24 * 60 * 60 * 1000));
         if (dayOffset < 0 || dayOffset > 2) continue;
-        if (dayOffset === 0 && d < currentHourStart) continue; // schon vergangene Stunde
-        sums[dayOffset] += values[i];
+        let kwh = values[i] ?? 0;
+        if (dayOffset === 0 && d < currentHourStart) {
+            // schon vergangene Stunde: Ist-Wert (Stundenmittel in kW = kWh), sonst die Prognose
+            const ist = actual ? actual[i] : null;
+            kwh = (ist !== null && ist !== undefined) ? Math.max(0, ist) : kwh;
+        } else if (dayOffset === 0 && d.getTime() === currentHourStart.getTime()) {
+            kwh = currentHourPvKwh(currentHourStart, now, values[i] ?? 0, actualFine);
+        }
+        sums[dayOffset] += kwh;
         hasData[dayOffset] = true;
         if (d.getHours() >= PV_COMPLETE_CHECK_FROM_HOUR && values[i] <= PV_ZERO_THRESHOLD_KW) {
             reachedZeroInEvening[dayOffset] = true;
@@ -8297,6 +8286,30 @@ function computePvEnergySummary(labels, values) {
         result.push({offset, label: dayLabels[offset], kwh: Math.round(sums[offset])});
     }
     return result;
+}
+
+// Laufende Stunde anteilig: gemessene Energie seit Stundenbeginn (actualFine = [[ISO-Beginn, kW], ...]
+// in 5-Minuten-Schritten, der letzte Schritt endet bei "jetzt") plus Prognose fuer den noch
+// verbleibenden Teil der Stunde. Ohne Feinwerte wird der vergangene Teil mit der Prognose angesetzt.
+function currentHourPvKwh(hourStart, now, forecastKw, actualFine) {
+    const HOUR_MS = 60 * 60 * 1000;
+    const elapsedMs = Math.min(HOUR_MS, Math.max(0, now - hourStart));
+    const remainingFraction = 1 - elapsedMs / HOUR_MS;
+    const hourEnd = new Date(hourStart.getTime() + HOUR_MS);
+    const points = (actualFine || [])
+        .map(([t, kw]) => [new Date(t), kw])
+        .filter(([t, kw]) => t >= hourStart && t < hourEnd && t < now && kw !== null && kw !== undefined)
+        .sort((a, b) => a[0] - b[0]);
+    if (points.length === 0) return forecastKw;
+    let actualKwh = 0;
+    for (let i = 0; i < points.length; i++) {
+        const segStart = points[i][0];
+        const segEnd = i + 1 < points.length ? points[i + 1][0] : now;
+        actualKwh += Math.max(0, points[i][1]) * Math.max(0, Math.min(segEnd, hourEnd) - segStart) / HOUR_MS;
+    }
+    // Luecke zwischen Stundenbeginn und erstem Feinwert (sollte bei 5-Minuten-Schritten nicht vorkommen) mit Prognose fuellen
+    actualKwh += forecastKw * Math.max(0, points[0][0] - hourStart) / HOUR_MS;
+    return actualKwh + forecastKw * remainingFraction;
 }
 
 // Renders one hourly time series as an interactive inline SVG line chart (no charting library).
@@ -9598,12 +9611,12 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, options
         // summaryLabels/summaryForecast: die PV-Ertragssumme (Heute | Morgen) bezieht sich immer auf den vollen Zeitraum
         const windowLabels = sliceChartSeries(labels, w);
         const sliced = {...options, plannedHistory: sliceChartSeries(options.plannedHistory, w), actionHours: sliceChartSeries(options.actionHours, w),
-            summaryLabels: labels, summaryForecast: forecast, actualFine: filterFineByLabels(options.actualFine, windowLabels)};
+            summaryLabels: labels, summaryForecast: forecast, summaryActual: actual, summaryActualFine: options.actualFine, actualFine: filterFineByLabels(options.actualFine, windowLabels)};
         return buildForecastActualChartImpl(title, unit, windowLabels, sliceChartSeries(forecast, w), sliceChartSeries(actual, w), sliced, ctx);
     }, {labels, stickyKey: options.chartKey || title});
 }
 
-function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null, actualFine = null, blurredLabel = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
+function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null, summaryActual = null, summaryActualFine = null, actualFine = null, blurredLabel = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
     // "Prognose" ist visuell EINE Linie ueber den ganzen Tag: fuer bereits vergangene Stunden der zu
     // ihrer Zeit juengste Planungsstand (plannedHistory), fuer die Zukunft die aktuelle Prognose
     // (forecast) - ersetzt die fruehere separate dritte Linie/Legende "Letzter Planungsstand".
@@ -9836,7 +9849,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     // Nur bei PV (energySummary): eine kWh-Ertragssumme ergibt fuer andere Prognose/Ist-Charts (z.B.
     // Ladestand Heimspeicher in %) keinen Sinn.
     if (energySummary) {
-        const pvSummaryParts = computePvEnergySummary(summaryLabels || labels, summaryForecast || forecast).map(({label, kwh}) => `${label}: ${kwh} kWh`);
+        const pvSummaryParts = computePvEnergySummary(summaryLabels || labels, summaryForecast || forecast, summaryActual || actual, summaryActualFine || actualFine).map(({label, kwh}) => `${label}: ${kwh} kWh`);
         if (pvSummaryParts.length > 0) {
             const pvSummary = document.createElement('div');
             pvSummary.className = 'dashboardPvEnergySummary';
