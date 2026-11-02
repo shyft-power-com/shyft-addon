@@ -11176,7 +11176,7 @@ function buildEnergyFlowSvgDesktop(data) {
 
     if (data.car && data.car.configured) {
         const rowY = rowYCar;
-        const isAway = data.car.state === 'away';
+        const isAway = data.car.state === 'away' || data.car.state === 'home';
         const isCharging = carCharging;
         // Leitung immer sichtbar (auch "abwesend"), Punkte nur waehrend des Ladens.
         const line = buildFlowLineFromPath(buildFlowPath(busX, rowY, consumerAnchorX, rowY), carFlowKw);
@@ -11189,6 +11189,7 @@ function buildEnergyFlowSvgDesktop(data) {
         const carLines = [];
         if (data.car.soc !== null) carLines.push(withStaleness(`Ladestand: ${Math.round(data.car.soc)} %` + (data.car.rangeKm !== null ? ` (${data.car.rangeKm} km)` : ''), data.car.updatedAt, OTHER_STALE_MINUTES));
         if (data.car.state === 'away') carLines.push('abwesend');
+        else if (data.car.state === 'home') carLines.push('zu Hause');
         else if (data.car.state === 'charging') carLines.push(data.car.chargingKw != null ? `Lädt (${formatKwValue(data.car.chargingKw)})` : 'lädt');
         else if (data.car.state === 'connected') carLines.push('eingesteckt');
         const carLabel = buildEnergyFlowLabel(columnX + carTargetW / 2 + 10, rowY, carLines);
@@ -11439,7 +11440,7 @@ function buildEnergyFlowSvgMobile(data) {
                 const iconHalfH = 38;
                 const drop = buildFlowLineFromPath(`M ${colX},${busY} V ${rowY - iconHalfH}`, flows.carFlowKw);
                 if (drop) svg.appendChild(drop);
-                const isAway = data.car.state === 'away';
+                const isAway = data.car.state === 'away' || data.car.state === 'home';
                 const carImg = isAway ? {href: 'assets/ev-away.jpg', w: 356, h: 239} : {href: 'assets/ev-connected.jpg', w: 464, h: 229};
                 svg.appendChild(buildFlowImage(carImg.href, colX, rowY, carImg.w, carImg.h, 100));
                 const carLines = [];
@@ -11451,6 +11452,7 @@ function buildEnergyFlowSvgMobile(data) {
                     if (data.car.rangeKm !== null) carLines.push(`(${data.car.rangeKm} km)`);
                 }
                 if (data.car.state === 'away') carLines.push('abwesend');
+                else if (data.car.state === 'home') carLines.push('zu Hause');
                 else if (data.car.state === 'charging') carLines.push(data.car.chargingKw != null ? `Lädt (${formatKwValue(data.car.chargingKw)})` : 'lädt');
                 else if (data.car.state === 'connected') carLines.push('eingesteckt');
                 if (carLines.length === 0) carLines.push('–');

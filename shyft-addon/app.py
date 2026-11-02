@@ -5951,7 +5951,10 @@ def compute_energy_flow_data():
     if wallbox_configured:
         connected = is_car_ready_to_charge(config)
         if not connected:
-            car_state = "away"
+            # Nicht eingesteckt: "home" statt "away", wenn der optionale Sensor "Auto - Zuhause?"
+            # (electronicvehicle_home) "Zuhause" meldet - das Dashboard zeigt dann "zu Hause" statt
+            # "abwesend". Ohne Sensor bzw. bei unbekanntem Zustand bleibt es bei "away".
+            car_state = "home" if read_car_home_state(config) is True else "away"
         elif wallbox_kw and wallbox_kw > 0:
             car_state = "charging"
         else:

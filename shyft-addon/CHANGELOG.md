@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.355
+
+* **Dashboard: Auto „zu Hause“ statt „abwesend“.** Ist das Auto nicht eingesteckt, meldet der Sensor „Auto - Zuhause?“ aber „Zuhause“, steht in der Energiefluss-Grafik (Desktop und Mobil) jetzt „zu Hause“ statt „abwesend“. Ohne Sensor oder bei unbekanntem Sensorzustand bleibt es bei „abwesend“.
+
 ## 0.0.45.354
 
 * **Dashboard: PV-Ertrag „Heute“ ist jetzt der Gesamttag.** Unter dem Chart „PV-Leistung“ stand bei „Heute“ bisher nur der Rest-Ertrag ab jetzt. Jetzt zählt wie bei Morgen/Übermorgen der ganze Tag: vergangene Stunden mit der gemessenen PV-Leistung, die laufende Stunde anteilig (gemessen seit Stundenbeginn + Prognose für den Rest der Stunde), kommende Stunden mit der Prognose.
