@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.356
+
+* **Fix: „Prognose im Detail“ klappt sich nicht mehr von selbst zu.** Der Aufklapp-Zustand wird jetzt dauerhaft gemerkt und nicht mehr aus dem beim 30-Sekunden-Refresh ersetzten Element gelesen. Fehlte beim Refresh kurz die Prognose, ging der Zustand vorher verloren.
+
 ## 0.0.45.355
 
 * **Dashboard: Auto „zu Hause“ statt „abwesend“.** Ist das Auto nicht eingesteckt, meldet der Sensor „Auto - Zuhause?“ aber „Zuhause“, steht in der Energiefluss-Grafik (Desktop und Mobil) jetzt „zu Hause“ statt „abwesend“. Ohne Sensor oder bei unbekanntem Sensorzustand bleibt es bei „abwesend“.

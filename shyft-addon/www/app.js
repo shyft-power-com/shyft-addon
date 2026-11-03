@@ -10243,9 +10243,17 @@ function scheduleConsumptionForecastOptimizerTrigger() {
     }, CONSUMPTION_FORECAST_DELETE_TRIGGER_DELAY_MS);
 }
 
+// Aufklapp-Zustand von "Prognose im Detail" dauerhaft im Speicher halten (statt ihn beim Refresh aus
+// dem alten DOM-Element abzulesen): Das Widget wird alle 30s komplett neu gebaut, und wenn dabei
+// einmal kein <details> existiert (z.B. Prognose-Abruf kurz fehlgeschlagen/leer), ging der Zustand
+// verloren und die Liste blieb danach zu.
+let consumptionForecastDetailsOpen = false;
+
 function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionBasis, presenceForecast, simulatedHours = []) {
     const details = document.createElement('details');
     details.className = 'dashboardConsumptionForecast';
+    details.open = consumptionForecastDetailsOpen;
+    details.addEventListener('toggle', () => { consumptionForecastDetailsOpen = details.open; });
     const summary = document.createElement('summary');
     summary.textContent = `Prognose im Detail (${labels.length}h) anzeigen`;
     details.appendChild(summary);
@@ -12128,13 +12136,6 @@ async function loadDashboardImpl() {
         if (consumptionForecast) {
             const consumptionDetails = buildCarConsumptionForecastDetails(
                 consumptionForecast.labels, consumptionForecast.consumptionKwh, consumptionForecast.consumptionBasis, presenceForecast, consumptionForecast.simulatedHours);
-            // updateOrAppendDashboardWidget ERSETZT das komplette 'ladestandAuto'-Widget bei jedem
-            // periodischen Refresh (alle 30s, siehe refreshDashboard) - ein frisches <details>-
-            // Element ist dabei immer zu (Nutzer-Feedback: ein manuell aufgeklapptes Element fiel
-            // dadurch von selbst wieder zu). Offen-Zustand daher hier vom noch existierenden alten
-            // Element uebernehmen, bevor es gleich ersetzt wird.
-            const existingDetails = container.querySelector('[data-dashboard-widget-key="ladestandAuto"] .dashboardConsumptionForecast');
-            if (existingDetails && existingDetails.open) consumptionDetails.open = true;
             ladestandAutoChart.appendChild(consumptionDetails);
         }
         // Unconditional wie der Chart selbst (der auch ohne konfiguriertes Auto leer/flach
