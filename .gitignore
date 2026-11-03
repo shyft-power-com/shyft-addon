@@ -2,3 +2,11 @@
 # "Record build branch") - haelt den bauenden Git-Branch fest, ist kein Quellcode und soll nie
 # versioniert werden.
 shyft-addon/BUILD_BRANCH
+
+# Lokale Zugangsdaten fuer die .http-Testdateien - nie committen
+http-client.env.json
+http-client.private.env.json
+
+# Python-Bytecode
+__pycache__/
+*.pyc
