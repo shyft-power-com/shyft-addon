@@ -1,6 +1,6 @@
 # shyft-power – HEMS für Home Assistant
 
-**Home-Energy-Management-System (HEMS) als Home-Assistant-Add-on.** shyft-power plant und steuert deine großen Stromverbraucher – Wärmepumpe, Warmwasser, Batteriespeicher, Wallbox/E-Auto und weitere Verbraucher – so, dass deine Stromkosten über die nächsten Stunden und Tage minimal werden. Mit lernender PV-Prognose, dynamischen Stromtarifen (Tibber, aWATTar, Börsenpreis), zeitvariablen Netzentgelten nach §14a EnWG (Modul 3) und einem thermischen Gebäudemodell für die Wärmepumpe.
+**Home-Energy-Management-System (HEMS) als Home-Assistant-Add-on.** shyft-power plant und steuert deine großen Stromverbraucher – Wärmepumpe, Warmwasser, Batteriespeicher, Wallbox/E-Auto und weitere Verbraucher – so, dass deine Stromkosten über die nächsten Stunden und Tage minimal werden. Mit lernenden Prognosen (PV, Hausverbrauch, Elektroautoverbrauch), dynamischen Stromtarifen, zeitvariablen Netzentgelten nach §14a EnWG (Modul 3) und einem thermischen Gebäudemodell für die Wärmepumpe. Auch Limit-Power-Production-Usecases können optimiert werden.
 
 [![Add-on-Repository zu Home Assistant hinzufügen](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fshyft-power-com%2Fshyft-addon)
 
