@@ -4,7 +4,7 @@
 
 [![Add-on-Repository zu Home Assistant hinzufügen](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fshyft-power-com%2Fshyft-addon)
 
-🌐 Website: <https://www.shyft-power.com> · 📖 Blog: [Der große HEMS-Vergleich](https://www.shyft-power.com/blog-post/hems-vergleich-home-assistant)
+🌐 Website: <https://www.shyft-power.com>
 
 ---
 
@@ -41,7 +41,7 @@ Voraussetzung: Home Assistant OS oder Supervised (Add-on-Store), Architektur `am
 
 ## Wie unterscheidet sich shyft-power von EMHASS und evcc?
 
-Kurz: **evcc** ist hervorragend für PV-Überschussladen von E-Autos und arbeitet überwiegend regelbasiert. **EMHASS** ist ein sehr flexibler Open-Source-Optimierer, dessen Ergebnisse du aber selbst per YAML/Automationen in Steuerbefehle übersetzen musst. **shyft-power** kombiniert eine Optimierung über alle Geräte (inkl. Wärmepumpe mit Gebäudemodell) mit einer geführten Oberfläche, die die Steuerung direkt übernimmt. Ausführlicher Vergleich im Blog: [Der große HEMS-Vergleich](https://www.shyft-power.com/blog-post/hems-vergleich-home-assistant).
+Kurz: **evcc** ist hervorragend für PV-Überschussladen von E-Autos und arbeitet überwiegend regelbasiert. **EMHASS** ist ein sehr flexibler Open-Source-Optimierer, dessen Ergebnisse du aber selbst per YAML/Automationen in Steuerbefehle übersetzen musst. **shyft-power** kombiniert eine Optimierung über alle Geräte (inkl. Wärmepumpe mit Gebäudemodell) mit einer geführten Oberfläche, die die Steuerung direkt übernimmt.
 
 ## Datenschutz
 
