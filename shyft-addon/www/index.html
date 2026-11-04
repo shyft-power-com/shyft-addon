@@ -515,6 +515,20 @@
             color: var(--color-accent);
             font-weight: 700;
         }
+        /* Dezenter Textlink am Ende einer Steuerung ("Volle Individualität: Per Home-Assistant-
+           Automation steuern", siehe buildAutomationExpertLink) - bewusst klein und unauffaellig. */
+        .expertLinkRow {
+            margin-top: 10px;
+            font-size: 0.85em;
+        }
+        .expertLinkRow a {
+            color: var(--secondary-text-color, #727272);
+            text-decoration: underline;
+            cursor: pointer;
+        }
+        .expertLinkRow a:hover {
+            color: var(--primary-color, #03a9f4);
+        }
         .autoActionStatus {
             font-size: 0.9em;
             color: var(--color-text-secondary);
