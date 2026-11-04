@@ -9671,7 +9671,11 @@ function buildSonstigesGeraetForecastActualChart(labels, forecast, actual, actio
 function buildAussentemperaturForecastActualChart(labels, temperature) {
     const nowMs = Date.now();
     const actual = temperature.map((v, i) => (new Date(labels[i]).getTime() <= nowMs ? v : null));
-    const forecast = temperature.map((v, i) => (new Date(labels[i]).getTime() >= nowMs ? v : null));
+    // Die gestrichelte Prognose beginnt am letzten Ist-Punkt (statt erst an der naechsten Stunde) - sonst bleibt zwischen "jetzt"
+    // und der naechsten vollen Stunde eine Luecke in der Kurve. Die Temperatur ist ohnehin EINE durchgehende Reihe.
+    let lastActualIndex = -1;
+    actual.forEach((v, i) => { if (v !== null) lastActualIndex = i; });
+    const forecast = temperature.map((v, i) => (i >= lastActualIndex && (lastActualIndex >= 0 || new Date(labels[i]).getTime() >= nowMs) ? v : null));
     return buildForecastActualChart('Außentemperatur', '°C', labels, forecast, actual, {decimals: 1, flatColor: 'var(--color-accent)'});
 }
 
