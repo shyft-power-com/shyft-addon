@@ -2054,7 +2054,7 @@ def readDashboardChartData():
                 # Batterieladung, gleiche Definition wie PowerUsageBaseList.
                 opt_cost.append(_safe_float(row.get("profits_net_opt")))
                 opt_usage.append(_safe_float(row.get("X_sum")))
-                # Netzsaldo (GR_sum: positiv = Bezug, negativ = Einspeisung) - Netz-Linie "Netzbezug/Einspeisung" im Strompreis-Chart
+                # Netzsaldo (GR_sum: positiv = Bezug, negativ = Einspeisung) - Netz-Linie "Strombezug/Einspeisung" im Strompreis-Chart
                 opt_grid_import.append(_safe_float(row.get("GR_sum")))
         except Exception as e:
             print("[Shyft] output_csv konnte nicht gelesen werden:", repr(e))

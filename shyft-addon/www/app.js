@@ -9092,7 +9092,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         if (secondSeries.fine) defined2.push(...secondSeries.fine.map(p => p[1]));
         if (secondSeries.actual && secondSeries.forecast) defined2.push(...secondSeries.forecast.filter(v => v !== null && v !== undefined));
         if (secondSeries.actualFine) defined2.push(...parseFinePoints(secondSeries.actualFine).map(p => p[1]));
-        // signed (z.B. Netzbezug/Einspeisung): positive UND negative Werte - die Skala schliesst 0 immer ein und geht bei Einspeisung darunter.
+        // signed (z.B. Strombezug/Einspeisung): positive UND negative Werte - die Skala schliesst 0 immer ein und geht bei Einspeisung darunter.
         dataMin2 = Math.min(...defined2);
         const rawMin2 = secondSeries.zeroBased ? 0 : (secondSeries.signed ? Math.min(0, ...defined2) : Math.min(...defined2));
         const rawMax2 = secondSeries.signed ? Math.max(0, ...defined2) : Math.max(...defined2);
@@ -9204,7 +9204,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     }
 
     // Hauptkurve (linke Skala): endet unten auf Hoehe der Nulllinie der rechten, vorzeichenbehafteten Skala
-    // (z.B. Strompreis vs. Netzbezug/Einspeisung) - Bezug "haengt" so nicht in der Luft, sobald es Einspeisung
+    // (z.B. Strompreis vs. Strombezug/Einspeisung) - Bezug "haengt" so nicht in der Luft, sobald es Einspeisung
     // gibt. Unterhalb der Nulllinie bleibt Platz nur fuer die Einspeisung (siehe belowZeroMarkup).
     let primaryBottom = paddingTop + plotHeight;
     if (secondSeries && secondSeries.signed && !hideSecond && yMin2 < 0 && yMax2 > 0) {
@@ -11960,7 +11960,7 @@ async function loadDashboardImpl() {
         } catch (err) {
             console.log(err);
         }
-        // Netzbezug/Einspeisung (Bezug positiv, Einspeisung negativ) fuer die Netz-Linie im Strompreis-Chart
+        // Strombezug/Einspeisung (Bezug positiv, Einspeisung negativ) fuer die Netz-Linie im Strompreis-Chart
         let gridFinePoints = [];
         try {
             const gridFine = await getJson(insideHomeAssistant + '/dashboard/usage-fine?source=grid');
@@ -11985,7 +11985,7 @@ async function loadDashboardImpl() {
                 });
                 const forecast = labelMs.map((ms, k) => (actual[k] === null && ms > lastFineMs && Number.isFinite(optByMs.get(ms)) ? optByMs.get(ms) : null));
                 secondSeries = {
-                    label: 'Netzbezug/Einspeisung', unit: 'kW', decimals: 1, color: 'var(--color-text-secondary)',
+                    label: 'Strombezug/Einspeisung', unit: 'kW', decimals: 1, color: 'var(--color-text-secondary)',
                     actual, forecast, fine: gridFinePoints.length >= 2 ? gridFinePoints : null, binMs: usageFineBinMs, signed: true,
                 };
             }
