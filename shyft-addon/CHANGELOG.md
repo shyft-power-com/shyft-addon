@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.45.358
+
+* **Dashboard: Charts lassen sich vergrößern (Desktop).** Oben rechts an jedem Chart sitzt ein dezentes „Vergrößern“-Icon (am Handy ausgeblendet). Der Chart öffnet in einem Modal in Bildschirmbreite mit Rand rundherum, mit Tooltips und Legende wie im normalen Chart. Schließen per ×, Klick daneben oder Esc.
+* **Wärmepumpe: „Warmwasserbereitung aktiviert“ und „Heizung aktiviert“ lassen sich fest auf „An“ oder „Aus“ stellen.** Ganz oben im Dropdown stehen jetzt die Einträge „An“ und „Aus“, für Nutzer ohne passenden Sensor. Der Info-Text erklärt: Bei „Aus“ ist die Steuerung nicht aktiviert, es werden keine Pläne gesetzt und nichts optimiert. Bei der Neueinrichtung einer Wärmepumpe steht beides auf „An“. Ohne Eintrag gilt weiterhin „An“.
+* **Wärmepumpen-Kachel neu sortiert** mit Zwischenüberschriften „Warmwasser“, „Heizung“ und „System / Gebäude“ sowie je einer Gruppe „Optionale Sensoren“. Umbenannt: „Temperatur Warmwassertank (aktuell)“, „Solltemperatur (°C)“ und „Soll-Raumtemperatur (aktuell)“ (beide fett, da für die Aktion relevant), „Warmwasserbereitung aktiviert“, „Heizung aktiviert“, „Warmwasser gerade erwärmt?“ (Info: Anzeige im Dashboard), „Schwankungen Raumtemperatur / Gebäudepuffer“ und „Temperaturobergrenze, Heizungssystem“.
+* **Steuerung der Wärmepumpe:** erst Warmwasser, dann Heizung. Der Test-Button der Heizung heißt „Testen“. Die Kachel „Raumtemperatur“ steht jetzt hinter der Kachel „Wärmepumpe“.
+* **Konfiguration aufgeräumt (aus 0.0.45.357):** Das „Varianten“-Dropdown ist weg, die Home-Assistant-Automation steht nur noch als dezenter Textlink am Ende der Kachel zur Wahl.
+
 ## 0.0.45.357
 
 * **Konfiguration aufgeräumt: Das „Varianten“-Dropdown ist weg.** Standard ist immer die direkte Steuerung (bei der Wallbox die dreistufige). Die Home-Assistant-Automation ist nur noch über einen dezenten Textlink am Ende der Kachel erreichbar („Volle Individualität: Per Home-Assistant-Automation steuern“, mit Info-Symbol für Experten). Der Link schaltet die Kachel auf das Automations-Feld um, ein „← Zurück zur direkten Steuerung“-Link wechselt zurück. Betrifft Sonstigen Verbraucher, Auto laden, Warmwasserbereitung und die drei Batterie-Aktionen. Bereits hinterlegte Automationen bleiben aktiv.

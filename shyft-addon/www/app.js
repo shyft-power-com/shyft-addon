@@ -75,28 +75,32 @@ const helpinformation = {
         description: ' Optionale Zahl-Entität (in Sekunden), nach der der Wechselrichter einen Steuerbefehl der Batterie selbst verwirft und in den Normalbetrieb zurückfällt. Das Addon setzt sie beim Start von "Batterie netzladen" auf 60 Minuten und von "Batterie-Entladen verschieben" auf 10 Stunden.'
     },
     'heatpump_dhw_tank_temp': {
-        label: 'Temperatur Warmwassertank',
+        label: 'Temperatur Warmwassertank (aktuell)',
         description: ' Die aktuelle Temperatur im Warmwassertank (in °C)'
     },
     'heatpump_dhw_target_temp': {
-        label: 'Warmwasser: Solltemperatur (°C)',
+        label: 'Solltemperatur (°C)',
+        bold: true,
         description: ' Die Home-Assistant-Entity (number oder climate), über die Shyft die Ziel-/Solltemperatur für die Warmwasserbereitung setzt. Während einer "Warmwasser"-Aktion wird sie auf den von Shyft berechneten Zielwert gesetzt und beim Beenden der Aktion wieder auf den vorherigen Wert zurückgesetzt.'
     },
     'heatpump_dhw_activated': {
-        label: 'Warmwassermodus aktiviert? An/Aus',
-        description: ' Optional. Steht der Sensor auf "On", werden Aktionen zur Warmwasserbereitung berechnet. Bei "Off" berechnet Shyft keine Warmwasseraktionen. Ist nichts hinterlegt, gilt "On"; bei "unknown"/"unavailable" gilt der zuletzt gemeldete Wert.'
+        label: 'Warmwasserbereitung aktiviert',
+        staticOnOff: true,
+        description: ' Steht der Wert auf "An", plant Shyft die Warmwasserbereitung. Steht er auf "Aus", ist die Steuerung der Warmwasserbereitung nicht aktiviert: Shyft berechnet dann keine Warmwasser-Aktionen und optimiert hier nichts. Wähle oben im Dropdown "An" oder "Aus", wenn du keinen passenden Sensor hast oder findest, oder hinterlege eine Home-Assistant-Entität, die den Zustand meldet. Standard ist "An"; bei "unknown"/"unavailable" gilt der zuletzt gemeldete Wert.'
     },
     'heatpump_dhw_on_off': {
-        label: 'Warmwasser gerade erwärmt? An / Aus',
-        description: ' je nachdem ob deine Wärmepumpe gerade Brauchwasser erwärmt oder nicht.'
+        label: 'Warmwasser gerade erwärmt?',
+        description: ' Anzeige im Dashboard, ob gerade Brauchwasser erwärmt wird'
     },
     'heatpump_heating_target_temp_normal': {
-        label: 'Heizung Soll-Temperatur (aktuell)',
+        label: 'Soll-Raumtemperatur (aktuell)',
+        bold: true,
         description: ' Gewünschte Raumtemperatur (Solltemperatur). Über die stündliche Anpassung dieses Wertes steuert Shyft kurzfristig die Leistung deiner Wärmepumpe und stellt die gewünschte Solltemperatur in deinen Räumen sicher.'
     },
     'heatpump_heating_activated': {
-        label: 'Heizung aktiviert?',
-        description: ' Ja / Nein, je nachdem, ob du die Heizung an deiner Wärmepumpe aktiviert hast oder nicht. Jeder Zustand außer "off" zählt als "an" (z.B. auch Betriebsmodi wie "auto" oder "heat" einer Heizungs-Entität).'
+        label: 'Heizung aktiviert',
+        staticOnOff: true,
+        description: ' Steht der Wert auf "An", optimiert Shyft die Heizung. Steht er auf "Aus", ist die Steuerung der Heizung nicht aktiviert: Shyft erzeugt dann keine Heizungs-Aktionen und optimiert hier nichts. Wähle oben im Dropdown "An" oder "Aus", wenn du keinen passenden Sensor hast oder findest, oder hinterlege eine Home-Assistant-Entität, die den Zustand meldet. Standard ist "An". Bei einer Entität zählt jeder Zustand außer "off" als "an" (z.B. auch Betriebsmodi wie "auto" oder "heat").'
     },
     'heatpump_current_power_elect': {
         label: 'Aktuelle Leistung Wärmepumpe (elektrisch)',
@@ -148,6 +152,7 @@ const heatingRodHelpInformation = {
     },
     'heatpump_dhw_target_temp': {
         label: 'Warmwasser: Solltemperatur (°C)',
+        bold: false,
         description: ' Die Home-Assistant-Entity (number oder climate), an der die Ziel-/Solltemperatur des Warmwassers eingestellt ist. Daraus leitet Shyft die Untergrenze für die Warmwasserplanung ab.'
     },
     [HEATING_ROD_SWITCH_KEY]: {
@@ -337,6 +342,14 @@ const INTEGRATION_SECTIONS = [
         hasDemo: true
     },
     {
+        key: 'raumtemperatur',
+        label: 'Raumtemperatur',
+        sensors: ['heatpump_temp_indoor_measured'],
+        actions: [],
+        requiresDeviceClass: 'temperature',
+        description: 'Hinterlege einen Innenraum-Temperatursensor. Shyft stellt dann sicher, dass deine Räume nie zu kalt werden. Die Vorlauftemperatur deiner Wärmepumpe kann dann ohne Reserven gesteuert werden und so Kosten sparen. Hinterlegst du keinen Sensor, simulieren wir die Raumtemperatur.\nTipp: Wenn du das Minimum mehrerer Temperatursensoren verwenden willst, erstelle in Home Assistant einen entsprechenden Hilfssensor.'
+    },
+    {
         key: 'auto',
         label: 'Auto',
         sensors: ['electronicvehicle_state_of_charge', 'electronicvehicle_home'],
@@ -350,14 +363,6 @@ const INTEGRATION_SECTIONS = [
         sensors: ['wallbox_current_charging_power', 'wallbox_plugged'],
         actions: ['car_charge_start', 'car_charge_stop'],
         hasDemo: true
-    },
-    {
-        key: 'raumtemperatur',
-        label: 'Raumtemperatur',
-        sensors: ['heatpump_temp_indoor_measured'],
-        actions: [],
-        requiresDeviceClass: 'temperature',
-        description: 'Hinterlege einen Innenraum-Temperatursensor. Shyft stellt dann sicher, dass deine Räume nie zu kalt werden. Die Vorlauftemperatur deiner Wärmepumpe kann dann ohne Reserven gesteuert werden und so Kosten sparen. Hinterlegst du keinen Sensor, simulieren wir die Raumtemperatur.\nTipp: Wenn du das Minimum mehrerer Temperatursensoren verwenden willst, erstelle in Home Assistant einen entsprechenden Hilfssensor.'
     },
     {
         key: 'sonstiger_verbraucher',
@@ -3365,6 +3370,13 @@ function renderIntegrationSections() {
             const wasDemo = previousIds.length === 1 && previousIds[0] === DEMO_INTEGRATION_ID;
             const becameReal = !(selectedIds.length === 1 && selectedIds[0] === DEMO_INTEGRATION_ID);
             currentIntegrationSelections[section.key] = selectedIds;
+            // Neueinrichtung einer Waermepumpe: "Warmwasserbereitung aktiviert" und "Heizung aktiviert" starten mit "An".
+            if (section.key === 'waermepumpe' && becameReal && (wasEmpty || wasDemo)) {
+                configData['sensorMappings'] = configData['sensorMappings'] || {};
+                for (const staticKey of ['heatpump_dhw_activated', 'heatpump_heating_activated']) {
+                    if (!configData['sensorMappings'][staticKey]) configData['sensorMappings'][staticKey] = STATIC_SENSOR_ON;
+                }
+            }
             if (selectedIds.length > 0) {
                 renderSectionBody(bodyDiv, section, selectedIds);
                 if (wasEmpty || (wasDemo && becameReal)) expanded = true;
@@ -3931,7 +3943,9 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         sensorsHeading.textContent = 'Sensoren';
         bodyDiv.appendChild(sensorsHeading);
 
-        if (section.key === 'waermepumpe' || section.key === 'heizstab') {
+        if (section.key === 'waermepumpe') {
+            appendWaermepumpeSensorLayout(bodyDiv, section, sensorDatalistIds);
+        } else if (section.key === 'heizstab') {
             // "Warmwasser-Speichergröße" gehoert direkt unter die zugehoerige Sensor-Zeile
             // "Temperatur Warmwassertank" (Nutzer-Feedback) - dafuer wird dieser eine Sensor hier
             // vorgezogen und das Feld gleich daruntergesetzt, statt es weiter unten im Konfig-Block
@@ -3946,7 +3960,7 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         const topSensorKeys = section.key === 'wallbox'
             ? section.sensors.filter(k => k !== 'wallbox_plugged')
             : section.key === 'waermepumpe'
-                ? section.sensors.filter(k => k !== 'heatpump_dhw_tank_temp')
+                ? []  // komplett in appendWaermepumpeSensorLayout
                 : section.key === 'heizstab'
                     // Die An-/Aus-Entitaet steht weiter unten unter "Steuerung" (siehe buildHeatingRodControl).
                     ? section.sensors.filter(k => k !== 'heatpump_dhw_tank_temp' && k !== HEATING_ROD_SWITCH_KEY)
@@ -3954,7 +3968,9 @@ function renderSectionBody(bodyDiv, section, entryIds) {
                         // Mehrfachauswahl (Liste) statt der Einzelzeile - siehe buildMultiSensorField unten.
                         ? section.sensors.filter(k => k !== 'sonstiger_verbraucher_switch_entities')
                         : section.sensors;
-        bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, sectionHelpInformation(section), VALUE_POSTFIX, key => sensorDatalistIds[key], true));
+        if (topSensorKeys.length > 0) {
+            bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, sectionHelpInformation(section), VALUE_POSTFIX, key => sensorDatalistIds[key], true));
+        }
         if (section.key === 'heizstab') {
             bodyDiv.appendChild(buildHeatingRodMaxPowerField());
             bodyDiv.appendChild(buildHeatingRodMaxTempField());
@@ -3990,18 +4006,6 @@ function renderSectionBody(bodyDiv, section, entryIds) {
             bodyDiv.appendChild(buildMultiSensorField('sonstiger_verbraucher_switch_entities', candidateEntities));
             bodyDiv.appendChild(buildOdPriceThresholdField());
             bodyDiv.appendChild(buildOdPowerField());
-        }
-        if (section.key === 'waermepumpe') {
-            bodyDiv.appendChild(buildHpTypeField());
-            bodyDiv.appendChild(buildHpBuildingSizeField());
-            bodyDiv.appendChild(buildHpEnergyEfficiencyField());
-            // buildHpDhwTankSizeField() steht jetzt oben direkt unter "Temperatur Warmwassertank".
-            bodyDiv.appendChild(buildHpMaxPowerField());
-            bodyDiv.appendChild(buildHpMaxSupplyTempField());
-            bodyDiv.appendChild(buildHpHeatingTargetTempMinField());
-            bodyDiv.appendChild(buildHpHeatingBufferField());
-            bodyDiv.appendChild(buildHpHeatingCurveLevelField());
-            bodyDiv.appendChild(buildHpHeatingCurveSlopeField());
         }
     }
 
@@ -4076,16 +4080,17 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         steuerungTarget.appendChild(buildMappingTable(manualActions, configData["actorMappings"] || {}, actorHelpInformation, ACTOR_VALUE_POSTFIX, () => 'allEntityOptions', false, configData["actionTypeEnabled"] || {}));
     }
 
+    // Waermepumpe: erst Warmwasser, dann Heizung (Nutzer-Vorgabe) - Warmwasser ist die einzige Steuerung mit hasHotWater.
+    if (hasHotWater) {
+        steuerungTarget.appendChild(buildHotWaterControl());
+    }
+
     for (const control of sectionControls) {
         steuerungTarget.appendChild(control.type === 'switch' ? buildAutoManagedSwitchControl(control) : buildAutoManagedNumberControl(control));
     }
 
     if (hasCarCharge) {
         steuerungTarget.appendChild(buildCarChargeControl());
-    }
-
-    if (hasHotWater) {
-        steuerungTarget.appendChild(buildHotWaterControl());
     }
 
     if (section.key === 'heizstab') {
@@ -4441,6 +4446,43 @@ function buildConfigSelectField({label, tooltip, id, configKey, options, default
 // exactly (see shyft's SiteEntityRepository mapToXyz switch statements) so the Java server can
 // look them up unchanged. See addon_sensor_data_JSON/staticConfig in sync_site_data (app.py).
 
+// Kleine Zwischenueberschrift innerhalb eines Abschnitts (kleiner als "Sensoren"/"Steuerung"); spaced = mit etwas Abstand davor
+// (z.B. "Optionale Sensoren").
+function buildMinorHeading(text, spaced = false) {
+    const heading = document.createElement('div');
+    heading.className = 'sectionMinorHeading' + (spaced ? ' sectionMinorHeadingSpaced' : '');
+    heading.textContent = text;
+    return heading;
+}
+
+// Sensor-Teil der Waermepumpen-Kachel (Nutzer-Vorgabe): Warmwasser / Heizung / System-Gebaeude mit Zwischenueberschriften und
+// eigenen "Optionale Sensoren"-Gruppen. Die Reihenfolge der Felder steht hier, nicht in section.sensors.
+function appendWaermepumpeSensorLayout(bodyDiv, section, sensorDatalistIds) {
+    const table = keys => buildMappingTable(keys, configData["sensorMappings"] || {}, sectionHelpInformation(section), VALUE_POSTFIX, key => sensorDatalistIds[key], true);
+
+    bodyDiv.appendChild(buildMinorHeading('Warmwasser'));
+    bodyDiv.appendChild(buildHpDhwTankSizeField());
+    bodyDiv.appendChild(table(['heatpump_dhw_tank_temp', 'heatpump_dhw_target_temp', 'heatpump_dhw_activated']));
+    bodyDiv.appendChild(buildMinorHeading('Optionale Sensoren', true));
+    bodyDiv.appendChild(table(['heatpump_dhw_on_off']));
+
+    bodyDiv.appendChild(buildMinorHeading('Heizung'));
+    bodyDiv.appendChild(table(['heatpump_heating_activated', 'heatpump_heating_target_temp_normal']));
+    bodyDiv.appendChild(buildMinorHeading('Optionale Sensoren', true));
+    bodyDiv.appendChild(table(['heatpump_current_power_elect', 'heatpump_on_off', 'heatpump_supply_temp_hp']));
+
+    bodyDiv.appendChild(buildMinorHeading('System / Gebäude'));
+    bodyDiv.appendChild(buildHpHeatingTargetTempMinField());
+    bodyDiv.appendChild(buildHpBuildingSizeField());
+    bodyDiv.appendChild(buildHpEnergyEfficiencyField());
+    bodyDiv.appendChild(buildHpHeatingBufferField());
+    bodyDiv.appendChild(buildHpTypeField());
+    bodyDiv.appendChild(buildHpMaxPowerField());
+    bodyDiv.appendChild(buildHpHeatingCurveLevelField());
+    bodyDiv.appendChild(buildHpHeatingCurveSlopeField());
+    bodyDiv.appendChild(buildHpMaxSupplyTempField());
+}
+
 function buildHpBuildingSizeField() {
     return buildConfigSelectField({
         label: 'Wohnfläche',
@@ -4563,7 +4605,7 @@ function buildHpHeatingTargetTempMinField() {
 // here is just the "name" part, the "__zahl" suffix is invisible to the user.
 function buildHpHeatingBufferField() {
     return buildConfigSelectField({
-        label: 'Heizungspuffer',
+        label: 'Schwankungen Raumtemperatur / Gebäudepuffer',
         tooltip: 'Wie viel Spielraum die Optimierung beim Vorheizen der Innentemperatur oberhalb der Soll-Temperatur nutzen darf, bevor sie stoppt.',
         id: 'hp_heating_buffer',
         configKey: 'hpHeatingBuffer',
@@ -4574,7 +4616,7 @@ function buildHpHeatingBufferField() {
 
 function buildHpMaxSupplyTempField() {
     return buildConfigNumberField({
-        label: 'Temperatur Obergrenze (°C)',
+        label: 'Temperaturobergrenze, Heizungssystem (°C)',
         tooltip: 'Höchste Temperatur, auf die Shyft das Warmwasser erwärmen darf / maximale Systemtemperatur.',
         id: 'hp_max_supply_temp',
         configKey: 'hpMaxSupplyTempC',
@@ -5057,7 +5099,7 @@ function openNewAutomationBuilder() {
 // zu befuellen. Gibt einen Wrapper zurueck, der ANSTELLE des bisherigen "cell.appendChild(input)" ins
 // DOM eingehaengt wird; das <input>-Element selbst bleibt unveraendert (gleiche id, gleiche externen
 // 'change'-Listener, siehe dispatchEvent unten).
-function attachEntityDropdown(input, {datalistId, headerText, topAction}) {
+function attachEntityDropdown(input, {datalistId, headerText, topAction, staticOptions = null}) {
     input.removeAttribute('list');
 
     const wrapper = document.createElement('span');
@@ -5104,6 +5146,14 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction}) {
                 panel.hidden = true;
             });
             panel.appendChild(actionRow);
+        }
+
+        // Feste Auswahl (z.B. "An"/"Aus") ganz oben, unabhaengig vom Suchtext - fuer Nutzer ohne passenden Sensor.
+        if (staticOptions) {
+            for (const opt of staticOptions) {
+                appendOptionRow(opt);
+                panel.lastChild.classList.add('entityDropdownStaticOption');
+            }
         }
 
         const header = document.createElement('div');
@@ -5280,7 +5330,7 @@ function buildAutoManagedNumberControl(control) {
 
     const plusButton = document.createElement('button');
     plusButton.type = 'button';
-    plusButton.textContent = `Test: +${control.step}${unitSuffix}`;
+    plusButton.textContent = control.onlyIncrement ? 'Testen' : `Test: +${control.step}${unitSuffix}`;
 
     const valueDisplay = document.createElement('span');
     valueDisplay.className = 'autoActionValue';
@@ -6583,6 +6633,8 @@ function buildToggleSwitch(id, checked) {
 function extractEntityId(value) {
     const text = (value || '').trim();
     if (!text) return '';
+    if (text === 'An') return STATIC_SENSOR_ON;
+    if (text === 'Aus') return STATIC_SENSOR_OFF;
     const byLabel = allSensorIdOptions.find(entity => entity.label === text);
     if (byLabel) return byLabel.entity_id;
     const inParens = text.match(/\(([a-z0-9_]+\.[a-z0-9_]+),/);
@@ -7022,8 +7074,15 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
     return container;
 }
 
+// Feste An/Aus-Auswahl statt einer Entitaet (siehe STATIC_SENSOR_ON/OFF in sync_service.py): gespeichert als "static_on"/"static_off",
+// im Eingabefeld als "An"/"Aus".
+const STATIC_SENSOR_ON = 'static_on';
+const STATIC_SENSOR_OFF = 'static_off';
+
 function formatEntityDisplay(entityId) {
     if (!entityId) return '';
+    if (entityId === STATIC_SENSOR_ON) return 'An';
+    if (entityId === STATIC_SENSOR_OFF) return 'Aus';
     const match = allSensorIdOptions.find(entity => entity.entity_id === entityId);
     if (!match) return entityId;
     return match.label;
@@ -7318,11 +7377,14 @@ function buildMappingRow(key, value, helpInfo, valuePostfix, datalistId, showLiv
     const keyCell = document.createElement('td');
     const context = helpInfo[key] ?? {label: key};
     keyCell.textContent = context.label;
+    if (context.bold) keyCell.style.fontWeight = '700';
     keyCell.appendChild(buildTooltip(context.description ?? key));
 
     const inputValue = document.createElement('input');
     inputValue.id = key + valuePostfix;
     inputValue.value = showLiveValue ? formatEntityDisplay(value) : value;
+    // Felder mit fester An/Aus-Auswahl (siehe STATIC_SENSOR_*): ohne Eintrag gilt "An" (Standard).
+    if (context.staticOnOff) inputValue.placeholder = 'An (Standard)';
     inputValue.setAttribute("class", "sensorInput");
     inputValue.setAttribute("autocomplete", "off");
     inputValue.addEventListener('change', async () => {
@@ -7333,7 +7395,8 @@ function buildMappingRow(key, value, helpInfo, valuePostfix, datalistId, showLiv
         if (onChange) onChange();
     });
     const inputWrapper = wrapEntityInputWithClear(
-        attachEntityDropdown(inputValue, {datalistId, headerText: 'Home-Assistant-Entität'}), inputValue);
+        attachEntityDropdown(inputValue, {datalistId, headerText: 'Home-Assistant-Entität',
+            staticOptions: context.staticOnOff ? [{value: 'An', label: 'An'}, {value: 'Aus', label: 'Aus'}] : null}), inputValue);
 
     const valueCell = document.createElement('td');
     valueCell.appendChild(inputWrapper);

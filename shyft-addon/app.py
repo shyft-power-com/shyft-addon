@@ -1,4 +1,4 @@
-from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id, resolve_dhw_activated
+from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id, resolve_dhw_activated, static_sensor_state, STATIC_SENSOR_ON, STATIC_SENSOR_OFF
 from homeassistant_adapter import HomeAssistantAdapter, EntityState
 from shyft_adapter import ShyftAdapter
 from constants import DEV_ACCESS_KEY_PREFIX
@@ -5222,6 +5222,9 @@ def _read_mapped_entity_state(config, sensor_key):
         if state is None:
             return None
         return EntityState(state, unit or "", datetime.now(timezone.utc))
+    static_state = static_sensor_state(config, sensor_key)
+    if static_state is not None:
+        return EntityState(static_state, "", datetime.now(timezone.utc))
     entity_id = mapped_entity_id(config, sensor_key)
     if not entity_id:
         return None
@@ -7593,6 +7596,8 @@ def _keep_valid_entity_ids(incoming, existing, keys=("sensorMappings", "actorMap
             continue
         for inner_key, new_value in list(new_map.items()):
             old_value = old_map.get(inner_key)
+            if new_value in (STATIC_SENSOR_ON, STATIC_SENSOR_OFF):
+                continue  # feste An/Aus-Auswahl (siehe static_sensor_state), keine entity_id
             if (isinstance(new_value, str) and new_value and not _VALID_ENTITY_ID.match(new_value)
                     and isinstance(old_value, str) and _VALID_ENTITY_ID.match(old_value)):
                 print(f"[Shyft] Mapping '{key}.{inner_key}': ungueltiger Wert {new_value!r} ignoriert, behalte {old_value!r}.")

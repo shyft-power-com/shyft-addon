@@ -208,6 +208,22 @@ def heating_rod_active(config):
 
 HEATING_ROD_SWITCH_SENSOR_KEY = "heating_rod_switch"
 
+# Feste "An"/"Aus"-Auswahl statt einer Home-Assistant-Entitaet (Dropdown-Eintraege ganz oben bei "Warmwasserbereitung aktiviert" und
+# "Heizung aktiviert"): fuer Nutzer, die den passenden Sensor nicht haben oder nicht finden. Gespeichert als Wert in sensorMappings
+# (ohne ":"/"."/Leerzeichen, damit weder _entity_id_from_display_value noch _VALID_ENTITY_ID ihn anfassen).
+STATIC_SENSOR_ON = "static_on"
+STATIC_SENSOR_OFF = "static_off"
+
+
+def static_sensor_state(config, sensor_key):
+    "'on'/'off', wenn fuer sensor_key eine feste An/Aus-Auswahl hinterlegt ist, sonst None."
+    value = ((config.get("sensorMappings", {}) or {}).get(sensor_key) or "")
+    if value == STATIC_SENSOR_ON:
+        return "on"
+    if value == STATIC_SENSOR_OFF:
+        return "off"
+    return None
+
 # Letzter bekannter An/Aus-Zustand von "Warmwassermodus aktiviert?" (heatpump_dhw_activated) - bei "unknown"/"unavailable" gilt dieser Wert
 # weiter, nicht automatisch "aus" (siehe resolve_dhw_activated).
 DHW_ACTIVATED_LAST_STATE_PATH = "/data/dhw_activated_last_state.json"
@@ -240,6 +256,9 @@ def resolve_dhw_activated(config, homeassistant_adapter):
     im Demo-Modus immer True."""
     if heating_rod_active(config) or is_demo_sensor(config, "heatpump_dhw_activated"):
         return True
+    static_state = static_sensor_state(config, "heatpump_dhw_activated")
+    if static_state is not None:
+        return static_state == "on"
     entity_id = mapped_entity_id(config, "heatpump_dhw_activated")
     if not entity_id:
         return True
@@ -525,6 +544,9 @@ class SyncService:
                 "unit": unit,
                 "sensor": bubbleSensorIdentifier
             }
+        static_state = static_sensor_state(data, key)
+        if static_state is not None:
+            return {"entity_id": None, "state": static_state, "unit": None, "sensor": bubbleSensorIdentifier}
         sensorId = mapped_entity_id(data, key) or data["sensorMappings"][key]
         try:
             sensorValue = self.homeassistant_adapter.load_entity_state(sensorId)
