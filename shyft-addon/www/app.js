@@ -8604,6 +8604,72 @@ function attachChartViewGestures(entry) {
     }, {capture: true, passive: true});
 }
 
+// Dezentes "Vergroessern"-Icon oben rechts an jedem Dashboard-Chart (nur Desktop, am Handy per CSS ausgeblendet - dort wird gescrollt/gezoomt).
+function buildChartEnlargeButton(chartKey, build, info) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'chartEnlargeButton';
+    button.title = 'Vergrößern';
+    button.setAttribute('aria-label', 'Chart vergrößern');
+    button.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2h4v4M6 14H2v-4M14 2l-5 5M2 14l5-5"/></svg>';
+    button.addEventListener('click', () => openChartModal(chartKey, build, info));
+    return button;
+}
+
+// Oeffnet denselben Chart gross in einem Modal (Bildschirmbreite mit Rand). Es wird ein zweiter, voll bedienbarer Chart ueber dieselbe
+// build()-Funktion gebaut - nur mit der Modalbreite als SVG-Breite (ctx.chartWidth/chartHeight), damit Schrift und Linien in
+// Originalgroesse bleiben und der Chart mehr Platz fuer den Zeitverlauf bekommt. Ausgeblendete Kurven (Legende) gelten gemeinsam.
+let chartModalCleanup = null;
+function openChartModal(chartKey, build, info) {
+    if (chartModalCleanup) chartModalCleanup();
+    const overlay = document.createElement('div');
+    overlay.className = 'chartModalOverlay';
+    const dialog = document.createElement('div');
+    dialog.className = 'chartModalDialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'chartModalClose';
+    closeButton.title = 'Schließen';
+    closeButton.setAttribute('aria-label', 'Schließen');
+    closeButton.textContent = '×';
+    const body = document.createElement('div');
+    body.className = 'chartModalBody';
+    dialog.appendChild(closeButton);
+    dialog.appendChild(body);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const chartSize = () => {
+        const width = Math.max(600, Math.round(body.clientWidth || 600));
+        const height = Math.max(CHART_SVG_HEIGHT, Math.min(800, Math.round(window.innerHeight * 0.92 - 170)));
+        return {width, height};
+    };
+    const chartEl = makeToggleableChart(chartKey, build, {...info, isModal: true, chartSize});
+    body.appendChild(chartEl);
+    // Erst jetzt, wo der Chart im DOM steht, stimmt body.clientWidth - einmal passend neu zeichnen.
+    chartEl.__chartEntry.refresh();
+
+    const onResize = () => chartEl.__chartEntry.refresh();
+    const onKey = event => { if (event.key === 'Escape') close(); };
+    function close() {
+        window.removeEventListener('resize', onResize);
+        document.removeEventListener('keydown', onKey);
+        document.body.style.overflow = previousOverflow;
+        overlay.remove();
+        chartModalCleanup = null;
+    }
+    chartModalCleanup = close;
+    window.addEventListener('resize', onResize);
+    document.addEventListener('keydown', onKey);
+    closeButton.addEventListener('click', close);
+    overlay.addEventListener('mousedown', event => { if (event.target === overlay) close(); });
+    closeButton.focus();
+}
+
 // Baut einen Chart ueber build(ctx) und baut ihn bei Aenderungen an Ort und Stelle neu (Kurve ein-/ausblenden per Legende,
 // Zeitfenster per Zoom/Wischen). ctx = {hidden: Set ausgeblendeter Kurven, toggle: Funktion(seriesId) | null (ohne chartKey),
 // view: Zeitfenster | null}. Nur die von build() erzeugten Knoten werden getauscht, vom Aufrufer spaeter angehaengte
@@ -8621,7 +8687,13 @@ function makeToggleableChart(chartKey, build, info = {}) {
         refresh: () => rebuild(),
         get ctx() { return lastCtx; },
     };
-    const makeCtx = () => ({hidden: chartKey ? loadHiddenChartSeries(chartKey) : new Set(), toggle: chartKey ? toggle : null, view: chartGlobalView});
+    // info.chartSize (nur im Vergroessern-Modal, siehe openChartModal): Funktion -> {width, height} in SVG-Einheiten; ohne sie gelten die
+    // festen Standardmasse der Chart-Funktionen (600 x CHART_SVG_HEIGHT).
+    const makeCtx = () => {
+        const size = info.chartSize ? info.chartSize() : null;
+        return {hidden: chartKey ? loadHiddenChartSeries(chartKey) : new Set(), toggle: chartKey ? toggle : null, view: chartGlobalView,
+            chartWidth: size ? size.width : null, chartHeight: size ? size.height : null};
+    };
     function rebuild() {
         lastCtx = makeCtx();
         const next = build(lastCtx);
@@ -8650,6 +8722,8 @@ function makeToggleableChart(chartKey, build, info = {}) {
     wrapper = build(lastCtx);
     ownNodes = [...wrapper.childNodes];
     entry.wrapper = wrapper;
+    wrapper.__chartEntry = entry;
+    if (!info.isModal) wrapper.appendChild(buildChartEnlargeButton(chartKey, build, info));
     restoreSticky();
     if (labelTimes.length > 2) {
         chartRefreshers.add(entry);
@@ -8839,7 +8913,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 
 function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hidden: new Set(), toggle: null}) {
     const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, overlayForecast = null, curveLegend = false, bandPrimary = null, primaryFine = null, axisMax = null} = options;
-    const width = 600, height = CHART_SVG_HEIGHT;
+    const width = ctx.chartWidth || 600, height = ctx.chartHeight || CHART_SVG_HEIGHT;
     // presenceForecast reserves an extra strip just above the x-axis labels for the
     // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
     // eigener rechter Skala, siehe unten) braucht zusaetzlichen Platz rechts fuer ihre eigene
@@ -9568,7 +9642,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     // erkannt, ob 'actual' dort einen Wert hat (bei jedem Aufrufer nur fuer bereits vergangene/
     // laufende Stunden befuellt).
     const prognose = plannedHistory ? labels.map((_, i) => (plannedHistory[i] ?? forecast[i])) : forecast;
-    const width = 600, height = CHART_SVG_HEIGHT;
+    const width = ctx.chartWidth || 600, height = ctx.chartHeight || CHART_SVG_HEIGHT;
     const paddingLeft = 52, paddingRight = 15, paddingTop = chartTopPadding(unit), paddingBottom = 26;
     ctx.plotLeft = paddingLeft;
     ctx.plotRight = paddingRight;
@@ -9863,7 +9937,7 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, option
 }
 
 function buildComparisonChartImpl(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false, actualValues = null, actualFine = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
-    const width = 600, height = CHART_SVG_HEIGHT;
+    const width = ctx.chartWidth || 600, height = ctx.chartHeight || CHART_SVG_HEIGHT;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     ctx.plotLeft = paddingLeft;
     ctx.plotRight = paddingRight;
