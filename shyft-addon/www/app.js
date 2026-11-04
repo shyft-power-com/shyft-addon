@@ -9432,7 +9432,18 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     const nowIndex = Math.round((nowMs - firstLabelMs) / 3600000);
     if (nowIndex >= 0 && nowIndex <= lastIndex) {
         // Dauerhaft sichtbarer Punkt mit Ring auf der Kurve (siehe nowDotSvg) - kein senkrechter Strich mehr.
-        for (const p of [hidePrimarySeg(nowIndex) ? null : points[nowIndex], hideSecond ? null : (points2 && points2[nowIndex])]) {
+        // Hauptkurve mit feinen Ist-Punkten (z.B. Heizung-Soll als Treppe): der Punkt sitzt auf dem LETZTEN Ist-Punkt (aktueller Wert, bei
+        // einem Sprung also oben), nicht auf dem Stundenwert - der steht sonst am Anfang des Sprungs auf dem alten Wert. Nur, wenn dieser
+        // Punkt auch aktuell ist (sonst Stundenwert wie bisher).
+        let primaryNowPoint = points[nowIndex];
+        if (fineP.length >= 2) {
+            const [lastFineMs, lastFineValue] = fineP[fineP.length - 1];
+            const fineX = paddingLeft + ((lastFineMs + 150000 - firstLabelMs) / 3600000 / lastIndex) * plotWidth;
+            if (Math.abs(nowMs - lastFineMs) <= 5400000 && fineX >= paddingLeft && fineX <= width - paddingRight) {
+                primaryNowPoint = [fineX, yPrimary(lastFineValue)];
+            }
+        }
+        for (const p of [hidePrimarySeg(nowIndex) ? null : primaryNowPoint, hideSecond ? null : (points2 && points2[nowIndex])]) {
             if (p) nowMarkup += nowDotSvg(p[0], p[1]);
         }
     }
