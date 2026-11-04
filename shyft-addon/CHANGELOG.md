@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.357
+
+* **Konfiguration aufgeräumt: Das „Varianten“-Dropdown ist weg.** Standard ist immer die direkte Steuerung (bei der Wallbox die dreistufige). Die Home-Assistant-Automation ist nur noch über einen dezenten Textlink am Ende der Kachel erreichbar („Volle Individualität: Per Home-Assistant-Automation steuern“, mit Info-Symbol für Experten). Der Link schaltet die Kachel auf das Automations-Feld um, ein „← Zurück zur direkten Steuerung“-Link wechselt zurück. Betrifft Sonstigen Verbraucher, Auto laden, Warmwasserbereitung und die drei Batterie-Aktionen. Bereits hinterlegte Automationen bleiben aktiv.
+
 ## 0.0.45.356
 
 * **Fix: „Prognose im Detail“ klappt sich nicht mehr von selbst zu.** Der Aufklapp-Zustand wird jetzt dauerhaft gemerkt und nicht mehr aus dem beim 30-Sekunden-Refresh ersetzten Element gelesen. Fehlte beim Refresh kurz die Prognose, ging der Zustand vorher verloren.
