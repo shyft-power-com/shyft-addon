@@ -1865,7 +1865,86 @@
 
         .dashboardChart {
             margin-bottom: 0;
+            position: relative;
         }
+
+        /* "Vergroessern"-Icon oben rechts am Chart (siehe buildChartEnlargeButton) - bewusst dezent, erst beim Darueberfahren deutlich.
+           Am Handy ausgeblendet (dort wird im Chart gescrollt/gezoomt). */
+        .dashboardChart > .dashboardChartTitle { padding-right: 30px; }
+        .chartEnlargeButton {
+            position: absolute;
+            top: 0;
+            right: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 26px;
+            height: 26px;
+            padding: 0;
+            border: none;
+            border-radius: 4px;
+            background: transparent;
+            color: var(--color-text-secondary);
+            opacity: 0.55;
+            cursor: pointer;
+            z-index: 6;
+        }
+        .chartEnlargeButton:hover, .chartEnlargeButton:focus-visible {
+            opacity: 1;
+            background: var(--color-border);
+        }
+        @media (max-width: 700px) {
+            .chartEnlargeButton { display: none; }
+        }
+
+        /* Vergroessern-Modal (siehe openChartModal): fast bildschirmfuellend mit komfortablem Rand auf allen Seiten. */
+        .chartModalOverlay {
+            position: fixed;
+            inset: 0;
+            z-index: 10001;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 4vh 4vw;
+            background: rgba(0, 0, 0, 0.55);
+        }
+        .chartModalDialog {
+            position: relative;
+            width: 100%;
+            max-height: 100%;
+            overflow: auto;
+            box-sizing: border-box;
+            padding: 20px 24px 24px;
+            border-radius: 10px;
+            background: var(--color-bg);
+            color: var(--color-text);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+        }
+        .chartModalBody {
+            width: 100%;
+        }
+        .chartModalBody .dashboardChart {
+            max-width: none;
+        }
+        .chartModalBody .dashboardChartTitle {
+            padding-right: 40px;
+        }
+        .chartModalClose {
+            position: absolute;
+            top: 10px;
+            right: 12px;
+            width: 30px;
+            height: 30px;
+            border: none;
+            border-radius: 4px;
+            background: transparent;
+            color: var(--color-text-secondary);
+            font-size: 24px;
+            line-height: 1;
+            cursor: pointer;
+            z-index: 7;
+        }
+        .chartModalClose:hover { background: var(--color-border); color: var(--color-text); }
 
         /* Wetter-Streifen ueber dem PV-Chart (siehe buildWeatherStrip / pv_forecast.py) */
         .weatherStrip {
