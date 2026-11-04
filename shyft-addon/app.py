@@ -2121,6 +2121,7 @@ def readDashboardChartData():
     history_hours = [midnight_utc + timedelta(hours=i) for i in range(history_hour_count)]
     archive_by_hour = {}
     if history_hours:
+        backfill_missing_actual_hours()  # Luecken der heutigen Ist-Linie schliessen (gedrosselt, siehe dort)
         try:
             archive_rows = energy_archive.query_summary(
                 "hourly", energy_archive.hour_key(midnight_utc), energy_archive.hour_key(now_hour))
@@ -12608,10 +12609,97 @@ def finalize_completed_hour_periodically():
         energy_archive.finalize_hour(energy_archive.hour_key(hour_start), hour_end, import_kwh, export_kwh, usage_kwh)
     except Exception as e:
         print("[Shyft] Energie-Archiv: Stundenabschluss fehlgeschlagen:", repr(e))
+    backfill_missing_actual_hours(force=True)
     try:
         record_pv_forecast_accuracy()
     except Exception as e:
         print("[Shyft] PV-Prognose-Aufzeichnung fehlgeschlagen:", repr(e))
+
+
+# Ist-Kosten nachholen: der Stundenabschluss (finalize_completed_hour_periodically) laeuft nur um :03 fuer die GERADE abgelaufene Stunde und
+# braucht einen aufgezeichneten Optimierungslauf dieser Stunde - nach einem Neustart/Ausfall blieb die Stunde sonst fuer immer leer und die
+# Ist-Linie im Kosten-Chart hatte Luecken. Ist-Kosten sind aber nur historischer Preis x historischer Verbrauch (Netz-Sensor) und lassen sich
+# jederzeit nachrechnen: fehlende Stunden der letzten ACTUAL_COST_BACKFILL_HOURS werden hier nachgetragen (siehe backfill_missing_actual_hours).
+ACTUAL_COST_BACKFILL_HOURS = 72
+ACTUAL_COST_BACKFILL_MIN_INTERVAL_SECONDS = 600
+_actual_cost_backfill_lock = threading.Lock()
+_actual_cost_backfill_last_run = 0.0
+
+
+def _historic_prices_for_hour(config, hour_start):
+    """(Einkaufspreis, Einspeisepreis) in EUR/kWh fuer eine bereits vergangene Stunde, ohne den damaligen Optimierungslauf: dynamische Tarife
+    aus der Boersenpreis-Historie (plus heutigem Tarif-Aufschlag, siehe spot_history_buy_prices), sonst aus der Tarif-Konfiguration. (None, None),
+    wenn der Einkaufspreis nicht ermittelbar ist."""
+    buy = None
+    adder = _dynamic_tariff_adder(config)
+    if adder is not None:
+        spot, _ = _load_spot_history()
+        raw = spot.get(int(hour_start.timestamp() * 1000))
+        if raw is not None:
+            buy = raw + adder(hour_start)
+    if buy is None:
+        try:
+            arr = compute_price_buy_array(config, hour_start, 1)
+            buy = arr[0] if arr else None
+        except Exception as e:
+            print("[Shyft] Ist-Kosten: Einkaufspreis nicht ermittelbar:", repr(e))
+    if buy is None:
+        return None, None
+    try:
+        sell_arr = _price_sell_hourly(config, hour_start, 1)
+        sell = sell_arr[0] if sell_arr else 0.0
+    except Exception:
+        sell = 0.0
+    return buy, sell
+
+
+def backfill_missing_actual_hours(force=False):
+    """Trägt fuer alle abgelaufenen Stunden der letzten ACTUAL_COST_BACKFILL_HOURS, die im Energie-Archiv fehlen, Ist-Verbrauch und Ist-Kosten nach
+    (Netz-/Haushalts-Sensor-Historie x Preis der Stunde). Gibt es zur Stunde noch einen offenen Plan-Eintrag, wird er regulaer abgeschlossen
+    (mit geplant/Basisfall), sonst nur die Ist-Werte archiviert. Stunden ohne Netz-Sensor/-Historie oder ohne ermittelbaren Preis bleiben leer.
+    Hoechstens alle ACTUAL_COST_BACKFILL_MIN_INTERVAL_SECONDS (die HA-Historie-Abfragen sind nicht billig) - force=True ueberspringt das.
+    Gibt die Zahl nachgetragener Stunden zurueck."""
+    global _actual_cost_backfill_last_run
+    if is_demo_mode():
+        return 0
+    if not _actual_cost_backfill_lock.acquire(blocking=False):
+        return 0
+    try:
+        if not force and time.time() - _actual_cost_backfill_last_run < ACTUAL_COST_BACKFILL_MIN_INTERVAL_SECONDS:
+            return 0
+        _actual_cost_backfill_last_run = time.time()
+        now_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        first_hour = now_hour - timedelta(hours=ACTUAL_COST_BACKFILL_HOURS)
+        existing = energy_archive.existing_hour_keys(energy_archive.hour_key(first_hour), energy_archive.hour_key(now_hour))
+        config = _read_current_config()
+        written = 0
+        # neueste zuerst: die sichtbare heutige Linie wird zuerst gefuellt
+        for i in range(1, ACTUAL_COST_BACKFILL_HOURS + 1):
+            hour_start = now_hour - timedelta(hours=i)
+            key = energy_archive.hour_key(hour_start)
+            if key in existing:
+                continue
+            hour_end = hour_start + timedelta(hours=1)
+            import_kwh, export_kwh = _grid_import_export_kwh(hour_start, hour_end, config)
+            if import_kwh is None and export_kwh is None:
+                continue  # keine Netz-Sensor-Historie - nichts zu berechnen
+            usage_kwh = _household_usage_kwh(hour_start, hour_end, config)
+            if energy_archive.finalize_hour(key, hour_end, import_kwh, export_kwh, usage_kwh):
+                written += 1
+                continue
+            price_buy, price_sell = _historic_prices_for_hour(config, hour_start)
+            if price_buy is None:
+                continue
+            if energy_archive.record_actual_only_hour(key, import_kwh, export_kwh, usage_kwh, price_buy, price_sell):
+                written += 1
+        if written:
+            print(f"[Shyft] Energie-Archiv: {written} fehlende Stunde(n) mit Ist-Verbrauch/-Kosten nachgetragen.")
+        return written
+    except Exception as e:
+        print("[Shyft] Energie-Archiv: Nachtragen fehlender Ist-Stunden fehlgeschlagen:", repr(e))
+        return 0
+    finally:
+        _actual_cost_backfill_lock.release()
 
 
 # PV-Prognose vs. Ist (Analyse-Tab): der stuendliche Job holt die letzten PV_ACCURACY_LOOKBACK_HOURS nach (deckt Neustarts

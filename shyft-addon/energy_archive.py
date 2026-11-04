@@ -258,6 +258,36 @@ def finalize_hour(hour_start_utc, hour_end_at, actual_import_kwh, actual_export_
         return True
 
 
+def existing_hour_keys(from_key, to_key):
+    "Menge der hour_start_utc-Schluessel (siehe hour_key) in hourly_archive im Bereich from_key <= Stunde < to_key."
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        rows = conn.execute("SELECT hour_start_utc FROM hourly_archive WHERE hour_start_utc >= ? AND hour_start_utc < ?", (from_key, to_key)).fetchall()
+        return {r["hour_start_utc"] for r in rows}
+
+
+def record_actual_only_hour(hour_start_utc, actual_import_kwh, actual_export_kwh, actual_usage_kwh, price_buy, price_sell):
+    """Archiviert eine abgelaufene Stunde OHNE Planungsdaten: nur Ist-Verbrauch und Ist-Kosten (Netzbezug x Einkaufspreis minus
+    Einspeisung x Einspeisepreis, Preise der Stunde, nicht der letzte Lauf). Fuer Stunden, in denen kein Optimierungslauf aufgezeichnet
+    wurde (Neustart/Ausfall), damit die Ist-Linie im Kosten-Chart keine Luecken hat. geplant/Basisfall/Ersparnis bleiben leer (NULL).
+    Ueberschreibt NIE eine bestehende Zeile (ON CONFLICT DO NOTHING). True, wenn eine Zeile geschrieben wurde."""
+    actual_import_kwh = actual_import_kwh or 0.0
+    actual_export_kwh = actual_export_kwh or 0.0
+    actual_cost = actual_import_kwh * (price_buy or 0.0) - actual_export_kwh * (price_sell or 0.0)
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        cursor = conn.execute("""
+            INSERT INTO hourly_archive (hour_start_utc, planned_usage_kwh, planned_cost_eur, base_usage_kwh,
+                base_cost_eur, actual_usage_kwh, actual_import_kwh, actual_export_kwh, actual_cost_eur,
+                savings_vs_base_eur, savings_vs_planned_eur, recorded_at, actual_usage_source)
+            VALUES (?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL, ?, ?)
+            ON CONFLICT(hour_start_utc) DO NOTHING
+        """, (hour_start_utc, actual_usage_kwh, actual_import_kwh, actual_export_kwh, actual_cost,
+              datetime.now(timezone.utc).isoformat(), "load" if actual_usage_kwh is not None else None))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
 def hours_needing_usage_backfill(since_hour_key, limit):
     "Stunden (neueste zuerst, hour_key-Format) ab since_hour_key, deren Ist-Verbrauch noch nicht aus dem Haushalt-Sensor stammt (actual_usage_source IS NULL) - Kandidaten fuer die Nachberechnung."
     with _lock, _connect() as conn:

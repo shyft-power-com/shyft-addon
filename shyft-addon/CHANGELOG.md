@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.45.359
+
+* **Fix: Die Ist-Linie im Chart „Deine Stromkosten / -erträge“ hatte Lücken.** Eine abgelaufene Stunde wurde nur um :03 und nur mit einem aufgezeichneten Optimierungslauf archiviert; nach Neustart oder Ausfall blieb sie für immer leer. Jetzt werden fehlende Stunden der letzten 72 Stunden nachgerechnet (Netz-Sensor-Historie × Preis der Stunde, bei dynamischen Tarifen aus der Börsenpreis-Historie), stündlich und beim Laden des Dashboards (höchstens alle 10 Minuten). Stunden ohne Optimierungslauf bekommen nur Ist-Verbrauch und Ist-Kosten, Plan und Ersparnis bleiben dort leer.
+* **Außentemperatur-Chart:** Die gestrichelte Prognose beginnt am letzten Ist-Punkt, zwischen „jetzt“ und der nächsten Stunde gibt es keine Lücke mehr.
+* **Raumtemperatur-Chart:** Der „jetzt“-Punkt sitzt auf dem aktuellen Ist-Wert, bei einem Sprung der Solltemperatur also oben.
+* **Strompreis-Chart:** Die Linie heißt jetzt „Strombezug/Einspeisung“ statt „Netzbezug/Einspeisung“.
+
 ## 0.0.45.358
 
 * **Dashboard: Charts lassen sich vergrößern (Desktop).** Oben rechts an jedem Chart sitzt ein dezentes „Vergrößern“-Icon (am Handy ausgeblendet). Der Chart öffnet in einem Modal in Bildschirmbreite mit Rand rundherum, mit Tooltips und Legende wie im normalen Chart. Schließen per ×, Klick daneben oder Esc.
