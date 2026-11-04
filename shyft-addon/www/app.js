@@ -5330,7 +5330,7 @@ function buildAutoManagedNumberControl(control) {
 
     const plusButton = document.createElement('button');
     plusButton.type = 'button';
-    plusButton.textContent = control.onlyIncrement ? 'Testen' : `Test: +${control.step}${unitSuffix}`;
+    plusButton.textContent = control.onlyIncrement ? 'Test: Soll-Temperatur steuern' : `Test: +${control.step}${unitSuffix}`;
 
     const valueDisplay = document.createElement('span');
     valueDisplay.className = 'autoActionValue';
