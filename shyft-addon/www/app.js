@@ -4988,23 +4988,51 @@ function markActionTested(readyKey, passed) {
     actionTestStatusMap[readyKey] = passed;
 }
 
-// "Direkt steuern" vs "HA-Automation" dropdown, shared by every AUTO_MANAGED_CONTROLS entry that
-// has hasAutomationVariant set - selecting a value here just toggles which of the two sibling
-// wrappers (direct-entity UI vs. automation-entity field(s)) is visible, see callers.
-function buildVariantSelect(id, currentValue, directLabel) {
-    const select = document.createElement('select');
-    select.id = id;
-    select.className = 'sensorInput';
-    const directOption = document.createElement('option');
-    directOption.value = 'direct';
-    directOption.textContent = directLabel;
-    select.appendChild(directOption);
-    const haOption = document.createElement('option');
-    haOption.value = 'ha_automation';
-    haOption.textContent = 'HA-Automation';
-    select.appendChild(haOption);
-    select.value = currentValue;
-    return select;
+// Unauffaelliger Textlink am Ende einer Steuerung, der zwischen der Standard-Steuerung (direkte
+// Entitaets-Steuerung) und der Experten-Variante "Per Home-Assistant-Automation steuern" umschaltet.
+// Ersetzt das fruehere "Varianten"-Dropdown: Standard ist immer die direkte Steuerung, die
+// Automation-Variante erreicht man nur ueber diesen Link (und zurueck ueber den zweiten Link).
+// Ein verstecktes <input id=hiddenId> haelt den Variantenwert ('ha_automation' oder directValue),
+// damit die bestehende Speicherlogik (liest die Variante per getElementById) unveraendert bleibt.
+// onToggle(active) wird nach jedem Umschalten aufgerufen; speichern und Sichtbarkeit uebernimmt der Aufrufer.
+function buildAutomationExpertLink(hiddenId, directValue, isActive, onToggle) {
+    const row = document.createElement('div');
+    row.className = 'expertLinkRow';
+
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.id = hiddenId;
+    row.appendChild(hidden);
+
+    const link = document.createElement('a');
+    link.setAttribute('role', 'button');
+    link.tabIndex = 0;
+    row.appendChild(link);
+    row.appendChild(document.createTextNode(' '));
+    const tooltipHolder = document.createElement('span');
+    row.appendChild(tooltipHolder);
+
+    let active = isActive;
+    function render() {
+        hidden.value = active ? 'ha_automation' : directValue;
+        link.textContent = active ? '← Zurück zur direkten Steuerung' : 'Volle Individualität: Per Home-Assistant-Automation steuern';
+        tooltipHolder.innerHTML = '';
+        tooltipHolder.appendChild(buildTooltip(active
+            ? 'Shyft löst aktuell deine Home-Assistant-Automation aus, statt die Geräte direkt anzusteuern. Mit dem Link wechselst du zurück zur direkten Steuerung.'
+            : 'Für Home-Assistant-Experten: Statt die Geräte direkt anzusteuern, löst Shyft eine von dir erstellte Home-Assistant-Automation aus und übergibt ihr den Zielwert (z.B. {{ target }}). So kannst du eigene Steuerungsregeln aufsetzen und volle Kontrolle über den Ablauf behalten.'));
+    }
+    const toggle = (event) => {
+        event.preventDefault();
+        active = !active;
+        render();
+        onToggle(active);
+    };
+    link.addEventListener('click', toggle);
+    link.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') toggle(event);
+    });
+    render();
+    return row;
 }
 
 // Oeffnet den Automation-Editor von Home Assistant fuer eine neue Automation in einem neuen Tab -
@@ -5219,24 +5247,7 @@ function buildAutoManagedNumberControl(control) {
         : control.hasAutomationVariant ? ((configData['controlVariant'] || {})[control.key] || 'direct')
         : 'direct';
 
-    let variantSelect = null;
     let automationRow = null;
-    if (control.hasAutomationVariant) {
-        variantSelect = buildVariantSelect(control.key + '_variant', variant, 'Direkt steuern');
-        const variantTable = document.createElement('table');
-        const variantTbody = document.createElement('tbody');
-        const variantRow = document.createElement('tr');
-        const variantLabelCell = document.createElement('td');
-        variantLabelCell.textContent = 'Varianten';
-        variantLabelCell.appendChild(buildTooltip('Wie das Addon diese Aktion umsetzt: entweder direkt über eine Home-Assistant-Entität, oder indem es eine selbst erstellte Automation triggert.'));
-        const variantValueCell = document.createElement('td');
-        variantValueCell.appendChild(variantSelect);
-        variantRow.appendChild(variantLabelCell);
-        variantRow.appendChild(variantValueCell);
-        variantTbody.appendChild(variantRow);
-        variantTable.appendChild(variantTbody);
-        wrapper.appendChild(variantTable);
-    }
     if (control.hasAutomationVariant || control.automationOnly) {
         automationRow = buildAutomationEntityRow('HA-Automation auswählen',
             'Zum Auslösen dieser Aktion kannst du deine selber erstellte Automation hinterlegen. Der Zielwert für die Aktion wird als {{ target }} von Shyft übergeben.',
@@ -5472,14 +5483,14 @@ function buildAutoManagedNumberControl(control) {
     controls.appendChild(valueDisplay);
     wrapper.appendChild(controls);
 
-    if (variantSelect) {
-        variantSelect.addEventListener('change', () => {
-            variant = variantSelect.value;
-            automationRow.style.display = variant === 'ha_automation' ? '' : 'none';
+    if (control.hasAutomationVariant) {
+        wrapper.appendChild(buildAutomationExpertLink(control.key + '_variant', 'direct', variant === 'ha_automation', (active) => {
+            variant = active ? 'ha_automation' : 'direct';
+            automationRow.style.display = active ? '' : 'none';
             valueDisplay.textContent = 'Aktueller Wert: –';
             autoSave();
             refreshStatus();
-        });
+        }));
     }
 
     wrapper.__refresh = refreshStatus;
@@ -5513,24 +5524,8 @@ function buildAutoManagedSwitchControl(control) {
     const readyKey = control.key;
     let variant = control.hasAutomationVariant ? ((configData['controlVariant'] || {})[control.key] || 'direct') : 'direct';
 
-    let variantSelect = null;
     let automationRows = null;
     if (control.hasAutomationVariant) {
-        variantSelect = buildVariantSelect(control.key + '_variant', variant, 'Entität ein-/ausschalten');
-        const variantTable = document.createElement('table');
-        const variantTbody = document.createElement('tbody');
-        const variantRow = document.createElement('tr');
-        const variantLabelCell = document.createElement('td');
-        variantLabelCell.textContent = 'Varianten';
-        variantLabelCell.appendChild(buildTooltip('Wie das Addon diese Aktion umsetzt: entweder direkt über eine Home-Assistant-Entität, oder indem es selbst erstellte Automationen triggert.'));
-        const variantValueCell = document.createElement('td');
-        variantValueCell.appendChild(variantSelect);
-        variantRow.appendChild(variantLabelCell);
-        variantRow.appendChild(variantValueCell);
-        variantTbody.appendChild(variantRow);
-        variantTable.appendChild(variantTbody);
-        wrapper.appendChild(variantTable);
-
         automationRows = document.createElement('div');
         const actorMappings = configData['actorMappings'] || {};
         automationRows.appendChild(buildAutomationEntityRow('Sonstigen Verbraucher starten',
@@ -5674,16 +5669,16 @@ function buildAutoManagedSwitchControl(control) {
     controlsRow.appendChild(valueDisplay);
     wrapper.appendChild(controlsRow);
 
-    if (variantSelect) {
-        variantSelect.addEventListener('change', () => {
-            variant = variantSelect.value;
-            automationRows.style.display = variant === 'ha_automation' ? '' : 'none';
+    if (control.hasAutomationVariant) {
+        wrapper.appendChild(buildAutomationExpertLink(control.key + '_variant', 'direct', variant === 'ha_automation', (active) => {
+            variant = active ? 'ha_automation' : 'direct';
+            automationRows.style.display = active ? '' : 'none';
             valueDisplay.textContent = 'Aktueller Status: –';
             nextPhase = 'start';
             testButton.textContent = 'Test: Start';
             autoSave();
             refreshStatus();
-        });
+        }));
     }
 
     wrapper.__refresh = refreshStatus;
@@ -6152,35 +6147,9 @@ function buildCarChargeControl() {
 
     const candidateServices = allServiceOptions.filter(s => getIntegrationServiceDomains('wallbox').has(s.service.split('.')[0]));
 
-    const recipeTable = document.createElement('table');
-    const recipeTbody = document.createElement('tbody');
-    const recipeRow = document.createElement('tr');
-    const recipeLabelCell = document.createElement('td');
-    recipeLabelCell.textContent = 'Varianten';
-    recipeLabelCell.appendChild(buildTooltip('Wie das Addon deine Wallbox ansteuert, um einen Ladevorgang zu starten. "Dreistufig" setzt zuerst die Phasenzahl, dann die Amperezahl, dann startet es den Ladevorgang.'));
-    const recipeValueCell = document.createElement('td');
-    const recipeSelect = document.createElement('select');
-    recipeSelect.id = 'car_charge_recipe_type';
-    recipeSelect.className = 'sensorInput';
-    const noRecipeOption = document.createElement('option');
-    noRecipeOption.value = '';
-    noRecipeOption.textContent = '– keine Variante ausgewählt –';
-    recipeSelect.appendChild(noRecipeOption);
-    const threeStageOption = document.createElement('option');
-    threeStageOption.value = 'three_stage';
-    threeStageOption.textContent = 'Dreistufig';
-    recipeSelect.appendChild(threeStageOption);
-    const haAutomationOption = document.createElement('option');
-    haAutomationOption.value = 'ha_automation';
-    haAutomationOption.textContent = 'HA-Automation';
-    recipeSelect.appendChild(haAutomationOption);
-    recipeSelect.value = recipe.type || '';
-    recipeValueCell.appendChild(recipeSelect);
-    recipeRow.appendChild(recipeLabelCell);
-    recipeRow.appendChild(recipeValueCell);
-    recipeTbody.appendChild(recipeRow);
-    recipeTable.appendChild(recipeTbody);
-    wrapper.appendChild(recipeTable);
+    // Standard ist immer die dreistufige Steuerung; die HA-Automation erreicht man nur ueber den Textlink
+    // am Ende der Kachel (siehe buildAutomationExpertLink).
+    let carChargeAutomationActive = recipe.type === 'ha_automation';
 
     const stagesWrapper = document.createElement('div');
     stagesWrapper.className = 'carChargeStages';
@@ -6202,13 +6171,13 @@ function buildCarChargeControl() {
         candidateServices, controlStage,
         CAR_CHARGE_STAGE_BRANCHES.control.keys, CAR_CHARGE_STAGE_BRANCHES.control.labels,
         'z.B. action_command', 'wallbox'));
-    stagesWrapper.style.display = recipeSelect.value === 'three_stage' ? '' : 'none';
+    stagesWrapper.style.display = carChargeAutomationActive ? 'none' : '';
     wrapper.appendChild(stagesWrapper);
 
     // "HA-Automation" is the alternative to the 3-stage recipe: instead of the addon driving
     // individual services itself, it just triggers the user's own automation with target/phase
     // as template variables ({{ target }}, {{ phase }}) - see trigger_ha_automation_recipe in
-    // app.py. Only ever one or the other is shown, matching recipeSelect's current value.
+    // app.py. Only ever one or the other is shown, matching the current variant.
     const automationWrapper = document.createElement('div');
     const automationTable = document.createElement('table');
     const automationTbody = document.createElement('tbody');
@@ -6244,14 +6213,8 @@ function buildCarChargeControl() {
     automationTbody.appendChild(automationRow);
     automationTable.appendChild(automationTbody);
     automationWrapper.appendChild(automationTable);
-    automationWrapper.style.display = recipeSelect.value === 'ha_automation' ? '' : 'none';
+    automationWrapper.style.display = carChargeAutomationActive ? '' : 'none';
     wrapper.appendChild(automationWrapper);
-
-    recipeSelect.addEventListener('change', () => {
-        stagesWrapper.style.display = recipeSelect.value === 'three_stage' ? '' : 'none';
-        automationWrapper.style.display = recipeSelect.value === 'ha_automation' ? '' : 'none';
-        autoSave();
-    });
 
     const status = document.createElement('div');
     status.className = 'autoActionStatus';
@@ -6391,6 +6354,13 @@ function buildCarChargeControl() {
     controlsRow.appendChild(wallboxStatusDisplay);
     wrapper.appendChild(controlsRow);
 
+    wrapper.appendChild(buildAutomationExpertLink('car_charge_recipe_type', 'three_stage', carChargeAutomationActive, (active) => {
+        carChargeAutomationActive = active;
+        stagesWrapper.style.display = active ? 'none' : '';
+        automationWrapper.style.display = active ? '' : 'none';
+        autoSave();
+    }));
+
     wrapper.__refresh = refreshWallboxStatus;
     refreshWallboxStatus();
 
@@ -6408,39 +6378,12 @@ function buildHotWaterControl() {
     wrapper.appendChild(title);
 
     const recipe = configData['hotWaterRecipe'] || {};
-    // "Direkte Entitäts-Steuerung" ist die haeufigere Wahl - deshalb hier vorausgewaehlt, solange
-    // der Nutzer nicht explizit "HA-Automation" gewaehlt hat (Nutzer-Vorgabe). "Befehl auswählen"
-    // bleibt als Option erreichbar, falls jemand die Auswahl bewusst wieder zuruecksetzen will.
-    let variant = recipe.type === 'ha_automation' ? 'ha_automation' : (recipe.type === '' ? '' : 'direct');
+    // Standard ist immer die direkte Entitaets-Steuerung; die HA-Automation erreicht man nur ueber den
+    // Textlink am Ende der Kachel (siehe buildAutomationExpertLink).
+    let variant = recipe.type === 'ha_automation' ? 'ha_automation' : 'direct';
     const hotWaterHint = buildTestGateHint();
     applyTestGate('hot_water', checkmark, hotWaterHint,
         variant === 'ha_automation' ? !!recipe.haAutomationEntityId : !!recipe.service);
-
-    // "Varianten" zuerst (siehe Reihenfolge weiter unten) - erst nach einer Auswahl blendet sich
-    // das passende Eingabefeld darunter ein, statt beide gleichzeitig zu zeigen.
-    const variantSelect = document.createElement('select');
-    variantSelect.id = 'hot_water_variant';
-    variantSelect.className = 'sensorInput';
-    for (const [value, text] of [['', 'Befehl auswählen'], ['direct', 'Direkte Entitäts-Steuerung'], ['ha_automation', 'HA-Automation']]) {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = text;
-        variantSelect.appendChild(option);
-    }
-    variantSelect.value = variant;
-    const variantTable = document.createElement('table');
-    const variantTbody = document.createElement('tbody');
-    const variantRow = document.createElement('tr');
-    const variantLabelCell = document.createElement('td');
-    variantLabelCell.textContent = 'Varianten';
-    variantLabelCell.appendChild(buildTooltip('Wie das Addon die Warmwasserbereitung auslöst: entweder direkt über einen Wärmepumpen-Befehl (HA-Aktion), oder indem es eine selbst erstellte Automation triggert (HA-Automation).'));
-    const variantValueCell = document.createElement('td');
-    variantValueCell.appendChild(variantSelect);
-    variantRow.appendChild(variantLabelCell);
-    variantRow.appendChild(variantValueCell);
-    variantTbody.appendChild(variantRow);
-    variantTable.appendChild(variantTbody);
-    wrapper.appendChild(variantTable);
 
     const candidateServices = allServiceOptions.filter(s => getIntegrationServiceDomains('waermepumpe').has(s.service.split('.')[0])
         && !HOT_WATER_FORBIDDEN_SERVICES.has(s.service));
@@ -6472,14 +6415,6 @@ function buildHotWaterControl() {
     automationInput.addEventListener('change', refreshCheckmark);
     const hotWaterServiceInput = document.getElementById('hot_water_hotWater_service');
     if (hotWaterServiceInput) hotWaterServiceInput.addEventListener('change', refreshCheckmark);
-
-    variantSelect.addEventListener('change', () => {
-        variant = variantSelect.value;
-        stageWrapper.style.display = variant === 'direct' ? '' : 'none';
-        automationRow.style.display = variant === 'ha_automation' ? '' : 'none';
-        refreshCheckmark();
-        autoSave();
-    });
 
     const status = document.createElement('div');
     status.className = 'autoActionStatus';
@@ -6575,6 +6510,14 @@ function buildHotWaterControl() {
     controlsRow.appendChild(testButton);
     controlsRow.appendChild(statusDisplay);
     wrapper.appendChild(controlsRow);
+
+    wrapper.appendChild(buildAutomationExpertLink('hot_water_variant', 'direct', variant === 'ha_automation', (active) => {
+        variant = active ? 'ha_automation' : 'direct';
+        stageWrapper.style.display = active ? 'none' : '';
+        automationRow.style.display = active ? '' : 'none';
+        refreshCheckmark();
+        autoSave();
+    }));
 
     wrapper.__refresh = refreshHotWaterStatus;
     refreshHotWaterStatus();
@@ -6927,8 +6870,6 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     }
 
     const variant = (configData['controlVariant'] || {})[actionKey] || 'direct';
-    const variantSelect = buildVariantSelect(actionKey + '_variant', variant, 'Direkte Entitäts-Steuerung');
-    wrapper.appendChild(buildLabeledRow('Varianten', 'Wähle möglichst "Direkte Entitäts-Steuerung", um die Ladeleistung direkt von shyft-power zu steuern. Funktioniert dies mit deiner Batterie nicht, so erstelle selber eine Automation in Home-Assistant, die du hier dann hinterlegen kannst.', variantSelect));
 
     const directFields = document.createElement('div');
     directFields.style.display = variant === 'direct' ? '' : 'none';
@@ -6947,14 +6888,13 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     // synchron direkt danach aufgerufenes refresh() wuerde also noch mit dem alten Stand rendern
     // und die Auswahl optisch wieder zuruecksetzen. Selbes Muster wie bei den bestehenden
     // AUTO_MANAGED_CONTROLS-Varianten-Dropdowns (siehe z.B. buildAutoManagedNumberControl).
-    variantSelect.addEventListener('change', () => {
-        const newVariant = variantSelect.value;
+    wrapper.appendChild(buildAutomationExpertLink(actionKey + '_variant', 'direct', variant === 'ha_automation', (active) => {
         configData['controlVariant'] = configData['controlVariant'] || {};
-        configData['controlVariant'][actionKey] = newVariant;
-        directFields.style.display = newVariant === 'direct' ? '' : 'none';
-        automationRow.style.display = newVariant === 'ha_automation' ? '' : 'none';
+        configData['controlVariant'][actionKey] = active ? 'ha_automation' : 'direct';
+        directFields.style.display = active ? 'none' : '';
+        automationRow.style.display = active ? '' : 'none';
         autoSave();
-    });
+    }));
 
     return wrapper;
 }
