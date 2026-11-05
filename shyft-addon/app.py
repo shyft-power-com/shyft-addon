@@ -1977,7 +1977,8 @@ def readShyftActions():
         return jsonify({"status": "success",
                         "response": {"actions": _demo_shyft_actions(), "display_max_days": SHYFT_ACTIONS_DISPLAY_MAX_DAYS}})
     config = _read_current_config()
-    all_actions = _read_computed_actions() + [_pv_surplus_session_to_action(s, config) for s in _read_pv_surplus_actions()]
+    all_actions = (_read_computed_actions() + [_pv_surplus_session_to_action(s, config) for s in _read_pv_surplus_actions()]
+                   + [_ev_reserve_session_to_action(s, config) for s in _read_ev_reserve_actions()])
     household_action = _household_savings_action()
     if household_action:
         all_actions.append(household_action)
@@ -6451,6 +6452,157 @@ def _run_pv_surplus_charging_tick_impl():
         actions.append(new_session)
         _write_pv_surplus_actions(actions)
         notify_action_event(config, _pv_surplus_session_to_action(new_session, config), "gestartet")
+
+
+# ---- Sofortladen bis zur Reserve (siehe ev_tiers.EV_RESERVE_START_SOC / EV_RESERVE_STOP_SOC) -------------------------------------
+# Der Optimierer kennt die 10-%-Reserve nur als Endbedingung bzw. Endwert-Stufe und darf das Laden dafuer in die guenstigsten Stunden
+# des Planungsfensters schieben. Steht ein eingestecktes Auto unter 10 %, laedt das Add-on deshalb selbst sofort mit voller Leistung
+# bis 12 % - unabhaengig vom Plan. Laeuft gerade eine Optimierer-"Auto laden"-Aktion oder eine PV-Ueberschuss-Session, steuern die
+# die Wallbox; endet sie vor 12 %, startet das Sofortladen wieder. Die Sessions erscheinen als "Auto laden" mit eigenem Untertitel.
+EV_RESERVE_ACTIONS_PATH = "/data/ev_reserve_actions.json"
+
+
+def _read_ev_reserve_actions():
+    try:
+        with open(EV_RESERVE_ACTIONS_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _write_ev_reserve_actions(actions):
+    cutoff_ms = (datetime.now() - timedelta(days=PV_SURPLUS_ACTIONS_MAX_DAYS)).timestamp() * 1000
+    pruned = [a for a in actions if a.get("active") or (a.get("end_ms") or 0) >= cutoff_ms]
+    try:
+        with open(EV_RESERVE_ACTIONS_PATH, "w") as f:
+            json.dump(pruned, f)
+    except Exception as e:
+        print("[Shyft] Sofortladen: Aktionsliste konnte nicht gespeichert werden:", repr(e))
+
+
+def _ev_reserve_session_to_action(session, config):
+    "Sofortladen-Session als 'Auto laden'-Aktion fuer die Aktionsliste (wie _pv_surplus_session_to_action); keine Ersparnis - es ist Pflichtladen."
+    is_active = bool(session.get("active"))
+    energy_kwh = _pv_surplus_session_energy_kwh(session)
+    start_soc = ev_tiers.EV_RESERVE_START_SOC
+    stop_soc = ev_tiers.EV_RESERVE_STOP_SOC
+    return {
+        "Action Name": EV_CHARGE_ACTION_NAME,
+        "Status": "aktiv" if is_active else "beendet",
+        "Execution Status": "yes, started",
+        "Target Value": session.get("target_kw", 0),
+        "Energy (electr)": energy_kwh,
+        "Subtitle": f"Sofortladen: Ladestand unter {start_soc:.0f} %, lädt bis {stop_soc:.0f} % ({energy_kwh:.1f} kWh)",
+        "Date Start": session.get("start_ms"),
+        "Date End": session.get("end_ms") if not is_active else None,
+        "Savings": None,
+        "costsbase": None,
+        "costsopt": None,
+        "Log": "\n".join(session.get("log", [])),
+        "Had Error": bool(session.get("had_error")),
+    }
+
+
+def _end_ev_reserve_session(sessions, session, config, reason, send_stop):
+    if send_stop:
+        try:
+            execute_car_charge_stop(session.get("target_kw"))
+        except Exception as e:
+            session["had_error"] = True
+            _append_pv_surplus_log(session, session.get("target_kw", 0), note=f"Stop fehlgeschlagen: {e}")
+            print("[Shyft] Sofortladen: Stop fehlgeschlagen:", repr(e))
+    now_ms = int(time.time() * 1000)
+    if session.get("power_history") and session["power_history"][-1].get("kw"):
+        session["power_history"].append({"at_ms": now_ms, "kw": 0})
+    _append_pv_surplus_log(session, 0, note=reason)
+    session["active"] = False
+    session["end_ms"] = now_ms
+    session["stop_reason"] = reason
+    _write_ev_reserve_actions(sessions)
+    ended_action = _ev_reserve_session_to_action(session, config)
+    try:
+        energy_archive.archive_completed_action(ended_action)
+    except Exception as e:
+        print("[Shyft] Energie-Archiv: Sofortladen-Aktion konnte nicht archiviert werden:", repr(e))
+    notify_action_event(config, ended_action, "beendet")
+
+
+def _run_ev_reserve_charging_locked(config):
+    sessions = _read_ev_reserve_actions()
+    session = next((a for a in sessions if a.get("active")), None)
+    now_ms = int(time.time() * 1000)
+    other_active = bool(_active_optimizer_ev_charge_action() or _find_active_pv_surplus_session(_read_pv_surplus_actions())
+                        or next((a for a in _read_computed_actions() if a.get("Action Name") == EV_CHARGE_ACTION_NAME
+                                 and (a.get("Status") or "").lower() == "aktiv" and a.get("Execution Status") == "yes, started"
+                                 and not a.get("_convertedToPvSurplusFallback")), None))
+    ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
+    live_kw = _read_mapped_numeric(config, "wallbox_current_charging_power")
+    decision = ev_tiers.reserve_charge_decision(session is not None, is_car_ready_to_charge(config), ev_soc, other_active,
+                                                live_kw, now_ms, session.get("last_command_ms") if session else None)
+    if decision is None:
+        return
+    if decision in ("start", "restart"):
+        target_kw = compute_wallbox_max_kw(config)
+        try:
+            execute_car_charge_start(target_kw)
+            error = None
+        except Exception as e:
+            error = e
+            print("[Shyft] Sofortladen: Start fehlgeschlagen:", repr(e))
+        if decision == "start":
+            if error is not None:
+                return  # naechste Minute erneut versuchen, keine Karte fuer einen nie gestarteten Ladevorgang
+            session = {"active": True, "kind": "reserve", "target_kw": target_kw, "start_ms": now_ms, "log": [],
+                       "start_soc": ev_soc, "last_command_ms": now_ms,
+                       "power_history": [{"at_ms": now_ms, "kw": target_kw}]}
+            _append_pv_surplus_log(session, target_kw, note=f"Start bei {ev_soc:.0f} %")
+            sessions.append(session)
+            _write_ev_reserve_actions(sessions)
+            print(f"[Shyft] Sofortladen: Ladestand {ev_soc:.0f} % unter {ev_tiers.EV_RESERVE_START_SOC:.0f} % - lade bis {ev_tiers.EV_RESERVE_STOP_SOC:.0f} %")
+            notify_action_event(config, _ev_reserve_session_to_action(session, config), "gestartet")
+            return
+        session["last_command_ms"] = now_ms
+        if error is not None:
+            _append_pv_surplus_log(session, target_kw, note=f"Neustart fehlgeschlagen: {error}")
+        else:
+            _append_pv_surplus_log(session, target_kw, note="Wallbox lud nicht - erneut gestartet")
+        _write_ev_reserve_actions(sessions)
+        return
+    if decision == "stop":
+        _end_ev_reserve_session(sessions, session, config, f"{ev_tiers.EV_RESERVE_STOP_SOC:.0f} % erreicht", send_stop=True)
+    elif decision == "end":
+        reason = "Auto nicht mehr ladebereit" if not is_car_ready_to_charge(config) else "andere Ladung läuft weiter"
+        _end_ev_reserve_session(sessions, session, config, reason, send_stop=False)
+
+
+def run_ev_reserve_charging():
+    "Minuetlicher Job: Sofortladen bis zur Reserve. Laeuft nicht parallel zum Aktions-Poll oder PV-Ueberschuss-Tick (sonst naechste Minute)."
+    if is_demo_mode():
+        return
+    config = _read_current_config()
+    if not (_is_ev_wallbox_configured(config) and is_action_type_enabled(config, EV_CHARGE_ACTION_NAME)):
+        return
+    if not (config.get("sensorMappings", {}) or {}).get("electronicvehicle_state_of_charge"):
+        return  # ohne Ladestand-Sensor keine Reserve-Erkennung
+    if not _action_processing_lock.acquire(blocking=False):
+        return
+    try:
+        if not _pv_surplus_lock.acquire(blocking=False):
+            return
+        try:
+            _run_ev_reserve_charging_locked(config)
+        finally:
+            _pv_surplus_lock.release()
+    finally:
+        _action_processing_lock.release()
+
+
+def run_ev_reserve_charging_periodically():
+    with app.app_context():
+        try:
+            run_ev_reserve_charging()
+        except Exception as e:
+            print("[Shyft] Sofortladen fehlgeschlagen:", repr(e))
 
 
 # number.set_value setzt nur einen Zahlenwert und aktiviert keine Warmwasserbereitung - die Solltemperatur kommt
@@ -13866,6 +14018,7 @@ scheduler.add_job(run_hourly_action_transition_periodically, 'cron', minute="0")
 scheduler.add_job(retry_failed_battery_actions_periodically, 'interval', seconds=BATTERY_ACTION_RETRY_INTERVAL_SECONDS, max_instances=1, coalesce=True)
 scheduler.add_job(check_battery_discharge_shift_watchdog_periodically, 'interval', seconds=BATTERY_WATCHDOG_INTERVAL_SECONDS, max_instances=1, coalesce=True)
 scheduler.add_job(monitor_ev_charging_periodically, 'interval', seconds=EV_CHARGE_CHECK_INTERVAL_SECONDS, max_instances=1, coalesce=True)
+scheduler.add_job(run_ev_reserve_charging_periodically, 'interval', seconds=EV_CHARGE_CHECK_INTERVAL_SECONDS, max_instances=1, coalesce=True)
 # Energie-Archiv (Analyse-Tab): 3 Minuten nach der Stunde, damit der frische Optimierungslauf von
 # sync_dashboard_chart_data_periodically (Minute 0) den letzten Plan-Beitrag der GERADE
 # abgelaufenen Stunde schon abgegeben hat, bevor sie hier abgeschlossen wird (siehe

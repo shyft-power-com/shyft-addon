@@ -19,7 +19,17 @@ EV_CHARGE_RULES = {
 }
 EV_CHARGE_RULE_DEFAULT = "mittel"
 
-EV_HARD_RESERVE = 0.10        # bis hierhin wird immer sofort geladen (Optimierer-Spalte ev_soc_norm, fest)
+EV_HARD_RESERVE = 0.10        # Endbedingung des Optimierers (Spalte ev_soc_norm, fest) - gilt nur fuer das Ende des Planungsfensters
+EV_TIER_HARD_END = 0.30       # erste Endwert-Stufe (Wert EV_TIER_VALUE_HARD): bis hierhin soll das Auto am Ende des Fensters sicher stehen
+
+# Notladung durch das Add-on selbst (unabhaengig vom Plan): faellt der Ladestand eines eingesteckten Autos unter
+# EV_RESERVE_START_SOC, laedt das Add-on sofort mit voller Leistung bis EV_RESERVE_STOP_SOC (2 % Puffer gegen den
+# Standverlust, damit das Auto nicht gleich wieder unter die Schwelle faellt). Der Optimierer kennt nur Endwerte und
+# wuerde die Reserve sonst in die guenstigsten Stunden des Fensters schieben.
+EV_RESERVE_START_SOC = 10.0
+EV_RESERVE_STOP_SOC = 12.0
+EV_RESERVE_RESTART_MS = 5 * 60 * 1000   # laedt die Wallbox nicht (z. B. nach dem Ende einer Optimierer-Aktion), Start erneut senden
+EV_RESERVE_CHARGING_MIN_KW = 0.5
 EV_WEAR_EDGE = 0.90           # darueber nur bei sehr billigem Strom (Akkuschonung)
 EV_TIER_VALUE_HARD = 0.60     # EUR/kWh unterhalb der harten Reserve (praktisch "immer")
 EV_TIER_VALUE_VERY_CHEAP = 0.05  # EUR/kWh: oberste Stufe hoechstens
@@ -97,7 +107,7 @@ def build_tiers(rule, history, upcoming_buy, pv_mode, sell_ref=None):
     top = min(top, saving)
 
     # (Obergrenze, Wert) je Zone aufsteigend; PV-Grenze als zusaetzliche Kante
-    zones = [(EV_HARD_RESERVE, EV_TIER_VALUE_HARD, "hart"), (reserve_end, reserve, "reserve"),
+    zones = [(EV_TIER_HARD_END, EV_TIER_VALUE_HARD, "hart"), (reserve_end, reserve, "reserve"),
              (comfort_end, comfort, "comfort"), (EV_WEAR_EDGE, saving, "saving"), (1.0, top, "top")]
     segments = []
     lower = 0.0
@@ -137,3 +147,24 @@ def build_tiers(rule, history, upcoming_buy, pv_mode, sell_ref=None):
         soc.append(1.0)
     return {"p": p, "soc": soc, "basis": basis + (" / PV-Überschuss" if pv_mode and sell_ref is not None else ""),
             "values": {"reserve": reserve, "comfort": comfort, "saving": saving, "top": top}}
+
+
+def reserve_charge_decision(active, car_ready, ev_soc, other_active, live_kw, now_ms, last_command_ms):
+    """Notladung bis EV_RESERVE_STOP_SOC (siehe oben). Rueckgabe: "start" (neu starten), "restart" (Start erneut senden,
+    Wallbox laedt nicht), "stop" (Ziel erreicht, Wallbox stoppen), "end" (Notladung ohne Stopp-Befehl beenden: Auto
+    abgesteckt oder eine andere Ladung - Optimierer-Aktion/PV-Ueberschuss - steuert die Wallbox und laedt ohnehin weiter)
+    oder None (nichts tun). other_active: eine Optimierer-'Auto laden'-Aktion oder PV-Ueberschuss-Session laeuft gerade."""
+    if not active:
+        if car_ready and ev_soc is not None and ev_soc < EV_RESERVE_START_SOC and not other_active:
+            return "start"
+        return None
+    if not car_ready:
+        return "end"
+    if ev_soc is not None and ev_soc >= EV_RESERVE_STOP_SOC:
+        return "end" if other_active else "stop"
+    if other_active:
+        return None  # die andere Ladung laeuft; endet sie vor 12 %, startet der naechste Tick neu
+    charging = live_kw is not None and live_kw >= EV_RESERVE_CHARGING_MIN_KW
+    if not charging and (last_command_ms is None or now_ms - last_command_ms >= EV_RESERVE_RESTART_MS):
+        return "restart"
+    return None

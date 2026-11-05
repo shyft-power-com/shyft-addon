@@ -44,7 +44,7 @@ def test_dynamic_tiers_mittel():
     # nicht steigend (konkav), Kanten aufsteigend
     assert all(a >= b for a, b in zip(p, p[1:]))
     assert all(a <= b for a, b in zip(soc, soc[1:]))
-    assert p[0] == ev_tiers.EV_TIER_VALUE_HARD and soc[0] == 0.10
+    assert p[0] == ev_tiers.EV_TIER_VALUE_HARD and soc[0] == 0.30
     # Reserve bis 35 %, Komfort bis 70 %, Sparzone bis 90 %, oben hoechstens 5 ct
     assert soc[1:4] == [0.35, 0.70, 0.90]
     assert p[1] > p[2] > p[3] > p[4]
@@ -57,7 +57,7 @@ def test_dynamic_tiers_mittel():
 def test_dynamic_tiers_komfort_has_no_saving_zone():
     t = ev_tiers.build_tiers("Komfort", _history(), [0.3], pv_mode=False)
     # Reserve bis 45 %, Komfort bis 90 %, darueber 5 ct -> 4 verschiedene Stufen, Rest aufgefuellt
-    assert t["soc"][:3] == [0.10, 0.45, 0.90]
+    assert t["soc"][:3] == [0.30, 0.45, 0.90]
     assert t["p"][3] == 0.05 and t["p"][4] == 0.05 and t["soc"][3:] == [1.0, 1.0]
 
 
@@ -65,9 +65,10 @@ def test_known_prices_without_history():
     t = ev_tiers.build_tiers("sehr günstig", None, [0.30, 0.25, 0.30], pv_mode=False)
     p = t["p"]
     assert t["basis"].startswith("bekannte Preise")
-    assert abs(p[2] - 0.28) < 1e-9          # guenstigster + 3 ct bis zum Komfort-Ladestand
-    assert p[1] > p[2]                      # Reserve ueber allen bekannten Preisen
-    assert p[4] == 0.05                     # darueber nur bei sehr billigem Strom
+    # 'sehr guenstig': Reserve (bis 25 %) liegt komplett in der harten Stufe (bis 30 %)
+    assert p[0] == ev_tiers.EV_TIER_VALUE_HARD and t["soc"][0] == 0.30
+    assert abs(p[1] - 0.28) < 1e-9          # guenstigster + 3 ct bis zum Komfort-Ladestand
+    assert p[3] == 0.05                     # darueber nur bei sehr billigem Strom
 
 
 def test_short_history_falls_back_to_known_prices():
@@ -82,10 +83,10 @@ def test_no_prices_no_tiers():
 def test_pv_mode_caps_above_reserve_and_stops_at_pv_cap():
     t = ev_tiers.build_tiers("sehr günstig", _history(), [0.3], pv_mode=True, sell_ref=0.07)
     p, soc = t["p"], t["soc"]
-    # Reserve (10-25 %) bleibt ungedeckelt; darueber hoechstens Einspeisepreis + 3 ct bis zur PV-Grenze 70 %, danach knapp unter dem Einspeisepreis
-    assert soc[:4] == [0.10, 0.25, 0.50, 0.70] or soc[:3] == [0.10, 0.25, 0.70]
-    assert p[1] > 0.10
-    assert abs(p[2] - 0.10) < 1e-9
+    # harte Stufe (bis 30 %, deckt bei 'sehr guenstig' die Reserve bis 25 % mit ab) bleibt ungedeckelt; darueber hoechstens Einspeisepreis + 3 ct bis zur PV-Grenze 70 %, danach knapp unter dem Einspeisepreis
+    assert soc[:3] == [0.30, 0.50, 0.70] or soc[:2] == [0.30, 0.70]
+    assert p[0] == ev_tiers.EV_TIER_VALUE_HARD
+    assert abs(p[1] - 0.10) < 1e-9
     below_cap = [v for v, hi in zip(p, soc + [1.0]) if hi > 0.70 + 1e-9 and v < 0.10]
     assert below_cap and all(v <= 0.06 + 1e-9 for v in below_cap) and abs(max(below_cap) - 0.06) < 1e-9
     assert all(a >= b for a, b in zip(p, p[1:]))
@@ -95,3 +96,22 @@ def test_pv_mode_negative_feed_in_allows_full_charge():
     t = ev_tiers.build_tiers("Komfort", _history(), [0.3], pv_mode=True, sell_ref=-0.02)
     # Einspeisung kostet: Stufen oberhalb der Reserve sind ueberall nicht teurer als sell_ref + 3 ct
     assert max(t["p"][2:]) <= 0.01 + 1e-9
+
+
+def test_reserve_charge_decision():
+    d = ev_tiers.reserve_charge_decision
+    # Start nur eingesteckt, unter 10 % und ohne andere laufende Ladung
+    assert d(False, True, 3, False, 0, 0, None) == "start"
+    assert d(False, True, 10, False, 0, 0, None) is None
+    assert d(False, False, 3, False, 0, 0, None) is None
+    assert d(False, True, None, False, 0, 0, None) is None
+    assert d(False, True, 3, True, 0, 0, None) is None
+    # laeuft: bis 12 % weiter, dann stoppen (oder nur beenden, wenn eine andere Ladung uebernommen hat)
+    assert d(True, True, 11, False, 3.4, 60000, 0) is None
+    assert d(True, True, 12, False, 3.4, 60000, 0) == "stop"
+    assert d(True, True, 12, True, 3.4, 60000, 0) == "end"
+    assert d(True, False, 5, False, 0, 60000, 0) == "end"
+    # Wallbox laedt nicht: erst nach der Wartezeit erneut starten
+    assert d(True, True, 5, False, 0, 60000, 0) is None
+    assert d(True, True, 5, False, 0, ev_tiers.EV_RESERVE_RESTART_MS, 0) == "restart"
+    assert d(True, True, 5, True, 0, ev_tiers.EV_RESERVE_RESTART_MS, 0) is None

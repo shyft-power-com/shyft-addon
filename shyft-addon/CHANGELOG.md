@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.361
+
+* **Neu: Sofortladen unter 10 %.** Fällt der Ladestand eines eingesteckten Autos unter 10 %, startet das Add-on die Wallbox sofort mit voller Leistung und lädt bis 12 % (2 % Puffer, damit das Auto durch den Standverlust nicht gleich wieder unter 10 % fällt) – unabhängig vom Plan des Optimierers. Bisher war die 10-%-Reserve nur eine Endbedingung bzw. Endwert-Stufe am Ende des Planungsfensters; der Optimierer durfte das Laden dafür in die günstigsten Stunden der nächsten Tage schieben, auch wenn das Auto mit 3 % in der Garage stand. Läuft gerade eine geplante „Auto laden“-Aktion oder PV-Überschussladen, steuert diese die Wallbox; endet sie vor 12 %, übernimmt das Sofortladen wieder. In der Aktionsliste erscheint es als „Auto laden“ mit dem Untertitel „Sofortladen: Ladestand unter 10 %, lädt bis 12 % (x kWh)“, ohne Ersparnis. Voraussetzung: Ladestand-Sensor des Autos und Aktion „Auto laden“ eingeschaltet (`ev_tiers.reserve_charge_decision`, Job `run_ev_reserve_charging_periodically`, Sessions in `/data/ev_reserve_actions.json`).
+* **Laderegel: erste Endwert-Stufe bis 30 % statt 10 %.** Am Ende des Planungsfensters soll das Auto mindestens 30 % haben (Wert 60 ct/kWh, lädt also praktisch immer – aber in den günstigsten Stunden). Bei „sehr günstig“ geht die bisherige Reserve-Stufe bis 25 % damit in dieser Stufe auf; bei „mittel“/„Komfort“ beginnt die Reserve-Stufe bei 30 % (bis 35 % / 45 %). Die Endbedingung `EV - SOC Normal` bleibt bei 10 %.
+
 ## 0.0.45.360
 
 * **TEST-Rollout ohne Eck-Sticker, Analyse-Tab und negative Ersparnis (vorübergehend, zum Zurückrollen gedacht).** Der schräge „TESTUMGEBUNG“-Sticker im Dashboard wird nicht mehr angezeigt, der Analyse-Tab ist ausgeblendet, und bei Aktionen mit negativer Ersparnis entfällt die Ersparnis-Zeile (Kosten ohne Optimierung | Ersparnis | Kosten mit Shyft). Alles in `www/app.js`; Zurückrollen per `git revert` dieses Commits.
