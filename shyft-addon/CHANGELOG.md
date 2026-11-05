@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.360
+
+* **TEST-Rollout ohne Eck-Sticker, Analyse-Tab und negative Ersparnis (vorübergehend, zum Zurückrollen gedacht).** Der schräge „TESTUMGEBUNG“-Sticker im Dashboard wird nicht mehr angezeigt, der Analyse-Tab ist ausgeblendet, und bei Aktionen mit negativer Ersparnis entfällt die Ersparnis-Zeile (Kosten ohne Optimierung | Ersparnis | Kosten mit Shyft). Alles in `www/app.js`; Zurückrollen per `git revert` dieses Commits.
+
 ## 0.0.45.359
 
 * **Fix: Die Ist-Linie im Chart „Deine Stromkosten / -erträge“ hatte Lücken.** Eine abgelaufene Stunde wurde nur um :03 und nur mit einem aufgezeichneten Optimierungslauf archiviert; nach Neustart oder Ausfall blieb sie für immer leer. Jetzt werden fehlende Stunden der letzten 72 Stunden nachgerechnet (Netz-Sensor-Historie × Preis der Stunde, bei dynamischen Tarifen aus der Börsenpreis-Historie), stündlich und beim Laden des Dashboards (höchstens alle 10 Minuten). Stunden ohne Optimierungslauf bekommen nur Ist-Verbrauch und Ist-Kosten, Plan und Ersparnis bleiben dort leer.

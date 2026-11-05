@@ -1292,6 +1292,8 @@ async function renderEnvironmentBadge() {
     try {
         const status = await getJson(insideHomeAssistant + '/account-status');
         if (!status.isTestBuild) return;
+        // Vorübergehend ausgeblendet (TEST-Rollout ohne Eck-Sticker) - zum Zurückrollen entfernen.
+        return;
         if (document.getElementById('environmentBadge')) return;
         const badge = document.createElement('div');
         badge.id = 'environmentBadge';
@@ -1320,7 +1322,8 @@ async function applyAnalyseTabVisibility() {
     if (!button) return;
     try {
         const status = await getJson(insideHomeAssistant + '/account-status');
-        button.hidden = !status.isTestEnvironment;
+        // Vorübergehend ausgeblendet - zum Zurückrollen wieder auf !status.isTestEnvironment setzen.
+        button.hidden = true;
     } catch (err) {
         console.log(err);
     }
@@ -7563,7 +7566,8 @@ function buildShyftActionCard(action) {
     }
     // Unter 1 Cent (Nutzer-Vorgabe) wird die ganze Zeile ausgeblendet statt eine irrefuehrende
     // "0,00 €"-Ersparnis zu zeigen - so klein ist der Wert praktisch nur Rundungsrauschen.
-    if (typeof action['Savings'] === 'number' && Math.abs(action['Savings']) >= 0.01) {
+    // Negative Ersparnis wird nicht angezeigt (Nutzer-Vorgabe).
+    if (typeof action['Savings'] === 'number' && action['Savings'] >= 0.01) {
         // Einzeilig statt Pill + separater Preiszeile darunter (Nutzer-Vorgabe): Basis-Kosten,
         // Ersparnis-Pill, Kosten mit Shyft nebeneinander, jeweils ohne eigene Beschriftung ("0,14 €"
         // statt "Ohne Optimierung: 0,14 €") - die Bedeutung der drei Werte erklaert stattdessen ein
