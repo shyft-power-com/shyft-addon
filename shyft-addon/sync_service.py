@@ -60,6 +60,43 @@ UNIT_CONVERSIONS = {
 }
 
 
+EV_SOC_SENSOR_KEY = "electronicvehicle_state_of_charge"
+# Zuletzt gueltiger Auto-Ladestand: das Auto meldet im Schlaf/ohne Verbindung oft "unavailable" - dann gilt dieser Wert weiter statt 0 %.
+EV_SOC_LAST_VALUE_PATH = "/data/ev_soc_last_value.json"
+
+
+def _as_finite_number(value):
+    "Der Wert als endliche Zahl, sonst None (Text wie 'unavailable', None, NaN, inf)."
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _read_last_ev_soc():
+    try:
+        with open(EV_SOC_LAST_VALUE_PATH, "r") as f:
+            data = json.load(f)
+        if _as_finite_number(data.get("state")) is None:
+            return None
+        return {"state": data["state"], "unit": data.get("unit", "")}
+    except Exception:
+        return None
+
+
+def _write_last_ev_soc(state, unit):
+    try:
+        if _read_last_ev_soc() == {"state": state, "unit": unit}:
+            return
+        with open(EV_SOC_LAST_VALUE_PATH, "w") as f:
+            json.dump({"state": state, "unit": unit}, f)
+    except Exception as e:
+        print("[Shyft] Letzter Auto-Ladestand konnte nicht gespeichert werden:", repr(e))
+
+
 def convert_to_expected_unit(key, state, unit):
     "Converts state to the unit shyft-power expects for this sensor (EXPECTED_UNITS), if Home Assistant reports a different, known-convertible unit. Passes through unchanged otherwise."
     expected_unit = EXPECTED_UNITS.get(key)
@@ -528,6 +565,15 @@ class SyncService:
         try:
             sensorValue = self.homeassistant_adapter.load_entity_state(sensorId)
             state, unit = convert_to_expected_unit(key, sensorValue.state, sensorValue.unit)
+            if key in EXPECTED_UNITS:
+                # Numerische Sensoren: an den Optimierer geht NIE Text ("unknown"/"unavailable"/...), sonst wertet der Server ihn als 0.
+                if _as_finite_number(state) is None:
+                    last = _read_last_ev_soc() if key == EV_SOC_SENSOR_KEY else None
+                    if last is None:
+                        return ""
+                    state, unit = last["state"], last["unit"]
+                elif key == EV_SOC_SENSOR_KEY:
+                    _write_last_ev_soc(state, unit)
             return {
                 "entity_id": sensorId,
                 "state": state,

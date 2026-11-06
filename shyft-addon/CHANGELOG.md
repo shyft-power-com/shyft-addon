@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.351
+
+* **Fix: Auto-Ladestand 0 % im Optimierer, obwohl das Auto z. B. 12 % hat.** Meldete der Sensor „unavailable“/„unknown“ (Auto schläft oder ist nicht verbunden), ging dieser Text an den Optimierer und wurde dort als 0 % gewertet. Jetzt wird an den Optimierer bei allen Zahlen-Sensoren (Leistung, Temperatur, Ladestand) nie Text geschickt: Ungültige Werte werden weggelassen. Beim Auto-Ladestand gilt stattdessen der zuletzt gültige Wert weiter.
+* **Fix: Kein Laden, wenn das Auto nicht eingesteckt ist.** Meldet die Wallbox „nicht verbunden“, wird kein Startbefehl mehr gesendet – weder für „Auto laden“-Aktionen noch für PV-Überschussladen oder Wiederholungen.
+
 ## 0.0.45.350
 
 * **Warmwasser-Abweichung: Meldung erst ab mehr als 4 °C, Temperaturen in ganzen Grad.** Die Push-Nachricht „Warmwasser-Solltemperatur weicht ab“ wird nur noch gesendet, wenn Soll und Ist um mehr als 4 °C (vorher 1,5 °C) auseinanderliegen. Die Werte in der Nachricht werden auf ganze Grad gerundet statt mit 3 oder mehr Nachkommastellen angezeigt.
