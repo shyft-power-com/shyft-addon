@@ -891,15 +891,43 @@ BUBBLE_PRICE_PREDICTION_REFRESH_TIMEZONE = "Europe/Berlin"
 BUBBLE_PRICE_PREDICTION_REFRESH_TIMES = ((6, 5), (18, 5))  # (Stunde, Minute): einige Minuten nach Bubbles Laeufen um 05:59 / 17:59
 
 
+def _parse_energyforecast_body(api_body):
+    """({hour_start_epoch_ms: EUR/kWh netto}, epoch_ms der letzten Stunde mit price_origin "market") aus dem rohen JSON der energyforecast.de-Antwort
+    (Feld api_body am Bubble-Objekt Electr. Price Prediction: Liste mit start (ISO mit Offset), price, price_origin "market" = echter Day-ahead-Preis,
+    "forecast" = Prognose). ({}, None) bei fehlendem oder unlesbarem JSON."""
+    if not api_body:
+        return {}, None
+    try:
+        rows = json.loads(api_body) if isinstance(api_body, str) else api_body
+        prices = {}
+        last_market_ms = None
+        for row in rows:
+            hour = datetime.fromisoformat(row["start"]).astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+            ts_ms = int(hour.timestamp() * 1000)
+            prices[ts_ms] = float(row["price"])
+            if row.get("price_origin") == "market" and (last_market_ms is None or ts_ms > last_market_ms):
+                last_market_ms = ts_ms
+        return prices, last_market_ms
+    except (TypeError, ValueError, KeyError, AttributeError) as e:
+        print("[Shyft] Bubble-Strompreisprognose: api_body nicht lesbar, nutze Datetime Array/Price (text):", repr(e))
+        return {}, None
+
+
 def _request_bubble_price_prediction():
-    "Ruft Bubbles Strompreisprognose ab (provide_input_output_csv) und gibt {hour_start_epoch_ms: EUR/kWh netto} zurueck ({} ohne Zugangstoken/Nutzer). Wirft bei Fehlern."
+    """Ruft Bubbles Strompreisprognose ab (provide_input_output_csv) und gibt ({hour_start_epoch_ms: EUR/kWh netto}, epoch_ms der letzten Stunde mit
+    echtem Marktpreis oder None) zurueck (({}, None) ohne Zugangstoken/Nutzer). Bevorzugt das rohe energyforecast-JSON (api_body, enthaelt price_origin), sonst
+    Datetime Array + Price (text) ohne Marktgrenze. Wirft bei Fehlern."""
     if is_demo_mode():
-        return {}  # Demo-Modus: nie Bubble aufrufen (Dashboard nutzt dann die Live-Awattar-Preise)
+        return {}, None  # Demo-Modus: nie Bubble aufrufen (Dashboard nutzt dann die Live-Awattar-Preise)
     user_id = extract_shyft_user_id(shyft_adapter.bubble_token)
     if not user_id:
-        return {}
+        return {}, None
     result = shyft_adapter.get_input_output_csv(user_id)
     prediction = (result.get("response") or {}).get("price_prediction") or {}
+    api_body = next((v for k, v in prediction.items() if k.lower() == "api_body"), None)
+    prices, last_market_ms = _parse_energyforecast_body(api_body)
+    if prices:
+        return prices, last_market_ms
     datetimes_ms = prediction.get("Datetime Array") or []
     price_text = prediction.get("Price (text)") or ""
     price_values = [float(p.replace(",", ".")) for p in price_text.split(";") if p != ""]
@@ -907,13 +935,13 @@ def _request_bubble_price_prediction():
     for ts_ms, price in zip(datetimes_ms, price_values):
         hour = datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
         prices[int(hour.timestamp() * 1000)] = price
-    return prices
+    return prices, None
 
 
-def _write_bubble_price_prediction_cache(prices):
+def _write_bubble_price_prediction_cache(prices, last_market_ms=None):
     try:
         with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "w") as f:
-            json.dump({"fetched_at": time.time(), "prices": {str(k): v for k, v in prices.items()}}, f)
+            json.dump({"fetched_at": time.time(), "prices": {str(k): v for k, v in prices.items()}, "last_market_ms": last_market_ms}, f)
     except Exception as e:
         print("[Shyft] Bubble-Preisprognose-Cache konnte nicht geschrieben werden:", repr(e))
 
@@ -930,7 +958,7 @@ def refresh_bubble_price_prediction():
     except Exception:
         old_prices = {}
     try:
-        prices = _request_bubble_price_prediction()
+        prices, last_market_ms = _request_bubble_price_prediction()
     except Exception as e:
         print(f"[Shyft] Bubble-Strompreisprognose: Abruf fehlgeschlagen ({e!r}) - es gilt der letzte bekannte Stand, naechster Abruf zur naechsten festen Zeit.")
         return False
@@ -941,11 +969,13 @@ def refresh_bubble_price_prediction():
     changed = sum(1 for k, v in new_prices.items() if old_prices.get(k) != v)
     first = datetime.fromtimestamp(min(prices) / 1000, tz=timezone.utc).isoformat()
     last = datetime.fromtimestamp(max(prices) / 1000, tz=timezone.utc).isoformat()
-    _write_bubble_price_prediction_cache(prices)
+    _write_bubble_price_prediction_cache(prices, last_market_ms)
+    market_info = (f", echte Marktpreise bis {datetime.fromtimestamp(last_market_ms / 1000, tz=timezone.utc).isoformat()}" if last_market_ms
+                   else ", ohne price_origin (kein api_body)")
     if changed == 0:
-        print(f"[Shyft] Bubble-Strompreisprognose unveraendert ({len(prices)} Stunden, {first} bis {last}) - Bubble evtl. noch nicht fertig; naechster Abruf zur naechsten festen Zeit.")
+        print(f"[Shyft] Bubble-Strompreisprognose unveraendert ({len(prices)} Stunden, {first} bis {last}{market_info}) - Bubble evtl. noch nicht fertig; naechster Abruf zur naechsten festen Zeit.")
         return False
-    print(f"[Shyft] Bubble-Strompreisprognose aktualisiert: {len(prices)} Stunden ({first} bis {last}), {changed} Werte gegenueber dem letzten Stand geaendert.")
+    print(f"[Shyft] Bubble-Strompreisprognose aktualisiert: {len(prices)} Stunden ({first} bis {last}{market_info}), {changed} Werte gegenueber dem letzten Stand geaendert.")
     return True
 
 
@@ -978,41 +1008,65 @@ def _fetch_bubble_price_prediction():
     if cached and time.time() - cached.get("fetched_at", 0) < BUBBLE_PRICE_PREDICTION_CACHE_TTL_SECONDS and cached.get("prices"):
         return {int(k): v for k, v in cached["prices"].items()}
     try:
-        prices = _request_bubble_price_prediction()
+        prices, last_market_ms = _request_bubble_price_prediction()
     except Exception as e:
         print("[Shyft] Bubble-Strompreisprognose konnte nicht geladen werden:", repr(e))
         if cached and cached.get("prices"):
             return {int(k): v for k, v in cached["prices"].items()}
         return {}
     if prices:
-        _write_bubble_price_prediction_cache(prices)
+        _write_bubble_price_prediction_cache(prices, last_market_ms)
     return prices
 
 
+def _bubble_last_market_hour():
+    "Letzte Stunde (UTC), in der Bubbles gecachte Prognose noch den echten Marktpreis enthaelt (price_origin \"market\"), None ohne api_body im Cache."
+    try:
+        with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "r") as f:
+            ts_ms = json.load(f).get("last_market_ms")
+        return datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc) if ts_ms else None
+    except Exception:
+        return None
+
+
 # Fehler der Prognose halten erfahrungsgemaess ueber Stunden bis Tage an (gleiches Vorzeichen, z.B. Prognose am Tageswechsel zu niedrig -> auch in den
-# Folgestunden zu niedrig). Deshalb wird die Differenz am Ende der echten Day-ahead-Preise (letzter veroeffentlichter Awattar-Preis minus Prognose fuer
-# genau diese Stunde, beides netto) auf die Prognose der Folgestunden aufgeschlagen und schmilzt je Stunde um BUBBLE_BIAS_MELT_PER_HOUR_EUR ab.
+# Folgestunden zu niedrig). Deshalb wird die Differenz am Ende der echten Day-ahead-Preise auf die Prognose der Folgestunden aufgeschlagen und schmilzt je
+# Stunde um BUBBLE_BIAS_MELT_PER_HOUR_EUR ab. Zwei Faelle, je nachdem, wo die echten Preise enden:
+# - Bubbles Reihe enthaelt dort selbst noch echte Preise (price_origin "market", Bubble-Lauf nach der Veroeffentlichung gegen 13 Uhr): die Prognose beginnt
+#   in der Stunde danach und ist nicht an den letzten echten Preis angebunden. Aufschlag = letzter echter Preis minus Prognose der ersten Folgestunde, der
+#   Preis laeuft also ohne Sprung weiter.
+# - Awattar ist weiter als Bubbles echte Preise (oder Bubble liefert kein price_origin): Aufschlag = letzter Awattar-Preis minus Bubble-Prognose fuer genau
+#   diese Stunde (der Prognosefehler).
 BUBBLE_BIAS_MELT_PER_HOUR_EUR = 0.001  # 0,1 Cent/kWh netto je Stunde
 _last_logged_bubble_bias = None
 
 
 def _bubble_bias(by_hour, bubble_by_hour):
-    """(letzte Stunde mit echtem Awattar-Preis, Differenz echter Preis minus Bubble-Prognose dieser Stunde, beides netto in EUR/kWh) - None, wenn es keinen
-    echten Preis oder keine Prognose fuer diese Stunde gibt. Ist Bubbles Stand aktuell genug, dass er dort schon den echten Preis enthaelt, ist die Differenz 0."""
+    """(letzte Stunde mit echtem Preis, Differenz zum Preis dahinter, beides netto in EUR/kWh) - None, wenn es keinen echten Preis oder keine passende
+    Prognose gibt. Siehe oben fuer die beiden Faelle."""
     global _last_logged_bubble_bias
-    if not by_hour:
+    market_end = _bubble_last_market_hour()
+    if market_end is not None and (not by_hour or market_end >= max(by_hour)):
+        last = market_end
+        compare_hour = last + timedelta(hours=1)
+        compare_label = "erste Prognosestunde"
+        actual_net = by_hour[last] / AWATTAR_VAT_FACTOR if last in by_hour else bubble_by_hour.get(last)
+    elif by_hour:
+        last = max(by_hour)
+        compare_hour = last
+        compare_label = "Prognose fuer diese Stunde"
+        actual_net = by_hour[last] / AWATTAR_VAT_FACTOR
+    else:
         return None
-    last = max(by_hour)
-    forecast_net = bubble_by_hour.get(last)
-    if forecast_net is None:
+    forecast_net = bubble_by_hour.get(compare_hour)
+    if forecast_net is None or actual_net is None:
         return None
-    actual_net = by_hour[last] / AWATTAR_VAT_FACTOR
     delta = actual_net - forecast_net
     marker = (last, round(delta, 5))
     if marker != _last_logged_bubble_bias:
         _last_logged_bubble_bias = marker
         melt_hours = int(abs(delta) / BUBBLE_BIAS_MELT_PER_HOUR_EUR)
-        print(f"[Shyft] Prognose-Korrektur: letzter echter Day-ahead-Preis {last.isoformat()} netto {actual_net:.4f}, Bubble-Prognose dafuer {forecast_net:.4f} -> "
+        print(f"[Shyft] Prognose-Korrektur: letzter echter Day-ahead-Preis {last.isoformat()} netto {actual_net:.4f}, Bubble-{compare_label} {forecast_net:.4f} -> "
               f"Differenz {delta:+.4f} EUR/kWh, wird auf die Prognose danach aufgeschlagen und schmilzt um {BUBBLE_BIAS_MELT_PER_HOUR_EUR * 100:.1f} ct/h ab "
               f"(nach etwa {melt_hours} Stunden weg).")
     return last, delta

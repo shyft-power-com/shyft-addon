@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.350
+
+* **Strompreisprognose: kein Sprung mehr am Ende der echten Day-ahead-Preise.** Bubbles Prognose (energyforecast.de) besteht vorn aus echten Day-ahead-Preisen (`price_origin` „market“) und danach aus Prognosewerten („forecast“), die nicht an den letzten echten Preis angebunden sind. Bubble-Läufe nach der Veröffentlichung (ca. 13 Uhr) enthalten die echten Preise von morgen schon, deshalb war die Differenz an der letzten echten Stunde 0 und die Korrektur aus 0.0.45.319 hat nichts aufgeschlagen: der Preis sprang am Tageswechsel um mehrere Cent (z. B. 21,1 → 14,8 ct netto). Das Add-on liest jetzt das rohe energyforecast-JSON (`api_body` am Bubble-Objekt „Electr. Price Prediction“, kommt über `price_prediction` von `provide_input_output_csv` mit) und kennt dadurch die Grenze zwischen echten und prognostizierten Preisen. Aufschlag = letzter echter Preis minus Prognose der ersten Folgestunde; der Preis läuft also ohne Sprung weiter und nähert sich der Prognose mit 0,1 Cent/kWh (netto) je Stunde. Ist Awattar weiter als Bubbles echte Preise, bleibt es beim Prognosefehler an der letzten Awattar-Stunde wie bisher. Ohne `api_body` (ältere Datensätze) gilt weiter die bisherige Awattar-Grenze. Das Log nennt „Prognose-Korrektur: …“ mit letztem echtem Preis, Vergleichswert und Differenz; der Abruf-Log nennt zusätzlich, bis wann Bubble echte Marktpreise enthält.
+
 ## 0.0.45.349
 
 * **Fix: Automatische Konto-Erstellung legte bei jeder Änderung auf der Konfigurationsseite einen neuen shyft-power-Account an.** Sobald ein echtes Gerät ausgewählt war, rief jedes automatische Speichern `create_user_addon` auf. Die Live-Antwort von Bubble enthielt keinen Token, das Add-on blieb deshalb im Demomodus und versuchte es beim nächsten Speichern erneut – am 31.10.2026 entstanden so 48 Accounts in 30 Minuten. Jetzt gilt:
