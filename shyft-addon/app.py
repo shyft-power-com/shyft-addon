@@ -5095,8 +5095,24 @@ def trigger_ha_automation_recipe(recipe, phase, target_kw):
     trigger_ha_automation(recipe.get("haAutomationEntityId"), phase, target_kw)
 
 
+def is_car_unplugged(config):
+    "True nur, wenn die Wallbox sicher 'nicht eingesteckt' meldet (Status lesbar und als 'kann nicht laden' zugeordnet). Ohne zugeordneten/lesbaren Sensor oder bei unzugeordnetem Status: False (nicht blockieren)."
+    entity_id = config.get("sensorMappings", {}).get("wallbox_plugged", "")
+    if not entity_id:
+        return False
+    try:
+        state = homeassistant_adapter.load_entity_state(entity_id)
+        return classify_wallbox_connection_state(state.state, config) is False
+    except Exception:
+        return False
+
+
 def execute_car_charge_start(target_kw):
     config = _read_current_config()
+    # Ein nicht eingestecktes Auto kann nicht laden - kein Startbefehl (gilt fuer jeden Aufrufer: Optimierer-Aktion,
+    # PV-Ueberschussladen, Wiederholungen der Ladekontrolle).
+    if is_car_unplugged(config):
+        raise Exception("Auto ist nicht eingesteckt – Laden wird nicht gestartet")
     # Gilt fuer JEDEN Aufrufer (die lokale PV-Ueberschussladen-Rueckfalllogik UND shyft-powers
     # eigene "Auto laden"-Cloud-Aktionen, siehe handle_shyft_action_start) - beide koennen einen zu
     # hohen Zielwert anfordern, und die Wallbox soll so oder so nie mehr bekommen, als sie selbst
