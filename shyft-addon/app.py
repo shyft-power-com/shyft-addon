@@ -1031,14 +1031,17 @@ def _bubble_last_market_hour():
 
 
 # Fehler der Prognose halten erfahrungsgemaess ueber Stunden bis Tage an (gleiches Vorzeichen, z.B. Prognose am Tageswechsel zu niedrig -> auch in den
-# Folgestunden zu niedrig). Deshalb wird die Differenz am Ende der echten Day-ahead-Preise auf die Prognose der Folgestunden aufgeschlagen und schmilzt je
-# Stunde um BUBBLE_BIAS_MELT_PER_HOUR_EUR ab. Zwei Faelle, je nachdem, wo die echten Preise enden:
+# Folgestunden zu niedrig). Deshalb wird die Differenz am Ende der echten Day-ahead-Preise auf die Prognose der Folgestunden aufgeschlagen und bleibt ueber
+# den ganzen Prognosezeitraum konstant (BUBBLE_BIAS_MELT_PER_HOUR_EUR = 0; Auswertung von 668 gespeicherten Bubble-Laeufen: schon 0,1 ct/h Abschmelzen liess
+# nach 2-3 Tagen wieder 2-4 ct Niveaufehler uebrig, ohne Abschmelzen ist der mittlere Fehler ~0). Zwei Faelle, je nachdem, wo die echten Preise enden:
 # - Bubbles Reihe enthaelt dort selbst noch echte Preise (price_origin "market", Bubble-Lauf nach der Veroeffentlichung gegen 13 Uhr): die Prognose beginnt
-#   in der Stunde danach und ist nicht an den letzten echten Preis angebunden. Aufschlag = letzter echter Preis minus Prognose der ersten Folgestunde, der
-#   Preis laeuft also ohne Sprung weiter.
+#   in der Stunde danach und ist nicht an den letzten echten Preis angebunden. Aufschlag = letzter echter Preis minus Prognose der ersten Folgestunde minus
+#   BUBBLE_MIDNIGHT_STEP_EUR (der uebliche Preisrueckgang um Mitternacht gehoert nicht zum Niveaufehler), der Preis laeuft also ohne Sprung weiter.
 # - Awattar ist weiter als Bubbles echte Preise (oder Bubble liefert kein price_origin): Aufschlag = letzter Awattar-Preis minus Bubble-Prognose fuer genau
 #   diese Stunde (der Prognosefehler).
-BUBBLE_BIAS_MELT_PER_HOUR_EUR = 0.001  # 0,1 Cent/kWh netto je Stunde
+BUBBLE_BIAS_MELT_PER_HOUR_EUR = 0.0  # Abschmelzen der Differenz je Stunde (EUR/kWh netto); 0 = Differenz bleibt ueber den ganzen Zeitraum bestehen
+# Mittlerer Preisrueckgang von 23 auf 0 Uhr (echte Preise, 660 Tage: im Mittel 0,49 ct, Median 0,37 ct; seit August 2026 0,88 ct, Winter 25/26 0,26 ct, netto).
+BUBBLE_MIDNIGHT_STEP_EUR = 0.005
 _last_logged_bubble_bias = None
 
 
@@ -1052,6 +1055,8 @@ def _bubble_bias(by_hour, bubble_by_hour):
         compare_hour = last + timedelta(hours=1)
         compare_label = "erste Prognosestunde"
         actual_net = by_hour[last] / AWATTAR_VAT_FACTOR if last in by_hour else bubble_by_hour.get(last)
+        if actual_net is not None:
+            actual_net -= BUBBLE_MIDNIGHT_STEP_EUR  # Vergleichswert ohne den ueblichen Rueckgang ueber Mitternacht
     elif by_hour:
         last = max(by_hour)
         compare_hour = last
@@ -1066,15 +1071,16 @@ def _bubble_bias(by_hour, bubble_by_hour):
     marker = (last, round(delta, 5))
     if marker != _last_logged_bubble_bias:
         _last_logged_bubble_bias = marker
-        melt_hours = int(abs(delta) / BUBBLE_BIAS_MELT_PER_HOUR_EUR)
-        print(f"[Shyft] Prognose-Korrektur: letzter echter Day-ahead-Preis {last.isoformat()} netto {actual_net:.4f}, Bubble-{compare_label} {forecast_net:.4f} -> "
-              f"Differenz {delta:+.4f} EUR/kWh, wird auf die Prognose danach aufgeschlagen und schmilzt um {BUBBLE_BIAS_MELT_PER_HOUR_EUR * 100:.1f} ct/h ab "
-              f"(nach etwa {melt_hours} Stunden weg).")
+        step_text = f" (nach Abzug des ueblichen Mitternachtsrueckgangs von {BUBBLE_MIDNIGHT_STEP_EUR * 100:.1f} ct)" if compare_hour > last else ""
+        melt_text = (f"schmilzt um {BUBBLE_BIAS_MELT_PER_HOUR_EUR * 100:.2f} ct/h ab (nach etwa {int(abs(delta) / BUBBLE_BIAS_MELT_PER_HOUR_EUR)} Stunden weg)"
+                     if BUBBLE_BIAS_MELT_PER_HOUR_EUR > 0 else "bleibt ueber den ganzen Prognosezeitraum unveraendert")
+        print(f"[Shyft] Prognose-Korrektur: letzter echter Day-ahead-Preis {last.isoformat()} netto {actual_net:.4f}{step_text}, Bubble-{compare_label} {forecast_net:.4f} -> "
+              f"Differenz {delta:+.4f} EUR/kWh, wird auf die Prognose danach aufgeschlagen und {melt_text}.")
     return last, delta
 
 
 def _bubble_bias_offset(h, bias):
-    "Aufschlag (EUR/kWh netto) auf die Bubble-Prognose der Stunde h: die Differenz am Ende der echten Preise, je Stunde danach um BUBBLE_BIAS_MELT_PER_HOUR_EUR kleiner (nie ueber 0 hinaus)."
+    "Aufschlag (EUR/kWh netto) auf die Bubble-Prognose der Stunde h: die Differenz am Ende der echten Preise, je Stunde danach um BUBBLE_BIAS_MELT_PER_HOUR_EUR kleiner (nie ueber 0 hinaus; bei 0 bleibt sie unveraendert)."
     if not bias:
         return 0.0
     last, delta = bias

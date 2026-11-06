@@ -38,11 +38,14 @@ def test_bias_continues_from_last_market_price(monkeypatch):
     bubble = {last: 0.21115, last + timedelta(hours=1): 0.14819, last + timedelta(hours=2): 0.15}
     bias = app._bubble_bias(by_hour, bubble)
     assert bias[0] == last
-    assert bias[1] == pytest.approx(0.21115 - 0.14819)
+    assert bias[1] == pytest.approx(0.21115 - app.BUBBLE_MIDNIGHT_STEP_EUR - 0.14819)
+    # erste Prognosestunde: letzter echter Preis minus ueblicher Mitternachtsrueckgang
     first = bubble[last + timedelta(hours=1)] + app._bubble_bias_offset(last + timedelta(hours=1), bias)
-    assert first == pytest.approx(0.21115 - app.BUBBLE_BIAS_MELT_PER_HOUR_EUR)
-    # nach genug Stunden ist der Aufschlag abgeschmolzen
-    assert app._bubble_bias_offset(last + timedelta(hours=100), bias) == 0.0
+    assert first == pytest.approx(0.21115 - app.BUBBLE_MIDNIGHT_STEP_EUR)
+    # der Aufschlag schmilzt nicht ab: auch Tage spaeter noch dieselbe Differenz
+    assert app.BUBBLE_BIAS_MELT_PER_HOUR_EUR == 0
+    assert app._bubble_bias_offset(last + timedelta(hours=100), bias) == pytest.approx(bias[1])
+    assert app._bubble_bias_offset(last, bias) == 0.0  # echte Stunden bleiben unberuehrt
 
 
 def test_bias_uses_forecast_error_when_awattar_is_ahead_of_bubble_market(monkeypatch):
