@@ -9026,6 +9026,13 @@ def handle_shyft_action_start(action, actions_enabled, config):
         _update_computed_action(action)
         notify_action_event(config, action, "gestartet (nur simuliert)")
         return
+    # Auto beim Startzeitpunkt nicht eingesteckt: die Ladeaktion ist sinnlos und wird kommentarlos geloescht
+    # (kein Fehler, keine Benachrichtigung). "_discard" sorgt dafuer, dass der Stundenwechsel sie nicht zurueckschreibt.
+    if label == "Auto laden" and is_car_unplugged(config):
+        print(f"[Shyft] '{label}' beim Start verworfen: Auto ist nicht eingesteckt.")
+        action["_discard"] = True
+        _write_computed_actions([a for a in _read_computed_actions() if a.get("_id") != action.get("_id")])
+        return
     _begin_attempt(action, "Starten")
 
     # Ein Geraet, das noch nicht vollstaendig eingerichtet ODER nicht zuletzt erfolgreich getestet
@@ -11262,7 +11269,7 @@ def _run_hourly_action_transition_unlocked():
                 started_ids.add(action_id)
 
     if changed:
-        result_actions = [a for a in actions if a.get("_id") not in to_remove_ids]
+        result_actions = [a for a in actions if a.get("_id") not in to_remove_ids and not a.get("_discard")]
         _write_computed_actions(result_actions)
         config["startedShyftActionIds"] = sorted(started_ids)
         config["endedShyftActionIds"] = sorted(ended_ids)
