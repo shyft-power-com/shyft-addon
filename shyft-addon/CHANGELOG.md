@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.366
+
+* **Heizung Soll-Temperatur: echte Fehlerursache statt „400: Bad Request“.** Lehnt Home Assistant den Skriptaufruf ab (z.B. Wert außerhalb des erlaubten Bereichs), stand die Ursache weder in der REST-Antwort noch im System-Log – die Aktionskarte zeigte nur `POST /api/services/script/... failed: 400 400: Bad Request`. Das Add-on liest die Ursache jetzt zusätzlich aus dem Skript-Trace von Home Assistant, hängt Zielwert und Entität an die Meldung an und schreibt den Fehler ins Add-on-Log sowie ins Home-Assistant-Log (Logger `shyft`).
+* **Fix: Dashboard aktualisierte sich nach dem Öffnen nicht mehr automatisch.** `getJson` hatte kein Timeout. Blieb ein Request hängen (Standby, WLAN-Wechsel, Ingress antwortet nicht), blieb `loadDashboard` dauerhaft „in Arbeit“ und der 30-Sekunden-Refresh sowie der Refresh beim Sichtbarwerden kamen nie mehr durch – bis zum manuellen Neuladen. Jetzt bricht jeder Request nach 30 s ab (der nächste Refresh versucht es neu), und beim Wiederherstellen der Seite aus dem Back-Forward-Cache (`pageshow`) wird sofort aktualisiert.
+
 ## 0.0.45.365
 
 * **Warmwasser-Abweichung: Meldung erst ab mehr als 4 °C, Temperaturen in ganzen Grad.** Die Push-Nachricht „Warmwasser-Solltemperatur weicht ab“ kommt nur noch bei mehr als 4 °C (vorher 1,5 °C) Unterschied zwischen Soll und Ist; die Werte sind auf ganze Grad gerundet.
