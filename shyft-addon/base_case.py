@@ -142,7 +142,7 @@ def _fh_heat_pump_power(q_thermal, heatdis, t_i_min, t_out_cap, hp_max_power):
     return 0.5 * (lo + hi)
 
 
-def compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None):
+def compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None, ev_comfort_soc=None):
     """Berechnet den Base Case aus dem Optimierer-``input_csv`` (``;``-getrennt).
 
     state_overrides (optional): {"T_i_0", "T_hw_0", "ev_soc_0", "SOC_b_0_percent"} - ersetzt die
@@ -168,12 +168,15 @@ def compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None):
     eingesteckt ist (Rueckwaerts-Pflicht-SOC wie bei den Fahrten), und zahlt die Preise genau dieser Stunden - kein
     p_min, denn "genau dort laden, wo es billig ist" waere selbst schon eine Optimierung.
 
+    ev_comfort_soc (optional): Komfort-Ladestand der Laderegel als Anteil 0..1 (ev_tiers.EV_CHARGE_RULES). Der Base Case laedt das Auto
+    sofort bis dahin - das ist, was der Nutzer ohne Optimierung bekaeme; ``ev_soc_norm`` ist nur noch die feste Reserve von 10 %.
+
     Gibt ein Dict mit ``netProfitBase48HoursSum`` / ``netProfitBaseList`` / ``PowerUsageBaseList`` /
     ``nextState`` (Zustand NACH Stunde 0 - Basis fuer den naechsten Aufruf) zurueck, oder ``None``,
     wenn das CSV nicht auswertbar ist (nie eine Exception nach aussen).
     """
     try:
-        return _compute_base_case(input_csv, state_overrides, ev_end_target_kwh)
+        return _compute_base_case(input_csv, state_overrides, ev_end_target_kwh, ev_comfort_soc)
     except Exception as exc:  # pragma: no cover - defensiv, Aufrufer soll nie brechen
         print("[Shyft] Base-Case-Berechnung fehlgeschlagen:", repr(exc))
         return None
@@ -182,12 +185,14 @@ def compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None):
 _STATE_OVERRIDE_KEYS = ("T_i_0", "T_hw_0", "ev_soc_0", "SOC_b_0_percent")
 
 
-def _compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None):
+def _compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None, ev_comfort_soc=None):
     rows = list(csv.DictReader(io.StringIO(input_csv or ""), delimiter=";"))
     if not rows:
         return None
 
     p = {key: _num(rows[0].get(key)) for key in _SCALAR_KEYS}
+    if ev_comfort_soc:
+        p["ev_soc_norm"] = max(p["ev_soc_norm"], ev_comfort_soc)  # Komfort-Ladestand statt Reserve als Ziel des sofortigen Ladens
     if state_overrides:
         for key in _STATE_OVERRIDE_KEYS:
             value = state_overrides.get(key)

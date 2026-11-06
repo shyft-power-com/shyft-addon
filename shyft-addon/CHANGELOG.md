@@ -1,8 +1,87 @@
 # Changelog
 
-## 0.0.45.350
+## 0.0.45.363
 
 * **Strompreisprognose: kein Sprung mehr am Ende der echten Day-ahead-Preise.** Bubbles Prognose (energyforecast.de) besteht vorn aus echten Day-ahead-Preisen (`price_origin` „market“) und danach aus Prognosewerten („forecast“), die nicht an den letzten echten Preis angebunden sind. Bubble-Läufe nach der Veröffentlichung (ca. 13 Uhr) enthalten die echten Preise von morgen schon, deshalb war die Differenz an der letzten echten Stunde 0 und die Korrektur aus 0.0.45.319 hat nichts aufgeschlagen: der Preis sprang am Tageswechsel um mehrere Cent (z. B. 21,1 → 14,8 ct netto). Das Add-on liest jetzt das rohe energyforecast-JSON (`api_body` am Bubble-Objekt „Electr. Price Prediction“, kommt über `price_prediction` von `provide_input_output_csv` mit) und kennt dadurch die Grenze zwischen echten und prognostizierten Preisen. Aufschlag = letzter echter Preis minus Prognose der ersten Folgestunde; der Preis läuft also ohne Sprung weiter und nähert sich der Prognose mit 0,1 Cent/kWh (netto) je Stunde. Ist Awattar weiter als Bubbles echte Preise, bleibt es beim Prognosefehler an der letzten Awattar-Stunde wie bisher. Ohne `api_body` (ältere Datensätze) gilt weiter die bisherige Awattar-Grenze. Das Log nennt „Prognose-Korrektur: …“ mit letztem echtem Preis, Vergleichswert und Differenz; der Abruf-Log nennt zusätzlich, bis wann Bubble echte Marktpreise enthält.
+
+## 0.0.45.362
+
+* **TEST: Eck-Sticker, Analyse-Tab und negative Ersparnis wieder sichtbar.** Der schräge „TESTUMGEBUNG“-Sticker im Dashboard, der Analyse-Tab in der Navigation und die Ersparnis-Zeile bei Aktionen mit negativer Ersparnis werden wieder angezeigt (Rücknahme der für Videoaufnahmen ausgeblendeten Version 0.0.45.360).
+
+## 0.0.45.361
+
+* **Neu: Sofortladen unter 10 %.** Fällt der Ladestand eines eingesteckten Autos unter 10 %, startet das Add-on die Wallbox sofort mit voller Leistung und lädt bis 12 % (2 % Puffer, damit das Auto durch den Standverlust nicht gleich wieder unter 10 % fällt) – unabhängig vom Plan des Optimierers. Bisher war die 10-%-Reserve nur eine Endbedingung bzw. Endwert-Stufe am Ende des Planungsfensters; der Optimierer durfte das Laden dafür in die günstigsten Stunden der nächsten Tage schieben, auch wenn das Auto mit 3 % in der Garage stand. Läuft gerade eine geplante „Auto laden“-Aktion oder PV-Überschussladen, steuert diese die Wallbox; endet sie vor 12 %, übernimmt das Sofortladen wieder. In der Aktionsliste erscheint es als „Auto laden“ mit dem Untertitel „Sofortladen: Ladestand unter 10 %, lädt bis 12 % (x kWh)“, ohne Ersparnis. Voraussetzung: Ladestand-Sensor des Autos und Aktion „Auto laden“ eingeschaltet (`ev_tiers.reserve_charge_decision`, Job `run_ev_reserve_charging_periodically`, Sessions in `/data/ev_reserve_actions.json`).
+* **Laderegel: erste Endwert-Stufe bis 30 % statt 10 %.** Am Ende des Planungsfensters soll das Auto mindestens 30 % haben (Wert 60 ct/kWh, lädt also praktisch immer – aber in den günstigsten Stunden). Bei „sehr günstig“ geht die bisherige Reserve-Stufe bis 25 % damit in dieser Stufe auf; bei „mittel“/„Komfort“ beginnt die Reserve-Stufe bei 30 % (bis 35 % / 45 %). Die Endbedingung `EV - SOC Normal` bleibt bei 10 %.
+
+## 0.0.45.360
+
+* **TEST-Rollout ohne Eck-Sticker, Analyse-Tab und negative Ersparnis (vorübergehend, zum Zurückrollen gedacht).** Der schräge „TESTUMGEBUNG“-Sticker im Dashboard wird nicht mehr angezeigt, der Analyse-Tab ist ausgeblendet, und bei Aktionen mit negativer Ersparnis entfällt die Ersparnis-Zeile (Kosten ohne Optimierung | Ersparnis | Kosten mit Shyft). Alles in `www/app.js`; Zurückrollen per `git revert` dieses Commits.
+
+## 0.0.45.359
+
+* **Fix: Die Ist-Linie im Chart „Deine Stromkosten / -erträge“ hatte Lücken.** Eine abgelaufene Stunde wurde nur um :03 und nur mit einem aufgezeichneten Optimierungslauf archiviert; nach Neustart oder Ausfall blieb sie für immer leer. Jetzt werden fehlende Stunden der letzten 72 Stunden nachgerechnet (Netz-Sensor-Historie × Preis der Stunde, bei dynamischen Tarifen aus der Börsenpreis-Historie), stündlich und beim Laden des Dashboards (höchstens alle 10 Minuten). Stunden ohne Optimierungslauf bekommen nur Ist-Verbrauch und Ist-Kosten, Plan und Ersparnis bleiben dort leer.
+* **Außentemperatur-Chart:** Die gestrichelte Prognose beginnt am letzten Ist-Punkt, zwischen „jetzt“ und der nächsten Stunde gibt es keine Lücke mehr.
+* **Raumtemperatur-Chart:** Der „jetzt“-Punkt sitzt auf dem aktuellen Ist-Wert, bei einem Sprung der Solltemperatur also oben.
+* **Strompreis-Chart:** Die Linie heißt jetzt „Strombezug/Einspeisung“ statt „Netzbezug/Einspeisung“.
+
+## 0.0.45.358
+
+* **Dashboard: Charts lassen sich vergrößern (Desktop).** Oben rechts an jedem Chart sitzt ein dezentes „Vergrößern“-Icon (am Handy ausgeblendet). Der Chart öffnet in einem Modal in Bildschirmbreite mit Rand rundherum, mit Tooltips und Legende wie im normalen Chart. Schließen per ×, Klick daneben oder Esc.
+* **Wärmepumpe: „Warmwasserbereitung aktiviert“ und „Heizung aktiviert“ lassen sich fest auf „An“ oder „Aus“ stellen.** Ganz oben im Dropdown stehen jetzt die Einträge „An“ und „Aus“, für Nutzer ohne passenden Sensor. Der Info-Text erklärt: Bei „Aus“ ist die Steuerung nicht aktiviert, es werden keine Pläne gesetzt und nichts optimiert. Bei der Neueinrichtung einer Wärmepumpe steht beides auf „An“. Ohne Eintrag gilt weiterhin „An“.
+* **Wärmepumpen-Kachel neu sortiert** mit Zwischenüberschriften „Warmwasser“, „Heizung“ und „System / Gebäude“ sowie je einer Gruppe „Optionale Sensoren“. Umbenannt: „Temperatur Warmwassertank (aktuell)“, „Solltemperatur (°C)“ und „Soll-Raumtemperatur (aktuell)“ (beide fett, da für die Aktion relevant), „Warmwasserbereitung aktiviert“, „Heizung aktiviert“, „Warmwasser gerade erwärmt?“ (Info: Anzeige im Dashboard), „Schwankungen Raumtemperatur / Gebäudepuffer“ und „Temperaturobergrenze, Heizungssystem“.
+* **Steuerung der Wärmepumpe:** erst Warmwasser, dann Heizung. Der Test-Button der Heizung heißt „Test: Soll-Temperatur steuern“. Die Kachel „Raumtemperatur“ steht jetzt hinter der Kachel „Wärmepumpe“.
+* **Konfiguration aufgeräumt (aus 0.0.45.357):** Das „Varianten“-Dropdown ist weg, die Home-Assistant-Automation steht nur noch als dezenter Textlink am Ende der Kachel zur Wahl.
+
+## 0.0.45.357
+
+* **Konfiguration aufgeräumt: Das „Varianten“-Dropdown ist weg.** Standard ist immer die direkte Steuerung (bei der Wallbox die dreistufige). Die Home-Assistant-Automation ist nur noch über einen dezenten Textlink am Ende der Kachel erreichbar („Volle Individualität: Per Home-Assistant-Automation steuern“, mit Info-Symbol für Experten). Der Link schaltet die Kachel auf das Automations-Feld um, ein „← Zurück zur direkten Steuerung“-Link wechselt zurück. Betrifft Sonstigen Verbraucher, Auto laden, Warmwasserbereitung und die drei Batterie-Aktionen. Bereits hinterlegte Automationen bleiben aktiv.
+
+## 0.0.45.356
+
+* **Fix: „Prognose im Detail“ klappt sich nicht mehr von selbst zu.** Der Aufklapp-Zustand wird jetzt dauerhaft gemerkt und nicht mehr aus dem beim 30-Sekunden-Refresh ersetzten Element gelesen. Fehlte beim Refresh kurz die Prognose, ging der Zustand vorher verloren.
+
+## 0.0.45.355
+
+* **Dashboard: Auto „zu Hause“ statt „abwesend“.** Ist das Auto nicht eingesteckt, meldet der Sensor „Auto - Zuhause?“ aber „Zuhause“, steht in der Energiefluss-Grafik (Desktop und Mobil) jetzt „zu Hause“ statt „abwesend“. Ohne Sensor oder bei unbekanntem Sensorzustand bleibt es bei „abwesend“.
+
+## 0.0.45.354
+
+* **Dashboard: PV-Ertrag „Heute“ ist jetzt der Gesamttag.** Unter dem Chart „PV-Leistung“ stand bei „Heute“ bisher nur der Rest-Ertrag ab jetzt. Jetzt zählt wie bei Morgen/Übermorgen der ganze Tag: vergangene Stunden mit der gemessenen PV-Leistung, die laufende Stunde anteilig (gemessen seit Stundenbeginn + Prognose für den Rest der Stunde), kommende Stunden mit der Prognose.
+* **Konfiguration Auto: Frage „Ø Fahrleistung (km/Tag)“ entfernt.** Der Wert wurde nur als Startwert für die Verbrauchsprognose genutzt, solange noch kein Fahrtag bekannt ist. Beim Einrichten rekonstruiert das Add-on die letzten 30 Tage ohnehin aus der Home-Assistant-Historie von Wallbox-Status und Akkustand und lernt die Fahrleistung daraus. Bis dahin gelten fest 50 km/Tag; ein früher gespeicherter Wert wird ignoriert.
+* **Benachrichtigungen: Erklärung zu „Geplante Ladevorgänge ankündigen“** steht jetzt im Info-Fragezeichen statt als Text unter dem Schalter.
+
+## 0.0.45.353 – Laderegel: Auto laden nach Preis-Historie statt „günstigster Preis + 3 Cent“
+
+Die Einstellungen „Mindestladestand“ und „Limit PV-Überschussladen“ werden durch **eine** Einstellung ersetzt: **Laderegel** (sehr günstig / mittel / Komfort). Sie entscheidet, wie voll das Auto bei günstigen Strompreisen geladen wird.
+
+* **Neue Zielfunktion im Optimierer (Server ab 0.46.29.0).** Der Ladestand am Ende des Planungsfensters ist keine Gerade (`p_min` pro kWh) mehr, sondern eine Treppe: Ladestandsbereiche mit jeweils einem Preis, unter dem sich das Laden lohnt. Der Optimierer sucht dafür die günstigsten Stunden des Fensters heraus und wartet auf die allergünstigsten, statt loszuladen, sobald es sich irgendwie lohnt.
+  * Bis 10 % lädt das Auto immer sofort (fest, früher „Mindestladestand“).
+  * Reserve-Stufe (Preisgrenze: 70-%-Quantil der letzten 35 Tage, sehr günstig bis 25 %, mittel bis 35 %, Komfort bis 45 %), Komfort-Stufe (20-%-Quantil, bis 50 / 70 / 90 %), Spar-Stufe (10-%-Quantil, bis 90 %), darüber nur bei sehr billigem Strom (unter 5 Cent brutto – das gibt es fast nur bei negativen Preisen, schont den Akku).
+  * Rückblick-Rechnung über zwei Jahre (Börsenpreise 2024–2026, typisches Fahrprofil, 64-kWh-Auto): 514 € (sehr günstig) / 517 € (mittel) / 532 € (Komfort) Netzkosten pro Jahr gegenüber 567 € mit der bisherigen Regel. „sehr günstig“ spart einige Euro, dafür steht das Auto öfter bei niedrigem Ladestand (Ø 60 % gegenüber 73 % bei Komfort).
+* **Preis-Historie.** Das Add-on speichert die Börsenpreise der letzten 35 Tage (beim ersten Start von Awattar nachgeladen) und rechnet sie mit deinem aktuellen Tarif (Netzentgelt-Fenster, Aufschlag) in Brutto-Einkaufspreise um. Bei Festpreis, HT/NT oder noch fehlender Historie (unter 14 Tage) werden die Stufen aus den bekannten Preisen berechnet: günstigster Preis + 3 Cent bis zum Komfort-Ladestand, darüber nur unter 5 Cent.
+* **PV-Überschuss.** Der Schalter (PV-Überschuss im letzten Plan, `p_sell`-Basis) bleibt: Dann deckelt die Einspeisevergütung die Stufen oberhalb der Reserve, und oberhalb der PV-Grenze (70 % / 80 % / 90 %) lädt PV nicht mehr. Dieselbe Grenze gilt für das Laden mit PV-Überschuss durch das Add-on selbst.
+* **Bestandsnutzer.** Der bisherige Mindestladestand wird einmalig auf die Laderegel abgebildet: bis 20 % → sehr günstig, 30–50 % → mittel, ab 60 % → Komfort. Das „Limit PV-Überschussladen“ entfällt. Ohne bisherige Einstellung gilt „mittel“.
+* **Referenzfall (Ersparnis-Anzeige):** Ohne Optimierung lädt das Auto sofort bis zum Komfort-Ladestand der Laderegel.
+* **Server:** Das Add-on sendet die Stufen als `ev_tier_p1`…`p6` und `ev_tier_soc1`…`soc5` (Live-Werte) und weiterhin `WB - p_min`. Ein Server ohne Stufen-Unterstützung (< 0.46.29.0) nutzt weiter `WB - p_min`, die Reserve ist dort aber fest 10 % (`EV - SOC Normal`). Server daher erst nach dem Add-on-Update umstellen.
+
+## 0.0.45.352
+
+* **Neu: optionaler Sensor „Auto - Zuhause?“ und Zustand „zu Hause“ in der Anwesenheitsprognose.** Der Sensor (Kachel „Auto“) liefert die Zustände „Zuhause“ bzw. „Abwesend“ (z. B. bei der Tesla-Integration direkt vorhanden; auch `home`/`not_home`, Groß-/Kleinschreibung egal). Liefert dein Auto etwas anderes, richte dir einen Hilfssensor mit diesen beiden Zuständen ein. Ist das Auto zu Hause, aber nicht eingesteckt, zählt die laufende Stunde in der Prognose als abwesend, ab der Folgestunde als „kann laden“. Bei `unknown`/`unavailable` oder ohne Sensor bleibt alles wie bisher. Der Sensor wird nur intern im Add-on benutzt und nicht an shyft-power übertragen.
+* **Dashboard: Zustand „zu Hause“ in der Anwesenheitsprognose.** Ist das Auto zu Hause, aber nicht eingesteckt, zeigt die laufende Stunde im Balken unter „Ladestand Auto“, in der Legende und in „Prognose im Detail“ den Zustand „zu Hause“ (orange) statt „steht“.
+* **Neu: Benachrichtigung „Geplante Ladevorgänge ankündigen“ (Standard aus).** Um 18 und 6 Uhr (lokale Zeit) kommt eine Nachricht, wenn in den nächsten 12 Stunden eine Ladung geplant ist und das Auto nicht eingesteckt ist: „Verbinde dein Fahrzeug, geplante Ladung: XX kWh um XX Uhr. Ersparnis: XX €“. Ist das Auto abwesend, entfällt die Nachricht und kommt sofort beim Wechsel auf „Zuhause“ (ohne Wartezeit); dabei wird auch neu optimiert. Jede Ladung wird nur einmal angekündigt. Wird eine angekündigte, noch nicht gestartete Ladung verschoben oder abgesagt, folgt nach dem nächsten Optimierungslauf eine Update-Nachricht („Ladevorgang auf XX:XX Uhr verschoben“ / „Ladevorgang abgesagt“).
+
+## 0.0.45.351
+
+* **Batterie: Command-Timeout auch beim Netzladen 36000 s (10 h).** Bisher setzte „Batterie netzladen“ 3600 s. Lief die Aktion über den Stundenwechsel weiter, ohne dass ein neuer Befehl gesendet wurde, fiel der Wechselrichter nach genau einer Stunde auf „Maximize Self Consumption“ zurück (01.11.2026: Laden endete um 04:00:49 statt 05:00).
+* **Watchdog für „Batterie-Entladen verschieben“.** Solange die Aktion am Gerät läuft, prüft das Add-on die Entladeleistung sofort bei jeder Änderung der Entität (nach 20 s Bestätigung) und zusätzlich jede Minute. Steht sie nicht mehr auf 0 W (z. B. weil der Wechselrichter Entladeleistung und Timeout von sich aus zurückgesetzt hat, 01.11.2026 05:16), werden die Startbefehle inkl. Command-Timeout erneut gesendet und im Log der Aktion vermerkt.
+  * Gelingt das erneute Senden, bleibt die Aktion erfolgreich; schlägt es fehl, wird sie als Fehler markiert.
+  * Push-Benachrichtigung, wenn „Aktionen starten / beenden“ (alle oder nur bei Fehlern) eingeschaltet ist.
+  * Keine Prüfung in der ersten Minute nach dem Start, in den letzten 90 s vor dem geplanten Ende und bis 90 s nach einem eigenen Schreibvorgang des Add-ons (Beenden/Ablösen setzt den Ruhewert, während die Aktion noch als aktiv gespeichert ist). Erneutes Senden höchstens alle 5 Minuten je Aktion.
+
+## 0.0.45.350
+
+* **Verständliche Fehlermeldung, wenn die Heizungs-Solltemperatur einem Sensor zugeordnet ist.** Bei „Direkt steuern“ lässt sich nur eine number.- oder climate.-Entität beschreiben; war ein reiner Sensor (z. B. `sensor.vicare_zieltemperatur`) zugeordnet, entstand kein Hilfsskript, und der Test endete mit dem kryptischen „400: Bad Request“. Der Test nennt jetzt direkt den Grund und was zu tun ist, ebenso das Speichern der Zuordnung und ein fehlendes Hilfsskript.
+* **Auswahl der Heizungs-Solltemperatur schlägt zuerst number.- und climate.-Entitäten vor.** Sensoren bleiben wählbar, stehen aber unter „Sonstige Sensoren“.
 
 ## 0.0.45.349
 
