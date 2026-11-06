@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.45.365
+
+* **Warmwasser-Abweichung: Meldung erst ab mehr als 4 °C, Temperaturen in ganzen Grad.** Die Push-Nachricht „Warmwasser-Solltemperatur weicht ab“ kommt nur noch bei mehr als 4 °C (vorher 1,5 °C) Unterschied zwischen Soll und Ist; die Werte sind auf ganze Grad gerundet.
+* **Fix: Auto-Ladestand 0 % im Optimierer.** Meldete der Sensor „unavailable“/„unknown“, ging dieser Text an den Optimierer und wurde als 0 % gewertet. Bei allen Zahlen-Sensoren geht jetzt nie Text raus (ungültige Werte werden weggelassen); beim Auto-Ladestand gilt der zuletzt gültige Wert weiter.
+* **Fix: Kein Laden, wenn das Auto nicht eingesteckt ist.** Meldet die Wallbox „nicht verbunden“, wird kein Startbefehl gesendet. Ist das Auto zum Startzeitpunkt einer „Auto laden“-Aktion nicht eingesteckt, wird die Aktion kommentarlos gelöscht.
+
 ## 0.0.45.364
 
 * **Strompreisprognose: Differenz an der Nahtstelle schmilzt nicht mehr ab, plus fester Abzug für den Mitternachtsrückgang.** Eine Auswertung von 668 gespeicherten Bubble-Läufen (seit Dez 2024) gegen die später veröffentlichten Preise zeigt: Die Prognose liegt im Mittel 1,5 ct (Winter 25/26: 2 ct) zu niedrig, seit August 2026 sogar 4–5 ct, und der Fehler wächst mit dem Vorlauf; an den 5 billigsten Stunden eines Tages liegt sie an 70–80 % der Tage zu niedrig. Der Anker an der Nahtstelle (letzter echter Preis gegen erste Prognosestunde) beseitigt diesen Niveaufehler fast vollständig, aber nur, wenn er nicht abschmilzt: mit 0,1 ct/h blieben nach 2–3 Tagen wieder 2–4 ct Fehler übrig. Die Differenz bleibt deshalb jetzt über den ganzen Prognosezeitraum konstant (`BUBBLE_BIAS_MELT_PER_HOUR_EUR = 0`). Außerdem wird vom letzten echten Preis der übliche Preisrückgang von 23 auf 0 Uhr abgezogen (`BUBBLE_MIDNIGHT_STEP_EUR`, 0,5 ct netto = Mittel über 660 Tage; seit August 0,9 ct, Winter 0,26 ct), damit dieser normale Rückgang nicht als Niveaufehler aufgeschlagen wird. Gilt nur, wenn Bubbles Reihe selbst bis zur Naht echte Preise enthält (price_origin „market“); ist Awattar weiter als Bubble, bleibt es beim Prognosefehler an der letzten Awattar-Stunde (ohne Abzug, ohne Abschmelzen). Das Log nennt jetzt „bleibt über den ganzen Prognosezeitraum unverändert“ und den Abzug.
