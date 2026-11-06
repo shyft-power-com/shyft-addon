@@ -9386,7 +9386,7 @@ def announce_planned_charges_periodically():
 DEVICE_DEVIATION_GRACE_MINUTES = 20
 BATTERY_DEVIATION_TOLERANCE_KW = 0.15
 HEATING_TARGET_TEMP_DEVIATION_TOLERANCE_C = 1.0
-DHW_TARGET_TEMP_DEVIATION_TOLERANCE_C = 1.5
+DHW_TARGET_TEMP_DEVIATION_TOLERANCE_C = 4.0
 
 
 def _device_deviation_problem_id(key):
@@ -9636,10 +9636,14 @@ def check_device_status_deviation(config):
         dhw_action = _active_computed_action(computed_actions, DHW_ACTION_NAME)
         expected_dhw_temp = dhw_action.get("Target Value") if dhw_action is not None and past_grace(dhw_action) else None
         live_dhw_temp = _read_mapped_numeric(config, DHW_TARGET_TEMP_SENSOR_FIELD)
+        # Push/Problemtext in ganzen Grad (statt 3+ Nachkommastellen); gemeldet wird erst ab > 4 °C Abweichung.
+        dhw_message = ""
+        if expected_dhw_temp is not None and live_dhw_temp is not None:
+            dhw_message = f"Warmwasser-Solltemperatur weicht ab: Shyft erwartet {round(expected_dhw_temp)} °C, gemessen werden {round(live_dhw_temp)} °C."
         _check_numeric_deviation(
             "warmwasser_soll_temp", expected_dhw_temp, live_dhw_temp,
             DHW_TARGET_TEMP_DEVIATION_TOLERANCE_C,
-            f"Warmwasser-Solltemperatur weicht ab: Shyft erwartet {expected_dhw_temp} °C, gemessen werden {live_dhw_temp} °C.",
+            dhw_message,
             config,
         )
     else:
