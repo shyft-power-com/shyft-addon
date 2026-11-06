@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.350
+
+* **Warmwasser-Abweichung: Meldung erst ab mehr als 4 °C, Temperaturen in ganzen Grad.** Die Push-Nachricht „Warmwasser-Solltemperatur weicht ab“ wird nur noch gesendet, wenn Soll und Ist um mehr als 4 °C (vorher 1,5 °C) auseinanderliegen. Die Werte in der Nachricht werden auf ganze Grad gerundet statt mit 3 oder mehr Nachkommastellen angezeigt.
+
 ## 0.0.45.349
 
 * **Fix: Automatische Konto-Erstellung legte bei jeder Änderung auf der Konfigurationsseite einen neuen shyft-power-Account an.** Sobald ein echtes Gerät ausgewählt war, rief jedes automatische Speichern `create_user_addon` auf. Die Live-Antwort von Bubble enthielt keinen Token, das Add-on blieb deshalb im Demomodus und versuchte es beim nächsten Speichern erneut – am 31.10.2026 entstanden so 48 Accounts in 30 Minuten. Jetzt gilt:
