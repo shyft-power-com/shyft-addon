@@ -84,3 +84,13 @@ def test_parse_rows_tolerates_garbage():
     raw = json.dumps([{"slot": "sensor:a", "steps": "[{\"e\":\"p/k\"}]", "used": 2}, {"slot": "x"}, {"slot": "y", "steps": "{{"}])
     assert cs.parse_rows(raw) == [{"slot": "sensor:a", "steps": [{"e": "p/k"}], "used": 2}]
     assert cs.parse_rows("not json") == []
+
+
+def test_hot_water_recipe_roundtrip_uses_main_stage():
+    info = cs.build_entity_info(ENTITIES)
+    config = {"hotWaterRecipe": {"type": "direct", "service": "button.press", "sharedFields": {"entity_id": "button.my_renamed_start"}}}
+    (slot, steps_json), = cs.build_report_items(config, "hot_water", info)
+    assert slot == "recipe:hot_water"
+    resolved = cs.resolve_suggestions([{"slot": slot, "steps": json.loads(steps_json), "used": 1}],
+                                      cs.build_ref_index(cs.build_entity_info([{"entity_id": "button.other", "platform": "easee", "translation_key": "start_charging"}])))
+    assert resolved[slot][0]["value"] == {"main": {"service": "button.press", "sharedFields": {"entity_id": "button.other"}}}
