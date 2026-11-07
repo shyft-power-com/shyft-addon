@@ -2957,6 +2957,9 @@ def readRaumtemperaturForecastVsActual():
     payload["actualFine"] = _state_fine_points(entity_id)
     payload["targetActualFine"] = _state_fine_points(target_entity_id)
     payload["binMinutes"] = FINE_ACTUAL_BIN_MINUTES
+    # Live-Werte fuer den Hinweis unter dem Chart (Raum kaelter als Soll, siehe Frontend buildChartHint).
+    payload["liveIndoorTempC"] = _read_mapped_numeric(config, "heatpump_temp_indoor_measured")
+    payload["liveTargetTempC"] = _read_mapped_numeric(config, "heatpump_heating_target_temp_normal")
     return jsonify(payload)
 
 
@@ -2974,6 +2977,10 @@ def readWarmwasserForecastVsActual():
     payload = _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=DHW_ACTION_NAMES)
     payload["actualFine"] = _demo_fine_points("heatpump_dhw_tank_temp") if demo else _state_fine_points(entity_id)
     payload["binMinutes"] = FINE_ACTUAL_BIN_MINUTES
+    # Live-Tanktemperatur + vom Optimierer angesetzte Untergrenze (hw_soc_min) fuer den Hinweis unter dem Chart: liegt der Tank darunter,
+    # startet die Prognose bei der Untergrenze statt beim Ist-Wert (siehe Frontend buildChartHint).
+    payload["liveTankTempC"] = None if demo else _read_mapped_numeric(config, "heatpump_dhw_tank_temp")
+    payload["hwSocMinC"] = config.get("hwSocMinC")
     return jsonify(payload)
 
 

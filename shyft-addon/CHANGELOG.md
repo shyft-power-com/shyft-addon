@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.368
+
+* **Dashboard: Hinweise unter Warmwasser und Raumtemperatur.** Liegt der Warmwassertank mindestens 3 °C unter der Untergrenze, die der Optimierer ansetzt (`hw_soc_min`), startet die Prognose bei dieser Untergrenze statt beim Ist-Wert. Der Chart weist dann darauf hin, an der Wärmepumpe sicherzustellen, dass die Mindesttemperatur immer eingehalten wird (mit Link zur Sensor-Zuordnung der Warmwasser-Solltemperatur). Liegt die Raumtemperatur mindestens 0,2 °C unter der Solltemperatur, erscheint unter dem Raumtemperatur-Chart der Hinweis, dass die Heizkurve der Wärmepumpe zu niedrig eingestellt sein kann. Bei deaktiviertem Warmwasser bzw. deaktivierter Heizung werden die Hinweise nicht gezeigt.
+
 ## 0.0.45.367
 
 * **TEST: Add-on-Name und Seitenleisten-Titel wieder „shyft-power (TEST)“.** Beim Merge in 0.0.45.363 ging `name`/`panel_title` auf `test` verloren (Konflikt in `config.yaml`, die `main`-Zeile blieb stehen). Außerdem trugen `main` und `test` danach dieselbe Version 0.0.45.366, sodass das vom `main`-Build erzeugte Image (ohne „TESTUMGEBUNG“-Sticker) das des `test`-Builds überschreiben konnte. Mit der neuen Version kommt das Image nur noch vom `test`-Build, der Eck-Sticker erscheint wieder. Beim Release nach `main` muss der Name weiterhin auf „shyft-power“ zurückgesetzt werden.

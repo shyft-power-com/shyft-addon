@@ -11825,6 +11825,48 @@ function trimWeatherStripToFit(strip) {
     }
 }
 
+// Kleiner Hinweis unter einem Dashboard-Chart (Widget-Element von buildLineChart/buildForecastActualChart).
+// parts: Strings und/oder {text, sensorField} - letzteres wird ein Link, der zur Sensor-Zuordnung in den Einstellungen springt.
+function appendChartHint(widgetEl, parts) {
+    const hint = document.createElement('p');
+    hint.className = 'chartHint';
+    for (const part of parts) {
+        if (typeof part === 'string') {
+            hint.appendChild(document.createTextNode(part));
+            continue;
+        }
+        const link = document.createElement('a');
+        link.href = '#';
+        link.className = 'systemHealthProblemLink';
+        link.style.whiteSpace = 'normal';
+        link.textContent = part.text;
+        link.addEventListener('click', (event) => {
+            event.preventDefault();
+            scrollToIntegrationSection(sensorFieldSectionKey(part.sensorField), part.sensorField + VALUE_POSTFIX);
+        });
+        hint.appendChild(link);
+    }
+    widgetEl.appendChild(hint);
+    return widgetEl;
+}
+
+// Warmwasser: Tank mind. 3 K unter der Untergrenze des Modells (hw_soc_min) -> die Prognose startet bei der Untergrenze, nicht beim Ist-Wert.
+const DHW_HINT_MIN_DEVIATION_K = 3;
+// Heizung: Raum mind. 0,2 K unter der Solltemperatur.
+const HEATING_HINT_MIN_DEVIATION_K = 0.2;
+
+function dhwHintParts(comparison) {
+    const tank = comparison && comparison.liveTankTempC, min = comparison && comparison.hwSocMinC;
+    if (typeof tank !== 'number' || typeof min !== 'number' || tank > min - DHW_HINT_MIN_DEVIATION_K) return null;
+    return ['Stelle durch Einstellungen an der Wärmepumpe sicher, dass die ', {text: 'Mindesttemperatur', sensorField: 'heatpump_dhw_target_temp'}, ' immer eingehalten wird.'];
+}
+
+function heatingHintParts(comparison) {
+    const indoor = comparison && comparison.liveIndoorTempC, target = comparison && comparison.liveTargetTempC;
+    if (typeof indoor !== 'number' || typeof target !== 'number' || indoor > target - HEATING_HINT_MIN_DEVIATION_K) return null;
+    return ['Wenn dein Gebäude in den nächsten Stunden nicht auf Solltemperatur aufheizt, ist die Heizkurve in den Einstellungen deiner Wärmepumpe zu niedrig eingestellt.'];
+}
+
 // Ersetzt (oder haengt beim allerersten Aufruf neu an) ein Dashboard-Widget anhand eines stabilen
 // Schluessels, statt die gesamte #dashboardBody bei jedem Refresh neu aufzubauen (siehe Nutzer-
 // Feedback: der 30-Sekunden-Hintergrund-Refresh liess vorher die ganze Seite "neu laden" - jedes
@@ -12078,10 +12120,11 @@ async function loadDashboardImpl() {
         // "Innenraum" (Zweitkurve): Ist aus der echten Sensorhistorie statt der bisher gezeigten,
         // vom Optimierer nur SIMULIERTEN Innentemperatur (Nutzer-Vorgabe) - best-effort wie bei den
         // anderen Prognose-vs-Ist-Charts, faellt bei einem Fehler auf die reine Simulationskurve zurueck.
-        let raumtemperaturLabels = data.output_labels, raumtemperaturValues = data.t_i_target, raumtemperaturDashedFromIndex = null, raumtemperaturOverlay = null, raumtemperaturFine = null;
+        let raumtemperaturLabels = data.output_labels, raumtemperaturValues = data.t_i_target, raumtemperaturDashedFromIndex = null, raumtemperaturOverlay = null, raumtemperaturFine = null, raumtemperaturHint = null;
         let raumtemperaturSecondSeries = {values: data.t_i, label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2, integerTicks: true, band: 'upper'};
         try {
             const raumtemperaturComparison = await getJson(insideHomeAssistant + '/dashboard/raumtemperatur-forecast-vs-actual');
+            raumtemperaturHint = heatingHintParts(raumtemperaturComparison);
             if (raumtemperaturComparison.status === 'success' && raumtemperaturComparison.labels.length > 0) {
                 // Beide Kurven laufen ab 0 Uhr (Historie des heutigen Tages + Prognose, wie bei Ladestand Auto):
                 // "Heizung-Soll" = Verlauf der Solltemperatur-Entitaet bis jetzt, danach (gestrichelt) der Plan des
@@ -12111,7 +12154,8 @@ async function loadDashboardImpl() {
         } catch (err) {
             console.log(err);
         }
-        updateOrAppendDashboardWidget(container, 'raumtemperatur', buildLineChart('Raumtemperatur', '°C', raumtemperaturLabels, raumtemperaturValues, {
+        const heatingDeactivated = !!(flowData && flowData.heatpump && flowData.heatpump.heatingOn === false);
+        const raumtemperaturWidget = buildLineChart('Raumtemperatur', '°C', raumtemperaturLabels, raumtemperaturValues, {
             // Kein subtitle mehr (Nutzer-Vorgabe: Titel bleibt schlicht "Raumtemperatur (°C)"),
             // primaryLabel beschriftet stattdessen nur die Legende darunter.
             primaryLabel: 'Heizung-Soll',
@@ -12134,7 +12178,9 @@ async function loadDashboardImpl() {
             blurredLabel: (flowData && flowData.heatpump && flowData.heatpump.heatingOn === false)
                 ? 'Heizung deaktiviert - keine Heizungs-Aktionen'
                 : null,
-        }));
+        });
+        if (raumtemperaturHint && !heatingDeactivated) appendChartHint(raumtemperaturWidget, raumtemperaturHint);
+        updateOrAppendDashboardWidget(container, 'raumtemperatur', raumtemperaturWidget);
         // Steht "Warmwassermodus aktiviert?" auf Aus, bekommt der Optimierer keinen Warmwasserbedarf (siehe build_hot_water_optimizer_fields) - die Prognose waere
         // bedeutungslos. Der Chart bleibt, wird aber wie bei der Raumtemperatur als "deaktiviert" ausgeblendet (Heizstab/nicht zugeordnet: null -> nichts ausgeblendet).
         const warmwasserBlurredLabel = (flowData && flowData.heatpump && flowData.heatpump.dhwActivated === false)
@@ -12144,7 +12190,10 @@ async function loadDashboardImpl() {
         try {
             const warmwasserComparison = await getJson(insideHomeAssistant + '/dashboard/warmwasser-forecast-vs-actual');
             if (warmwasserComparison.status === 'success' && warmwasserComparison.labels.length > 0) {
-                updateOrAppendDashboardWidget(container, 'warmwasser', buildWarmwasserForecastActualChart(warmwasserComparison.labels, warmwasserComparison.forecast, warmwasserComparison.actual, warmwasserComparison.actionHours, warmwasserComparison.actualFine, warmwasserBlurredLabel));
+                const warmwasserWidget = buildWarmwasserForecastActualChart(warmwasserComparison.labels, warmwasserComparison.forecast, warmwasserComparison.actual, warmwasserComparison.actionHours, warmwasserComparison.actualFine, warmwasserBlurredLabel);
+                const warmwasserHint = dhwHintParts(warmwasserComparison);
+                if (warmwasserHint && !warmwasserBlurredLabel) appendChartHint(warmwasserWidget, warmwasserHint);
+                updateOrAppendDashboardWidget(container, 'warmwasser', warmwasserWidget);
                 warmwasserChartRendered = true;
             }
         } catch (err) {
