@@ -4719,10 +4719,9 @@ function evChargeRuleFromLegacy(legacyEvSocNormal) {
 function buildEvChargeRuleField() {
     return buildConfigSelectField({
         label: 'Laderegel',
-        tooltip: 'Die Laderegel entscheidet, wie voll dein Auto bei günstigen Strompreisen geladen wird. ' +
-            'Fällt der Ladestand eines eingesteckten Autos unter 10 %, lädt Shyft sofort mit voller Leistung bis 12 % (Sofortladen). Bis 30 % lädt Shyft in jedem Fall in den günstigsten Stunden der nächsten Tage, je nach Regel bis ca. 35 % / 45 % auch bei normalen Preisen (als Reserve), bis 50 % / 70 % / 90 % bei guten Preisen, darüber nur bei sehr günstigem Strom (unter 5 Cent brutto, also fast nur bei negativen Preisen), um den Akku zu schonen. ' +
-            '„sehr günstig“ spart einige Euro im Jahr: Shyft wartet auf die allergünstigsten Stunden und lädt dann voll. Dafür steht das Auto öfter bei niedrigem Ladestand. „Komfort“ hält das Auto voller für spontane Fahrten. ' +
-            'Beim Laden mit PV-Überschuss lädt Shyft bis 70 % („sehr günstig“), 80 % („mittel“) bzw. 90 % („Komfort“) – das ersetzt die frühere Einstellung „Limit PV-Überschussladen“.',
+        tooltip: 'Fällt der Ladestand eines eingesteckten Autos unter 10 %, lädt Shyft sofort, um den Akku zu schonen und spontane Kurzfahrten zu ermöglichen. ' +
+            'Zudem stellt Shyft sicher, dass für alle prognostizierten und geplanten Fahrten ausreichend geladen wird. ' +
+            'Drittens plant Shyft opportunistische Ladevorgänge, bei im historischen Vergleich niedrigen prognostizierten Preisen. Shyft kann entweder den Akku möglichst leer halten und auf die allergünstigsten Preise warten („sehr günstig“), oder für mehr „Komfort“ tendenziell häufiger laden.',
         id: 'ev_charge_rule',
         configKey: 'evChargeRule',
         options: ['sehr günstig', 'mittel', 'Komfort'].map(v => [v, v]),

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.369
+
+* **Laderegel: kürzerer Hilfetext.** Der Hinweis zur Laderegel erklärt jetzt in drei Sätzen: Sofortladen unter 10 %, ausreichend Ladung für geplante Fahrten und opportunistisches Laden bei niedrigen Preisen („sehr günstig“ vs. „Komfort“).
+
 ## 0.0.45.368
 
 * **Dashboard: Hinweise unter Warmwasser und Raumtemperatur.** Liegt der Warmwassertank mindestens 3 °C unter der Untergrenze, die der Optimierer ansetzt (`hw_soc_min`), startet die Prognose bei dieser Untergrenze statt beim Ist-Wert. Der Chart weist dann darauf hin, an der Wärmepumpe sicherzustellen, dass die Mindesttemperatur immer eingehalten wird (mit Link zur Sensor-Zuordnung der Warmwasser-Solltemperatur). Liegt die Raumtemperatur mindestens 0,2 °C unter der Solltemperatur, erscheint unter dem Raumtemperatur-Chart der Hinweis, dass die Heizkurve der Wärmepumpe zu niedrig eingestellt sein kann. Bei deaktiviertem Warmwasser bzw. deaktivierter Heizung werden die Hinweise nicht gezeigt.
