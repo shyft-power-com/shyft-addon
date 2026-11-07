@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.367
+
+* **Community-Vorschläge für Zuordnungen.** Nach einem erfolgreichen Aktionstest meldet das Add-on anonym an shyft-power, welche Entitäten (und bei „Warmwasser“/„Auto laden“ welche Service-Rezepte) für die gewählte Integration funktioniert haben – als stabiler Schlüssel aus Integrations-Domain und `translation_key`/`original_name`, nicht als umbenennbare `entity_id`, ohne Zahlenwerte, Geräte-IDs oder Nutzerbezug. Mit dem letzten bestandenen Test einer Kachel gehen auch deren übrige Sensoren mit. Ein unveränderter Wiederholungstest meldet nichts. Wählt ein neuer Nutzer dieselbe Integration, werden leere Sensor-/Steuerungsfelder mit dem häufigsten Vorschlag belegt (nur Entitäten, die er hat; bei mehreren gleichen die erste), gelb markiert mit Badge „Vorschlag“; Platz 2 und 3 stehen oben im Dropdown. Die Markierung verschwindet nach Änderung des Felds oder erfolgreichem Test. Rezept-Vorschläge (Warmwasser/Auto laden) liefert das Add-on bereits über `GET /suggestions/<kachel>`, die Vorbelegung dieser Formulare folgt.
+
 ## 0.0.45.366
 
 * **Heizung Soll-Temperatur: echte Fehlerursache statt „400: Bad Request“.** Lehnt Home Assistant den Skriptaufruf ab (z.B. Wert außerhalb des erlaubten Bereichs), stand die Ursache weder in der REST-Antwort noch im System-Log – die Aktionskarte zeigte nur `POST /api/services/script/... failed: 400 400: Bad Request`. Das Add-on liest die Ursache jetzt zusätzlich aus dem Skript-Trace von Home Assistant, hängt Zielwert und Entität an die Meldung an und schreibt den Fehler ins Add-on-Log sowie ins Home-Assistant-Log (Logger `shyft`).

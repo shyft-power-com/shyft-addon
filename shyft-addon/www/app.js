@@ -3903,6 +3903,11 @@ function buildIntegrationPicker(section, currentIds, onChange) {
 }
 
 function renderSectionBody(bodyDiv, section, entryIds) {
+    renderSectionBodyContent(bodyDiv, section, entryIds);
+    applyCommunitySuggestions(section, entryIds);
+}
+
+function renderSectionBodyContent(bodyDiv, section, entryIds) {
     bodyDiv.innerHTML = '';
 
     // Demo-Geraet: keine echten Entities zum Mappen, keine echte Steuerung - kurzer Hinweis statt
@@ -5046,6 +5051,7 @@ function reapplyTestGates() {
 function markActionTested(readyKey, passed) {
     if (readyKey === null) return;
     actionTestStatusMap[readyKey] = passed;
+    refreshCommunitySuggestionMarks();
 }
 
 // Unauffaelliger Textlink am Ende einer Steuerung, der zwischen der Standard-Steuerung (direkte
@@ -7092,6 +7098,84 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
 // im Eingabefeld als "An"/"Aus".
 const STATIC_SENSOR_ON = 'static_on';
 const STATIC_SENSOR_OFF = 'static_off';
+
+// ---- Community-Vorschlaege (siehe community_suggestions.py) ----------------------------------
+// Fuer die gewaehlte Integration liefert das Add-on (GET /suggestions/<section>) die haeufigsten Entitaets-
+// Zuordnungen anderer Nutzer, schon auf Entitaeten gefiltert, die dieser Nutzer hat. Leere Sensor-/Steuerungs-
+// felder werden mit dem haeufigsten Vorschlag belegt und gelb mit "Vorschlag"-Badge markiert; Platz 2 und 3
+// stehen oben im Dropdown. Die Markierung verschwindet, sobald der Nutzer das Feld aendert oder eine Aktion
+// der Kachel erfolgreich getestet wurde (dann hat der Vorschlag sich bewaehrt).
+const SECTION_READY_KEYS = {
+    waermepumpe: ['hot_water', 'heating_target_temp'], heizstab: ['heating_rod'], wallbox: ['car_charge_start'],
+    auto: ['car_charge_start'], batterie: ['battery_charge_shift_pv_surplus', 'battery_discharge_shift', 'battery_grid_charge'],
+};
+const communitySuggestionCache = {};
+const communitySuggestionMarks = [];   // {input, badge, section}
+
+async function loadCommunitySuggestions(sectionKey, entryId) {
+    const cacheKey = sectionKey + '|' + entryId;
+    if (!communitySuggestionCache[cacheKey]) {
+        communitySuggestionCache[cacheKey] = getJson(insideHomeAssistant + '/suggestions/' + encodeURIComponent(sectionKey)
+            + '?entry=' + encodeURIComponent(entryId)).catch(() => ({}));
+    }
+    return communitySuggestionCache[cacheKey];
+}
+
+function isSectionTestPassed(sectionKey) {
+    return (SECTION_READY_KEYS[sectionKey] || []).some(k => actionTestStatusMap[k] === true);
+}
+
+function clearSuggestionMark(mark) {
+    mark.input.classList.remove('communitySuggested');
+    if (mark.badge) mark.badge.remove();
+    mark.badge = null;
+}
+
+function refreshCommunitySuggestionMarks() {
+    for (const mark of communitySuggestionMarks) {
+        if (mark.badge && (!mark.input.isConnected || isSectionTestPassed(mark.sectionKey))) clearSuggestionMark(mark);
+    }
+}
+
+async function applyCommunitySuggestions(section, entryIds) {
+    if (entryIds.length !== 1 || entryIds[0] === DEMO_INTEGRATION_ID) return;
+    const suggestions = await loadCommunitySuggestions(section.key, entryIds[0]);
+    for (const [slot, entries] of Object.entries(suggestions || {})) {
+        const [kind, key] = slot.split(':');
+        if (kind !== 'sensor' && kind !== 'actor') continue;   // Rezept-Slots (recipe:*) folgen
+        const input = document.getElementById(key + (kind === 'sensor' ? VALUE_POSTFIX : ACTOR_VALUE_POSTFIX));
+        if (!input || typeof input.value !== 'string' || !entries.length) continue;
+        // Alternativen (Platz 2 und 3) oben im Dropdown
+        const datalist = document.getElementById('entityOptions_' + section.key + '_' + key);
+        if (datalist) {
+            for (const entry of entries.slice(1).reverse()) {
+                const option = document.createElement('option');
+                option.value = formatEntityDisplay(entry.value);
+                option.dataset.bucket = 'match';
+                datalist.insertBefore(option, datalist.firstChild);
+            }
+        }
+        const top = formatEntityDisplay(entries[0].value);
+        const wasEmpty = !input.value.trim();
+        // Bereits per Vorschlag belegt (vor dem letzten Neurendern gespeichert): Markierung erneut setzen,
+        // solange noch kein Test der Kachel bestanden ist.
+        const stillSuggested = !wasEmpty && input.value === top && !isSectionTestPassed(section.key);
+        if (!wasEmpty && !stillSuggested) continue;
+        if (wasEmpty) {
+            input.value = top;
+            input.dispatchEvent(new Event('change', {bubbles: true}));   // speichert (autoSave), damit "Testen" die Zuordnung kennt
+        }
+        const badge = document.createElement('span');
+        badge.className = 'communitySuggestionBadge';
+        badge.textContent = 'Vorschlag';
+        badge.title = 'Von anderen Nutzern mit derselben Integration erfolgreich verwendet - bitte testen.';
+        input.classList.add('communitySuggested');
+        input.parentNode.appendChild(badge);
+        const mark = {input, badge, sectionKey: section.key};
+        communitySuggestionMarks.push(mark);
+        input.addEventListener('input', () => clearSuggestionMark(mark), {once: true});
+    }
+}
 
 function formatEntityDisplay(entityId) {
     if (!entityId) return '';

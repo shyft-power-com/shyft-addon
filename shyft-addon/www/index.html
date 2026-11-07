@@ -86,6 +86,22 @@
         .sensorInput.status-error {
             border-color: var(--color-error);
         }
+        /* Per Community-Vorschlag vorbelegtes Feld (siehe applyCommunitySuggestions): gelber Rand + "Vorschlag"-Badge,
+           bis der Nutzer es aendert oder eine Aktion der Kachel erfolgreich getestet wurde. */
+        .sensorInput.communitySuggested {
+            border-color: #e0a800;
+            box-shadow: 0 0 0 2px rgba(224, 168, 0, 0.25);
+        }
+        .communitySuggestionBadge {
+            display: inline-block;
+            margin-top: 0.25em;
+            padding: 0.05em 0.55em;
+            border-radius: 999px;
+            background: rgba(224, 168, 0, 0.18);
+            border: 1px solid #e0a800;
+            color: var(--color-text);
+            font-size: 0.78em;
+        }
 
         /* Markiert ein Sensor-/Steuerungsfeld, das gerade eine Fehlermeldung ausloest - entweder
            eine fehlgeschlagene Aktion oder ein fehlendes Pflichtfeld (siehe
