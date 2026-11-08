@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.371
+
+* **Base Case: E-Auto ohne festen Ladeverlust, Selbstentladung 0,0004.** Der Optimierer (Server 0.46.31.0, `OPTIMIZER_VERSION` v52) rechnet den festen Ladeverlust von 0,2 kWh je Ladestunde nicht mehr mit und setzt die Selbstentladung des Autos von 0,00004 auf 0,0004 je Stunde (ca. 30 W bei 75 kWh). Der Base Case in `base_case.py` zieht nach: `EV_FIXED_LOSS_KWH` ist 0, `EV_LOSS` ist 0,0004. Damit stimmen die Ladestände von Base Case und Optimierer-Plan im Vergleich wieder überein. Die Schwelle, ab der der Base Case ein Komfort-Defizit unter `ev_soc_norm` nachlädt, bleibt bei 0,2 kWh (neue Konstante `EV_CHARGE_HYSTERESIS_KWH`), das Regelverhalten ändert sich also nicht. Reihenfolge beim Ausrollen: erst Server 0.46.31.0, dann dieses Add-on.
+
 ## 0.0.45.370
 
 * **Strompreisprognose: Sicherheitsaufschlag auf den Einkaufspreis, wachsend mit dem Vorlauf.** Zusätzlich zum Niveauausgleich an der Naht (0.0.45.364) wird jede Prognosestunde ab der letzten Stunde mit echtem Day-ahead-Preis um einen Aufschlag angehoben (brutto): 1 ct am Anfang, 1,5 ct nach 4 h, 2 ct nach 15 h, 3 ct ab 24 h, dazwischen linear (`FORECAST_MARKUP_POINTS`). Hintergrund: Die Prognose liegt in den billigsten Stunden meist zu niedrig, der Optimierer wartete deshalb auf scheinbar günstige Prognosestunden (z. B. für die Auto-Ladung), die beim Näherkommen teurer wurden, und schob die Ladung immer weiter. Jetzt wird nur noch auf prognostizierte Stunden gewartet, die deutlich günstiger sind. Wirkt nur auf den Einkaufspreis (nicht auf die Einspeisevergütung, auch nicht bei Direktvermarktung) und nur auf Bubbles Prognose, nicht auf echte Preise.

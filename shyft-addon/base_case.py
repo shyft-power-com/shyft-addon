@@ -20,7 +20,7 @@ Abweichungen Richtung aktuellem Julia-Modell (so mit dem Product Owner abgestimm
 * Batterie-Mindest-SOC aus Spalte ``b_soc_min`` (Excel: hart 10 %).
 * Waermepumpen-Leistung deckt exakt den Stundenbedarf, keine 20-%-Modulationsuntergrenze,
   kein alternierendes Ueber-/Unterheizen (Excel-Spalte F).
-* EV-Wirkungsgrad 0.93 / Verlust 0.00004 / Fixverlust 0.2 kWh je Ladestunde (Julia).
+* EV-Wirkungsgrad 0.93 / Verlust 0.0004 je Stunde / kein Fixverlust mehr (Julia, seit Server 0.46.31.0).
 * "Sonstiger Verbraucher" (OD) war im Excel-Modell gar nicht enthalten, ist aber im aktuellen
   Julia-Modell aktiv: es laeuft (mit fixer Leistung ``otherDevice_P``) genau dann, wenn ``p_buy``
   unter dem in ``OD_running_hours`` hinterlegten Schwellenpreis liegt (Cent/kWh, /100 fuer EUR/kWh
@@ -56,8 +56,9 @@ PV_ETA = 0.95            # pv = PV(0.95f0)
 B_ETA = 0.92             # Battery(0.92f0, ...) - bewusst < 0.95 gegen Arbitrage-Grenzfaelle
 B_LOSS = 0.00003         # Battery(..., 0.00003f0)
 EV_ETA = 0.93            # EV(0.93f0, ...)
-EV_LOSS = 0.00004        # EV(..., 0.00004f0)
-EV_FIXED_LOSS_KWH = 0.2  # -0.2 * ev_plugged[h] je Ladestunde
+EV_LOSS = 0.0004         # EV(..., 0.0004f0) - Selbstentladung je Stunde (ca. 30 W bei 75 kWh), seit Server 0.46.31.0
+EV_FIXED_LOSS_KWH = 0.0  # fester Ladeverlust je Ladestunde: im Optimierer seit Server 0.46.31.0 entfallen (vorher -0.2 * ev_plugged[h])
+EV_CHARGE_HYSTERESIS_KWH = 0.2  # Base Case: Komfort-Defizit (ev_soc_norm) erst ab dieser Groesse nachladen - kein Verlust, nur Regelverhalten
 HW_LOSS = 0.003          # hw = ThermalStorage(..., loss_hw=0.003, ...)
 C_WATER = 4.184
 P_WATER = 997.0
@@ -362,11 +363,11 @@ def _compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None, 
             plugged = (i + 1) not in ev_away_hours
             if plugged:
                 # Pflicht: kuenftige Fahrten abdecken (keine Hysterese - sonst faellt der SOC vor der
-                # Fahrt unter 0). Komfort: ev_soc_norm halten, dort mit Hysterese (0.2 kWh Fixverlust
-                # je Ladestunde -> ein reales, ungeregeltes System jagt kein Mini-Defizit hinterher).
+                # Fahrt unter 0). Komfort: ev_soc_norm halten, dort mit Hysterese (EV_CHARGE_HYSTERESIS_KWH,
+                # ein reales, ungeregeltes System jagt kein Mini-Defizit hinterher).
                 need_trip = required[i + 1] - soc_no_charge
                 need_norm = ev_soc_norm_kwh - soc_no_charge
-                if need_trip > 1e-9 or need_norm > EV_FIXED_LOSS_KWH:
+                if need_trip > 1e-9 or need_norm > EV_CHARGE_HYSTERESIS_KWH:
                     gain = min(max(need_trip, need_norm), eff_rate, ev_b_size - soc_no_charge)  # <= soc_max und <= rate_max
                     if gain > 1e-9:
                         ev_charge_gross[i] = (gain + EV_FIXED_LOSS_KWH) / EV_ETA
