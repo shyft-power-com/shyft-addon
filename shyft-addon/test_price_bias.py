@@ -62,3 +62,31 @@ def test_bias_without_market_info_falls_back_to_awattar_boundary(monkeypatch):
     last = datetime(2026, 11, 4, 22, tzinfo=UTC)
     assert app._bubble_bias({last: 0.2 * VAT}, {last: 0.2}) == (last, pytest.approx(0.0))
     assert app._bubble_bias({}, {last: 0.2}) is None
+
+
+def test_forecast_markup_ramps_with_lead_time():
+    seam = datetime(2026, 11, 4, 22, tzinfo=UTC)
+    at = lambda hours: app._forecast_markup_gross(seam + timedelta(hours=hours), seam)
+    assert at(0) == 0.0 and at(-3) == 0.0  # echte Stunden bleiben unberuehrt
+    assert at(1) == pytest.approx(0.010 + 0.005 / 4)
+    assert at(4) == pytest.approx(0.015)
+    assert at(15) == pytest.approx(0.020)
+    assert at(24) == pytest.approx(0.030)
+    assert at(100) == pytest.approx(0.030)
+    assert at(9.5) == pytest.approx(0.015 + 0.005 * 5.5 / 11)
+    assert app._forecast_markup_gross(seam, None) == 0.0
+
+
+def test_markup_only_on_buy_price_not_on_sell(monkeypatch):
+    last = datetime(2026, 11, 4, 22, tzinfo=UTC)
+    monkeypatch.setattr(app, "_bubble_last_market_hour", lambda: last)
+    h = last + timedelta(hours=30)
+    by_hour = {last: 0.2 * VAT}
+    bubble = {last: 0.2, h: 0.18}
+    bias = app._bubble_bias(by_hour, bubble)
+    base = app._resolve_fallback_price(h, by_hour, bubble, bias)
+    with_markup = app._resolve_fallback_price(h, by_hour, bubble, bias, markup=True)
+    assert with_markup - base == pytest.approx(0.03, abs=1e-4)
+    # ohne bias: Naht ist die letzte Stunde mit echtem Preis
+    no_bias = app._resolve_fallback_price(h, by_hour, bubble, None, markup=True)
+    assert no_bias == pytest.approx(0.18 * VAT + 0.03, abs=1e-4)

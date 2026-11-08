@@ -1091,16 +1091,44 @@ def _bubble_bias_offset(h, bias):
     return math.copysign(remaining, delta) if remaining > 0 else 0.0
 
 
-def _resolve_fallback_price(h, by_hour, bubble_by_hour, bias=None):
+# Sicherheitsaufschlag auf den Einkaufspreis der PROGNOSE (brutto, EUR/kWh), wachsend mit dem Vorlauf ab der letzten Stunde mit echtem Preis: die Prognose ist
+# trotz Niveauausgleich (_bubble_bias) am Anfang unsicher und liegt in den billigsten Stunden meist zu niedrig. Folge ohne Aufschlag: der Optimierer wartet
+# auf scheinbar billige Prognosestunden, die beim Naeherkommen teurer werden, und verschiebt Ladungen immer weiter. Stuetzpunkte (Vorlauf in Stunden,
+# Aufschlag): 1 ct am Anfang (erste zwei Stunden), 1,5 ct bei 4 h, 2 ct bei 15 h, 3 ct ab 24 h; dazwischen linear. Nur Einkauf, nicht die Einspeiseverguetung.
+FORECAST_MARKUP_POINTS = ((0, 0.010), (4, 0.015), (15, 0.020), (24, 0.030))
+
+
+def _forecast_markup_gross(h, seam):
+    "Aufschlag (EUR/kWh brutto) fuer die Prognosestunde h; seam = letzte Stunde mit echtem Preis. Ausserhalb der Prognose (h <= seam, kein seam) 0."
+    if seam is None:
+        return 0.0
+    lead = (h - seam) / timedelta(hours=1)
+    if lead <= 0:
+        return 0.0
+    points = FORECAST_MARKUP_POINTS
+    if lead >= points[-1][0]:
+        return points[-1][1]
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        if lead <= x1:
+            return y0 + (y1 - y0) * (lead - x0) / (x1 - x0)
+    return points[-1][1]
+
+
+def _resolve_fallback_price(h, by_hour, bubble_by_hour, bias=None, markup=False):
     """Brutto-Preis (EUR/kWh) fuer eine Stunde jenseits des echten Awattar-Fensters: zuerst Bubbles
     eigene Strompreisprognose (_fetch_bubble_price_prediction, netto -> brutto konvertiert - deckt
-    i.d.R. den gesamten Optimierungszeitraum ab; mit abschmelzender Korrektur um den Fehler am Ende der
+    i.d.R. den gesamten Optimierungszeitraum ab; mit Niveaukorrektur um den Fehler am Ende der
     echten Preise, siehe _bubble_bias), sonst als letzter Rueckfall ein echter
     Awattar-Preis derselben Uhrzeit bis zu PRICE_FALLBACK_MAX_DAYS_BACK Tage zurueck. None, wenn
-    beides fehlschlaegt - der Aufrufer faellt dann selbst auf den zuletzt aufgeloesten Wert zurueck."""
+    beides fehlschlaegt - der Aufrufer faellt dann selbst auf den zuletzt aufgeloesten Wert zurueck.
+    markup=True (Einkaufspreis): zusaetzlich der mit dem Vorlauf wachsende Sicherheitsaufschlag (FORECAST_MARKUP_POINTS)."""
     bubble_price = bubble_by_hour.get(h)
     if bubble_price is not None:
-        return round((bubble_price + _bubble_bias_offset(h, bias)) * AWATTAR_VAT_FACTOR, 5)
+        price = (bubble_price + _bubble_bias_offset(h, bias)) * AWATTAR_VAT_FACTOR
+        if markup:
+            seam = bias[0] if bias else (max(by_hour) if by_hour else None)
+            price += _forecast_markup_gross(h, seam)
+        return round(price, 5)
     for days_back in range(1, PRICE_FALLBACK_MAX_DAYS_BACK + 1):
         price = by_hour.get(h - timedelta(days=days_back))
         if price is not None:
@@ -1200,7 +1228,7 @@ def compute_price_buy_array(config, base_time_utc, hours):
             h = (base_time_utc + timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
             price = by_hour.get(h)
             if price is None:
-                price = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias)
+                price = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias, markup=True)
             if price is None:
                 price = out[-1] - surcharge if out else 0.0
             out.append(round(price + surcharge, 5))
@@ -1233,7 +1261,7 @@ def compute_price_buy_array(config, base_time_utc, hours):
                 # echter Awattar-Preis eines frueheren Tages, zuletzt der vorherige Wert (Notnagel -
                 # erzeugte ohne den Bubble-Fallback einen eingefrorenen Preisverlauf, siehe
                 # CHANGELOG 0.0.45.88).
-                raw_price = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias)
+                raw_price = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias, markup=True)
             if raw_price is None:
                 raw_price = prev_raw_price if prev_raw_price is not None else 0.0
             tariff = _netzentgelt_tariff_for_hour(h.astimezone(get_ha_timezone()), windows, quarters)

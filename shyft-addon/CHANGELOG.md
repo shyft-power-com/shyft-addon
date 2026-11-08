@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.370
+
+* **Strompreisprognose: Sicherheitsaufschlag auf den Einkaufspreis, wachsend mit dem Vorlauf.** Zusätzlich zum Niveauausgleich an der Naht (0.0.45.364) wird jede Prognosestunde ab der letzten Stunde mit echtem Day-ahead-Preis um einen Aufschlag angehoben (brutto): 1 ct am Anfang, 1,5 ct nach 4 h, 2 ct nach 15 h, 3 ct ab 24 h, dazwischen linear (`FORECAST_MARKUP_POINTS`). Hintergrund: Die Prognose liegt in den billigsten Stunden meist zu niedrig, der Optimierer wartete deshalb auf scheinbar günstige Prognosestunden (z. B. für die Auto-Ladung), die beim Näherkommen teurer wurden, und schob die Ladung immer weiter. Jetzt wird nur noch auf prognostizierte Stunden gewartet, die deutlich günstiger sind. Wirkt nur auf den Einkaufspreis (nicht auf die Einspeisevergütung, auch nicht bei Direktvermarktung) und nur auf Bubbles Prognose, nicht auf echte Preise.
+
 ## 0.0.45.369
 
 * **Laderegel: kürzerer Hilfetext.** Der Hinweis zur Laderegel erklärt jetzt in drei Sätzen: Sofortladen unter 10 %, ausreichend Ladung für geplante Fahrten und opportunistisches Laden bei niedrigen Preisen („sehr günstig“ vs. „Komfort“).
