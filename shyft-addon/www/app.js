@@ -7164,38 +7164,79 @@ function recipeTargets(slot, value) {
     return targets.length ? targets : null;
 }
 
+function describeRecipeTargets(targets) {
+    const services = [...new Set(targets.map(t => t.service))].join(' / ');
+    const entityId = targets.map(t => Object.values(t.fields).find(v => typeof v === 'string' && /^[a-z_]+\.[a-z0-9_]+$/.test(v))).find(Boolean);
+    return entityId ? services + ' → ' + formatEntityDisplay(entityId) : services;
+}
+
 function applyRecipeSuggestion(section, slot, entries) {
-    for (const entry of entries) {
-        const targets = recipeTargets(slot, entry.value);
-        if (!targets) continue;
-        const wasEmpty = targets.every(t => !t.serviceInput.value.trim());
-        const stillSuggested = !wasEmpty && targets.every(t => t.serviceInput.value === t.service) && !isSectionTestPassed(section.key);
-        if (!wasEmpty && !stillSuggested) return;
-        if (wasEmpty) {
-            for (const t of targets) t.el.applyState({service: t.service, fields: t.fields});
-            autoSave();   // speichert, damit "Testen" die Zuordnung kennt
-        }
-        const inputs = targets.flatMap(t => [...t.el.querySelectorAll('input.sensorInput')].filter(i => i.value));
-        const badge = document.createElement('span');
-        badge.className = 'communitySuggestionBadge';
-        badge.textContent = 'Vorschlag';
-        badge.title = 'Von anderen Nutzern mit derselben Integration erfolgreich verwendet - bitte testen.';
-        for (const input of inputs) input.classList.add('communitySuggested');
-        const host = targets[0].el.closest('.autoActionControl') || targets[0].el;
-        host.insertBefore(badge, host.children[1] || null);
-        const mark = {inputs: inputs.length ? inputs : [targets[0].serviceInput], badge, sectionKey: section.key};
-        communitySuggestionMarks.push(mark);
-        // jede Aenderung im Formular heisst: der Nutzer macht es zu seinem eigenen Setup
-        const onUserEdit = (event) => {
-            if (!event.isTrusted) return;
-            clearSuggestionMark(mark);
-            host.removeEventListener('input', onUserEdit);
-            host.removeEventListener('change', onUserEdit);
-        };
-        host.addEventListener('input', onUserEdit);
-        host.addEventListener('change', onUserEdit);
-        return;
+    // Alle Vorschlaege, die sich hier umsetzen lassen (Befehle existieren in HA), in Reihenfolge der Haeufigkeit.
+    const options = entries.map(entry => ({entry, targets: recipeTargets(slot, entry.value)})).filter(o => o.targets);
+    if (!options.length) return;
+    const targets0 = options[0].targets;
+    const wasEmpty = targets0.every(t => !t.serviceInput.value.trim());
+    const matching = options.findIndex(o => o.targets.every(t => t.serviceInput.value === t.service));
+    const stillSuggested = !wasEmpty && matching >= 0 && !isSectionTestPassed(section.key);
+    if (!wasEmpty && !stillSuggested) return;
+
+    const host = targets0[0].el.closest('.autoActionControl') || targets0[0].el;
+    const mark = {inputs: [], badge: null, sectionKey: section.key};
+    const title = 'Von anderen Nutzern mit derselben Integration erfolgreich verwendet - bitte testen.';
+
+    function applyOption(index) {
+        const option = options[index];
+        for (const t of option.targets) t.el.applyState({service: t.service, fields: t.fields});
+        // applyState baut die Felder neu auf - Markierung auf den neuen Eingabefeldern setzen
+        for (const input of mark.inputs) input.classList.remove('communitySuggested');
+        mark.inputs = option.targets.flatMap(t => [...t.el.querySelectorAll('input.sensorInput')].filter(i => i.value));
+        if (!mark.inputs.length) mark.inputs = [option.targets[0].serviceInput];
+        for (const input of mark.inputs) input.classList.add('communitySuggested');
     }
+
+    if (wasEmpty) {
+        applyOption(0);
+        autoSave();   // speichert, damit "Testen" die Zuordnung kennt
+    } else {
+        applyOption(matching);
+    }
+
+    let badge;
+    if (options.length > 1) {
+        // Platz 2 und 3: Auswahl am Badge (ein Vorschlag besteht aus mehreren Feldern, passt also nicht in ein einzelnes Dropdown-Feld)
+        badge = document.createElement('select');
+        badge.className = 'communitySuggestionBadge communitySuggestionPicker';
+        options.forEach((o, i) => {
+            const el = document.createElement('option');
+            el.value = String(i);
+            el.textContent = `Vorschlag ${i + 1} von ${options.length}: ${describeRecipeTargets(o.targets)}`;
+            badge.appendChild(el);
+        });
+        badge.value = String(wasEmpty ? 0 : matching);
+        badge.addEventListener('change', (event) => {
+            event.stopPropagation();   // zaehlt nicht als Aenderung des Nutzers am Formular
+            applyOption(Number(badge.value));
+            autoSave();
+        });
+    } else {
+        badge = document.createElement('span');
+        badge.textContent = 'Vorschlag';
+        badge.className = 'communitySuggestionBadge';
+    }
+    badge.title = title;
+    mark.badge = badge;
+    host.insertBefore(badge, host.children[1] || null);
+    communitySuggestionMarks.push(mark);
+
+    // jede Aenderung im Formular (ausser der Vorschlagsauswahl) heisst: der Nutzer macht es zu seinem eigenen Setup
+    const onUserEdit = (event) => {
+        if (!event.isTrusted) return;
+        clearSuggestionMark(mark);
+        host.removeEventListener('input', onUserEdit);
+        host.removeEventListener('change', onUserEdit);
+    };
+    host.addEventListener('input', onUserEdit);
+    host.addEventListener('change', onUserEdit);
 }
 
 async function applyCommunitySuggestions(section, entryIds) {
