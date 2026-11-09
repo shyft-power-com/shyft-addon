@@ -20,7 +20,7 @@ Abweichungen Richtung aktuellem Julia-Modell (so mit dem Product Owner abgestimm
 * Batterie-Mindest-SOC aus Spalte ``b_soc_min`` (Excel: hart 10 %).
 * Waermepumpen-Leistung deckt exakt den Stundenbedarf, keine 20-%-Modulationsuntergrenze,
   kein alternierendes Ueber-/Unterheizen (Excel-Spalte F).
-* EV-Wirkungsgrad 0.93 / Verlust 0.00004 / Fixverlust 0.2 kWh je Ladestunde (Julia).
+* EV-Wirkungsgrad 0.93 / Verlust 0.0004 je Stunde / kein Fixverlust mehr (Julia, seit Server 0.46.31.0).
 * "Sonstiger Verbraucher" (OD) war im Excel-Modell gar nicht enthalten, ist aber im aktuellen
   Julia-Modell aktiv: es laeuft (mit fixer Leistung ``otherDevice_P``) genau dann, wenn ``p_buy``
   unter dem in ``OD_running_hours`` hinterlegten Schwellenpreis liegt (Cent/kWh, /100 fuer EUR/kWh
@@ -56,8 +56,9 @@ PV_ETA = 0.95            # pv = PV(0.95f0)
 B_ETA = 0.92             # Battery(0.92f0, ...) - bewusst < 0.95 gegen Arbitrage-Grenzfaelle
 B_LOSS = 0.00003         # Battery(..., 0.00003f0)
 EV_ETA = 0.93            # EV(0.93f0, ...)
-EV_LOSS = 0.00004        # EV(..., 0.00004f0)
-EV_FIXED_LOSS_KWH = 0.2  # -0.2 * ev_plugged[h] je Ladestunde
+EV_LOSS = 0.0004         # EV(..., 0.0004f0) - Selbstentladung je Stunde (ca. 30 W bei 75 kWh), seit Server 0.46.31.0
+EV_FIXED_LOSS_KWH = 0.0  # fester Ladeverlust je Ladestunde: im Optimierer seit Server 0.46.31.0 entfallen (vorher -0.2 * ev_plugged[h])
+EV_CHARGE_HYSTERESIS_KWH = 0.2  # Base Case: Komfort-Defizit (ev_soc_norm) erst ab dieser Groesse nachladen - kein Verlust, nur Regelverhalten
 HW_LOSS = 0.003          # hw = ThermalStorage(..., loss_hw=0.003, ...)
 C_WATER = 4.184
 P_WATER = 997.0
@@ -142,7 +143,7 @@ def _fh_heat_pump_power(q_thermal, heatdis, t_i_min, t_out_cap, hp_max_power):
     return 0.5 * (lo + hi)
 
 
-def compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None):
+def compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None, ev_comfort_soc=None):
     """Berechnet den Base Case aus dem Optimierer-``input_csv`` (``;``-getrennt).
 
     state_overrides (optional): {"T_i_0", "T_hw_0", "ev_soc_0", "SOC_b_0_percent"} - ersetzt die
@@ -168,12 +169,15 @@ def compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None):
     eingesteckt ist (Rueckwaerts-Pflicht-SOC wie bei den Fahrten), und zahlt die Preise genau dieser Stunden - kein
     p_min, denn "genau dort laden, wo es billig ist" waere selbst schon eine Optimierung.
 
+    ev_comfort_soc (optional): Komfort-Ladestand der Laderegel als Anteil 0..1 (ev_tiers.EV_CHARGE_RULES). Der Base Case laedt das Auto
+    sofort bis dahin - das ist, was der Nutzer ohne Optimierung bekaeme; ``ev_soc_norm`` ist nur noch die feste Reserve von 10 %.
+
     Gibt ein Dict mit ``netProfitBase48HoursSum`` / ``netProfitBaseList`` / ``PowerUsageBaseList`` /
     ``nextState`` (Zustand NACH Stunde 0 - Basis fuer den naechsten Aufruf) zurueck, oder ``None``,
     wenn das CSV nicht auswertbar ist (nie eine Exception nach aussen).
     """
     try:
-        return _compute_base_case(input_csv, state_overrides, ev_end_target_kwh)
+        return _compute_base_case(input_csv, state_overrides, ev_end_target_kwh, ev_comfort_soc)
     except Exception as exc:  # pragma: no cover - defensiv, Aufrufer soll nie brechen
         print("[Shyft] Base-Case-Berechnung fehlgeschlagen:", repr(exc))
         return None
@@ -182,12 +186,14 @@ def compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None):
 _STATE_OVERRIDE_KEYS = ("T_i_0", "T_hw_0", "ev_soc_0", "SOC_b_0_percent")
 
 
-def _compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None):
+def _compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None, ev_comfort_soc=None):
     rows = list(csv.DictReader(io.StringIO(input_csv or ""), delimiter=";"))
     if not rows:
         return None
 
     p = {key: _num(rows[0].get(key)) for key in _SCALAR_KEYS}
+    if ev_comfort_soc:
+        p["ev_soc_norm"] = max(p["ev_soc_norm"], ev_comfort_soc)  # Komfort-Ladestand statt Reserve als Ziel des sofortigen Ladens
     if state_overrides:
         for key in _STATE_OVERRIDE_KEYS:
             value = state_overrides.get(key)
@@ -357,11 +363,11 @@ def _compute_base_case(input_csv, state_overrides=None, ev_end_target_kwh=None):
             plugged = (i + 1) not in ev_away_hours
             if plugged:
                 # Pflicht: kuenftige Fahrten abdecken (keine Hysterese - sonst faellt der SOC vor der
-                # Fahrt unter 0). Komfort: ev_soc_norm halten, dort mit Hysterese (0.2 kWh Fixverlust
-                # je Ladestunde -> ein reales, ungeregeltes System jagt kein Mini-Defizit hinterher).
+                # Fahrt unter 0). Komfort: ev_soc_norm halten, dort mit Hysterese (EV_CHARGE_HYSTERESIS_KWH,
+                # ein reales, ungeregeltes System jagt kein Mini-Defizit hinterher).
                 need_trip = required[i + 1] - soc_no_charge
                 need_norm = ev_soc_norm_kwh - soc_no_charge
-                if need_trip > 1e-9 or need_norm > EV_FIXED_LOSS_KWH:
+                if need_trip > 1e-9 or need_norm > EV_CHARGE_HYSTERESIS_KWH:
                     gain = min(max(need_trip, need_norm), eff_rate, ev_b_size - soc_no_charge)  # <= soc_max und <= rate_max
                     if gain > 1e-9:
                         ev_charge_gross[i] = (gain + EV_FIXED_LOSS_KWH) / EV_ETA

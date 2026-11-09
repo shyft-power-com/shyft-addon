@@ -60,6 +60,43 @@ UNIT_CONVERSIONS = {
 }
 
 
+EV_SOC_SENSOR_KEY = "electronicvehicle_state_of_charge"
+# Zuletzt gueltiger Auto-Ladestand: das Auto meldet im Schlaf/ohne Verbindung oft "unavailable" - dann gilt dieser Wert weiter statt 0 %.
+EV_SOC_LAST_VALUE_PATH = "/data/ev_soc_last_value.json"
+
+
+def _as_finite_number(value):
+    "Der Wert als endliche Zahl, sonst None (Text wie 'unavailable', None, NaN, inf)."
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _read_last_ev_soc():
+    try:
+        with open(EV_SOC_LAST_VALUE_PATH, "r") as f:
+            data = json.load(f)
+        if _as_finite_number(data.get("state")) is None:
+            return None
+        return {"state": data["state"], "unit": data.get("unit", "")}
+    except Exception:
+        return None
+
+
+def _write_last_ev_soc(state, unit):
+    try:
+        if _read_last_ev_soc() == {"state": state, "unit": unit}:
+            return
+        with open(EV_SOC_LAST_VALUE_PATH, "w") as f:
+            json.dump({"state": state, "unit": unit}, f)
+    except Exception as e:
+        print("[Shyft] Letzter Auto-Ladestand konnte nicht gespeichert werden:", repr(e))
+
+
 def convert_to_expected_unit(key, state, unit):
     "Converts state to the unit shyft-power expects for this sensor (EXPECTED_UNITS), if Home Assistant reports a different, known-convertible unit. Passes through unchanged otherwise."
     expected_unit = EXPECTED_UNITS.get(key)
@@ -208,6 +245,22 @@ def heating_rod_active(config):
 
 HEATING_ROD_SWITCH_SENSOR_KEY = "heating_rod_switch"
 
+# Feste "An"/"Aus"-Auswahl statt einer Home-Assistant-Entitaet (Dropdown-Eintraege ganz oben bei "Warmwasserbereitung aktiviert" und
+# "Heizung aktiviert"): fuer Nutzer, die den passenden Sensor nicht haben oder nicht finden. Gespeichert als Wert in sensorMappings
+# (ohne ":"/"."/Leerzeichen, damit weder _entity_id_from_display_value noch _VALID_ENTITY_ID ihn anfassen).
+STATIC_SENSOR_ON = "static_on"
+STATIC_SENSOR_OFF = "static_off"
+
+
+def static_sensor_state(config, sensor_key):
+    "'on'/'off', wenn fuer sensor_key eine feste An/Aus-Auswahl hinterlegt ist, sonst None."
+    value = ((config.get("sensorMappings", {}) or {}).get(sensor_key) or "")
+    if value == STATIC_SENSOR_ON:
+        return "on"
+    if value == STATIC_SENSOR_OFF:
+        return "off"
+    return None
+
 # Letzter bekannter An/Aus-Zustand von "Warmwassermodus aktiviert?" (heatpump_dhw_activated) - bei "unknown"/"unavailable" gilt dieser Wert
 # weiter, nicht automatisch "aus" (siehe resolve_dhw_activated).
 DHW_ACTIVATED_LAST_STATE_PATH = "/data/dhw_activated_last_state.json"
@@ -240,6 +293,9 @@ def resolve_dhw_activated(config, homeassistant_adapter):
     im Demo-Modus immer True."""
     if heating_rod_active(config) or is_demo_sensor(config, "heatpump_dhw_activated"):
         return True
+    static_state = static_sensor_state(config, "heatpump_dhw_activated")
+    if static_state is not None:
+        return static_state == "on"
     entity_id = mapped_entity_id(config, "heatpump_dhw_activated")
     if not entity_id:
         return True
@@ -420,8 +476,9 @@ class SyncService:
         # app.py) - fehlt (kein add()), solange noch kein Wert berechnet werden konnte (z.B. keine
         # Entitaet zugeordnet oder noch keine Historie vorhanden).
         add("hw_soc_min", "hwSocMinC")
-        add("EV - SOC Normal", "evSocNormal")
-        add("EV - SOC Max PV Surplus", "evSocMaxPvSurplus")
+        # Harte Reserve des Autos fest 10 % (frueher die Einstellung 'Mindestladestand'); wie weit darueber geladen wird, steuert die Laderegel
+        # ueber die Endwert-Stufen (ev_tier_*, siehe ev_tiers.py) - der Server liest die Reserve weiter aus diesem Feld.
+        static_config["EV - SOC Normal"] = "10 %"
         add("CO - Price Gas", "coPriceGas")
         # "Sonstiger Verbraucher": Preisschwelle (Cent/kWh) -> Optimierer-Spalte OD_running_hours
         # (Julia teilt selbst durch 100), Dauerleistung (kW) -> otherDevice_P. add() laesst leere
@@ -524,10 +581,22 @@ class SyncService:
                 "unit": unit,
                 "sensor": bubbleSensorIdentifier
             }
+        static_state = static_sensor_state(data, key)
+        if static_state is not None:
+            return {"entity_id": None, "state": static_state, "unit": None, "sensor": bubbleSensorIdentifier}
         sensorId = mapped_entity_id(data, key) or data["sensorMappings"][key]
         try:
             sensorValue = self.homeassistant_adapter.load_entity_state(sensorId)
             state, unit = convert_to_expected_unit(key, sensorValue.state, sensorValue.unit)
+            if key in EXPECTED_UNITS:
+                # Numerische Sensoren: an den Optimierer geht NIE Text ("unknown"/"unavailable"/...), sonst wertet der Server ihn als 0.
+                if _as_finite_number(state) is None:
+                    last = _read_last_ev_soc() if key == EV_SOC_SENSOR_KEY else None
+                    if last is None:
+                        return ""
+                    state, unit = last["state"], last["unit"]
+                elif key == EV_SOC_SENSOR_KEY:
+                    _write_last_ev_soc(state, unit)
             return {
                 "entity_id": sensorId,
                 "state": state,

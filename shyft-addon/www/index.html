@@ -113,7 +113,7 @@
             margin-top: 4px;
         }
         /* Fehlertext in eigener Tabellenzeile (siehe applyConfigFieldErrorHighlights): die Trennlinie gehoert unter den Text, nicht zwischen Feld und Text. */
-        tr:has(+ .configFieldErrorRow) > td {
+        #deviceSections tbody tr:has(+ .configFieldErrorRow) > td {
             border-bottom: none;
         }
         /* Mehrfachauswahl (buildMultiSensorField): die Markierung landet auf dem Container, der Rahmen sitzt
@@ -515,6 +515,35 @@
             color: var(--color-accent);
             font-weight: 700;
         }
+        /* Dezenter Textlink am Ende einer Steuerung ("Volle Individualität: Per Home-Assistant-
+           Automation steuern", siehe buildAutomationExpertLink) - bewusst klein und unauffaellig. */
+        .expertLinkRow {
+            margin-top: 10px;
+            font-size: 0.85em;
+        }
+        .expertLinkRow a {
+            color: var(--secondary-text-color, #727272);
+            text-decoration: underline;
+            cursor: pointer;
+        }
+        .expertLinkRow a:hover {
+            color: var(--primary-color, #03a9f4);
+        }
+        /* Kleine Zwischenueberschrift in einer Kachel (z.B. "Warmwasser", "Optionale Sensoren" - siehe buildMinorHeading) */
+        .sectionMinorHeading {
+            font-weight: 600;
+            font-size: 0.9em;
+            color: var(--color-text-secondary);
+            margin: 0.9em 0 0.3em;
+        }
+        .sectionMinorHeadingSpaced {
+            margin-top: 1.6em;
+            font-weight: 500;
+            font-size: 0.85em;
+        }
+        .entityDropdownStaticOption {
+            font-weight: 600;
+        }
         .autoActionStatus {
             font-size: 0.9em;
             color: var(--color-text-secondary);
@@ -742,9 +771,10 @@
             background: var(--color-bg-card);
             border-radius: 12px;
             /* Sorgt dafuer, dass scrollToIntegrationSection (app.js, scrollIntoView block:'start')
-               unter dem sticky .topBar anhaelt statt Ueberschrift+Anfang der Kachel darunter zu
-               verstecken - +16px, damit zusaetzlich noch etwas Rand sichtbar bleibt. */
-            scroll-margin-top: calc(var(--topbar-height, 60px) + 16px);
+               unter dem sticky .topBar UND der sticky Sprungmarken-Leiste (.deviceNav) anhaelt statt
+               Ueberschrift+Anfang der Kachel darunter zu verstecken - +16px, damit zusaetzlich noch
+               etwas Rand sichtbar bleibt. */
+            scroll-margin-top: calc(var(--topbar-height, 60px) + var(--devicenav-height, 0px) + 16px);
         }
         .integrationHeading {
             display: flex;
@@ -1664,6 +1694,12 @@
         .systemHealthProblemList li:not(:last-child) {
             margin-bottom: 0.3em;
         }
+        .chartHint {
+            margin: 8px 0 0;
+            font-size: 0.85em;
+            color: var(--color-text-secondary);
+        }
+
         .systemHealthProblemLink {
             color: var(--color-accent);
             font-weight: 600;
@@ -1851,7 +1887,86 @@
 
         .dashboardChart {
             margin-bottom: 0;
+            position: relative;
         }
+
+        /* "Vergroessern"-Icon oben rechts am Chart (siehe buildChartEnlargeButton) - bewusst dezent, erst beim Darueberfahren deutlich.
+           Am Handy ausgeblendet (dort wird im Chart gescrollt/gezoomt). */
+        .dashboardChart > .dashboardChartTitle { padding-right: 30px; }
+        .chartEnlargeButton {
+            position: absolute;
+            top: 0;
+            right: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 26px;
+            height: 26px;
+            padding: 0;
+            border: none;
+            border-radius: 4px;
+            background: transparent;
+            color: var(--color-text-secondary);
+            opacity: 0.55;
+            cursor: pointer;
+            z-index: 6;
+        }
+        .chartEnlargeButton:hover, .chartEnlargeButton:focus-visible {
+            opacity: 1;
+            background: var(--color-border);
+        }
+        @media (max-width: 700px) {
+            .chartEnlargeButton { display: none; }
+        }
+
+        /* Vergroessern-Modal (siehe openChartModal): fast bildschirmfuellend mit komfortablem Rand auf allen Seiten. */
+        .chartModalOverlay {
+            position: fixed;
+            inset: 0;
+            z-index: 10001;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 4vh 4vw;
+            background: rgba(0, 0, 0, 0.55);
+        }
+        .chartModalDialog {
+            position: relative;
+            width: 100%;
+            max-height: 100%;
+            overflow: auto;
+            box-sizing: border-box;
+            padding: 20px 24px 24px;
+            border-radius: 10px;
+            background: var(--color-bg);
+            color: var(--color-text);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+        }
+        .chartModalBody {
+            width: 100%;
+        }
+        .chartModalBody .dashboardChart {
+            max-width: none;
+        }
+        .chartModalBody .dashboardChartTitle {
+            padding-right: 40px;
+        }
+        .chartModalClose {
+            position: absolute;
+            top: 10px;
+            right: 12px;
+            width: 30px;
+            height: 30px;
+            border: none;
+            border-radius: 4px;
+            background: transparent;
+            color: var(--color-text-secondary);
+            font-size: 24px;
+            line-height: 1;
+            cursor: pointer;
+            z-index: 7;
+        }
+        .chartModalClose:hover { background: var(--color-border); color: var(--color-text); }
 
         /* Wetter-Streifen ueber dem PV-Chart (siehe buildWeatherStrip / pv_forecast.py) */
         .weatherStrip {

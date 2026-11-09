@@ -75,28 +75,32 @@ const helpinformation = {
         description: ' Optionale Zahl-Entität (in Sekunden), nach der der Wechselrichter einen Steuerbefehl der Batterie selbst verwirft und in den Normalbetrieb zurückfällt. Das Addon setzt sie beim Start von "Batterie netzladen" auf 60 Minuten und von "Batterie-Entladen verschieben" auf 10 Stunden.'
     },
     'heatpump_dhw_tank_temp': {
-        label: 'Temperatur Warmwassertank',
+        label: 'Temperatur Warmwassertank (aktuell)',
         description: ' Die aktuelle Temperatur im Warmwassertank (in °C)'
     },
     'heatpump_dhw_target_temp': {
-        label: 'Warmwasser: Solltemperatur (°C)',
+        label: 'Solltemperatur (°C)',
+        bold: true,
         description: ' Die Home-Assistant-Entity (number oder climate), über die Shyft die Ziel-/Solltemperatur für die Warmwasserbereitung setzt. Während einer "Warmwasser"-Aktion wird sie auf den von Shyft berechneten Zielwert gesetzt und beim Beenden der Aktion wieder auf den vorherigen Wert zurückgesetzt.'
     },
     'heatpump_dhw_activated': {
-        label: 'Warmwassermodus aktiviert? An/Aus',
-        description: ' Optional. Steht der Sensor auf "On", werden Aktionen zur Warmwasserbereitung berechnet. Bei "Off" berechnet Shyft keine Warmwasseraktionen. Ist nichts hinterlegt, gilt "On"; bei "unknown"/"unavailable" gilt der zuletzt gemeldete Wert.'
+        label: 'Warmwasserbereitung aktiviert',
+        staticOnOff: true,
+        description: ' Steht der Wert auf "An", plant Shyft die Warmwasserbereitung. Steht er auf "Aus", ist die Steuerung der Warmwasserbereitung nicht aktiviert: Shyft berechnet dann keine Warmwasser-Aktionen und optimiert hier nichts. Wähle oben im Dropdown "An" oder "Aus", wenn du keinen passenden Sensor hast oder findest, oder hinterlege eine Home-Assistant-Entität, die den Zustand meldet. Standard ist "An"; bei "unknown"/"unavailable" gilt der zuletzt gemeldete Wert.'
     },
     'heatpump_dhw_on_off': {
-        label: 'Warmwasser gerade erwärmt? An / Aus',
-        description: ' je nachdem ob deine Wärmepumpe gerade Brauchwasser erwärmt oder nicht.'
+        label: 'Warmwasser gerade erwärmt?',
+        description: ' Anzeige im Dashboard, ob gerade Brauchwasser erwärmt wird'
     },
     'heatpump_heating_target_temp_normal': {
-        label: 'Heizung Soll-Temperatur (aktuell)',
+        label: 'Soll-Raumtemperatur (aktuell)',
+        bold: true,
         description: ' Gewünschte Raumtemperatur (Solltemperatur). Über die stündliche Anpassung dieses Wertes steuert Shyft kurzfristig die Leistung deiner Wärmepumpe und stellt die gewünschte Solltemperatur in deinen Räumen sicher.'
     },
     'heatpump_heating_activated': {
-        label: 'Heizung aktiviert?',
-        description: ' Ja / Nein, je nachdem, ob du die Heizung an deiner Wärmepumpe aktiviert hast oder nicht. Jeder Zustand außer "off" zählt als "an" (z.B. auch Betriebsmodi wie "auto" oder "heat" einer Heizungs-Entität).'
+        label: 'Heizung aktiviert',
+        staticOnOff: true,
+        description: ' Steht der Wert auf "An", optimiert Shyft die Heizung. Steht er auf "Aus", ist die Steuerung der Heizung nicht aktiviert: Shyft erzeugt dann keine Heizungs-Aktionen und optimiert hier nichts. Wähle oben im Dropdown "An" oder "Aus", wenn du keinen passenden Sensor hast oder findest, oder hinterlege eine Home-Assistant-Entität, die den Zustand meldet. Standard ist "An". Bei einer Entität zählt jeder Zustand außer "off" als "an" (z.B. auch Betriebsmodi wie "auto" oder "heat").'
     },
     'heatpump_current_power_elect': {
         label: 'Aktuelle Leistung Wärmepumpe (elektrisch)',
@@ -117,6 +121,10 @@ const helpinformation = {
     'electronicvehicle_state_of_charge': {
         label: 'Auto - Ladestand',
         description: ' Ladestand deines Autos (in %)'
+    },
+    'electronicvehicle_home': {
+        label: 'Auto - Zuhause?',
+        description: ' Optional. Zeigt, ob dein Auto zu Hause ist: Der Sensor muss die Zustände "Zuhause" bzw. "Abwesend" liefern (z.B. bei der Tesla-Integration direkt vorhanden). Liefert dein Auto etwas anderes, richte dir in Home Assistant einen Hilfssensor (z.B. Template-Sensor) mit genau diesen beiden Zuständen ein. Ein Auto, das zu Hause, aber nicht eingesteckt ist, zählt in der Prognose in der nächsten Stunde als abwesend, danach als "kann laden". Außerdem schickt Shyft keine Lade-Ankündigung, solange das Auto unterwegs ist. Die Information wird nur intern im Add-on benutzt und nicht an shyft-power übertragen.'
     },
     'wallbox_current_charging_power': {
         label: 'Wallbox - Ladestrom',
@@ -144,6 +152,7 @@ const heatingRodHelpInformation = {
     },
     'heatpump_dhw_target_temp': {
         label: 'Warmwasser: Solltemperatur (°C)',
+        bold: false,
         description: ' Die Home-Assistant-Entity (number oder climate), an der die Ziel-/Solltemperatur des Warmwassers eingestellt ist. Daraus leitet Shyft die Untergrenze für die Warmwasserplanung ab.'
     },
     [HEATING_ROD_SWITCH_KEY]: {
@@ -248,6 +257,8 @@ const SENSOR_ENTITY_FILTERS = {
     // kein schaltbares Element - ein binary_sensor mit on/off bleibt aber gueltig.
     'wallbox_plugged': {type: 'exclude_units', values: ['kWh', 'kW', 'W', 'A', 'V', '°C', '%', 'Wh'],
         excludeDomains: ['switch', 'input_boolean', 'button', 'input_button', 'number', 'input_number', 'select', 'input_select', 'input_text']},
+    'electronicvehicle_home': {type: 'exclude_units', values: ['kWh', 'kW', 'W', 'A', 'V', '°C', '%', 'Wh'],
+        excludeDomains: ['switch', 'input_boolean', 'button', 'input_button', 'number', 'input_number', 'select', 'input_select', 'input_text']},
     'sonstiger_verbraucher_switch_entities': {type: 'state_on_off'},
 }
 
@@ -278,6 +289,7 @@ const SENSOR_MATCH_KEYWORDS = {
     'electronicvehicle_state_of_charge': ['soc', 'ladestand', 'akkustand', 'battery', 'charge_level'],
     'wallbox_current_charging_power': ['ladeleist', 'charging_power', 'charge_power', 'wallbox'],
     'wallbox_plugged': ['status', 'verbunden', 'connected', 'plugged', 'stecker', 'plug'],
+    'electronicvehicle_home': ['standort', 'location', 'zuhause', 'home', 'tracker', 'presence'],
     'sonstiger_verbraucher_switch_entities': ['switch', 'schalter', 'steckdose', 'plug', 'relay'],
 }
 
@@ -330,9 +342,17 @@ const INTEGRATION_SECTIONS = [
         hasDemo: true
     },
     {
+        key: 'raumtemperatur',
+        label: 'Raumtemperatur',
+        sensors: ['heatpump_temp_indoor_measured'],
+        actions: [],
+        requiresDeviceClass: 'temperature',
+        description: 'Hinterlege einen Innenraum-Temperatursensor. Shyft stellt dann sicher, dass deine Räume nie zu kalt werden. Die Vorlauftemperatur deiner Wärmepumpe kann dann ohne Reserven gesteuert werden und so Kosten sparen. Hinterlegst du keinen Sensor, simulieren wir die Raumtemperatur.\nTipp: Wenn du das Minimum mehrerer Temperatursensoren verwenden willst, erstelle in Home Assistant einen entsprechenden Hilfssensor.'
+    },
+    {
         key: 'auto',
         label: 'Auto',
-        sensors: ['electronicvehicle_state_of_charge'],
+        sensors: ['electronicvehicle_state_of_charge', 'electronicvehicle_home'],
         actions: [],
         hasDemo: true,
         description: 'Tipp, wenn du Schwierigkeiten hast, dein Auto in Home Assistant einzubinden und Tibber als Stromanbieter nutzt: Hinterlege dein Auto in der Tibber App, dann kannst du über die Tibber-Integration den Ladestand deines Autos auslesen.'
@@ -343,14 +363,6 @@ const INTEGRATION_SECTIONS = [
         sensors: ['wallbox_current_charging_power', 'wallbox_plugged'],
         actions: ['car_charge_start', 'car_charge_stop'],
         hasDemo: true
-    },
-    {
-        key: 'raumtemperatur',
-        label: 'Raumtemperatur',
-        sensors: ['heatpump_temp_indoor_measured'],
-        actions: [],
-        requiresDeviceClass: 'temperature',
-        description: 'Hinterlege einen Innenraum-Temperatursensor. Shyft stellt dann sicher, dass deine Räume nie zu kalt werden. Die Vorlauftemperatur deiner Wärmepumpe kann dann ohne Reserven gesteuert werden und so Kosten sparen. Hinterlegst du keinen Sensor, simulieren wir die Raumtemperatur.\nTipp: Wenn du das Minimum mehrerer Temperatursensoren verwenden willst, erstelle in Home Assistant einen entsprechenden Hilfssensor.'
     },
     {
         key: 'sonstiger_verbraucher',
@@ -412,16 +424,30 @@ function isFullyDemoMode() {
     return hasAnyDemo;
 }
 
-async function getJson(url) {
-    const response = await fetch(url);
+// Ohne Timeout bliebe ein haengender Request (Standby, WLAN-Wechsel, Ingress antwortet nicht) fuer immer offen - und
+// damit z.B. dashboardLoadInFlight in loadDashboard gesetzt, sodass kein periodischer Refresh mehr durchkommt
+// (Daten aktualisieren sich dann nie wieder, bis man die Seite neu laedt).
+const GET_JSON_TIMEOUT_MS = 30000;
 
-    if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
+async function getJson(url, timeoutMs = GET_JSON_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(url, {signal: controller.signal});
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+
+        return await response.json();
+    } catch (err) {
+        if (err && err.name === 'AbortError') {
+            throw new Error(`Timeout nach ${timeoutMs} ms: ${url}`);
+        }
+        throw err;
+    } finally {
+        clearTimeout(timer);
     }
-
-    const result = await response.json();
-
-    return result;
 }
 
 // Test-Popup fuer die "Testen"-Buttons der Konfigurationsseite: zeigt Zeile fuer Zeile, was der Test gerade tut
@@ -773,7 +799,16 @@ const CONFIG_PAGE_TOGGLE_KEYS = new Set(['pv_feed_in_limit', 'consumption_limit_
 const NOTIFICATION_TYPES = {
     'action_start_end': 'Aktionen starten / beenden (alle)',
     'action_start_end_errors_only': 'Aktionen starten / beenden (nur bei Fehlern)',
-    'device_status_deviation': 'Geräteverhalten abweichend von Shyft-Steuerung'
+    'device_status_deviation': 'Geräteverhalten abweichend von Shyft-Steuerung',
+    'charge_announcement': 'Geplante Ladevorgänge ankündigen'
+};
+
+// Neue Benachrichtigungen, die ohne explizite Zustimmung aus sind (statt der Standardregel "an, solange nicht ausdruecklich aus").
+const NOTIFICATION_TYPES_DEFAULT_OFF = new Set(['action_start_end_errors_only', 'charge_announcement']);
+
+// Erklaerung im Info-Fragezeichen neben dem jeweiligen Benachrichtigungs-Toggle (optional).
+const NOTIFICATION_TYPE_DESCRIPTIONS = {
+    'charge_announcement': 'Schickt um 18 Uhr und um 6 Uhr eine Nachricht, wenn in den nächsten 12 Stunden ein Ladevorgang geplant ist und das Auto nicht eingesteckt ist ("Verbinde dein Fahrzeug, geplante Ladung: XX kWh um XX Uhr. Ersparnis: XX €"). Ist das Auto abwesend (Sensor "Auto - Zuhause?"), kommt die Nachricht sofort bei der Ankunft zu Hause. Wird der Ladevorgang verschoben oder abgesagt, folgt eine Update-Nachricht. Jede Nachricht wird nur einmal gesendet.'
 };
 
 // "Alle" und "nur bei Fehlern" schliessen sich gegenseitig aus (Nutzer-Vorgabe: entweder/oder) -
@@ -1013,12 +1048,10 @@ async function saveConfigurationNow() {
         "wallboxConnectionStatusMapping": configData["wallboxConnectionStatusMapping"] || {},
         "carBatteryCapacityKwh": configData["carBatteryCapacityKwh"] ?? null,
         "carConsumptionKwhPer100km": configData["carConsumptionKwhPer100km"] ?? null,
-        "carAvgDailyDistanceKm": configData["carAvgDailyDistanceKm"] ?? 50,
         "wallboxMaxPhases": configData["wallboxMaxPhases"] ?? 3,
         "wallboxMaxCurrentAmps": configData["wallboxMaxCurrentAmps"] ?? 16,
         "batteryFlowSignOverride": configData["batteryFlowSignOverride"] ?? null,
-        "evSocNormal": configData["evSocNormal"] ?? '10 %',
-        "evSocMaxPvSurplus": configData["evSocMaxPvSurplus"] ?? null,
+        "evChargeRule": configData["evChargeRule"] ?? evChargeRuleFromLegacy(configData["evSocNormal"]),
         // Bis 0.0.44.33 fehlten alle uebrigen "einfachen" staticConfig-Felder (Waermepumpe/Batterie/
         // Strompreise/Optimierung) hier komplett - sie wurden per change-Handler nur lokal in
         // configData gesetzt, aber nie tatsaechlich per PUT mitgeschickt. writeConfig in app.py
@@ -1304,6 +1337,55 @@ async function applyAnalyseTabVisibility() {
         button.hidden = !status.isTestEnvironment;
     } catch (err) {
         console.log(err);
+    }
+}
+
+// Verlassen des Demomodus ohne Neuladen: Das Konto legt der Server im Hintergrund an, sobald ein
+// steuerbares echtes Geraet erfolgreich getestet wurde (siehe maybe_create_real_account in app.py).
+// Solange der Server isDemo meldet, fragt die Seite alle ACCOUNT_STATUS_POLL_MS nach; springt der
+// Status auf "echtes Konto", werden alle vom Demomodus abhaengigen Teile sofort neu aufgebaut.
+const ACCOUNT_STATUS_POLL_MS = 3000;
+let accountStatusPollTimer = null;
+
+async function watchForAccountCreation() {
+    if (accountStatusPollTimer) return;
+    let status;
+    try {
+        status = await getJson(insideHomeAssistant + '/account-status');
+    } catch (err) {
+        console.log(err);
+        return;
+    }
+    if (!status.isDemo) return;
+    accountStatusPollTimer = setInterval(async () => {
+        if (document.visibilityState !== 'visible') return;
+        try {
+            const current = await getJson(insideHomeAssistant + '/account-status');
+            if (current.isDemo) return;
+            clearInterval(accountStatusPollTimer);
+            accountStatusPollTimer = null;
+            onDemoModeLeft();
+        } catch (err) {
+            console.log(err);
+        }
+    }, ACCOUNT_STATUS_POLL_MS);
+}
+
+function onDemoModeLeft() {
+    renderSystemHealth();
+    renderDashboardProblemBanner();
+    applyAnalyseTabVisibility();
+    refreshActiveTabNow();
+    const statusElement = document.getElementById('saveStatus');
+    if (statusElement) {
+        statusElement.classList.remove('status-error');
+        statusElement.classList.add('status-saved');
+        statusElement.textContent = 'shyft-power-Konto angelegt – Demomodus beendet';
+        clearTimeout(saveStatusTimeout);
+        saveStatusTimeout = setTimeout(() => {
+            statusElement.textContent = '';
+            statusElement.classList.remove('status-saved');
+        }, 6000);
     }
 }
 
@@ -1961,6 +2043,14 @@ function scoreSensorEntityForField(entity, key, historySignal) {
     const keywords = SENSOR_MATCH_KEYWORDS[key] || [];
     if (keywords.some(k => haystack.includes(k))) score += 3;
 
+    // Die Heizungs-Solltemperatur wird bei "Direkt steuern" GESCHRIEBEN - nur number./climate.-Entitäten
+    // lassen sich beschreiben (siehe build_number_script_config in app.py). Sensoren bleiben wählbar
+    // (z. B. wenn eine eigene Automation schreibt), rutschen aber nach "Sonstige Sensoren".
+    if (key === 'heatpump_heating_target_temp_normal') {
+        const domain = entity.entity_id.split('.')[0];
+        score += (domain === 'number' || domain === 'climate') ? 5 : -7;
+    }
+
     if (historySignal) {
         if (key === 'photovoltaic_powerflow_pv') {
             // PV-Erzeugung darf nie negativ sein; das vom Nutzer beschriebene Muster (nachts ~0,
@@ -2352,7 +2442,7 @@ function isSectionComplete(section, currentIds) {
 // blockiert ohne Zuordnung nichts (compute_heizung_actions/collect_live_values in app.py bzw.
 // sync_service.py behandeln nicht-zugeordnet wie "an", nicht wie "aus"), und die Vorlauftemperatur
 // ist rein informativ, kein Pflichtfeld (Nutzer-Vorgabe).
-const REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS = new Set(['heatpump_current_power_elect', 'heatpump_temp_indoor_measured', 'heatpump_heating_activated', 'heatpump_supply_temp_hp', 'heatpump_dhw_activated']);
+const REQUIRED_FIELD_OPTIONAL_SENSOR_KEYS = new Set(['heatpump_current_power_elect', 'heatpump_temp_indoor_measured', 'heatpump_heating_activated', 'heatpump_supply_temp_hp', 'heatpump_dhw_activated', 'electronicvehicle_home']);
 const REQUIRED_FIELD_OPTIONAL_ACTION_KEYS = new Set(['consumption_limit_14a', 'pv_feed_in_limit']);
 
 // Ausfuehrlichere Schwester von isSectionComplete oben: statt nur true/false liefert das hier je
@@ -3294,6 +3384,13 @@ function renderIntegrationSections() {
             const wasDemo = previousIds.length === 1 && previousIds[0] === DEMO_INTEGRATION_ID;
             const becameReal = !(selectedIds.length === 1 && selectedIds[0] === DEMO_INTEGRATION_ID);
             currentIntegrationSelections[section.key] = selectedIds;
+            // Neueinrichtung einer Waermepumpe: "Warmwasserbereitung aktiviert" und "Heizung aktiviert" starten mit "An".
+            if (section.key === 'waermepumpe' && becameReal && (wasEmpty || wasDemo)) {
+                configData['sensorMappings'] = configData['sensorMappings'] || {};
+                for (const staticKey of ['heatpump_dhw_activated', 'heatpump_heating_activated']) {
+                    if (!configData['sensorMappings'][staticKey]) configData['sensorMappings'][staticKey] = STATIC_SENSOR_ON;
+                }
+            }
             if (selectedIds.length > 0) {
                 renderSectionBody(bodyDiv, section, selectedIds);
                 if (wasEmpty || (wasDemo && becameReal)) expanded = true;
@@ -3454,6 +3551,9 @@ function renderNotificationSection() {
         const row = document.createElement('tr');
         const keyCell = document.createElement('td');
         keyCell.textContent = label;
+        if (NOTIFICATION_TYPE_DESCRIPTIONS[key]) {
+            keyCell.appendChild(buildTooltip(NOTIFICATION_TYPE_DESCRIPTIONS[key]));
+        }
         const toggleCell = document.createElement('td');
         toggleCell.className = 'toggleCell';
         const toggleId = 'notification_' + key + ACTION_TOGGLE_POSTFIX;
@@ -3461,7 +3561,7 @@ function renderNotificationSection() {
         // "nur bei Fehlern" ist neu und faellt ohne explizite Zustimmung standardmaessig aus (anders
         // als die generische "!== false"-Standardregel unten) - sonst wuerden bestehende Nutzer nach
         // diesem Update ploetzlich BEIDE Toggles an dieser Stelle als aktiv sehen.
-        const checked = key === 'action_start_end_errors_only' ? notificationsEnabled[key] === true : notificationsEnabled[key] !== false;
+        const checked = NOTIFICATION_TYPES_DEFAULT_OFF.has(key) ? notificationsEnabled[key] === true : notificationsEnabled[key] !== false;
         if (pairedKey) {
             const bareToggle = buildBareToggleSwitch(checked);
             const input = bareToggle.querySelector('input');
@@ -3857,7 +3957,9 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         sensorsHeading.textContent = 'Sensoren';
         bodyDiv.appendChild(sensorsHeading);
 
-        if (section.key === 'waermepumpe' || section.key === 'heizstab') {
+        if (section.key === 'waermepumpe') {
+            appendWaermepumpeSensorLayout(bodyDiv, section, sensorDatalistIds);
+        } else if (section.key === 'heizstab') {
             // "Warmwasser-Speichergröße" gehoert direkt unter die zugehoerige Sensor-Zeile
             // "Temperatur Warmwassertank" (Nutzer-Feedback) - dafuer wird dieser eine Sensor hier
             // vorgezogen und das Feld gleich daruntergesetzt, statt es weiter unten im Konfig-Block
@@ -3872,7 +3974,7 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         const topSensorKeys = section.key === 'wallbox'
             ? section.sensors.filter(k => k !== 'wallbox_plugged')
             : section.key === 'waermepumpe'
-                ? section.sensors.filter(k => k !== 'heatpump_dhw_tank_temp')
+                ? []  // komplett in appendWaermepumpeSensorLayout
                 : section.key === 'heizstab'
                     // Die An-/Aus-Entitaet steht weiter unten unter "Steuerung" (siehe buildHeatingRodControl).
                     ? section.sensors.filter(k => k !== 'heatpump_dhw_tank_temp' && k !== HEATING_ROD_SWITCH_KEY)
@@ -3880,7 +3982,9 @@ function renderSectionBody(bodyDiv, section, entryIds) {
                         // Mehrfachauswahl (Liste) statt der Einzelzeile - siehe buildMultiSensorField unten.
                         ? section.sensors.filter(k => k !== 'sonstiger_verbraucher_switch_entities')
                         : section.sensors;
-        bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, sectionHelpInformation(section), VALUE_POSTFIX, key => sensorDatalistIds[key], true));
+        if (topSensorKeys.length > 0) {
+            bodyDiv.appendChild(buildMappingTable(topSensorKeys, configData["sensorMappings"] || {}, sectionHelpInformation(section), VALUE_POSTFIX, key => sensorDatalistIds[key], true));
+        }
         if (section.key === 'heizstab') {
             bodyDiv.appendChild(buildHeatingRodMaxPowerField());
             bodyDiv.appendChild(buildHeatingRodMaxTempField());
@@ -3910,26 +4014,12 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         if (section.key === 'auto') {
             bodyDiv.appendChild(buildCarBatteryCapacityField());
             bodyDiv.appendChild(buildCarConsumptionField());
-            bodyDiv.appendChild(buildCarAvgDailyDistanceField());
-            bodyDiv.appendChild(buildEvSocNormalField());
-            bodyDiv.appendChild(buildEvSocMaxPvSurplusField());
+            bodyDiv.appendChild(buildEvChargeRuleField());
         }
         if (section.key === 'sonstiger_verbraucher') {
             bodyDiv.appendChild(buildMultiSensorField('sonstiger_verbraucher_switch_entities', candidateEntities));
             bodyDiv.appendChild(buildOdPriceThresholdField());
             bodyDiv.appendChild(buildOdPowerField());
-        }
-        if (section.key === 'waermepumpe') {
-            bodyDiv.appendChild(buildHpTypeField());
-            bodyDiv.appendChild(buildHpBuildingSizeField());
-            bodyDiv.appendChild(buildHpEnergyEfficiencyField());
-            // buildHpDhwTankSizeField() steht jetzt oben direkt unter "Temperatur Warmwassertank".
-            bodyDiv.appendChild(buildHpMaxPowerField());
-            bodyDiv.appendChild(buildHpMaxSupplyTempField());
-            bodyDiv.appendChild(buildHpHeatingTargetTempMinField());
-            bodyDiv.appendChild(buildHpHeatingBufferField());
-            bodyDiv.appendChild(buildHpHeatingCurveLevelField());
-            bodyDiv.appendChild(buildHpHeatingCurveSlopeField());
         }
     }
 
@@ -4004,16 +4094,17 @@ function renderSectionBody(bodyDiv, section, entryIds) {
         steuerungTarget.appendChild(buildMappingTable(manualActions, configData["actorMappings"] || {}, actorHelpInformation, ACTOR_VALUE_POSTFIX, () => 'allEntityOptions', false, configData["actionTypeEnabled"] || {}));
     }
 
+    // Waermepumpe: erst Warmwasser, dann Heizung (Nutzer-Vorgabe) - Warmwasser ist die einzige Steuerung mit hasHotWater.
+    if (hasHotWater) {
+        steuerungTarget.appendChild(buildHotWaterControl());
+    }
+
     for (const control of sectionControls) {
         steuerungTarget.appendChild(control.type === 'switch' ? buildAutoManagedSwitchControl(control) : buildAutoManagedNumberControl(control));
     }
 
     if (hasCarCharge) {
         steuerungTarget.appendChild(buildCarChargeControl());
-    }
-
-    if (hasHotWater) {
-        steuerungTarget.appendChild(buildHotWaterControl());
     }
 
     if (section.key === 'heizstab') {
@@ -4343,7 +4434,7 @@ function buildConfigSelectField({label, tooltip, id, configKey, options, default
     // Den effektiven (Default-aufgeloesten) Wert sofort in configData festhalten, nicht erst beim
     // ersten 'change'. Sonst wird ein nie angefasstes Dropdown beim Speichern als null/undefined
     // geschrieben (writeConfig uebernimmt nur, was im PUT-Body steht) und der sichtbare Default
-    // greift nie - z.B. evSocNormal landete so dauerhaft als null in der Config.
+    // greift nie - z.B. evChargeRule landete so dauerhaft als null in der Config.
     if (configData[configKey] === undefined || configData[configKey] === null) {
         configData[configKey] = select.value;
     }
@@ -4368,6 +4459,43 @@ function buildConfigSelectField({label, tooltip, id, configKey, options, default
 // once here in the addon instead of via a Bubble form. Values match Bubble Option Set entries
 // exactly (see shyft's SiteEntityRepository mapToXyz switch statements) so the Java server can
 // look them up unchanged. See addon_sensor_data_JSON/staticConfig in sync_site_data (app.py).
+
+// Kleine Zwischenueberschrift innerhalb eines Abschnitts (kleiner als "Sensoren"/"Steuerung"); spaced = mit etwas Abstand davor
+// (z.B. "Optionale Sensoren").
+function buildMinorHeading(text, spaced = false) {
+    const heading = document.createElement('div');
+    heading.className = 'sectionMinorHeading' + (spaced ? ' sectionMinorHeadingSpaced' : '');
+    heading.textContent = text;
+    return heading;
+}
+
+// Sensor-Teil der Waermepumpen-Kachel (Nutzer-Vorgabe): Warmwasser / Heizung / System-Gebaeude mit Zwischenueberschriften und
+// eigenen "Optionale Sensoren"-Gruppen. Die Reihenfolge der Felder steht hier, nicht in section.sensors.
+function appendWaermepumpeSensorLayout(bodyDiv, section, sensorDatalistIds) {
+    const table = keys => buildMappingTable(keys, configData["sensorMappings"] || {}, sectionHelpInformation(section), VALUE_POSTFIX, key => sensorDatalistIds[key], true);
+
+    bodyDiv.appendChild(buildMinorHeading('Warmwasser'));
+    bodyDiv.appendChild(buildHpDhwTankSizeField());
+    bodyDiv.appendChild(table(['heatpump_dhw_tank_temp', 'heatpump_dhw_target_temp', 'heatpump_dhw_activated']));
+    bodyDiv.appendChild(buildMinorHeading('Optionale Sensoren', true));
+    bodyDiv.appendChild(table(['heatpump_dhw_on_off']));
+
+    bodyDiv.appendChild(buildMinorHeading('Heizung'));
+    bodyDiv.appendChild(table(['heatpump_heating_activated', 'heatpump_heating_target_temp_normal']));
+    bodyDiv.appendChild(buildMinorHeading('Optionale Sensoren', true));
+    bodyDiv.appendChild(table(['heatpump_current_power_elect', 'heatpump_on_off', 'heatpump_supply_temp_hp']));
+
+    bodyDiv.appendChild(buildMinorHeading('System / Gebäude'));
+    bodyDiv.appendChild(buildHpHeatingTargetTempMinField());
+    bodyDiv.appendChild(buildHpBuildingSizeField());
+    bodyDiv.appendChild(buildHpEnergyEfficiencyField());
+    bodyDiv.appendChild(buildHpHeatingBufferField());
+    bodyDiv.appendChild(buildHpTypeField());
+    bodyDiv.appendChild(buildHpMaxPowerField());
+    bodyDiv.appendChild(buildHpHeatingCurveLevelField());
+    bodyDiv.appendChild(buildHpHeatingCurveSlopeField());
+    bodyDiv.appendChild(buildHpMaxSupplyTempField());
+}
 
 function buildHpBuildingSizeField() {
     return buildConfigSelectField({
@@ -4491,7 +4619,7 @@ function buildHpHeatingTargetTempMinField() {
 // here is just the "name" part, the "__zahl" suffix is invisible to the user.
 function buildHpHeatingBufferField() {
     return buildConfigSelectField({
-        label: 'Heizungspuffer',
+        label: 'Schwankungen Raumtemperatur / Gebäudepuffer',
         tooltip: 'Wie viel Spielraum die Optimierung beim Vorheizen der Innentemperatur oberhalb der Soll-Temperatur nutzen darf, bevor sie stoppt.',
         id: 'hp_heating_buffer',
         configKey: 'hpHeatingBuffer',
@@ -4502,7 +4630,7 @@ function buildHpHeatingBufferField() {
 
 function buildHpMaxSupplyTempField() {
     return buildConfigNumberField({
-        label: 'Temperatur Obergrenze (°C)',
+        label: 'Temperaturobergrenze, Heizungssystem (°C)',
         tooltip: 'Höchste Temperatur, auf die Shyft das Warmwasser erwärmen darf / maximale Systemtemperatur.',
         id: 'hp_max_supply_temp',
         configKey: 'hpMaxSupplyTempC',
@@ -4577,32 +4705,27 @@ function buildBatterySocMinField() {
     });
 }
 
-function buildEvSocNormalField() {
-    return buildConfigSelectField({
-        label: 'Mindestladestand',
-        tooltip: 'Wie viel Prozent der Batterie sollen unabhängig von den geplanten Fahrten möglichst schnell geladen und für spontane Fahrten vorgehalten werden?',
-        id: 'ev_soc_normal',
-        configKey: 'evSocNormal',
-        options: ['10 %', '20 %', '30 %', '40 %', '50 %', '60 %', '70 %', '80 %'].map(v => [v, v]),
-        defaultValue: '10 %',
-    });
+// Laderegel (ersetzt 'Mindestladestand' und 'Limit PV-Überschussladen'): Bestandsnutzer bekommen die Regel aus ihrem bisherigen
+// Mindestladestand abgeleitet - dieselbe Abbildung wie ev_tiers.charge_rule_from_legacy_soc_normal im Add-on (Migration beim Start).
+function evChargeRuleFromLegacy(legacyEvSocNormal) {
+    if (legacyEvSocNormal === undefined || legacyEvSocNormal === null) return 'mittel';
+    const pct = parseFloat(String(legacyEvSocNormal).replace('%', '').replace(',', '.'));
+    if (Number.isNaN(pct)) return 'mittel';
+    if (pct <= 20) return 'sehr günstig';
+    if (pct <= 50) return 'mittel';
+    return 'Komfort';
 }
 
-// Deckelt nur das PV-Ueberschussladen (siehe run_pv_surplus_charging_tick in app.py) - geplante
-// Strecken und sehr guenstiger Netzstrom laden trotzdem bis zum vollen/gewuenschten Ladestand,
-// diese Grenze soll die Autobatterie nur vor unnoetig haeufigem Vollladen durch PV-Ueberschuss
-// schuetzen. 60-95%, da darunter der Nutzen fraglich waere und 100% die Grenze ohnehin sinnlos macht.
-function buildEvSocMaxPvSurplusField() {
-    return buildConfigNumberField({
-        label: 'Limit PV-Überschussladen',
-        tooltip: 'Setze für PV-Überschussladen einen maximalen Ladestand, um die Autobatterie zu schonen. Für geplante Strecken gilt diese Grenze nicht. Auch wird bei sehr günstigem Netzstrom vollgeladen.',
-        id: 'ev_soc_max_pv_surplus',
-        configKey: 'evSocMaxPvSurplus',
-        placeholder: 'z.B. 80 %',
-        min: '60',
-        max: '95',
-        step: '1',
-        unit: '%',
+function buildEvChargeRuleField() {
+    return buildConfigSelectField({
+        label: 'Laderegel',
+        tooltip: 'Fällt der Ladestand eines eingesteckten Autos unter 10 %, lädt Shyft sofort, um den Akku zu schonen und spontane Kurzfahrten zu ermöglichen. ' +
+            'Zudem stellt Shyft sicher, dass für alle prognostizierten und geplanten Fahrten ausreichend geladen wird. ' +
+            'Drittens plant Shyft opportunistische Ladevorgänge, bei im historischen Vergleich niedrigen prognostizierten Preisen. Shyft kann entweder den Akku möglichst leer halten und auf die allergünstigsten Preise warten („sehr günstig“), oder für mehr „Komfort“ tendenziell häufiger laden.',
+        id: 'ev_charge_rule',
+        configKey: 'evChargeRule',
+        options: ['sehr günstig', 'mittel', 'Komfort'].map(v => [v, v]),
+        defaultValue: evChargeRuleFromLegacy(configData["evSocNormal"]),
     });
 }
 
@@ -4761,21 +4884,6 @@ function buildCarConsumptionField() {
         configKey: 'carConsumptionKwhPer100km',
         placeholder: 'z.B. 18',
         step: '1',
-    });
-}
-
-// Nur als Ausgangswert fuer die Verbrauchsprognose des Autos, solange noch keine eigene
-// Fahrhistorie (SOC-Verlauf) vorliegt - siehe compute_car_presence_forecast / EV_DEFAULT_DAILY_KM
-// in app.py. Sobald echte Fahrtage aufgezeichnet sind, wird dieser Wert nicht mehr verwendet.
-function buildCarAvgDailyDistanceField() {
-    return buildConfigNumberField({
-        label: 'Ø Fahrleistung (km/Tag)',
-        tooltip: 'Nur als Startwert, solange noch keine eigene Fahrhistorie vorliegt: geschätzte durchschnittliche tägliche Fahrleistung. Sobald genug Ladeverlauf deines Autos aufgezeichnet ist, lernt die Verbrauchsprognose daraus und dieser Wert wird nicht mehr genutzt.',
-        id: 'car_avg_daily_distance_km',
-        configKey: 'carAvgDailyDistanceKm',
-        placeholder: 'z.B. 50',
-        step: '5',
-        defaultValue: 50,
     });
 }
 
@@ -4939,23 +5047,51 @@ function markActionTested(readyKey, passed) {
     actionTestStatusMap[readyKey] = passed;
 }
 
-// "Direkt steuern" vs "HA-Automation" dropdown, shared by every AUTO_MANAGED_CONTROLS entry that
-// has hasAutomationVariant set - selecting a value here just toggles which of the two sibling
-// wrappers (direct-entity UI vs. automation-entity field(s)) is visible, see callers.
-function buildVariantSelect(id, currentValue, directLabel) {
-    const select = document.createElement('select');
-    select.id = id;
-    select.className = 'sensorInput';
-    const directOption = document.createElement('option');
-    directOption.value = 'direct';
-    directOption.textContent = directLabel;
-    select.appendChild(directOption);
-    const haOption = document.createElement('option');
-    haOption.value = 'ha_automation';
-    haOption.textContent = 'HA-Automation';
-    select.appendChild(haOption);
-    select.value = currentValue;
-    return select;
+// Unauffaelliger Textlink am Ende einer Steuerung, der zwischen der Standard-Steuerung (direkte
+// Entitaets-Steuerung) und der Experten-Variante "Per Home-Assistant-Automation steuern" umschaltet.
+// Ersetzt das fruehere "Varianten"-Dropdown: Standard ist immer die direkte Steuerung, die
+// Automation-Variante erreicht man nur ueber diesen Link (und zurueck ueber den zweiten Link).
+// Ein verstecktes <input id=hiddenId> haelt den Variantenwert ('ha_automation' oder directValue),
+// damit die bestehende Speicherlogik (liest die Variante per getElementById) unveraendert bleibt.
+// onToggle(active) wird nach jedem Umschalten aufgerufen; speichern und Sichtbarkeit uebernimmt der Aufrufer.
+function buildAutomationExpertLink(hiddenId, directValue, isActive, onToggle) {
+    const row = document.createElement('div');
+    row.className = 'expertLinkRow';
+
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.id = hiddenId;
+    row.appendChild(hidden);
+
+    const link = document.createElement('a');
+    link.setAttribute('role', 'button');
+    link.tabIndex = 0;
+    row.appendChild(link);
+    row.appendChild(document.createTextNode(' '));
+    const tooltipHolder = document.createElement('span');
+    row.appendChild(tooltipHolder);
+
+    let active = isActive;
+    function render() {
+        hidden.value = active ? 'ha_automation' : directValue;
+        link.textContent = active ? '← Zurück zur direkten Steuerung' : 'Volle Individualität: Per Home-Assistant-Automation steuern';
+        tooltipHolder.innerHTML = '';
+        tooltipHolder.appendChild(buildTooltip(active
+            ? 'Shyft löst aktuell deine Home-Assistant-Automation aus, statt die Geräte direkt anzusteuern. Mit dem Link wechselst du zurück zur direkten Steuerung.'
+            : 'Für Home-Assistant-Experten: Statt die Geräte direkt anzusteuern, löst Shyft eine von dir erstellte Home-Assistant-Automation aus und übergibt ihr den Zielwert (z.B. {{ target }}). So kannst du eigene Steuerungsregeln aufsetzen und volle Kontrolle über den Ablauf behalten.'));
+    }
+    const toggle = (event) => {
+        event.preventDefault();
+        active = !active;
+        render();
+        onToggle(active);
+    };
+    link.addEventListener('click', toggle);
+    link.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') toggle(event);
+    });
+    render();
+    return row;
 }
 
 // Oeffnet den Automation-Editor von Home Assistant fuer eine neue Automation in einem neuen Tab -
@@ -4976,7 +5112,7 @@ function openNewAutomationBuilder() {
 // zu befuellen. Gibt einen Wrapper zurueck, der ANSTELLE des bisherigen "cell.appendChild(input)" ins
 // DOM eingehaengt wird; das <input>-Element selbst bleibt unveraendert (gleiche id, gleiche externen
 // 'change'-Listener, siehe dispatchEvent unten).
-function attachEntityDropdown(input, {datalistId, headerText, topAction}) {
+function attachEntityDropdown(input, {datalistId, headerText, topAction, staticOptions = null}) {
     input.removeAttribute('list');
 
     const wrapper = document.createElement('span');
@@ -5023,6 +5159,14 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction}) {
                 panel.hidden = true;
             });
             panel.appendChild(actionRow);
+        }
+
+        // Feste Auswahl (z.B. "An"/"Aus") ganz oben, unabhaengig vom Suchtext - fuer Nutzer ohne passenden Sensor.
+        if (staticOptions) {
+            for (const opt of staticOptions) {
+                appendOptionRow(opt);
+                panel.lastChild.classList.add('entityDropdownStaticOption');
+            }
         }
 
         const header = document.createElement('div');
@@ -5170,24 +5314,7 @@ function buildAutoManagedNumberControl(control) {
         : control.hasAutomationVariant ? ((configData['controlVariant'] || {})[control.key] || 'direct')
         : 'direct';
 
-    let variantSelect = null;
     let automationRow = null;
-    if (control.hasAutomationVariant) {
-        variantSelect = buildVariantSelect(control.key + '_variant', variant, 'Direkt steuern');
-        const variantTable = document.createElement('table');
-        const variantTbody = document.createElement('tbody');
-        const variantRow = document.createElement('tr');
-        const variantLabelCell = document.createElement('td');
-        variantLabelCell.textContent = 'Varianten';
-        variantLabelCell.appendChild(buildTooltip('Wie das Addon diese Aktion umsetzt: entweder direkt über eine Home-Assistant-Entität, oder indem es eine selbst erstellte Automation triggert.'));
-        const variantValueCell = document.createElement('td');
-        variantValueCell.appendChild(variantSelect);
-        variantRow.appendChild(variantLabelCell);
-        variantRow.appendChild(variantValueCell);
-        variantTbody.appendChild(variantRow);
-        variantTable.appendChild(variantTbody);
-        wrapper.appendChild(variantTable);
-    }
     if (control.hasAutomationVariant || control.automationOnly) {
         automationRow = buildAutomationEntityRow('HA-Automation auswählen',
             'Zum Auslösen dieser Aktion kannst du deine selber erstellte Automation hinterlegen. Der Zielwert für die Aktion wird als {{ target }} von Shyft übergeben.',
@@ -5216,7 +5343,7 @@ function buildAutoManagedNumberControl(control) {
 
     const plusButton = document.createElement('button');
     plusButton.type = 'button';
-    plusButton.textContent = `Test: +${control.step}${unitSuffix}`;
+    plusButton.textContent = control.onlyIncrement ? 'Test: Soll-Temperatur steuern' : `Test: +${control.step}${unitSuffix}`;
 
     const valueDisplay = document.createElement('span');
     valueDisplay.className = 'autoActionValue';
@@ -5423,14 +5550,14 @@ function buildAutoManagedNumberControl(control) {
     controls.appendChild(valueDisplay);
     wrapper.appendChild(controls);
 
-    if (variantSelect) {
-        variantSelect.addEventListener('change', () => {
-            variant = variantSelect.value;
-            automationRow.style.display = variant === 'ha_automation' ? '' : 'none';
+    if (control.hasAutomationVariant) {
+        wrapper.appendChild(buildAutomationExpertLink(control.key + '_variant', 'direct', variant === 'ha_automation', (active) => {
+            variant = active ? 'ha_automation' : 'direct';
+            automationRow.style.display = active ? '' : 'none';
             valueDisplay.textContent = 'Aktueller Wert: –';
             autoSave();
             refreshStatus();
-        });
+        }));
     }
 
     wrapper.__refresh = refreshStatus;
@@ -5464,24 +5591,8 @@ function buildAutoManagedSwitchControl(control) {
     const readyKey = control.key;
     let variant = control.hasAutomationVariant ? ((configData['controlVariant'] || {})[control.key] || 'direct') : 'direct';
 
-    let variantSelect = null;
     let automationRows = null;
     if (control.hasAutomationVariant) {
-        variantSelect = buildVariantSelect(control.key + '_variant', variant, 'Entität ein-/ausschalten');
-        const variantTable = document.createElement('table');
-        const variantTbody = document.createElement('tbody');
-        const variantRow = document.createElement('tr');
-        const variantLabelCell = document.createElement('td');
-        variantLabelCell.textContent = 'Varianten';
-        variantLabelCell.appendChild(buildTooltip('Wie das Addon diese Aktion umsetzt: entweder direkt über eine Home-Assistant-Entität, oder indem es selbst erstellte Automationen triggert.'));
-        const variantValueCell = document.createElement('td');
-        variantValueCell.appendChild(variantSelect);
-        variantRow.appendChild(variantLabelCell);
-        variantRow.appendChild(variantValueCell);
-        variantTbody.appendChild(variantRow);
-        variantTable.appendChild(variantTbody);
-        wrapper.appendChild(variantTable);
-
         automationRows = document.createElement('div');
         const actorMappings = configData['actorMappings'] || {};
         automationRows.appendChild(buildAutomationEntityRow('Sonstigen Verbraucher starten',
@@ -5625,16 +5736,16 @@ function buildAutoManagedSwitchControl(control) {
     controlsRow.appendChild(valueDisplay);
     wrapper.appendChild(controlsRow);
 
-    if (variantSelect) {
-        variantSelect.addEventListener('change', () => {
-            variant = variantSelect.value;
-            automationRows.style.display = variant === 'ha_automation' ? '' : 'none';
+    if (control.hasAutomationVariant) {
+        wrapper.appendChild(buildAutomationExpertLink(control.key + '_variant', 'direct', variant === 'ha_automation', (active) => {
+            variant = active ? 'ha_automation' : 'direct';
+            automationRows.style.display = active ? '' : 'none';
             valueDisplay.textContent = 'Aktueller Status: –';
             nextPhase = 'start';
             testButton.textContent = 'Test: Start';
             autoSave();
             refreshStatus();
-        });
+        }));
     }
 
     wrapper.__refresh = refreshStatus;
@@ -6103,35 +6214,9 @@ function buildCarChargeControl() {
 
     const candidateServices = allServiceOptions.filter(s => getIntegrationServiceDomains('wallbox').has(s.service.split('.')[0]));
 
-    const recipeTable = document.createElement('table');
-    const recipeTbody = document.createElement('tbody');
-    const recipeRow = document.createElement('tr');
-    const recipeLabelCell = document.createElement('td');
-    recipeLabelCell.textContent = 'Varianten';
-    recipeLabelCell.appendChild(buildTooltip('Wie das Addon deine Wallbox ansteuert, um einen Ladevorgang zu starten. "Dreistufig" setzt zuerst die Phasenzahl, dann die Amperezahl, dann startet es den Ladevorgang.'));
-    const recipeValueCell = document.createElement('td');
-    const recipeSelect = document.createElement('select');
-    recipeSelect.id = 'car_charge_recipe_type';
-    recipeSelect.className = 'sensorInput';
-    const noRecipeOption = document.createElement('option');
-    noRecipeOption.value = '';
-    noRecipeOption.textContent = '– keine Variante ausgewählt –';
-    recipeSelect.appendChild(noRecipeOption);
-    const threeStageOption = document.createElement('option');
-    threeStageOption.value = 'three_stage';
-    threeStageOption.textContent = 'Dreistufig';
-    recipeSelect.appendChild(threeStageOption);
-    const haAutomationOption = document.createElement('option');
-    haAutomationOption.value = 'ha_automation';
-    haAutomationOption.textContent = 'HA-Automation';
-    recipeSelect.appendChild(haAutomationOption);
-    recipeSelect.value = recipe.type || '';
-    recipeValueCell.appendChild(recipeSelect);
-    recipeRow.appendChild(recipeLabelCell);
-    recipeRow.appendChild(recipeValueCell);
-    recipeTbody.appendChild(recipeRow);
-    recipeTable.appendChild(recipeTbody);
-    wrapper.appendChild(recipeTable);
+    // Standard ist immer die dreistufige Steuerung; die HA-Automation erreicht man nur ueber den Textlink
+    // am Ende der Kachel (siehe buildAutomationExpertLink).
+    let carChargeAutomationActive = recipe.type === 'ha_automation';
 
     const stagesWrapper = document.createElement('div');
     stagesWrapper.className = 'carChargeStages';
@@ -6153,13 +6238,13 @@ function buildCarChargeControl() {
         candidateServices, controlStage,
         CAR_CHARGE_STAGE_BRANCHES.control.keys, CAR_CHARGE_STAGE_BRANCHES.control.labels,
         'z.B. action_command', 'wallbox'));
-    stagesWrapper.style.display = recipeSelect.value === 'three_stage' ? '' : 'none';
+    stagesWrapper.style.display = carChargeAutomationActive ? 'none' : '';
     wrapper.appendChild(stagesWrapper);
 
     // "HA-Automation" is the alternative to the 3-stage recipe: instead of the addon driving
     // individual services itself, it just triggers the user's own automation with target/phase
     // as template variables ({{ target }}, {{ phase }}) - see trigger_ha_automation_recipe in
-    // app.py. Only ever one or the other is shown, matching recipeSelect's current value.
+    // app.py. Only ever one or the other is shown, matching the current variant.
     const automationWrapper = document.createElement('div');
     const automationTable = document.createElement('table');
     const automationTbody = document.createElement('tbody');
@@ -6195,14 +6280,8 @@ function buildCarChargeControl() {
     automationTbody.appendChild(automationRow);
     automationTable.appendChild(automationTbody);
     automationWrapper.appendChild(automationTable);
-    automationWrapper.style.display = recipeSelect.value === 'ha_automation' ? '' : 'none';
+    automationWrapper.style.display = carChargeAutomationActive ? '' : 'none';
     wrapper.appendChild(automationWrapper);
-
-    recipeSelect.addEventListener('change', () => {
-        stagesWrapper.style.display = recipeSelect.value === 'three_stage' ? '' : 'none';
-        automationWrapper.style.display = recipeSelect.value === 'ha_automation' ? '' : 'none';
-        autoSave();
-    });
 
     const status = document.createElement('div');
     status.className = 'autoActionStatus';
@@ -6342,6 +6421,13 @@ function buildCarChargeControl() {
     controlsRow.appendChild(wallboxStatusDisplay);
     wrapper.appendChild(controlsRow);
 
+    wrapper.appendChild(buildAutomationExpertLink('car_charge_recipe_type', 'three_stage', carChargeAutomationActive, (active) => {
+        carChargeAutomationActive = active;
+        stagesWrapper.style.display = active ? 'none' : '';
+        automationWrapper.style.display = active ? '' : 'none';
+        autoSave();
+    }));
+
     wrapper.__refresh = refreshWallboxStatus;
     refreshWallboxStatus();
 
@@ -6359,39 +6445,12 @@ function buildHotWaterControl() {
     wrapper.appendChild(title);
 
     const recipe = configData['hotWaterRecipe'] || {};
-    // "Direkte Entitäts-Steuerung" ist die haeufigere Wahl - deshalb hier vorausgewaehlt, solange
-    // der Nutzer nicht explizit "HA-Automation" gewaehlt hat (Nutzer-Vorgabe). "Befehl auswählen"
-    // bleibt als Option erreichbar, falls jemand die Auswahl bewusst wieder zuruecksetzen will.
-    let variant = recipe.type === 'ha_automation' ? 'ha_automation' : (recipe.type === '' ? '' : 'direct');
+    // Standard ist immer die direkte Entitaets-Steuerung; die HA-Automation erreicht man nur ueber den
+    // Textlink am Ende der Kachel (siehe buildAutomationExpertLink).
+    let variant = recipe.type === 'ha_automation' ? 'ha_automation' : 'direct';
     const hotWaterHint = buildTestGateHint();
     applyTestGate('hot_water', checkmark, hotWaterHint,
         variant === 'ha_automation' ? !!recipe.haAutomationEntityId : !!recipe.service);
-
-    // "Varianten" zuerst (siehe Reihenfolge weiter unten) - erst nach einer Auswahl blendet sich
-    // das passende Eingabefeld darunter ein, statt beide gleichzeitig zu zeigen.
-    const variantSelect = document.createElement('select');
-    variantSelect.id = 'hot_water_variant';
-    variantSelect.className = 'sensorInput';
-    for (const [value, text] of [['', 'Befehl auswählen'], ['direct', 'Direkte Entitäts-Steuerung'], ['ha_automation', 'HA-Automation']]) {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = text;
-        variantSelect.appendChild(option);
-    }
-    variantSelect.value = variant;
-    const variantTable = document.createElement('table');
-    const variantTbody = document.createElement('tbody');
-    const variantRow = document.createElement('tr');
-    const variantLabelCell = document.createElement('td');
-    variantLabelCell.textContent = 'Varianten';
-    variantLabelCell.appendChild(buildTooltip('Wie das Addon die Warmwasserbereitung auslöst: entweder direkt über einen Wärmepumpen-Befehl (HA-Aktion), oder indem es eine selbst erstellte Automation triggert (HA-Automation).'));
-    const variantValueCell = document.createElement('td');
-    variantValueCell.appendChild(variantSelect);
-    variantRow.appendChild(variantLabelCell);
-    variantRow.appendChild(variantValueCell);
-    variantTbody.appendChild(variantRow);
-    variantTable.appendChild(variantTbody);
-    wrapper.appendChild(variantTable);
 
     const candidateServices = allServiceOptions.filter(s => getIntegrationServiceDomains('waermepumpe').has(s.service.split('.')[0])
         && !HOT_WATER_FORBIDDEN_SERVICES.has(s.service));
@@ -6423,14 +6482,6 @@ function buildHotWaterControl() {
     automationInput.addEventListener('change', refreshCheckmark);
     const hotWaterServiceInput = document.getElementById('hot_water_hotWater_service');
     if (hotWaterServiceInput) hotWaterServiceInput.addEventListener('change', refreshCheckmark);
-
-    variantSelect.addEventListener('change', () => {
-        variant = variantSelect.value;
-        stageWrapper.style.display = variant === 'direct' ? '' : 'none';
-        automationRow.style.display = variant === 'ha_automation' ? '' : 'none';
-        refreshCheckmark();
-        autoSave();
-    });
 
     const status = document.createElement('div');
     status.className = 'autoActionStatus';
@@ -6527,6 +6578,14 @@ function buildHotWaterControl() {
     controlsRow.appendChild(statusDisplay);
     wrapper.appendChild(controlsRow);
 
+    wrapper.appendChild(buildAutomationExpertLink('hot_water_variant', 'direct', variant === 'ha_automation', (active) => {
+        variant = active ? 'ha_automation' : 'direct';
+        stageWrapper.style.display = active ? 'none' : '';
+        automationRow.style.display = active ? '' : 'none';
+        refreshCheckmark();
+        autoSave();
+    }));
+
     wrapper.__refresh = refreshHotWaterStatus;
     refreshHotWaterStatus();
 
@@ -6587,6 +6646,8 @@ function buildToggleSwitch(id, checked) {
 function extractEntityId(value) {
     const text = (value || '').trim();
     if (!text) return '';
+    if (text === 'An') return STATIC_SENSOR_ON;
+    if (text === 'Aus') return STATIC_SENSOR_OFF;
     const byLabel = allSensorIdOptions.find(entity => entity.label === text);
     if (byLabel) return byLabel.entity_id;
     const inParens = text.match(/\(([a-z0-9_]+\.[a-z0-9_]+),/);
@@ -6878,8 +6939,6 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     }
 
     const variant = (configData['controlVariant'] || {})[actionKey] || 'direct';
-    const variantSelect = buildVariantSelect(actionKey + '_variant', variant, 'Direkte Entitäts-Steuerung');
-    wrapper.appendChild(buildLabeledRow('Varianten', 'Wähle möglichst "Direkte Entitäts-Steuerung", um die Ladeleistung direkt von shyft-power zu steuern. Funktioniert dies mit deiner Batterie nicht, so erstelle selber eine Automation in Home-Assistant, die du hier dann hinterlegen kannst.', variantSelect));
 
     const directFields = document.createElement('div');
     directFields.style.display = variant === 'direct' ? '' : 'none';
@@ -6898,14 +6957,13 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     // synchron direkt danach aufgerufenes refresh() wuerde also noch mit dem alten Stand rendern
     // und die Auswahl optisch wieder zuruecksetzen. Selbes Muster wie bei den bestehenden
     // AUTO_MANAGED_CONTROLS-Varianten-Dropdowns (siehe z.B. buildAutoManagedNumberControl).
-    variantSelect.addEventListener('change', () => {
-        const newVariant = variantSelect.value;
+    wrapper.appendChild(buildAutomationExpertLink(actionKey + '_variant', 'direct', variant === 'ha_automation', (active) => {
         configData['controlVariant'] = configData['controlVariant'] || {};
-        configData['controlVariant'][actionKey] = newVariant;
-        directFields.style.display = newVariant === 'direct' ? '' : 'none';
-        automationRow.style.display = newVariant === 'ha_automation' ? '' : 'none';
+        configData['controlVariant'][actionKey] = active ? 'ha_automation' : 'direct';
+        directFields.style.display = active ? 'none' : '';
+        automationRow.style.display = active ? '' : 'none';
         autoSave();
-    });
+    }));
 
     return wrapper;
 }
@@ -7029,8 +7087,15 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
     return container;
 }
 
+// Feste An/Aus-Auswahl statt einer Entitaet (siehe STATIC_SENSOR_ON/OFF in sync_service.py): gespeichert als "static_on"/"static_off",
+// im Eingabefeld als "An"/"Aus".
+const STATIC_SENSOR_ON = 'static_on';
+const STATIC_SENSOR_OFF = 'static_off';
+
 function formatEntityDisplay(entityId) {
     if (!entityId) return '';
+    if (entityId === STATIC_SENSOR_ON) return 'An';
+    if (entityId === STATIC_SENSOR_OFF) return 'Aus';
     const match = allSensorIdOptions.find(entity => entity.entity_id === entityId);
     if (!match) return entityId;
     return match.label;
@@ -7325,11 +7390,14 @@ function buildMappingRow(key, value, helpInfo, valuePostfix, datalistId, showLiv
     const keyCell = document.createElement('td');
     const context = helpInfo[key] ?? {label: key};
     keyCell.textContent = context.label;
+    if (context.bold) keyCell.style.fontWeight = '700';
     keyCell.appendChild(buildTooltip(context.description ?? key));
 
     const inputValue = document.createElement('input');
     inputValue.id = key + valuePostfix;
     inputValue.value = showLiveValue ? formatEntityDisplay(value) : value;
+    // Felder mit fester An/Aus-Auswahl (siehe STATIC_SENSOR_*): ohne Eintrag gilt "An" (Standard).
+    if (context.staticOnOff) inputValue.placeholder = 'An (Standard)';
     inputValue.setAttribute("class", "sensorInput");
     inputValue.setAttribute("autocomplete", "off");
     inputValue.addEventListener('change', async () => {
@@ -7340,7 +7408,8 @@ function buildMappingRow(key, value, helpInfo, valuePostfix, datalistId, showLiv
         if (onChange) onChange();
     });
     const inputWrapper = wrapEntityInputWithClear(
-        attachEntityDropdown(inputValue, {datalistId, headerText: 'Home-Assistant-Entität'}), inputValue);
+        attachEntityDropdown(inputValue, {datalistId, headerText: 'Home-Assistant-Entität',
+            staticOptions: context.staticOnOff ? [{value: 'An', label: 'An'}, {value: 'Aus', label: 'Aus'}] : null}), inputValue);
 
     const valueCell = document.createElement('td');
     valueCell.appendChild(inputWrapper);
@@ -8065,9 +8134,9 @@ function showShyftActionsError(container) {
     container.appendChild(error);
 }
 
-// "Heute: 3 kWh | Morgen: 23 kWh | Übermorgen: 22 kWh" - the remaining/full PV-Ertrag per
-// Kalendertag (lokale Zeit), summiert aus den stündlichen kW-Werten (ein kW-Wert über eine Stunde
-// ist per Definition eine kWh). "Heute" zählt nur noch nicht vergangene Stunden.
+// "Heute: 3 kWh | Morgen: 23 kWh | Übermorgen: 22 kWh" - der volle PV-Ertrag pro Kalendertag
+// (lokale Zeit), summiert aus den stündlichen kW-Werten (ein kW-Wert über eine Stunde ist per
+// Definition eine kWh). "Heute" ist seit 0.0.45.354 ebenfalls der Gesamttag (Ist bis jetzt + Prognose).
 //
 // "Übermorgen" wird erst ab 21 Uhr ausgewiesen (siehe computePvEnergySummary) - vorher deckt das
 // 48h-Fenster diesen Tag nicht vollstaendig ab, die Summe wirkte irrefuehrend unvollstaendig. "Vollstaendig" heißt hier
@@ -8075,8 +8144,7 @@ function showShyftActionsError(container) {
 // gefallen": sobald ab PV_COMPLETE_CHECK_FROM_HOUR (17 Uhr - spätestens 21 Uhr wäre auch im
 // Hochsommer sicher, im Winter geht die Sonne aber teils schon um 17 Uhr unter) ein Wert nahe 0
 // auftaucht, gilt der Tag als abgeschlossen; ein erneuter Anstieg danach ist im selben Kalendertag
-// praktisch ausgeschlossen. Nur "Heute" ist von dieser Prüfung ausgenommen, da dort absichtlich
-// nur die Teilsumme gezeigt wird.
+// praktisch ausgeschlossen. Nur "Heute" ist von dieser Prüfung ausgenommen (enthaelt ohnehin schon die Ist-Werte bis jetzt).
 // Die "Einsatzplan"-Karte direkt unter dem PV-Prognose-Chart: Kennzahlen des aktuellen
 // Optimierungslaufs (siehe _compute_einsatzplan_summary in app.py), einmal pro Dashboard-Ladung
 // aus /dashboard/chart-data gelesen (keine eigene Live-Berechnung im Frontend noetig).
@@ -8180,16 +8248,19 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
     return card;
 }
 
-// Restliche/volle PV-Ertrag pro Kalendertag (lokale Zeit), summiert aus den stuendlichen kW-Werten
-// (ein kW-Wert ueber eine Stunde ist per Definition eine kWh). "Heute" zaehlt nur noch nicht
-// vergangene Stunden. Wird direkt IN buildPvForecastActualChart eingezeichnet (neben der
+// Voller PV-Ertrag pro Kalendertag (lokale Zeit), summiert aus den stuendlichen kW-Werten
+// (ein kW-Wert ueber eine Stunde ist per Definition eine kWh). "Heute" ist - wie die uebrigen
+// Tageswerte - der GESAMTTAG (Nutzer-Vorgabe, vorher nur der Rest ab jetzt): vergangene Stunden mit
+// ihrem Ist-Wert (actual, sonst Prognose), die laufende Stunde zeitanteilig (Ist-Energie seit
+// Stundenbeginn aus actualFine + Prognose * verbleibender Stundenanteil), kommende Stunden mit der
+// Prognose. Um 12:30 also: Ist 0-12 Uhr + Ist 12:00-12:30 + halbe Prognose der 12-Uhr-Stunde + Prognose ab 13 Uhr. Wird direkt IN buildPvForecastActualChart eingezeichnet (neben der
 // "Jetzt"-Linie bzw. der jeweiligen Tagesgrenze), nicht mehr als eigener Text unter dem Chart -
 // stand dort vorher ohne erkennbaren Bezug zum Chart direkt neben der (inhaltlich anderen)
 // Einsatzplan-Karte und wurde faelschlich fuer deren "Stromverbrauch"-Kennzahl gehalten.
 //
 // Heute/Morgen immer, "Übermorgen" erst ab PV_DAY_AFTER_TOMORROW_FROM_HOUR Uhr (21 Uhr): das 48h-Fenster deckt diesen Tag
 // erst dann (nahezu) vollstaendig ab - frueher wirkte die Summe irrefuehrend unvollstaendig.
-function computePvEnergySummary(labels, values) {
+function computePvEnergySummary(labels, values, actual = null, actualFine = null) {
     const PV_ZERO_THRESHOLD_KW = 0.05;
     const PV_COMPLETE_CHECK_FROM_HOUR = 17;
     const PV_DAY_AFTER_TOMORROW_FROM_HOUR = 21;
@@ -8206,8 +8277,15 @@ function computePvEnergySummary(labels, values) {
         const startOfThatDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
         const dayOffset = Math.round((startOfThatDay - startOfToday) / (24 * 60 * 60 * 1000));
         if (dayOffset < 0 || dayOffset > 2) continue;
-        if (dayOffset === 0 && d < currentHourStart) continue; // schon vergangene Stunde
-        sums[dayOffset] += values[i];
+        let kwh = values[i] ?? 0;
+        if (dayOffset === 0 && d < currentHourStart) {
+            // schon vergangene Stunde: Ist-Wert (Stundenmittel in kW = kWh), sonst die Prognose
+            const ist = actual ? actual[i] : null;
+            kwh = (ist !== null && ist !== undefined) ? Math.max(0, ist) : kwh;
+        } else if (dayOffset === 0 && d.getTime() === currentHourStart.getTime()) {
+            kwh = currentHourPvKwh(currentHourStart, now, values[i] ?? 0, actualFine);
+        }
+        sums[dayOffset] += kwh;
         hasData[dayOffset] = true;
         if (d.getHours() >= PV_COMPLETE_CHECK_FROM_HOUR && values[i] <= PV_ZERO_THRESHOLD_KW) {
             reachedZeroInEvening[dayOffset] = true;
@@ -8224,6 +8302,30 @@ function computePvEnergySummary(labels, values) {
         result.push({offset, label: dayLabels[offset], kwh: Math.round(sums[offset])});
     }
     return result;
+}
+
+// Laufende Stunde anteilig: gemessene Energie seit Stundenbeginn (actualFine = [[ISO-Beginn, kW], ...]
+// in 5-Minuten-Schritten, der letzte Schritt endet bei "jetzt") plus Prognose fuer den noch
+// verbleibenden Teil der Stunde. Ohne Feinwerte wird der vergangene Teil mit der Prognose angesetzt.
+function currentHourPvKwh(hourStart, now, forecastKw, actualFine) {
+    const HOUR_MS = 60 * 60 * 1000;
+    const elapsedMs = Math.min(HOUR_MS, Math.max(0, now - hourStart));
+    const remainingFraction = 1 - elapsedMs / HOUR_MS;
+    const hourEnd = new Date(hourStart.getTime() + HOUR_MS);
+    const points = (actualFine || [])
+        .map(([t, kw]) => [new Date(t), kw])
+        .filter(([t, kw]) => t >= hourStart && t < hourEnd && t < now && kw !== null && kw !== undefined)
+        .sort((a, b) => a[0] - b[0]);
+    if (points.length === 0) return forecastKw;
+    let actualKwh = 0;
+    for (let i = 0; i < points.length; i++) {
+        const segStart = points[i][0];
+        const segEnd = i + 1 < points.length ? points[i + 1][0] : now;
+        actualKwh += Math.max(0, points[i][1]) * Math.max(0, Math.min(segEnd, hourEnd) - segStart) / HOUR_MS;
+    }
+    // Luecke zwischen Stundenbeginn und erstem Feinwert (sollte bei 5-Minuten-Schritten nicht vorkommen) mit Prognose fuellen
+    actualKwh += forecastKw * Math.max(0, points[0][0] - hourStart) / HOUR_MS;
+    return actualKwh + forecastKw * remainingFraction;
 }
 
 // Renders one hourly time series as an interactive inline SVG line chart (no charting library).
@@ -8578,6 +8680,72 @@ function attachChartViewGestures(entry) {
     }, {capture: true, passive: true});
 }
 
+// Dezentes "Vergroessern"-Icon oben rechts an jedem Dashboard-Chart (nur Desktop, am Handy per CSS ausgeblendet - dort wird gescrollt/gezoomt).
+function buildChartEnlargeButton(chartKey, build, info) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'chartEnlargeButton';
+    button.title = 'Vergrößern';
+    button.setAttribute('aria-label', 'Chart vergrößern');
+    button.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2h4v4M6 14H2v-4M14 2l-5 5M2 14l5-5"/></svg>';
+    button.addEventListener('click', () => openChartModal(chartKey, build, info));
+    return button;
+}
+
+// Oeffnet denselben Chart gross in einem Modal (Bildschirmbreite mit Rand). Es wird ein zweiter, voll bedienbarer Chart ueber dieselbe
+// build()-Funktion gebaut - nur mit der Modalbreite als SVG-Breite (ctx.chartWidth/chartHeight), damit Schrift und Linien in
+// Originalgroesse bleiben und der Chart mehr Platz fuer den Zeitverlauf bekommt. Ausgeblendete Kurven (Legende) gelten gemeinsam.
+let chartModalCleanup = null;
+function openChartModal(chartKey, build, info) {
+    if (chartModalCleanup) chartModalCleanup();
+    const overlay = document.createElement('div');
+    overlay.className = 'chartModalOverlay';
+    const dialog = document.createElement('div');
+    dialog.className = 'chartModalDialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'chartModalClose';
+    closeButton.title = 'Schließen';
+    closeButton.setAttribute('aria-label', 'Schließen');
+    closeButton.textContent = '×';
+    const body = document.createElement('div');
+    body.className = 'chartModalBody';
+    dialog.appendChild(closeButton);
+    dialog.appendChild(body);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const chartSize = () => {
+        const width = Math.max(600, Math.round(body.clientWidth || 600));
+        const height = Math.max(CHART_SVG_HEIGHT, Math.min(800, Math.round(window.innerHeight * 0.92 - 170)));
+        return {width, height};
+    };
+    const chartEl = makeToggleableChart(chartKey, build, {...info, isModal: true, chartSize});
+    body.appendChild(chartEl);
+    // Erst jetzt, wo der Chart im DOM steht, stimmt body.clientWidth - einmal passend neu zeichnen.
+    chartEl.__chartEntry.refresh();
+
+    const onResize = () => chartEl.__chartEntry.refresh();
+    const onKey = event => { if (event.key === 'Escape') close(); };
+    function close() {
+        window.removeEventListener('resize', onResize);
+        document.removeEventListener('keydown', onKey);
+        document.body.style.overflow = previousOverflow;
+        overlay.remove();
+        chartModalCleanup = null;
+    }
+    chartModalCleanup = close;
+    window.addEventListener('resize', onResize);
+    document.addEventListener('keydown', onKey);
+    closeButton.addEventListener('click', close);
+    overlay.addEventListener('mousedown', event => { if (event.target === overlay) close(); });
+    closeButton.focus();
+}
+
 // Baut einen Chart ueber build(ctx) und baut ihn bei Aenderungen an Ort und Stelle neu (Kurve ein-/ausblenden per Legende,
 // Zeitfenster per Zoom/Wischen). ctx = {hidden: Set ausgeblendeter Kurven, toggle: Funktion(seriesId) | null (ohne chartKey),
 // view: Zeitfenster | null}. Nur die von build() erzeugten Knoten werden getauscht, vom Aufrufer spaeter angehaengte
@@ -8595,7 +8763,13 @@ function makeToggleableChart(chartKey, build, info = {}) {
         refresh: () => rebuild(),
         get ctx() { return lastCtx; },
     };
-    const makeCtx = () => ({hidden: chartKey ? loadHiddenChartSeries(chartKey) : new Set(), toggle: chartKey ? toggle : null, view: chartGlobalView});
+    // info.chartSize (nur im Vergroessern-Modal, siehe openChartModal): Funktion -> {width, height} in SVG-Einheiten; ohne sie gelten die
+    // festen Standardmasse der Chart-Funktionen (600 x CHART_SVG_HEIGHT).
+    const makeCtx = () => {
+        const size = info.chartSize ? info.chartSize() : null;
+        return {hidden: chartKey ? loadHiddenChartSeries(chartKey) : new Set(), toggle: chartKey ? toggle : null, view: chartGlobalView,
+            chartWidth: size ? size.width : null, chartHeight: size ? size.height : null};
+    };
     function rebuild() {
         lastCtx = makeCtx();
         const next = build(lastCtx);
@@ -8624,6 +8798,8 @@ function makeToggleableChart(chartKey, build, info = {}) {
     wrapper = build(lastCtx);
     ownNodes = [...wrapper.childNodes];
     entry.wrapper = wrapper;
+    wrapper.__chartEntry = entry;
+    if (!info.isModal) wrapper.appendChild(buildChartEnlargeButton(chartKey, build, info));
     restoreSticky();
     if (labelTimes.length > 2) {
         chartRefreshers.add(entry);
@@ -8813,7 +8989,7 @@ function buildLineChart(title, unit, labels, values, options = {}) {
 
 function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hidden: new Set(), toggle: null}) {
     const {stepped = false, colorBands = null, slopeBands = null, valueScale = 1, minY = null, fixedMin = null, fixedMax = null, decimals = 1, round = false, subtitle = '', presenceForecast = null, blurredLabel = null, secondSeries = null, primaryLabel = null, dashedFromIndex = null, actionHours = null, overlayForecast = null, curveLegend = false, bandPrimary = null, primaryFine = null, axisMax = null} = options;
-    const width = 600, height = CHART_SVG_HEIGHT;
+    const width = ctx.chartWidth || 600, height = ctx.chartHeight || CHART_SVG_HEIGHT;
     // presenceForecast reserves an extra strip just above the x-axis labels for the
     // Anwesenheitsprognose overlay bar (see below). secondSeries (optionale zweite Kurve mit
     // eigener rechter Skala, siehe unten) braucht zusaetzlichen Platz rechts fuer ihre eigene
@@ -8860,7 +9036,9 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     // Legende zur farbigen Anwesenheits-Leiste im Chart (die Ueberschrift + Erklaerung "Anwesenheitsprognose" sitzt unter
     // dem Chart, siehe buildPresenceForecastHeading am Aufrufort) - reine Beschriftung, nicht ausblendbar.
     if (presenceForecast) {
-        for (const [color, label] of [['var(--color-accent)', 'eingesteckt'], ['var(--color-text-secondary)', 'steht'], ['var(--color-error)', 'fährt']]) {
+        const presenceLegend = [['var(--color-accent)', 'eingesteckt'], ['var(--color-text-secondary)', 'steht'], ['var(--color-error)', 'fährt']];
+        if (presenceForecast.hasAtHome) presenceLegend.push([PRESENCE_STATE_COLORS['zu Hause'], 'zu Hause']);
+        for (const [color, label] of presenceLegend) {
             legendEntries.push(chartLegendEntry(ctx, {label, color, style: 'square'}));
         }
     }
@@ -8927,7 +9105,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
         if (secondSeries.fine) defined2.push(...secondSeries.fine.map(p => p[1]));
         if (secondSeries.actual && secondSeries.forecast) defined2.push(...secondSeries.forecast.filter(v => v !== null && v !== undefined));
         if (secondSeries.actualFine) defined2.push(...parseFinePoints(secondSeries.actualFine).map(p => p[1]));
-        // signed (z.B. Netzbezug/Einspeisung): positive UND negative Werte - die Skala schliesst 0 immer ein und geht bei Einspeisung darunter.
+        // signed (z.B. Strombezug/Einspeisung): positive UND negative Werte - die Skala schliesst 0 immer ein und geht bei Einspeisung darunter.
         dataMin2 = Math.min(...defined2);
         const rawMin2 = secondSeries.zeroBased ? 0 : (secondSeries.signed ? Math.min(0, ...defined2) : Math.min(...defined2));
         const rawMax2 = secondSeries.signed ? Math.max(0, ...defined2) : Math.max(...defined2);
@@ -9039,7 +9217,7 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     }
 
     // Hauptkurve (linke Skala): endet unten auf Hoehe der Nulllinie der rechten, vorzeichenbehafteten Skala
-    // (z.B. Strompreis vs. Netzbezug/Einspeisung) - Bezug "haengt" so nicht in der Luft, sobald es Einspeisung
+    // (z.B. Strompreis vs. Strombezug/Einspeisung) - Bezug "haengt" so nicht in der Luft, sobald es Einspeisung
     // gibt. Unterhalb der Nulllinie bleibt Platz nur fuer die Einspeisung (siehe belowZeroMarkup).
     let primaryBottom = paddingTop + plotHeight;
     if (secondSeries && secondSeries.signed && !hideSecond && yMin2 < 0 && yMax2 > 0) {
@@ -9267,7 +9445,18 @@ function buildLineChartImpl(title, unit, labels, values, options = {}, ctx = {hi
     const nowIndex = Math.round((nowMs - firstLabelMs) / 3600000);
     if (nowIndex >= 0 && nowIndex <= lastIndex) {
         // Dauerhaft sichtbarer Punkt mit Ring auf der Kurve (siehe nowDotSvg) - kein senkrechter Strich mehr.
-        for (const p of [hidePrimarySeg(nowIndex) ? null : points[nowIndex], hideSecond ? null : (points2 && points2[nowIndex])]) {
+        // Hauptkurve mit feinen Ist-Punkten (z.B. Heizung-Soll als Treppe): der Punkt sitzt auf dem LETZTEN Ist-Punkt (aktueller Wert, bei
+        // einem Sprung also oben), nicht auf dem Stundenwert - der steht sonst am Anfang des Sprungs auf dem alten Wert. Nur, wenn dieser
+        // Punkt auch aktuell ist (sonst Stundenwert wie bisher).
+        let primaryNowPoint = points[nowIndex];
+        if (fineP.length >= 2) {
+            const [lastFineMs, lastFineValue] = fineP[fineP.length - 1];
+            const fineX = paddingLeft + ((lastFineMs + 150000 - firstLabelMs) / 3600000 / lastIndex) * plotWidth;
+            if (Math.abs(nowMs - lastFineMs) <= 5400000 && fineX >= paddingLeft && fineX <= width - paddingRight) {
+                primaryNowPoint = [fineX, yPrimary(lastFineValue)];
+            }
+        }
+        for (const p of [hidePrimarySeg(nowIndex) ? null : primaryNowPoint, hideSecond ? null : (points2 && points2[nowIndex])]) {
             if (p) nowMarkup += nowDotSvg(p[0], p[1]);
         }
     }
@@ -9506,7 +9695,11 @@ function buildSonstigesGeraetForecastActualChart(labels, forecast, actual, actio
 function buildAussentemperaturForecastActualChart(labels, temperature) {
     const nowMs = Date.now();
     const actual = temperature.map((v, i) => (new Date(labels[i]).getTime() <= nowMs ? v : null));
-    const forecast = temperature.map((v, i) => (new Date(labels[i]).getTime() >= nowMs ? v : null));
+    // Die gestrichelte Prognose beginnt am letzten Ist-Punkt (statt erst an der naechsten Stunde) - sonst bleibt zwischen "jetzt"
+    // und der naechsten vollen Stunde eine Luecke in der Kurve. Die Temperatur ist ohnehin EINE durchgehende Reihe.
+    let lastActualIndex = -1;
+    actual.forEach((v, i) => { if (v !== null) lastActualIndex = i; });
+    const forecast = temperature.map((v, i) => (i >= lastActualIndex && (lastActualIndex >= 0 || new Date(labels[i]).getTime() >= nowMs) ? v : null));
     return buildForecastActualChart('Außentemperatur', '°C', labels, forecast, actual, {decimals: 1, flatColor: 'var(--color-accent)'});
 }
 
@@ -9523,12 +9716,12 @@ function buildForecastActualChart(title, unit, labels, forecast, actual, options
         // summaryLabels/summaryForecast: die PV-Ertragssumme (Heute | Morgen) bezieht sich immer auf den vollen Zeitraum
         const windowLabels = sliceChartSeries(labels, w);
         const sliced = {...options, plannedHistory: sliceChartSeries(options.plannedHistory, w), actionHours: sliceChartSeries(options.actionHours, w),
-            summaryLabels: labels, summaryForecast: forecast, actualFine: filterFineByLabels(options.actualFine, windowLabels)};
+            summaryLabels: labels, summaryForecast: forecast, summaryActual: actual, summaryActualFine: options.actualFine, actualFine: filterFineByLabels(options.actualFine, windowLabels)};
         return buildForecastActualChartImpl(title, unit, windowLabels, sliceChartSeries(forecast, w), sliceChartSeries(actual, w), sliced, ctx);
     }, {labels, stickyKey: options.chartKey || title});
 }
 
-function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null, actualFine = null, blurredLabel = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
+function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {decimals = 1, yBounds = null, energySummary = false, actionHours = null, actionColors = null, plannedHistory = null, slopeColors = null, flatColor = null, summaryLabels = null, summaryForecast = null, summaryActual = null, summaryActualFine = null, actualFine = null, blurredLabel = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
     // "Prognose" ist visuell EINE Linie ueber den ganzen Tag: fuer bereits vergangene Stunden der zu
     // ihrer Zeit juengste Planungsstand (plannedHistory), fuer die Zukunft die aktuelle Prognose
     // (forecast) - ersetzt die fruehere separate dritte Linie/Legende "Letzter Planungsstand".
@@ -9540,7 +9733,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     // erkannt, ob 'actual' dort einen Wert hat (bei jedem Aufrufer nur fuer bereits vergangene/
     // laufende Stunden befuellt).
     const prognose = plannedHistory ? labels.map((_, i) => (plannedHistory[i] ?? forecast[i])) : forecast;
-    const width = 600, height = CHART_SVG_HEIGHT;
+    const width = ctx.chartWidth || 600, height = ctx.chartHeight || CHART_SVG_HEIGHT;
     const paddingLeft = 52, paddingRight = 15, paddingTop = chartTopPadding(unit), paddingBottom = 26;
     ctx.plotLeft = paddingLeft;
     ctx.plotRight = paddingRight;
@@ -9761,7 +9954,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
     // Nur bei PV (energySummary): eine kWh-Ertragssumme ergibt fuer andere Prognose/Ist-Charts (z.B.
     // Ladestand Heimspeicher in %) keinen Sinn.
     if (energySummary) {
-        const pvSummaryParts = computePvEnergySummary(summaryLabels || labels, summaryForecast || forecast).map(({label, kwh}) => `${label}: ${kwh} kWh`);
+        const pvSummaryParts = computePvEnergySummary(summaryLabels || labels, summaryForecast || forecast, summaryActual || actual, summaryActualFine || actualFine).map(({label, kwh}) => `${label}: ${kwh} kWh`);
         if (pvSummaryParts.length > 0) {
             const pvSummary = document.createElement('div');
             pvSummary.className = 'dashboardPvEnergySummary';
@@ -9835,7 +10028,7 @@ function buildComparisonChart(title, unit, labels, optValues, baseValues, option
 }
 
 function buildComparisonChartImpl(title, unit, labels, optValues, baseValues, {decimals = 2, summary = null, badgeLabel = null, highlightPositive = false, actualValues = null, actualFine = null} = {}, ctx = {hidden: new Set(), toggle: null}) {
-    const width = 600, height = CHART_SVG_HEIGHT;
+    const width = ctx.chartWidth || 600, height = ctx.chartHeight || CHART_SVG_HEIGHT;
     const paddingLeft = 52, paddingRight = 15, paddingTop = 20, paddingBottom = 26;
     ctx.plotLeft = paddingLeft;
     ctx.plotRight = paddingRight;
@@ -10098,9 +10291,12 @@ const PRESENCE_STATE_COLORS = {
     eingesteckt: 'var(--color-accent)',
     steht: 'var(--color-text-secondary)',
     fährt: 'var(--color-error)',
+    'zu Hause': 'var(--color-warning)',
 };
 function mostLikelyPresenceState(entry) {
     if (!entry) return null;
+    // "zu Hause": Auto da, aber nicht eingesteckt (Sensor "Auto - Zuhause?", nur die laufende Stunde) - hat Vorrang vor der Wahrscheinlichkeit.
+    if (entry.atHome) return {label: 'zu Hause', p: 1};
     // Reihenfolge fährt -> steht -> eingesteckt und ">=" statt ">": bei Gleichstand gewinnt
     // "fährt". Genau dieselbe Bruch-Entscheidung nutzt die Verbrauchszuteilung in app.py
     // (_is_predicted_driving), damit eine Stunde mit kWh > 0 in der Liste nie "eingesteckt"/"steht"
@@ -10152,9 +10348,17 @@ function scheduleConsumptionForecastOptimizerTrigger() {
     }, CONSUMPTION_FORECAST_DELETE_TRIGGER_DELAY_MS);
 }
 
+// Aufklapp-Zustand von "Prognose im Detail" dauerhaft im Speicher halten (statt ihn beim Refresh aus
+// dem alten DOM-Element abzulesen): Das Widget wird alle 30s komplett neu gebaut, und wenn dabei
+// einmal kein <details> existiert (z.B. Prognose-Abruf kurz fehlgeschlagen/leer), ging der Zustand
+// verloren und die Liste blieb danach zu.
+let consumptionForecastDetailsOpen = false;
+
 function buildCarConsumptionForecastDetails(labels, consumptionKwh, consumptionBasis, presenceForecast, simulatedHours = []) {
     const details = document.createElement('details');
     details.className = 'dashboardConsumptionForecast';
+    details.open = consumptionForecastDetailsOpen;
+    details.addEventListener('toggle', () => { consumptionForecastDetailsOpen = details.open; });
     const summary = document.createElement('summary');
     summary.textContent = `Prognose im Detail (${labels.length}h) anzeigen`;
     details.appendChild(summary);
@@ -11085,7 +11289,7 @@ function buildEnergyFlowSvgDesktop(data) {
 
     if (data.car && data.car.configured) {
         const rowY = rowYCar;
-        const isAway = data.car.state === 'away';
+        const isAway = data.car.state === 'away' || data.car.state === 'home';
         const isCharging = carCharging;
         // Leitung immer sichtbar (auch "abwesend"), Punkte nur waehrend des Ladens.
         const line = buildFlowLineFromPath(buildFlowPath(busX, rowY, consumerAnchorX, rowY), carFlowKw);
@@ -11098,6 +11302,7 @@ function buildEnergyFlowSvgDesktop(data) {
         const carLines = [];
         if (data.car.soc !== null) carLines.push(withStaleness(`Ladestand: ${Math.round(data.car.soc)} %` + (data.car.rangeKm !== null ? ` (${data.car.rangeKm} km)` : ''), data.car.updatedAt, OTHER_STALE_MINUTES));
         if (data.car.state === 'away') carLines.push('abwesend');
+        else if (data.car.state === 'home') carLines.push('zu Hause');
         else if (data.car.state === 'charging') carLines.push(data.car.chargingKw != null ? `Lädt (${formatKwValue(data.car.chargingKw)})` : 'lädt');
         else if (data.car.state === 'connected') carLines.push('eingesteckt');
         const carLabel = buildEnergyFlowLabel(columnX + carTargetW / 2 + 10, rowY, carLines);
@@ -11348,7 +11553,7 @@ function buildEnergyFlowSvgMobile(data) {
                 const iconHalfH = 38;
                 const drop = buildFlowLineFromPath(`M ${colX},${busY} V ${rowY - iconHalfH}`, flows.carFlowKw);
                 if (drop) svg.appendChild(drop);
-                const isAway = data.car.state === 'away';
+                const isAway = data.car.state === 'away' || data.car.state === 'home';
                 const carImg = isAway ? {href: 'assets/ev-away.jpg', w: 356, h: 239} : {href: 'assets/ev-connected.jpg', w: 464, h: 229};
                 svg.appendChild(buildFlowImage(carImg.href, colX, rowY, carImg.w, carImg.h, 100));
                 const carLines = [];
@@ -11360,6 +11565,7 @@ function buildEnergyFlowSvgMobile(data) {
                     if (data.car.rangeKm !== null) carLines.push(`(${data.car.rangeKm} km)`);
                 }
                 if (data.car.state === 'away') carLines.push('abwesend');
+                else if (data.car.state === 'home') carLines.push('zu Hause');
                 else if (data.car.state === 'charging') carLines.push(data.car.chargingKw != null ? `Lädt (${formatKwValue(data.car.chargingKw)})` : 'lädt');
                 else if (data.car.state === 'connected') carLines.push('eingesteckt');
                 if (carLines.length === 0) carLines.push('–');
@@ -11618,6 +11824,48 @@ function trimWeatherStripToFit(strip) {
     }
 }
 
+// Kleiner Hinweis unter einem Dashboard-Chart (Widget-Element von buildLineChart/buildForecastActualChart).
+// parts: Strings und/oder {text, sensorField} - letzteres wird ein Link, der zur Sensor-Zuordnung in den Einstellungen springt.
+function appendChartHint(widgetEl, parts) {
+    const hint = document.createElement('p');
+    hint.className = 'chartHint';
+    for (const part of parts) {
+        if (typeof part === 'string') {
+            hint.appendChild(document.createTextNode(part));
+            continue;
+        }
+        const link = document.createElement('a');
+        link.href = '#';
+        link.className = 'systemHealthProblemLink';
+        link.style.whiteSpace = 'normal';
+        link.textContent = part.text;
+        link.addEventListener('click', (event) => {
+            event.preventDefault();
+            scrollToIntegrationSection(sensorFieldSectionKey(part.sensorField), part.sensorField + VALUE_POSTFIX);
+        });
+        hint.appendChild(link);
+    }
+    widgetEl.appendChild(hint);
+    return widgetEl;
+}
+
+// Warmwasser: Tank mind. 3 K unter der Untergrenze des Modells (hw_soc_min) -> die Prognose startet bei der Untergrenze, nicht beim Ist-Wert.
+const DHW_HINT_MIN_DEVIATION_K = 3;
+// Heizung: Raum mind. 0,2 K unter der Solltemperatur.
+const HEATING_HINT_MIN_DEVIATION_K = 0.2;
+
+function dhwHintParts(comparison) {
+    const tank = comparison && comparison.liveTankTempC, min = comparison && comparison.hwSocMinC;
+    if (typeof tank !== 'number' || typeof min !== 'number' || tank > min - DHW_HINT_MIN_DEVIATION_K) return null;
+    return ['Stelle durch Einstellungen an der Wärmepumpe sicher, dass die ', {text: 'Mindesttemperatur', sensorField: 'heatpump_dhw_target_temp'}, ' immer eingehalten wird.'];
+}
+
+function heatingHintParts(comparison) {
+    const indoor = comparison && comparison.liveIndoorTempC, target = comparison && comparison.liveTargetTempC;
+    if (typeof indoor !== 'number' || typeof target !== 'number' || indoor > target - HEATING_HINT_MIN_DEVIATION_K) return null;
+    return ['Wenn dein Gebäude in den nächsten Stunden nicht auf Solltemperatur aufheizt, ist die Heizkurve in den Einstellungen deiner Wärmepumpe zu niedrig eingestellt.'];
+}
+
 // Ersetzt (oder haengt beim allerersten Aufruf neu an) ein Dashboard-Widget anhand eines stabilen
 // Schluessels, statt die gesamte #dashboardBody bei jedem Refresh neu aufzubauen (siehe Nutzer-
 // Feedback: der 30-Sekunden-Hintergrund-Refresh liess vorher die ganze Seite "neu laden" - jedes
@@ -11782,7 +12030,7 @@ async function loadDashboardImpl() {
         } catch (err) {
             console.log(err);
         }
-        // Netzbezug/Einspeisung (Bezug positiv, Einspeisung negativ) fuer die Netz-Linie im Strompreis-Chart
+        // Strombezug/Einspeisung (Bezug positiv, Einspeisung negativ) fuer die Netz-Linie im Strompreis-Chart
         let gridFinePoints = [];
         try {
             const gridFine = await getJson(insideHomeAssistant + '/dashboard/usage-fine?source=grid');
@@ -11807,7 +12055,7 @@ async function loadDashboardImpl() {
                 });
                 const forecast = labelMs.map((ms, k) => (actual[k] === null && ms > lastFineMs && Number.isFinite(optByMs.get(ms)) ? optByMs.get(ms) : null));
                 secondSeries = {
-                    label: 'Netzbezug/Einspeisung', unit: 'kW', decimals: 1, color: 'var(--color-text-secondary)',
+                    label: 'Strombezug/Einspeisung', unit: 'kW', decimals: 1, color: 'var(--color-text-secondary)',
                     actual, forecast, fine: gridFinePoints.length >= 2 ? gridFinePoints : null, binMs: usageFineBinMs, signed: true,
                 };
             }
@@ -11871,10 +12119,11 @@ async function loadDashboardImpl() {
         // "Innenraum" (Zweitkurve): Ist aus der echten Sensorhistorie statt der bisher gezeigten,
         // vom Optimierer nur SIMULIERTEN Innentemperatur (Nutzer-Vorgabe) - best-effort wie bei den
         // anderen Prognose-vs-Ist-Charts, faellt bei einem Fehler auf die reine Simulationskurve zurueck.
-        let raumtemperaturLabels = data.output_labels, raumtemperaturValues = data.t_i_target, raumtemperaturDashedFromIndex = null, raumtemperaturOverlay = null, raumtemperaturFine = null;
+        let raumtemperaturLabels = data.output_labels, raumtemperaturValues = data.t_i_target, raumtemperaturDashedFromIndex = null, raumtemperaturOverlay = null, raumtemperaturFine = null, raumtemperaturHint = null;
         let raumtemperaturSecondSeries = {values: data.t_i, label: 'Innenraum', color: 'var(--color-text-secondary)', decimals: 1, absolutePadding: 0.2, integerTicks: true, band: 'upper'};
         try {
             const raumtemperaturComparison = await getJson(insideHomeAssistant + '/dashboard/raumtemperatur-forecast-vs-actual');
+            raumtemperaturHint = heatingHintParts(raumtemperaturComparison);
             if (raumtemperaturComparison.status === 'success' && raumtemperaturComparison.labels.length > 0) {
                 // Beide Kurven laufen ab 0 Uhr (Historie des heutigen Tages + Prognose, wie bei Ladestand Auto):
                 // "Heizung-Soll" = Verlauf der Solltemperatur-Entitaet bis jetzt, danach (gestrichelt) der Plan des
@@ -11904,7 +12153,8 @@ async function loadDashboardImpl() {
         } catch (err) {
             console.log(err);
         }
-        updateOrAppendDashboardWidget(container, 'raumtemperatur', buildLineChart('Raumtemperatur', '°C', raumtemperaturLabels, raumtemperaturValues, {
+        const heatingDeactivated = !!(flowData && flowData.heatpump && flowData.heatpump.heatingOn === false);
+        const raumtemperaturWidget = buildLineChart('Raumtemperatur', '°C', raumtemperaturLabels, raumtemperaturValues, {
             // Kein subtitle mehr (Nutzer-Vorgabe: Titel bleibt schlicht "Raumtemperatur (°C)"),
             // primaryLabel beschriftet stattdessen nur die Legende darunter.
             primaryLabel: 'Heizung-Soll',
@@ -11927,7 +12177,9 @@ async function loadDashboardImpl() {
             blurredLabel: (flowData && flowData.heatpump && flowData.heatpump.heatingOn === false)
                 ? 'Heizung deaktiviert - keine Heizungs-Aktionen'
                 : null,
-        }));
+        });
+        if (raumtemperaturHint && !heatingDeactivated) appendChartHint(raumtemperaturWidget, raumtemperaturHint);
+        updateOrAppendDashboardWidget(container, 'raumtemperatur', raumtemperaturWidget);
         // Steht "Warmwassermodus aktiviert?" auf Aus, bekommt der Optimierer keinen Warmwasserbedarf (siehe build_hot_water_optimizer_fields) - die Prognose waere
         // bedeutungslos. Der Chart bleibt, wird aber wie bei der Raumtemperatur als "deaktiviert" ausgeblendet (Heizstab/nicht zugeordnet: null -> nichts ausgeblendet).
         const warmwasserBlurredLabel = (flowData && flowData.heatpump && flowData.heatpump.dhwActivated === false)
@@ -11937,7 +12189,10 @@ async function loadDashboardImpl() {
         try {
             const warmwasserComparison = await getJson(insideHomeAssistant + '/dashboard/warmwasser-forecast-vs-actual');
             if (warmwasserComparison.status === 'success' && warmwasserComparison.labels.length > 0) {
-                updateOrAppendDashboardWidget(container, 'warmwasser', buildWarmwasserForecastActualChart(warmwasserComparison.labels, warmwasserComparison.forecast, warmwasserComparison.actual, warmwasserComparison.actionHours, warmwasserComparison.actualFine, warmwasserBlurredLabel));
+                const warmwasserWidget = buildWarmwasserForecastActualChart(warmwasserComparison.labels, warmwasserComparison.forecast, warmwasserComparison.actual, warmwasserComparison.actionHours, warmwasserComparison.actualFine, warmwasserBlurredLabel);
+                const warmwasserHint = dhwHintParts(warmwasserComparison);
+                if (warmwasserHint && !warmwasserBlurredLabel) appendChartHint(warmwasserWidget, warmwasserHint);
+                updateOrAppendDashboardWidget(container, 'warmwasser', warmwasserWidget);
                 warmwasserChartRendered = true;
             }
         } catch (err) {
@@ -12003,9 +12258,10 @@ async function loadDashboardImpl() {
                         connected: presenceData.probabilities[i],
                         standing: presenceData.standingProbabilities[i],
                         driving: presenceData.drivingProbabilities[i],
+                        atHome: !!(presenceData.atHome && presenceData.atHome[i]),
                     };
                 });
-                presenceForecast = {byLabel};
+                presenceForecast = {byLabel, hasAtHome: Object.values(byLabel).some(entry => entry.atHome)};
                 consumptionForecast = {labels: presenceData.labels, consumptionKwh: presenceData.consumptionKwh, consumptionBasis: presenceData.consumptionBasis, simulatedHours: presenceData.simulatedHours || []};
             }
         } catch (err) {
@@ -12034,13 +12290,6 @@ async function loadDashboardImpl() {
         if (consumptionForecast) {
             const consumptionDetails = buildCarConsumptionForecastDetails(
                 consumptionForecast.labels, consumptionForecast.consumptionKwh, consumptionForecast.consumptionBasis, presenceForecast, consumptionForecast.simulatedHours);
-            // updateOrAppendDashboardWidget ERSETZT das komplette 'ladestandAuto'-Widget bei jedem
-            // periodischen Refresh (alle 30s, siehe refreshDashboard) - ein frisches <details>-
-            // Element ist dabei immer zu (Nutzer-Feedback: ein manuell aufgeklapptes Element fiel
-            // dadurch von selbst wieder zu). Offen-Zustand daher hier vom noch existierenden alten
-            // Element uebernehmen, bevor es gleich ersetzt wird.
-            const existingDetails = container.querySelector('[data-dashboard-widget-key="ladestandAuto"] .dashboardConsumptionForecast');
-            if (existingDetails && existingDetails.open) consumptionDetails.open = true;
             ladestandAutoChart.appendChild(consumptionDetails);
         }
         // Unconditional wie der Chart selbst (der auch ohne konfiguriertes Auto leer/flach
@@ -12322,6 +12571,16 @@ function setupTabs() {
             renderDashboardProblemBanner();
         }
     });
+    // Wiederherstellung aus dem Back-Forward-Cache / eingefrorener Seite (mobile App, iframe): visibilitychange
+    // feuert dort nicht zuverlaessig, die Timer standen aber still - also ebenfalls sofort auffrischen.
+    window.addEventListener('pageshow', event => {
+        if (event.persisted && document.visibilityState === 'visible') {
+            refreshActiveTabNow();
+            refreshLiveSensorValues();
+            renderSystemHealth();
+            renderDashboardProblemBanner();
+        }
+    });
 }
 
 // Setzt --topbar-height (siehe .topBar-Kommentar in index.html) auf die tatsaechliche Hoehe der
@@ -12333,6 +12592,18 @@ function syncTopBarHeightVar() {
     const topBar = document.querySelector('.topBar');
     if (!topBar) return;
     document.documentElement.style.setProperty('--topbar-height', topBar.offsetHeight + 'px');
+}
+
+// Setzt --devicenav-height auf die Hoehe der sticky Sprungmarken-Leiste (#deviceNav, inkl. evtl.
+// horizontaler Scrollleiste) - .integrationSection addiert sie zu --topbar-height in scroll-margin-top,
+// damit die Kachelueberschrift beim Anspringen nicht hinter der Leiste verschwindet. Die Leiste wird
+// erst nach dem Laden der Konfiguration befuellt, daher per ResizeObserver statt einmalig.
+function syncDeviceNavHeightVar() {
+    const nav = document.getElementById('deviceNav');
+    if (!nav) return;
+    const update = () => document.documentElement.style.setProperty('--devicenav-height', nav.offsetHeight + 'px');
+    update();
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(update).observe(nav);
 }
 
 // Vollbild: das Add-on laeuft in einem iframe der Home-Assistant-Seite (gleiche Adresse, daher Zugriff auf
@@ -12513,11 +12784,13 @@ if (document.readyState === 'complete') {
     setupTabs();
     setupPullToRefresh();
     syncTopBarHeightVar();
+    syncDeviceNavHeightVar();
     setupFullscreenToggle();
     applyAnalyseTabVisibility();
     applyAssistantWidget();
     renderUpdateBanner();
     renderEnvironmentBadge();
+    watchForAccountCreation();
 } else {
     window.addEventListener('load', () => {
         loadConfiguration().then(loadShyftActions);
@@ -12525,11 +12798,13 @@ if (document.readyState === 'complete') {
         setupTabs();
         setupPullToRefresh();
         syncTopBarHeightVar();
+        syncDeviceNavHeightVar();
         setupFullscreenToggle();
         applyAnalyseTabVisibility();
         applyAssistantWidget();
         renderUpdateBanner();
         renderEnvironmentBadge();
+        watchForAccountCreation();
     });
 }
 

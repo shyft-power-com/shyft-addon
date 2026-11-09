@@ -1,4 +1,4 @@
-from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id, resolve_dhw_activated
+from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id, resolve_dhw_activated, static_sensor_state, STATIC_SENSOR_ON, STATIC_SENSOR_OFF
 from homeassistant_adapter import HomeAssistantAdapter, EntityState
 from shyft_adapter import ShyftAdapter
 from constants import DEV_ACCESS_KEY_PREFIX
@@ -7,6 +7,7 @@ import problem_registry
 import assistant
 import pv_forecast
 import base_case
+import ev_tiers
 import energy_archive
 import base_load
 
@@ -700,82 +701,82 @@ def _is_real_device(mapping):
     return bool(mapping) and mapping != [DEMO_INTEGRATION_ID]
 
 
-def maybe_create_real_account(new_integration_mappings):
-    """Legt im Hintergrund einen echten shyft-power-Account an (create_user_addon), sobald ein
-    Demo-Modus-Nutzer (siehe is_demo_mode) ein echtes Geraet fuer irgendeine DEMO_CAPABLE_SECTIONS
-    hinterlegt hat (also von "Demo" auf eine echte HA-Integration gewechselt ist) - kein Popup,
-    keine E-Mail/Passwort-Abfrage, Bubble erzeugt beides selbst (siehe ShyftAdapter.create_user).
-    No-op, wenn schon ein echter Account existiert, oder wenn in der neuen Config gar keine Section
-    ein echtes Geraet hat. Wird von writeConfig nach jedem Config-Speichern aufgerufen.
+# Mindestabstand zwischen zwei create_user_addon-Versuchen. Jeder Aufruf legt in Bubble sofort einen
+# neuen User an - auch wenn das Add-on die Antwort danach nicht verwerten kann. Ohne Sperre erzeugte ein
+# Fehler in der Antwort (31.10.2026: kein Token in der Live-Antwort) bei jedem Speichern einen weiteren
+# Account (48 in 30 Minuten).
+ACCOUNT_CREATION_RETRY_SECONDS = 5 * 60
+_account_creation_lock = threading.Lock()
 
-    Bewusst NICHT nur beim exakten Uebergangsmoment (alt=Demo/leer, neu=echt) - sondern bei JEDEM
-    Speichern, solange mindestens eine Section ein echtes Geraet hat, is_demo_mode() noch True ist
-    UND shyftAccountCreated noch nicht gesetzt ist. Sonst waere ein fehlgeschlagener Versuch (z.B.
-    weil der Bubble-Workflow gerade kaputt war) nur durch Hin- und Herschalten eines Geraets erneut
-    ausloesbar - ein simples erneutes Speichern soll reichen.
 
-    create_user_addon darf im gesamten Lebenszyklus des Addons nur EIN EINZIGES MAL erfolgreich
-    aufgerufen werden - ein zweiter erfolgreicher Aufruf wuerde bei Bubble einen weiteren, komplett
-    neuen Account (neue E-Mail-Adresse) anlegen, unabhaengig vom bereits bestehenden. Sich allein auf
-    is_demo_mode() zu verlassen waere dafuer nicht robust genug: sollte der Supervisor-Options-Wert
-    shyft_access_key durch irgendein aeusseres Ereignis (z.B. ein Options-Schema-Reset bei einem
-    Addon-Update) wieder auf "notset" zurueckfallen, wuerde is_demo_mode() faelschlich wieder True
-    liefern und beim naechsten Demo->Echt-Wechsel eine zweite Kontoerstellung ausloesen. Deshalb
-    zusaetzlich ein eigener, dauerhafter Merker (shyftAccountCreated) in der addon-eigenen Config
-    (config.json, NICHT von Supervisor verwaltet) - der bleibt auch dann bestehen, wenn der
-    Zugangsschluessel selbst verloren geht."""
+def _extract_account_token(result):
+    """Zugangstoken aus der create_user_addon-Antwort. Bubble verschachtelt die Werte unter "response";
+    der Schluessel heisst je nach Workflow-Stand "token" oder "access_key". Fallback auf die oberste Ebene."""
+    payload = result.get("response") if isinstance(result.get("response"), dict) else result
+    for source in (payload, result):
+        for key in ("token", "access_key"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def maybe_create_real_account(ready_key):
+    """Legt einmalig einen echten shyft-power-Account an (create_user_addon), sobald im Demomodus ein
+    STEUERBARES echtes Geraet erfolgreich getestet wurde. Aufgerufen aus _record_action_test_result
+    nach einem bestandenen Test (ready_key, siehe _READY_KEY_TO_LABEL_SECTION). Reine Sensor-Geraete
+    (Wechselrichter/PV) und Demo-Geraete loesen nichts aus. Bubble erzeugt E-Mail/Passwort selbst.
+
+    create_user_addon darf im Lebenszyklus des Addons nur EINMAL erfolgreich aufgerufen werden: jeder
+    Aufruf legt einen neuen Bubble-User an. Deshalb
+      - der dauerhafte Merker shyftAccountCreated in der addon-eigenen Config (bleibt auch dann, wenn der
+        Supervisor-Wert shyft_access_key verloren geht),
+      - hoechstens ein Versuch pro ACCOUNT_CREATION_RETRY_SECONDS (shyftAccountCreateAttemptAt wird VOR
+        dem Aufruf geschrieben - auch ein abgebrochener Versuch zaehlt),
+      - ein Lock gegen zwei gleichzeitige Tests."""
     if not is_demo_mode():
         return
-    config = _read_current_config()
-    if config.get("shyftAccountCreated"):
-        print("[Shyft] shyftAccountCreated bereits gesetzt - kein erneuter create_user_addon-Aufruf (unabhaengig vom aktuellen Zugangsschluessel).")
+    label_section = _READY_KEY_TO_LABEL_SECTION.get(ready_key)
+    if not label_section:
         return
-    has_real_device = any(
-        _is_real_device(new_integration_mappings.get(section, []))
-        for section in DEMO_CAPABLE_SECTIONS
-    )
-    if not has_real_device:
-        return
-    # Vom test-Branch gebautes Add-on (siehe BUILD_BRANCH): Konto in der Bubble-Testversion anlegen und den Schluessel
-    # mit DEV_ACCESS_KEY_PREFIX ("test_") speichern - damit verbindet sich das Test-Add-on auch danach mit der Testversion
-    # (siehe ShyftAdapter.set_access_key). Ein main-Build legt wie bisher ein Konto in PROD an.
-    use_test_environment = BUILD_BRANCH == "test"
-    try:
-        result = shyft_adapter.create_user(test_environment=use_test_environment)
-    except Exception as e:
-        print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
-        return
-    # Der eigentliche Inhalt steckt unter "response" (siehe live beobachtete Antwort:
-    # {"status": "success", "response": {"has_account": bool, "token": "bus|user_id|secret", ...}}) -
-    # "token" wird 1:1 als shyft_access_key uebernommen (Format <prefix>|<user_id>|<secret>, siehe
-    # extract_shyft_user_id). Fallback auf die alten, oberste-Ebene-Feldnamen (access_key/"has an
-    # account") falls der Workflow das je wieder anders liefert.
-    payload = result.get("response") if isinstance(result.get("response"), dict) else result
-    has_account = payload.get("has_account")
-    if has_account is None:
-        has_account = str(result.get("has an account", "")).strip().lower() in ("yes", "true", "1")
-    if has_account:
-        # Sollte im automatischen Ablauf eigentlich nicht vorkommen (Bubble erzeugt ja jedes Mal eine
-        # neue E-Mail-Adresse) - lieber nichts uebernehmen als versehentlich falsch ueberschreiben.
-        # Kein shyftAccountCreated gesetzt: Addon bleibt im Demomodus, ein spaeterer Demo->Echt-
-        # Wechsel darf es erneut versuchen (siehe Docstring: "Ist der Aufruf nicht erfolgreich,
-        # bleibt das Addon im Demomodus").
-        print("[Shyft] create_user_addon meldet has_account=true - unerwartet, kein Zugangstoken uebernommen.")
-        return
-    new_access_key = payload.get("token") or result.get("access_key")
-    if not new_access_key:
-        print("[Shyft] create_user_addon lieferte keinen Token/access_key:", result)
-        return
-    if use_test_environment and not new_access_key.startswith(DEV_ACCESS_KEY_PREFIX):
-        new_access_key = DEV_ACCESS_KEY_PREFIX + new_access_key
-    try:
-        _persist_shyft_access_key(new_access_key)
-        config["shyftAccountCreated"] = True
+    with _account_creation_lock:
+        config = _read_current_config()
+        if config.get("shyftAccountCreated"):
+            return
+        if not _is_real_device(config.get("integrationMappings", {}).get(label_section[1], [])):
+            return
+        last_attempt = config.get("shyftAccountCreateAttemptAt") or 0
+        if time.time() - last_attempt < ACCOUNT_CREATION_RETRY_SECONDS:
+            print("[Shyft] Konto-Erstellung kuerzlich versucht - naechster Versuch fruehestens in "
+                  f"{int((ACCOUNT_CREATION_RETRY_SECONDS - (time.time() - last_attempt)) / 60) + 1} Min.")
+            return
+        config["shyftAccountCreateAttemptAt"] = time.time()
         _write_current_config(config)
-        print("[Shyft] Echter Account automatisch angelegt, Zugangstoken uebernommen.")
-    except Exception as e:
-        print("[Shyft] Zugangstoken nach automatischer Konto-Erstellung konnte nicht gespeichert werden:", repr(e))
-        return
+
+        # Vom test-Branch gebautes Add-on (siehe BUILD_BRANCH): Konto in der Bubble-Testversion anlegen und den
+        # Schluessel mit DEV_ACCESS_KEY_PREFIX ("test_") speichern (siehe ShyftAdapter.set_access_key).
+        use_test_environment = BUILD_BRANCH == "test"
+        print(f"[Shyft] Erstes steuerbares Geraet erfolgreich getestet ({label_section[0]}) - lege shyft-power-Konto an.")
+        try:
+            result = shyft_adapter.create_user(test_environment=use_test_environment)
+        except Exception as e:
+            print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
+            return
+        new_access_key = _extract_account_token(result if isinstance(result, dict) else {})
+        if not new_access_key:
+            print("[Shyft] create_user_addon lieferte keinen Token - Add-on bleibt im Demomodus:", result)
+            return
+        if use_test_environment and not new_access_key.startswith(DEV_ACCESS_KEY_PREFIX):
+            new_access_key = DEV_ACCESS_KEY_PREFIX + new_access_key
+        try:
+            _persist_shyft_access_key(new_access_key)
+            config = _read_current_config()
+            config["shyftAccountCreated"] = True
+            _write_current_config(config)
+            print("[Shyft] Echter Account automatisch angelegt, Zugangstoken uebernommen.")
+        except Exception as e:
+            print("[Shyft] Zugangstoken nach automatischer Konto-Erstellung konnte nicht gespeichert werden:", repr(e))
+            return
     try:
         # Erster echter Wetter-Abruf genau in dem Moment, in dem der Demomodus verlassen wird - nicht
         # erst auf den naechsten 3h-Cron-Tick warten (siehe fetch_weather_forecast_periodically):
@@ -785,6 +786,9 @@ def maybe_create_real_account(new_integration_mappings):
         fetch_weather_forecast()
     except Exception as e:
         print("[Shyft] Erster Wetter-Abruf nach Verlassen des Demomodus fehlgeschlagen:", repr(e))
+    # Erste echte Uebertragung an shyft-power sofort, nicht erst beim naechsten stuendlichen Lauf -
+    # damit das Dashboard nach dem Verlassen des Demomodus gleich echte Optimierungsdaten bekommt.
+    threading.Thread(target=sync_site_data, daemon=True).start()
 
 # Zeitpunkt (UTC) des letzten update_site_addon-Sends - fuer die "Neue Optimierung laeuft..."-Anzeige
 # im Dashboard (siehe _optimizer_result_pending / readDashboardChartData). Nur In-Memory: nach einem
@@ -888,15 +892,43 @@ BUBBLE_PRICE_PREDICTION_REFRESH_TIMEZONE = "Europe/Berlin"
 BUBBLE_PRICE_PREDICTION_REFRESH_TIMES = ((6, 5), (18, 5))  # (Stunde, Minute): einige Minuten nach Bubbles Laeufen um 05:59 / 17:59
 
 
+def _parse_energyforecast_body(api_body):
+    """({hour_start_epoch_ms: EUR/kWh netto}, epoch_ms der letzten Stunde mit price_origin "market") aus dem rohen JSON der energyforecast.de-Antwort
+    (Feld api_body am Bubble-Objekt Electr. Price Prediction: Liste mit start (ISO mit Offset), price, price_origin "market" = echter Day-ahead-Preis,
+    "forecast" = Prognose). ({}, None) bei fehlendem oder unlesbarem JSON."""
+    if not api_body:
+        return {}, None
+    try:
+        rows = json.loads(api_body) if isinstance(api_body, str) else api_body
+        prices = {}
+        last_market_ms = None
+        for row in rows:
+            hour = datetime.fromisoformat(row["start"]).astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+            ts_ms = int(hour.timestamp() * 1000)
+            prices[ts_ms] = float(row["price"])
+            if row.get("price_origin") == "market" and (last_market_ms is None or ts_ms > last_market_ms):
+                last_market_ms = ts_ms
+        return prices, last_market_ms
+    except (TypeError, ValueError, KeyError, AttributeError) as e:
+        print("[Shyft] Bubble-Strompreisprognose: api_body nicht lesbar, nutze Datetime Array/Price (text):", repr(e))
+        return {}, None
+
+
 def _request_bubble_price_prediction():
-    "Ruft Bubbles Strompreisprognose ab (provide_input_output_csv) und gibt {hour_start_epoch_ms: EUR/kWh netto} zurueck ({} ohne Zugangstoken/Nutzer). Wirft bei Fehlern."
+    """Ruft Bubbles Strompreisprognose ab (provide_input_output_csv) und gibt ({hour_start_epoch_ms: EUR/kWh netto}, epoch_ms der letzten Stunde mit
+    echtem Marktpreis oder None) zurueck (({}, None) ohne Zugangstoken/Nutzer). Bevorzugt das rohe energyforecast-JSON (api_body, enthaelt price_origin), sonst
+    Datetime Array + Price (text) ohne Marktgrenze. Wirft bei Fehlern."""
     if is_demo_mode():
-        return {}  # Demo-Modus: nie Bubble aufrufen (Dashboard nutzt dann die Live-Awattar-Preise)
+        return {}, None  # Demo-Modus: nie Bubble aufrufen (Dashboard nutzt dann die Live-Awattar-Preise)
     user_id = extract_shyft_user_id(shyft_adapter.bubble_token)
     if not user_id:
-        return {}
+        return {}, None
     result = shyft_adapter.get_input_output_csv(user_id)
     prediction = (result.get("response") or {}).get("price_prediction") or {}
+    api_body = next((v for k, v in prediction.items() if k.lower() == "api_body"), None)
+    prices, last_market_ms = _parse_energyforecast_body(api_body)
+    if prices:
+        return prices, last_market_ms
     datetimes_ms = prediction.get("Datetime Array") or []
     price_text = prediction.get("Price (text)") or ""
     price_values = [float(p.replace(",", ".")) for p in price_text.split(";") if p != ""]
@@ -904,13 +936,13 @@ def _request_bubble_price_prediction():
     for ts_ms, price in zip(datetimes_ms, price_values):
         hour = datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
         prices[int(hour.timestamp() * 1000)] = price
-    return prices
+    return prices, None
 
 
-def _write_bubble_price_prediction_cache(prices):
+def _write_bubble_price_prediction_cache(prices, last_market_ms=None):
     try:
         with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "w") as f:
-            json.dump({"fetched_at": time.time(), "prices": {str(k): v for k, v in prices.items()}}, f)
+            json.dump({"fetched_at": time.time(), "prices": {str(k): v for k, v in prices.items()}, "last_market_ms": last_market_ms}, f)
     except Exception as e:
         print("[Shyft] Bubble-Preisprognose-Cache konnte nicht geschrieben werden:", repr(e))
 
@@ -927,7 +959,7 @@ def refresh_bubble_price_prediction():
     except Exception:
         old_prices = {}
     try:
-        prices = _request_bubble_price_prediction()
+        prices, last_market_ms = _request_bubble_price_prediction()
     except Exception as e:
         print(f"[Shyft] Bubble-Strompreisprognose: Abruf fehlgeschlagen ({e!r}) - es gilt der letzte bekannte Stand, naechster Abruf zur naechsten festen Zeit.")
         return False
@@ -938,11 +970,13 @@ def refresh_bubble_price_prediction():
     changed = sum(1 for k, v in new_prices.items() if old_prices.get(k) != v)
     first = datetime.fromtimestamp(min(prices) / 1000, tz=timezone.utc).isoformat()
     last = datetime.fromtimestamp(max(prices) / 1000, tz=timezone.utc).isoformat()
-    _write_bubble_price_prediction_cache(prices)
+    _write_bubble_price_prediction_cache(prices, last_market_ms)
+    market_info = (f", echte Marktpreise bis {datetime.fromtimestamp(last_market_ms / 1000, tz=timezone.utc).isoformat()}" if last_market_ms
+                   else ", ohne price_origin (kein api_body)")
     if changed == 0:
-        print(f"[Shyft] Bubble-Strompreisprognose unveraendert ({len(prices)} Stunden, {first} bis {last}) - Bubble evtl. noch nicht fertig; naechster Abruf zur naechsten festen Zeit.")
+        print(f"[Shyft] Bubble-Strompreisprognose unveraendert ({len(prices)} Stunden, {first} bis {last}{market_info}) - Bubble evtl. noch nicht fertig; naechster Abruf zur naechsten festen Zeit.")
         return False
-    print(f"[Shyft] Bubble-Strompreisprognose aktualisiert: {len(prices)} Stunden ({first} bis {last}), {changed} Werte gegenueber dem letzten Stand geaendert.")
+    print(f"[Shyft] Bubble-Strompreisprognose aktualisiert: {len(prices)} Stunden ({first} bis {last}{market_info}), {changed} Werte gegenueber dem letzten Stand geaendert.")
     return True
 
 
@@ -975,48 +1009,78 @@ def _fetch_bubble_price_prediction():
     if cached and time.time() - cached.get("fetched_at", 0) < BUBBLE_PRICE_PREDICTION_CACHE_TTL_SECONDS and cached.get("prices"):
         return {int(k): v for k, v in cached["prices"].items()}
     try:
-        prices = _request_bubble_price_prediction()
+        prices, last_market_ms = _request_bubble_price_prediction()
     except Exception as e:
         print("[Shyft] Bubble-Strompreisprognose konnte nicht geladen werden:", repr(e))
         if cached and cached.get("prices"):
             return {int(k): v for k, v in cached["prices"].items()}
         return {}
     if prices:
-        _write_bubble_price_prediction_cache(prices)
+        _write_bubble_price_prediction_cache(prices, last_market_ms)
     return prices
 
 
+def _bubble_last_market_hour():
+    "Letzte Stunde (UTC), in der Bubbles gecachte Prognose noch den echten Marktpreis enthaelt (price_origin \"market\"), None ohne api_body im Cache."
+    try:
+        with open(BUBBLE_PRICE_PREDICTION_CACHE_PATH, "r") as f:
+            ts_ms = json.load(f).get("last_market_ms")
+        return datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc) if ts_ms else None
+    except Exception:
+        return None
+
+
 # Fehler der Prognose halten erfahrungsgemaess ueber Stunden bis Tage an (gleiches Vorzeichen, z.B. Prognose am Tageswechsel zu niedrig -> auch in den
-# Folgestunden zu niedrig). Deshalb wird die Differenz am Ende der echten Day-ahead-Preise (letzter veroeffentlichter Awattar-Preis minus Prognose fuer
-# genau diese Stunde, beides netto) auf die Prognose der Folgestunden aufgeschlagen und schmilzt je Stunde um BUBBLE_BIAS_MELT_PER_HOUR_EUR ab.
-BUBBLE_BIAS_MELT_PER_HOUR_EUR = 0.001  # 0,1 Cent/kWh netto je Stunde
+# Folgestunden zu niedrig). Deshalb wird die Differenz am Ende der echten Day-ahead-Preise auf die Prognose der Folgestunden aufgeschlagen und bleibt ueber
+# den ganzen Prognosezeitraum konstant (BUBBLE_BIAS_MELT_PER_HOUR_EUR = 0; Auswertung von 668 gespeicherten Bubble-Laeufen: schon 0,1 ct/h Abschmelzen liess
+# nach 2-3 Tagen wieder 2-4 ct Niveaufehler uebrig, ohne Abschmelzen ist der mittlere Fehler ~0). Zwei Faelle, je nachdem, wo die echten Preise enden:
+# - Bubbles Reihe enthaelt dort selbst noch echte Preise (price_origin "market", Bubble-Lauf nach der Veroeffentlichung gegen 13 Uhr): die Prognose beginnt
+#   in der Stunde danach und ist nicht an den letzten echten Preis angebunden. Aufschlag = letzter echter Preis minus Prognose der ersten Folgestunde minus
+#   BUBBLE_MIDNIGHT_STEP_EUR (der uebliche Preisrueckgang um Mitternacht gehoert nicht zum Niveaufehler), der Preis laeuft also ohne Sprung weiter.
+# - Awattar ist weiter als Bubbles echte Preise (oder Bubble liefert kein price_origin): Aufschlag = letzter Awattar-Preis minus Bubble-Prognose fuer genau
+#   diese Stunde (der Prognosefehler).
+BUBBLE_BIAS_MELT_PER_HOUR_EUR = 0.0  # Abschmelzen der Differenz je Stunde (EUR/kWh netto); 0 = Differenz bleibt ueber den ganzen Zeitraum bestehen
+# Mittlerer Preisrueckgang von 23 auf 0 Uhr (echte Preise, 660 Tage: im Mittel 0,49 ct, Median 0,37 ct; seit August 2026 0,88 ct, Winter 25/26 0,26 ct, netto).
+BUBBLE_MIDNIGHT_STEP_EUR = 0.005
 _last_logged_bubble_bias = None
 
 
 def _bubble_bias(by_hour, bubble_by_hour):
-    """(letzte Stunde mit echtem Awattar-Preis, Differenz echter Preis minus Bubble-Prognose dieser Stunde, beides netto in EUR/kWh) - None, wenn es keinen
-    echten Preis oder keine Prognose fuer diese Stunde gibt. Ist Bubbles Stand aktuell genug, dass er dort schon den echten Preis enthaelt, ist die Differenz 0."""
+    """(letzte Stunde mit echtem Preis, Differenz zum Preis dahinter, beides netto in EUR/kWh) - None, wenn es keinen echten Preis oder keine passende
+    Prognose gibt. Siehe oben fuer die beiden Faelle."""
     global _last_logged_bubble_bias
-    if not by_hour:
+    market_end = _bubble_last_market_hour()
+    if market_end is not None and (not by_hour or market_end >= max(by_hour)):
+        last = market_end
+        compare_hour = last + timedelta(hours=1)
+        compare_label = "erste Prognosestunde"
+        actual_net = by_hour[last] / AWATTAR_VAT_FACTOR if last in by_hour else bubble_by_hour.get(last)
+        if actual_net is not None:
+            actual_net -= BUBBLE_MIDNIGHT_STEP_EUR  # Vergleichswert ohne den ueblichen Rueckgang ueber Mitternacht
+    elif by_hour:
+        last = max(by_hour)
+        compare_hour = last
+        compare_label = "Prognose fuer diese Stunde"
+        actual_net = by_hour[last] / AWATTAR_VAT_FACTOR
+    else:
         return None
-    last = max(by_hour)
-    forecast_net = bubble_by_hour.get(last)
-    if forecast_net is None:
+    forecast_net = bubble_by_hour.get(compare_hour)
+    if forecast_net is None or actual_net is None:
         return None
-    actual_net = by_hour[last] / AWATTAR_VAT_FACTOR
     delta = actual_net - forecast_net
     marker = (last, round(delta, 5))
     if marker != _last_logged_bubble_bias:
         _last_logged_bubble_bias = marker
-        melt_hours = int(abs(delta) / BUBBLE_BIAS_MELT_PER_HOUR_EUR)
-        print(f"[Shyft] Prognose-Korrektur: letzter echter Day-ahead-Preis {last.isoformat()} netto {actual_net:.4f}, Bubble-Prognose dafuer {forecast_net:.4f} -> "
-              f"Differenz {delta:+.4f} EUR/kWh, wird auf die Prognose danach aufgeschlagen und schmilzt um {BUBBLE_BIAS_MELT_PER_HOUR_EUR * 100:.1f} ct/h ab "
-              f"(nach etwa {melt_hours} Stunden weg).")
+        step_text = f" (nach Abzug des ueblichen Mitternachtsrueckgangs von {BUBBLE_MIDNIGHT_STEP_EUR * 100:.1f} ct)" if compare_hour > last else ""
+        melt_text = (f"schmilzt um {BUBBLE_BIAS_MELT_PER_HOUR_EUR * 100:.2f} ct/h ab (nach etwa {int(abs(delta) / BUBBLE_BIAS_MELT_PER_HOUR_EUR)} Stunden weg)"
+                     if BUBBLE_BIAS_MELT_PER_HOUR_EUR > 0 else "bleibt ueber den ganzen Prognosezeitraum unveraendert")
+        print(f"[Shyft] Prognose-Korrektur: letzter echter Day-ahead-Preis {last.isoformat()} netto {actual_net:.4f}{step_text}, Bubble-{compare_label} {forecast_net:.4f} -> "
+              f"Differenz {delta:+.4f} EUR/kWh, wird auf die Prognose danach aufgeschlagen und {melt_text}.")
     return last, delta
 
 
 def _bubble_bias_offset(h, bias):
-    "Aufschlag (EUR/kWh netto) auf die Bubble-Prognose der Stunde h: die Differenz am Ende der echten Preise, je Stunde danach um BUBBLE_BIAS_MELT_PER_HOUR_EUR kleiner (nie ueber 0 hinaus)."
+    "Aufschlag (EUR/kWh netto) auf die Bubble-Prognose der Stunde h: die Differenz am Ende der echten Preise, je Stunde danach um BUBBLE_BIAS_MELT_PER_HOUR_EUR kleiner (nie ueber 0 hinaus; bei 0 bleibt sie unveraendert)."
     if not bias:
         return 0.0
     last, delta = bias
@@ -1027,16 +1091,44 @@ def _bubble_bias_offset(h, bias):
     return math.copysign(remaining, delta) if remaining > 0 else 0.0
 
 
-def _resolve_fallback_price(h, by_hour, bubble_by_hour, bias=None):
+# Sicherheitsaufschlag auf den Einkaufspreis der PROGNOSE (brutto, EUR/kWh), wachsend mit dem Vorlauf ab der letzten Stunde mit echtem Preis: die Prognose ist
+# trotz Niveauausgleich (_bubble_bias) am Anfang unsicher und liegt in den billigsten Stunden meist zu niedrig. Folge ohne Aufschlag: der Optimierer wartet
+# auf scheinbar billige Prognosestunden, die beim Naeherkommen teurer werden, und verschiebt Ladungen immer weiter. Stuetzpunkte (Vorlauf in Stunden,
+# Aufschlag): 1 ct am Anfang (erste zwei Stunden), 1,5 ct bei 4 h, 2 ct bei 15 h, 3 ct ab 24 h; dazwischen linear. Nur Einkauf, nicht die Einspeiseverguetung.
+FORECAST_MARKUP_POINTS = ((0, 0.010), (4, 0.015), (15, 0.020), (24, 0.030))
+
+
+def _forecast_markup_gross(h, seam):
+    "Aufschlag (EUR/kWh brutto) fuer die Prognosestunde h; seam = letzte Stunde mit echtem Preis. Ausserhalb der Prognose (h <= seam, kein seam) 0."
+    if seam is None:
+        return 0.0
+    lead = (h - seam) / timedelta(hours=1)
+    if lead <= 0:
+        return 0.0
+    points = FORECAST_MARKUP_POINTS
+    if lead >= points[-1][0]:
+        return points[-1][1]
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        if lead <= x1:
+            return y0 + (y1 - y0) * (lead - x0) / (x1 - x0)
+    return points[-1][1]
+
+
+def _resolve_fallback_price(h, by_hour, bubble_by_hour, bias=None, markup=False):
     """Brutto-Preis (EUR/kWh) fuer eine Stunde jenseits des echten Awattar-Fensters: zuerst Bubbles
     eigene Strompreisprognose (_fetch_bubble_price_prediction, netto -> brutto konvertiert - deckt
-    i.d.R. den gesamten Optimierungszeitraum ab; mit abschmelzender Korrektur um den Fehler am Ende der
+    i.d.R. den gesamten Optimierungszeitraum ab; mit Niveaukorrektur um den Fehler am Ende der
     echten Preise, siehe _bubble_bias), sonst als letzter Rueckfall ein echter
     Awattar-Preis derselben Uhrzeit bis zu PRICE_FALLBACK_MAX_DAYS_BACK Tage zurueck. None, wenn
-    beides fehlschlaegt - der Aufrufer faellt dann selbst auf den zuletzt aufgeloesten Wert zurueck."""
+    beides fehlschlaegt - der Aufrufer faellt dann selbst auf den zuletzt aufgeloesten Wert zurueck.
+    markup=True (Einkaufspreis): zusaetzlich der mit dem Vorlauf wachsende Sicherheitsaufschlag (FORECAST_MARKUP_POINTS)."""
     bubble_price = bubble_by_hour.get(h)
     if bubble_price is not None:
-        return round((bubble_price + _bubble_bias_offset(h, bias)) * AWATTAR_VAT_FACTOR, 5)
+        price = (bubble_price + _bubble_bias_offset(h, bias)) * AWATTAR_VAT_FACTOR
+        if markup:
+            seam = bias[0] if bias else (max(by_hour) if by_hour else None)
+            price += _forecast_markup_gross(h, seam)
+        return round(price, 5)
     for days_back in range(1, PRICE_FALLBACK_MAX_DAYS_BACK + 1):
         price = by_hour.get(h - timedelta(days=days_back))
         if price is not None:
@@ -1136,7 +1228,7 @@ def compute_price_buy_array(config, base_time_utc, hours):
             h = (base_time_utc + timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
             price = by_hour.get(h)
             if price is None:
-                price = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias)
+                price = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias, markup=True)
             if price is None:
                 price = out[-1] - surcharge if out else 0.0
             out.append(round(price + surcharge, 5))
@@ -1169,7 +1261,7 @@ def compute_price_buy_array(config, base_time_utc, hours):
                 # echter Awattar-Preis eines frueheren Tages, zuletzt der vorherige Wert (Notnagel -
                 # erzeugte ohne den Bubble-Fallback einen eingefrorenen Preisverlauf, siehe
                 # CHANGELOG 0.0.45.88).
-                raw_price = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias)
+                raw_price = _resolve_fallback_price(h, by_hour, bubble_by_hour, bias, markup=True)
             if raw_price is None:
                 raw_price = prev_raw_price if prev_raw_price is not None else 0.0
             tariff = _netzentgelt_tariff_for_hour(h.astimezone(get_ha_timezone()), windows, quarters)
@@ -1537,6 +1629,19 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
     wb_p_min = compute_wb_p_min()
     if wb_p_min is not None:
         live_values["WB - p_min"] = wb_p_min
+    # Laderegel: Endwert-Stufen des Autos (ev_tier_p1..p6 in EUR/kWh, ev_tier_soc1..soc5 als Anteil der Batterie). WB - p_min bleibt als
+    # Rueckfall fuer aeltere Server mit.
+    try:
+        if (config.get("electricityTariffMode") or "fixed") in SPOT_HISTORY_TARIFF_MODES:
+            update_spot_price_history()
+        ev_tier_values = compute_ev_tiers(config)
+        if ev_tier_values:
+            for i, value in enumerate(ev_tier_values["p"], start=1):
+                live_values[f"ev_tier_p{i}"] = value
+            for i, value in enumerate(ev_tier_values["soc"], start=1):
+                live_values[f"ev_tier_soc{i}"] = value
+    except Exception as e:
+        print("[Shyft] Laderegel-Stufen konnten nicht berechnet werden:", repr(e))
     try:
         live_values["HP - Temp Indoor T_i_0"] = compute_ti0_field(config)
     except Exception as e:
@@ -1960,7 +2065,8 @@ def readShyftActions():
         return jsonify({"status": "success",
                         "response": {"actions": _demo_shyft_actions(), "display_max_days": SHYFT_ACTIONS_DISPLAY_MAX_DAYS}})
     config = _read_current_config()
-    all_actions = _read_computed_actions() + [_pv_surplus_session_to_action(s, config) for s in _read_pv_surplus_actions()]
+    all_actions = (_read_computed_actions() + [_pv_surplus_session_to_action(s, config) for s in _read_pv_surplus_actions()]
+                   + [_ev_reserve_session_to_action(s, config) for s in _read_ev_reserve_actions()])
     household_action = _household_savings_action()
     if household_action:
         all_actions.append(household_action)
@@ -2037,7 +2143,7 @@ def readDashboardChartData():
                 # Batterieladung, gleiche Definition wie PowerUsageBaseList.
                 opt_cost.append(_safe_float(row.get("profits_net_opt")))
                 opt_usage.append(_safe_float(row.get("X_sum")))
-                # Netzsaldo (GR_sum: positiv = Bezug, negativ = Einspeisung) - Netz-Linie "Netzbezug/Einspeisung" im Strompreis-Chart
+                # Netzsaldo (GR_sum: positiv = Bezug, negativ = Einspeisung) - Netz-Linie "Strombezug/Einspeisung" im Strompreis-Chart
                 opt_grid_import.append(_safe_float(row.get("GR_sum")))
         except Exception as e:
             print("[Shyft] output_csv konnte nicht gelesen werden:", repr(e))
@@ -2104,6 +2210,7 @@ def readDashboardChartData():
     history_hours = [midnight_utc + timedelta(hours=i) for i in range(history_hour_count)]
     archive_by_hour = {}
     if history_hours:
+        backfill_missing_actual_hours()  # Luecken der heutigen Ist-Linie schliessen (gedrosselt, siehe dort)
         try:
             archive_rows = energy_archive.query_summary(
                 "hourly", energy_archive.hour_key(midnight_utc), energy_archive.hour_key(now_hour))
@@ -2878,6 +2985,9 @@ def readRaumtemperaturForecastVsActual():
     payload["actualFine"] = _state_fine_points(entity_id)
     payload["targetActualFine"] = _state_fine_points(target_entity_id)
     payload["binMinutes"] = FINE_ACTUAL_BIN_MINUTES
+    # Live-Werte fuer den Hinweis unter dem Chart (Raum kaelter als Soll, siehe Frontend buildChartHint).
+    payload["liveIndoorTempC"] = _read_mapped_numeric(config, "heatpump_temp_indoor_measured")
+    payload["liveTargetTempC"] = _read_mapped_numeric(config, "heatpump_heating_target_temp_normal")
     return jsonify(payload)
 
 
@@ -2895,6 +3005,10 @@ def readWarmwasserForecastVsActual():
     payload = _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=DHW_ACTION_NAMES)
     payload["actualFine"] = _demo_fine_points("heatpump_dhw_tank_temp") if demo else _state_fine_points(entity_id)
     payload["binMinutes"] = FINE_ACTUAL_BIN_MINUTES
+    # Live-Tanktemperatur + vom Optimierer angesetzte Untergrenze (hw_soc_min) fuer den Hinweis unter dem Chart: liegt der Tank darunter,
+    # startet die Prognose bei der Untergrenze statt beim Ist-Wert (siehe Frontend buildChartHint).
+    payload["liveTankTempC"] = None if demo else _read_mapped_numeric(config, "heatpump_dhw_tank_temp")
+    payload["hwSocMinC"] = config.get("hwSocMinC")
     return jsonify(payload)
 
 
@@ -3455,6 +3569,26 @@ def classify_wallbox_connection_state(state_value, config=None):
     return config.get("wallboxConnectionStatusMapping", {}).get(state_value)
 
 
+CAR_HOME_STATES = {"zuhause": True, "home": True, "abwesend": False, "not_home": False, "away": False}
+
+
+def classify_car_home_state(state_value):
+    """True = Auto ist zu Hause ("Zuhause"/"home"), False = Auto ist nicht zu Hause ("Abwesend"/"not_home"/"away"), None = unbekannt (unknown/unavailable/anderer Wert).
+    Gross-/Kleinschreibung egal. Zustand des optionalen Sensors "Auto - Zuhause?" (electronicvehicle_home), der nur intern im Add-on benutzt wird."""
+    return CAR_HOME_STATES.get(str(state_value or "").strip().lower())
+
+
+def read_car_home_state(config):
+    "Aktueller Zustand des optionalen Sensors 'Auto - Zuhause?' (True/False), None wenn nicht zugeordnet oder nicht lesbar/unbekannt - dann gilt das Verhalten wie ohne Sensor."
+    entity_id = (config.get("sensorMappings") or {}).get("electronicvehicle_home", "")
+    if not entity_id or isinstance(entity_id, list):
+        return None
+    try:
+        return classify_car_home_state(homeassistant_adapter.load_entity_state(entity_id).state)
+    except Exception:
+        return None
+
+
 _car_presence_log_lock = threading.Lock()
 
 
@@ -3709,8 +3843,10 @@ CAR_PRESENCE_RECENCY_HALF_LIFE_DAYS = 30
 
 # Cold-Start-Fahrprofil, solange ueberhaupt kein eigener Fahrtag vorliegt (n_driving_days == 0 - z.B.
 # Auto gerade erst eingerichtet, oder Akkukapazitaet fehlt, ohne die sich SOC-Rueckgaenge nicht in
-# kWh umrechnen lassen). Tagesfahrleistung aus carAvgDailyDistanceKm (Config, sonst
-# EV_DEFAULT_DAILY_KM), km->kWh ueber carConsumptionKwhPer100km (Config, sonst
+# kWh umrechnen lassen). Tagesfahrleistung fix EV_DEFAULT_DAILY_KM (seit 0.0.45.354 keine
+# Konfigurationsfrage mehr - der Wert zaehlt nur, bis backfill_car_presence_log aus der HA-Historie
+# des Akkustands den ersten echten Fahrtag rekonstruiert hat; ein evtl. noch gespeichertes
+# carAvgDailyDistanceKm aelterer Versionen wird ignoriert), km->kWh ueber carConsumptionKwhPer100km (Config, sonst
 # EV_DEFAULT_KWH_PER_100KM). Verteilung: an Werktagen je zur Haelfte auf 7-8 und 17-18 Uhr, am
 # Wochenende gleichmaessig auf 15-18 Uhr. Sobald echte Fahrtage vorliegen, wird dieses Profil nicht
 # mehr genutzt - dann zaehlt der recency-gewichtete historische Tagesdurchschnitt je Wochentag
@@ -3889,7 +4025,8 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
     steuert Hinweistext und ~-Markierung im Dashboard.
 
     return_meta=True haengt der Rueckgabe ein dict an: {"simulatedHours": [Indizes der Stunden, deren Verbrauch der
-    "Notnagel" (siehe oben) simuliert hat]} - fuer die Kennzeichnung in "Prognose im Detail".
+    "Notnagel" (siehe oben) simuliert hat], "atHomeUnplugged": True, wenn das Auto laut Sensor "Auto - Zuhause?" zu Hause, aber nicht
+    eingesteckt ist (Stunde 0 zaehlt dann als "zu Hause")} - fuer die Kennzeichnung in "Prognose im Detail".
     """
     try:
         with open(CAR_PRESENCE_LOG_PATH, "r") as f:
@@ -3951,7 +4088,7 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
     coldstart = n_driving_days == 0
 
     config = _read_current_config()
-    default_km = config.get("carAvgDailyDistanceKm") or EV_DEFAULT_DAILY_KM
+    default_km = EV_DEFAULT_DAILY_KM
     default_kwh_per_100 = config.get("carConsumptionKwhPer100km") or EV_DEFAULT_KWH_PER_100KM
     default_e_day = max(0.0, float(default_km) * float(default_kwh_per_100) / 100.0)
 
@@ -4017,7 +4154,10 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
 
     start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     labels = [(start + timedelta(hours=i)).isoformat() for i in range(hours)]
-    hours_away_now = compute_hours_away(by_hour, current_connected, start)
+    # Zustand "zu Hause": Auto ist da, aber nicht eingesteckt (Sensor "Auto - Zuhause?"). Die laufende Stunde zaehlt als
+    # abwesend (Zeit zum Einstecken), ab der Folgestunde als "kann laden" - die Prognose startet dann so, als waere es eingesteckt.
+    at_home_unplugged = current_connected is False and read_car_home_state(config) is True
+    hours_away_now = 0 if at_home_unplugged else compute_hours_away(by_hour, current_connected, start)
 
     probabilities = []
     if current_connected is None:
@@ -4025,6 +4165,8 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
     else:
         p = 1.0 if current_connected else 0.0
     probabilities.append(p)
+    if at_home_unplugged:
+        p = 1.0  # Ausgangspunkt der Markov-Kette fuer die Folgestunden; probabilities[0] bleibt 0.0
     for i in range(1, hours):
         source_ts = start + timedelta(hours=i - 1)
         p_home_given_home, _ = transition_rate(source_ts.weekday(), source_ts.hour, True)
@@ -4106,7 +4248,8 @@ def compute_car_presence_forecast(hours=48, buffer_hours=0, return_meta=False):
 
     result = (labels, probabilities, standing_probabilities, driving_probabilities, consumption_kwh_forecast, low_data_basis, consumption_basis)
     if return_meta:
-        return result + ({"simulatedHours": sorted(i for i in simulated_hours if consumption_kwh_forecast[i] > 0)},)
+        return result + ({"simulatedHours": sorted(i for i in simulated_hours if consumption_kwh_forecast[i] > 0),
+                          "atHomeUnplugged": at_home_unplugged},)
     return result
 
 
@@ -4260,6 +4403,11 @@ def carPresenceForecast():
             return "fährt"
         return "eingesteckt" if c >= s else "steht"
 
+    # Stunde 0 mit Zustand "zu Hause": Auto da, aber nicht eingesteckt (zaehlt fuer den Optimierer als abwesend, siehe compute_car_presence_forecast).
+    at_home = [False] * len(labels)
+    if meta.get("atHomeUnplugged") and at_home and probabilities[0] == 0.0 and consumption_kwh_forecast[0] == 0.0:
+        at_home[0] = True
+
     # Die an den Optimierer gehenden Felder (build_ev_optimizer_fields) MIT ausgeben, damit die
     # Prognose 1:1 gegen die tatsaechliche input.csv geprueft werden kann.
     optimizer_input = {}
@@ -4274,7 +4422,8 @@ def carPresenceForecast():
         "probabilities": [round(p, 3) for p in probabilities],
         "standingProbabilities": [round(p, 3) for p in standing_probabilities],
         "drivingProbabilities": [round(p, 3) for p in driving_probabilities],
-        "state": [_state(i) for i in range(len(labels))],
+        "state": ["zu Hause" if at_home[i] else _state(i) for i in range(len(labels))],
+        "atHome": at_home,
         "consumptionKwh": [round(v, 3) for v in consumption_kwh_forecast],
         "simulatedHours": [i in simulated for i in range(len(labels))],
         "consumptionBasis": consumption_basis,
@@ -4400,6 +4549,15 @@ def build_number_script_config(entity_id, control):
     }
 
 
+def _not_writable_entity_message(entity_id):
+    "Klartext, warum aus entity_id kein Steuer-Skript entsteht (nur number.* und climate.* lassen sich beschreiben)."
+    domain = entity_id.split(".")[0]
+    kind = "ein reiner Sensor (nur lesbar)" if domain == "sensor" else f"eine {domain}-Entität"
+    return (f"„{entity_id}“ ist {kind} und kann nicht beschrieben werden. Für „Direkt steuern“ bitte eine number.- oder "
+            f"climate.-Entität zuordnen (bei Viessmann/ViCare meist die Solltemperatur-Einstellung des Heizkreises) "
+            f"oder die Steuerung über eine eigene Home-Assistant-Automation wählen.")
+
+
 def sync_number_script(control_key, entity_id):
     "Creates/updates or removes an auto-managed control's script so it always targets the currently mapped entity. Returns the resulting actorMappings value."
     control = AUTO_MANAGED_CONTROLS[control_key]
@@ -4411,7 +4569,7 @@ def sync_number_script(control_key, entity_id):
 
     config = build_number_script_config(entity_id, control)
     if config is None:
-        raise Exception(f"Entity {entity_id} ist weder eine number- noch eine climate-Entity")
+        raise Exception(_not_writable_entity_message(entity_id))
 
     homeassistant_adapter.put_script_config(script_id, config)
     # writing the config alone doesn't make HA (re-)register the script entity - it needs an explicit reload
@@ -4442,7 +4600,26 @@ def _script_failure_reason(script_id, error):
     except Exception as e:
         print(f"[Shyft] Fehlerursache von script.{script_id} nicht aus dem HA-Log lesbar:", repr(e))
     if not reason:
-        return str(error)
+        # Ablehnungen (z.B. Wert ausserhalb des Bereichs) stehen nicht im System-Log, nur im Trace des Skripts
+        try:
+            reason = homeassistant_adapter.latest_script_trace_error(script_id)
+        except Exception as e:
+            print(f"[Shyft] Fehlerursache von script.{script_id} nicht aus dem HA-Trace lesbar:", repr(e))
+    if not reason:
+        if "failed: 400" in str(error):
+            # HA antwortet mit 400, wenn der Dienst script.<id> gar nicht existiert - das Skript wird beim Speichern der
+            # Zuordnung angelegt (sync_number_script) und fehlt, wenn dabei ein Fehler auftrat.
+            return (f"Das Hilfsskript script.{script_id} existiert in Home Assistant nicht. Es wird beim Speichern der "
+                    f"Entitäts-Zuordnung angelegt – das geht nur für number.- und climate.-Entitäten, nicht für Sensoren. "
+                    f"Bitte die Zuordnung prüfen und neu speichern")
+        reason = str(error)
+        print(f"[Shyft] script.{script_id} fehlgeschlagen, Ursache in Home Assistant nicht auffindbar: {reason}")
+        return reason
+    print(f"[Shyft] script.{script_id} fehlgeschlagen: {reason} (Antwort: {error})")
+    try:  # auch im Home-Assistant-Log (Einstellungen > System > Protokolle) sichtbar machen
+        homeassistant_adapter.call_service("system_log", "write", {"logger": "shyft", "level": "error", "message": f"script.{script_id} fehlgeschlagen: {reason}"})
+    except Exception as e:
+        print(f"[Shyft] Eintrag ins HA-Log fehlgeschlagen:", repr(e))
     text = f"Home Assistant meldet: {reason}"
     if "GATEWAY_OFFLINE" in reason:
         text += " (die Cloud des Herstellers erreicht das Gateway der Wärmepumpe nicht - Internetverbindung/Gateway der Wärmepumpe prüfen)"
@@ -4560,7 +4737,7 @@ def execute_auto_managed_action(control_key, phase, target_value):
         try:
             homeassistant_adapter.call_service("script", control["script_id"], {"target_value": target_value})
         except Exception as e:
-            raise Exception(_script_failure_reason(control["script_id"], e))
+            raise Exception(f"{_script_failure_reason(control['script_id'], e)} (Zielwert {target_value} für {entity_id})")
         return clamp_note
     elif control["type"] == "switch":
         service = "turn_on" if phase == "start" else "turn_off"
@@ -4966,8 +5143,24 @@ def trigger_ha_automation_recipe(recipe, phase, target_kw):
     trigger_ha_automation(recipe.get("haAutomationEntityId"), phase, target_kw)
 
 
+def is_car_unplugged(config):
+    "True nur, wenn die Wallbox sicher 'nicht eingesteckt' meldet (Status lesbar und als 'kann nicht laden' zugeordnet). Ohne zugeordneten/lesbaren Sensor oder bei unzugeordnetem Status: False (nicht blockieren)."
+    entity_id = config.get("sensorMappings", {}).get("wallbox_plugged", "")
+    if not entity_id:
+        return False
+    try:
+        state = homeassistant_adapter.load_entity_state(entity_id)
+        return classify_wallbox_connection_state(state.state, config) is False
+    except Exception:
+        return False
+
+
 def execute_car_charge_start(target_kw):
     config = _read_current_config()
+    # Ein nicht eingestecktes Auto kann nicht laden - kein Startbefehl (gilt fuer jeden Aufrufer: Optimierer-Aktion,
+    # PV-Ueberschussladen, Wiederholungen der Ladekontrolle).
+    if is_car_unplugged(config):
+        raise Exception("Auto ist nicht eingesteckt – Laden wird nicht gestartet")
     # Gilt fuer JEDEN Aufrufer (die lokale PV-Ueberschussladen-Rueckfalllogik UND shyft-powers
     # eigene "Auto laden"-Cloud-Aktionen, siehe handle_shyft_action_start) - beide koennen einen zu
     # hohen Zielwert anfordern, und die Wallbox soll so oder so nie mehr bekommen, als sie selbst
@@ -5155,6 +5348,9 @@ def _read_mapped_entity_state(config, sensor_key):
         if state is None:
             return None
         return EntityState(state, unit or "", datetime.now(timezone.utc))
+    static_state = static_sensor_state(config, sensor_key)
+    if static_state is not None:
+        return EntityState(static_state, "", datetime.now(timezone.utc))
     entity_id = mapped_entity_id(config, sensor_key)
     if not entity_id:
         return None
@@ -5595,6 +5791,173 @@ def compute_wb_p_min():
     return p_min
 
 
+# ---- Laderegel: Endwert-Stufen des E-Autos (siehe ev_tiers.py) ----------------------------------------------------------------------------
+# Preis-Historie fuer die Quantile: Boersenpreis (brutto, ohne Netzentgelt/Aufschlag) je Stunde. Gespeichert wird der Boersenpreis statt
+# des fertigen Einkaufspreises, damit eine spaetere Tarif-Aenderung (Netzentgelt, Aufschlag) rueckwirkend gilt.
+SPOT_HISTORY_PATH = "/data/spot_price_history.json"
+SPOT_HISTORY_DAYS = 35
+SPOT_HISTORY_KEEP_DAYS = 42
+SPOT_HISTORY_BACKFILL_CHUNK_DAYS = 7
+SPOT_HISTORY_BACKFILL_RETRY_SECONDS = 3600
+SPOT_HISTORY_TARIFF_MODES = ("dynamic", "dynamic_variable")
+_spot_history_lock = threading.Lock()
+
+
+def _load_spot_history():
+    "({hour_start_epoch_ms: EUR/kWh brutto}, meta) - leer, wenn die Datei fehlt oder unlesbar ist."
+    try:
+        with open(SPOT_HISTORY_PATH, "r") as f:
+            data = json.load(f)
+        return {int(k): float(v) for k, v in (data.get("prices") or {}).items()}, data.get("meta") or {}
+    except Exception:
+        return {}, {}
+
+
+def _save_spot_history(prices, meta):
+    tmp_path = SPOT_HISTORY_PATH + ".tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump({"prices": {str(k): v for k, v in sorted(prices.items())}, "meta": meta}, f)
+        os.replace(tmp_path, SPOT_HISTORY_PATH)
+    except Exception as e:
+        print("[Shyft] Preis-Historie konnte nicht gespeichert werden:", repr(e))
+
+
+def update_spot_price_history():
+    """Haelt die Boersenpreis-Historie der letzten SPOT_HISTORY_DAYS Tage aktuell: uebernimmt die bereits vergangenen Stunden aus dem
+    Awattar-Fenster des stuendlichen Syncs und fuellt Luecken (erster Start, laengere Pause) in Wochen-Abschnitten bei Awattar nach -
+    hoechstens einmal je SPOT_HISTORY_BACKFILL_RETRY_SECONDS, damit ein Ausfall der API den Sync nicht ausbremst."""
+    with _spot_history_lock:
+        prices, meta = _load_spot_history()
+        hour_ms = int(time.time() // 3600) * 3600 * 1000
+        day_ms = 24 * 3600 * 1000
+        for ts, price in _fetch_awattar_prices().items():
+            if ts < hour_ms:
+                prices[ts] = price
+        window_start = hour_ms - SPOT_HISTORY_DAYS * day_ms
+        have = sum(1 for ts in prices if window_start <= ts < hour_ms)
+        if have < 0.95 * SPOT_HISTORY_DAYS * 24 and time.time() - meta.get("last_backfill_attempt", 0) > SPOT_HISTORY_BACKFILL_RETRY_SECONDS:
+            meta["last_backfill_attempt"] = time.time()
+            chunk_ms = SPOT_HISTORY_BACKFILL_CHUNK_DAYS * day_ms
+            start = window_start
+            while start < hour_ms:
+                end = min(start + chunk_ms, hour_ms)
+                try:
+                    resp = requests.get(AWATTAR_URL, params={"start": start, "end": end}, timeout=20)
+                    resp.raise_for_status()
+                    for row in resp.json().get("data", []):
+                        ts = int(row["start_timestamp"])
+                        if ts < hour_ms:
+                            prices[ts] = round(float(row["marketprice"]) / 1000.0 * AWATTAR_VAT_FACTOR, 5)
+                except Exception as e:
+                    print("[Shyft] Preis-Historie: Nachfuellen bei Awattar fehlgeschlagen:", repr(e))
+                    break
+                start = end
+        cutoff = hour_ms - SPOT_HISTORY_KEEP_DAYS * day_ms
+        prices = {ts: v for ts, v in prices.items() if ts >= cutoff}
+        _save_spot_history(prices, meta)
+
+
+def _dynamic_tariff_adder(config):
+    "Funktion (Stunden-Start UTC) -> Aufschlag in EUR/kWh auf den Brutto-Boersenpreis im dynamischen Tarif; None fuer andere Tarife oder unvollstaendige Eingaben (wie compute_price_buy_array)."
+    mode = config.get("electricityTariffMode") or "fixed"
+
+    def _cent(key):
+        v = config.get(key)
+        try:
+            return float(v) / 100.0 if v is not None and v != "" else None
+        except (TypeError, ValueError):
+            return None
+
+    if mode == "dynamic":
+        surcharge = _cent("electricityDynamicSurchargeCent")
+        return (lambda hour_utc: surcharge) if surcharge is not None else None
+    if mode == "dynamic_variable":
+        ht, nt = _cent("electricityNetzentgeltHtCent"), _cent("electricityNetzentgeltNtCent")
+        standard = _cent("electricityNetzentgeltStandardCent")
+        if ht is None or nt is None or standard is None:
+            return None
+        windows = config.get("electricityNetzentgeltWindows") or []
+        quarters = set(config.get("electricityNetzentgeltQuarters") or [])
+
+        def adder(hour_utc):
+            tariff = _netzentgelt_tariff_for_hour(hour_utc.astimezone(get_ha_timezone()), windows, quarters)
+            return ht if tariff == "ht" else (nt if tariff == "nt" else standard)
+        return adder
+    return None
+
+
+def spot_history_buy_prices(config):
+    "Einkaufspreise (brutto, EUR/kWh) je Stunde der letzten SPOT_HISTORY_DAYS Tage mit dem heutigen Tarif; None ohne dynamischen Tarif."
+    adder = _dynamic_tariff_adder(config)
+    if adder is None:
+        return None
+    prices, _ = _load_spot_history()
+    hour_ms = int(time.time() // 3600) * 3600 * 1000
+    out = []
+    for ts in range(hour_ms - SPOT_HISTORY_DAYS * 24 * 3600 * 1000, hour_ms, 3600 * 1000):
+        raw = prices.get(ts)
+        if raw is not None:
+            out.append(raw + adder(datetime.fromtimestamp(ts / 1000, tz=timezone.utc)))
+    return out
+
+
+def _cache_upcoming_prices(price_column):
+    "Noch bevorstehende Stunden (ab jetzt, inklusive der aktuellen) der Spalte price_column aus der zuletzt gecachten input.csv; [] ohne Cache."
+    try:
+        with open(DASHBOARD_CACHE_PATH, "r") as f:
+            cache = json.load(f)
+        input_csv, creation_date_ms = cache.get("input_csv"), cache.get("creation_date")
+        if not input_csv or creation_date_ms is None:
+            return []
+        start = datetime.fromtimestamp(creation_date_ms / 1000, tz=timezone.utc).replace(minute=0, second=0, microsecond=0)
+        now_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        current_index = int((now_hour - start).total_seconds() // 3600)
+        rows = list(csv.DictReader(io.StringIO(input_csv), delimiter=";"))
+        return [_safe_float(row.get(price_column)) for i, row in enumerate(rows) if i >= current_index and row.get(price_column) not in (None, "")]
+    except Exception:
+        return []
+
+
+def compute_ev_tiers(config):
+    """Endwert-Stufen des E-Autos fuer den Optimierer (siehe ev_tiers.build_tiers), abhaengig von der Laderegel des Nutzers. None, wenn noch
+    keine bevorstehenden Preise bekannt sind (dann sendet der Sync nur WB - p_min)."""
+    rule = ev_tiers.charge_rule(config)
+    price_column = _wb_p_min_basis()[0]
+    pv_mode = price_column == "p_sell"
+    upcoming_buy = _cache_upcoming_prices("p_buy")
+    sell_ref = None
+    if pv_mode:
+        upcoming_sell = _cache_upcoming_prices("p_sell")
+        sell_ref = min(upcoming_sell) if upcoming_sell else None
+    history = spot_history_buy_prices(config)
+    tiers = ev_tiers.build_tiers(rule, history, upcoming_buy, pv_mode, sell_ref)
+    if tiers is None:
+        return None
+    values = ", ".join(f"{k} {v * 100:.1f} ct" for k, v in tiers["values"].items())
+    print(f"[Shyft] Laderegel '{rule}': {tiers['basis']} ({values}); Stufen {tiers['p']} bis Ladestand {tiers['soc']}")
+    return tiers
+
+
+def ev_pv_surplus_soc_cap(config):
+    "Ladestand (%), bis zu dem mit PV-Ueberschuss geladen wird - aus der Laderegel (ersetzt die fruehere Einstellung 'Limit PV-Ueberschussladen')."
+    return float(ev_tiers.pv_surplus_soc_cap_percent(config))
+
+
+def _migrate_ev_charge_rule():
+    """Einmal-Migration: der fruehere 'Mindestladestand' (evSocNormal) wird auf die neue Laderegel abgebildet (ev_tiers.
+    charge_rule_from_legacy_soc_normal); das fruehere 'Limit PV-Ueberschussladen' (evSocMaxPvSurplus) entfaellt, die Grenze ergibt sich nun
+    aus der Laderegel."""
+    config = _read_current_config()
+    if config.get("evChargeRule") in ev_tiers.EV_CHARGE_RULES:
+        return
+    if config.get("evSocNormal") is None and config.get("evSocMaxPvSurplus") is None:
+        return  # nie angefasst - der Standard greift ohnehin (ev_tiers.charge_rule)
+    config["evChargeRule"] = ev_tiers.charge_rule(config)
+    _write_current_config(config)
+    print("[Shyft] Laderegel aus Mindestladestand", config.get("evSocNormal"), "uebernommen:", config["evChargeRule"])
+
+
 def compute_energy_flow_data():
     """Aggregiert alle Live-Werte fuers Energiefluss-Widget auf dem Dashboard (siehe
     buildEnergyFlowWidget im Frontend) in einem Response - jedes Geraet nur, wenn es ueberhaupt als
@@ -5717,7 +6080,10 @@ def compute_energy_flow_data():
     if wallbox_configured:
         connected = is_car_ready_to_charge(config)
         if not connected:
-            car_state = "away"
+            # Nicht eingesteckt: "home" statt "away", wenn der optionale Sensor "Auto - Zuhause?"
+            # (electronicvehicle_home) "Zuhause" meldet - das Dashboard zeigt dann "zu Hause" statt
+            # "abwesend". Ohne Sensor bzw. bei unbekanntem Zustand bleibt es bei "away".
+            car_state = "home" if read_car_home_state(config) is True else "away"
         elif wallbox_kw and wallbox_kw > 0:
             car_state = "charging"
         else:
@@ -5973,7 +6339,7 @@ def _can_extend_pv_surplus_session(session, config):
     if has_battery and battery_soc <= PV_SURPLUS_BATTERY_STOP_SOC:
         return False
     ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
-    max_ev_soc = config.get("evSocMaxPvSurplus")
+    max_ev_soc = ev_pv_surplus_soc_cap(config)
     if ev_soc is not None and max_ev_soc is not None and ev_soc >= float(max_ev_soc):
         return False
     grid_kw = read_grid_power_kw(config)
@@ -6088,11 +6454,11 @@ def _run_pv_surplus_charging_tick_impl():
             stop_pv_surplus_charging(actions, session, config, reason=f"Heimspeicher-SOC auf {battery_soc:.0f}% gefallen")
             return
         ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
-        max_ev_soc = config.get("evSocMaxPvSurplus")
+        max_ev_soc = ev_pv_surplus_soc_cap(config)
         if ev_soc is not None and max_ev_soc is not None and ev_soc >= float(max_ev_soc):
             stop_pv_surplus_charging(
                 actions, session, config,
-                reason=f"Auto-Ladestand {ev_soc:.0f}% ≥ Limit PV-Überschussladen ({float(max_ev_soc):.0f}%)")
+                reason=f"Auto-Ladestand {ev_soc:.0f}% ≥ PV-Grenze der Laderegel ({float(max_ev_soc):.0f}%)")
             return
         if grid_kw is None:
             return  # kein aktueller Messwert - Zielwert unveraendert bis zum naechsten Tick
@@ -6167,7 +6533,7 @@ def _run_pv_surplus_charging_tick_impl():
         if has_battery and battery_soc <= PV_SURPLUS_BATTERY_STOP_SOC:
             return
         start_ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
-        start_max_ev_soc = config.get("evSocMaxPvSurplus")
+        start_max_ev_soc = ev_pv_surplus_soc_cap(config)
         if start_ev_soc is not None and start_max_ev_soc is not None and start_ev_soc >= float(start_max_ev_soc):
             return
         # Der Ablauf der geplanten Stunde ist ein regulaerer, gewollter Uebergang (siehe oben,
@@ -6210,6 +6576,157 @@ def _run_pv_surplus_charging_tick_impl():
         actions.append(new_session)
         _write_pv_surplus_actions(actions)
         notify_action_event(config, _pv_surplus_session_to_action(new_session, config), "gestartet")
+
+
+# ---- Sofortladen bis zur Reserve (siehe ev_tiers.EV_RESERVE_START_SOC / EV_RESERVE_STOP_SOC) -------------------------------------
+# Der Optimierer kennt die 10-%-Reserve nur als Endbedingung bzw. Endwert-Stufe und darf das Laden dafuer in die guenstigsten Stunden
+# des Planungsfensters schieben. Steht ein eingestecktes Auto unter 10 %, laedt das Add-on deshalb selbst sofort mit voller Leistung
+# bis 12 % - unabhaengig vom Plan. Laeuft gerade eine Optimierer-"Auto laden"-Aktion oder eine PV-Ueberschuss-Session, steuern die
+# die Wallbox; endet sie vor 12 %, startet das Sofortladen wieder. Die Sessions erscheinen als "Auto laden" mit eigenem Untertitel.
+EV_RESERVE_ACTIONS_PATH = "/data/ev_reserve_actions.json"
+
+
+def _read_ev_reserve_actions():
+    try:
+        with open(EV_RESERVE_ACTIONS_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _write_ev_reserve_actions(actions):
+    cutoff_ms = (datetime.now() - timedelta(days=PV_SURPLUS_ACTIONS_MAX_DAYS)).timestamp() * 1000
+    pruned = [a for a in actions if a.get("active") or (a.get("end_ms") or 0) >= cutoff_ms]
+    try:
+        with open(EV_RESERVE_ACTIONS_PATH, "w") as f:
+            json.dump(pruned, f)
+    except Exception as e:
+        print("[Shyft] Sofortladen: Aktionsliste konnte nicht gespeichert werden:", repr(e))
+
+
+def _ev_reserve_session_to_action(session, config):
+    "Sofortladen-Session als 'Auto laden'-Aktion fuer die Aktionsliste (wie _pv_surplus_session_to_action); keine Ersparnis - es ist Pflichtladen."
+    is_active = bool(session.get("active"))
+    energy_kwh = _pv_surplus_session_energy_kwh(session)
+    start_soc = ev_tiers.EV_RESERVE_START_SOC
+    stop_soc = ev_tiers.EV_RESERVE_STOP_SOC
+    return {
+        "Action Name": EV_CHARGE_ACTION_NAME,
+        "Status": "aktiv" if is_active else "beendet",
+        "Execution Status": "yes, started",
+        "Target Value": session.get("target_kw", 0),
+        "Energy (electr)": energy_kwh,
+        "Subtitle": f"Sofortladen: Ladestand unter {start_soc:.0f} %, lädt bis {stop_soc:.0f} % ({energy_kwh:.1f} kWh)",
+        "Date Start": session.get("start_ms"),
+        "Date End": session.get("end_ms") if not is_active else None,
+        "Savings": None,
+        "costsbase": None,
+        "costsopt": None,
+        "Log": "\n".join(session.get("log", [])),
+        "Had Error": bool(session.get("had_error")),
+    }
+
+
+def _end_ev_reserve_session(sessions, session, config, reason, send_stop):
+    if send_stop:
+        try:
+            execute_car_charge_stop(session.get("target_kw"))
+        except Exception as e:
+            session["had_error"] = True
+            _append_pv_surplus_log(session, session.get("target_kw", 0), note=f"Stop fehlgeschlagen: {e}")
+            print("[Shyft] Sofortladen: Stop fehlgeschlagen:", repr(e))
+    now_ms = int(time.time() * 1000)
+    if session.get("power_history") and session["power_history"][-1].get("kw"):
+        session["power_history"].append({"at_ms": now_ms, "kw": 0})
+    _append_pv_surplus_log(session, 0, note=reason)
+    session["active"] = False
+    session["end_ms"] = now_ms
+    session["stop_reason"] = reason
+    _write_ev_reserve_actions(sessions)
+    ended_action = _ev_reserve_session_to_action(session, config)
+    try:
+        energy_archive.archive_completed_action(ended_action)
+    except Exception as e:
+        print("[Shyft] Energie-Archiv: Sofortladen-Aktion konnte nicht archiviert werden:", repr(e))
+    notify_action_event(config, ended_action, "beendet")
+
+
+def _run_ev_reserve_charging_locked(config):
+    sessions = _read_ev_reserve_actions()
+    session = next((a for a in sessions if a.get("active")), None)
+    now_ms = int(time.time() * 1000)
+    other_active = bool(_active_optimizer_ev_charge_action() or _find_active_pv_surplus_session(_read_pv_surplus_actions())
+                        or next((a for a in _read_computed_actions() if a.get("Action Name") == EV_CHARGE_ACTION_NAME
+                                 and (a.get("Status") or "").lower() == "aktiv" and a.get("Execution Status") == "yes, started"
+                                 and not a.get("_convertedToPvSurplusFallback")), None))
+    ev_soc = _read_mapped_numeric(config, "electronicvehicle_state_of_charge")
+    live_kw = _read_mapped_numeric(config, "wallbox_current_charging_power")
+    decision = ev_tiers.reserve_charge_decision(session is not None, is_car_ready_to_charge(config), ev_soc, other_active,
+                                                live_kw, now_ms, session.get("last_command_ms") if session else None)
+    if decision is None:
+        return
+    if decision in ("start", "restart"):
+        target_kw = compute_wallbox_max_kw(config)
+        try:
+            execute_car_charge_start(target_kw)
+            error = None
+        except Exception as e:
+            error = e
+            print("[Shyft] Sofortladen: Start fehlgeschlagen:", repr(e))
+        if decision == "start":
+            if error is not None:
+                return  # naechste Minute erneut versuchen, keine Karte fuer einen nie gestarteten Ladevorgang
+            session = {"active": True, "kind": "reserve", "target_kw": target_kw, "start_ms": now_ms, "log": [],
+                       "start_soc": ev_soc, "last_command_ms": now_ms,
+                       "power_history": [{"at_ms": now_ms, "kw": target_kw}]}
+            _append_pv_surplus_log(session, target_kw, note=f"Start bei {ev_soc:.0f} %")
+            sessions.append(session)
+            _write_ev_reserve_actions(sessions)
+            print(f"[Shyft] Sofortladen: Ladestand {ev_soc:.0f} % unter {ev_tiers.EV_RESERVE_START_SOC:.0f} % - lade bis {ev_tiers.EV_RESERVE_STOP_SOC:.0f} %")
+            notify_action_event(config, _ev_reserve_session_to_action(session, config), "gestartet")
+            return
+        session["last_command_ms"] = now_ms
+        if error is not None:
+            _append_pv_surplus_log(session, target_kw, note=f"Neustart fehlgeschlagen: {error}")
+        else:
+            _append_pv_surplus_log(session, target_kw, note="Wallbox lud nicht - erneut gestartet")
+        _write_ev_reserve_actions(sessions)
+        return
+    if decision == "stop":
+        _end_ev_reserve_session(sessions, session, config, f"{ev_tiers.EV_RESERVE_STOP_SOC:.0f} % erreicht", send_stop=True)
+    elif decision == "end":
+        reason = "Auto nicht mehr ladebereit" if not is_car_ready_to_charge(config) else "andere Ladung läuft weiter"
+        _end_ev_reserve_session(sessions, session, config, reason, send_stop=False)
+
+
+def run_ev_reserve_charging():
+    "Minuetlicher Job: Sofortladen bis zur Reserve. Laeuft nicht parallel zum Aktions-Poll oder PV-Ueberschuss-Tick (sonst naechste Minute)."
+    if is_demo_mode():
+        return
+    config = _read_current_config()
+    if not (_is_ev_wallbox_configured(config) and is_action_type_enabled(config, EV_CHARGE_ACTION_NAME)):
+        return
+    if not (config.get("sensorMappings", {}) or {}).get("electronicvehicle_state_of_charge"):
+        return  # ohne Ladestand-Sensor keine Reserve-Erkennung
+    if not _action_processing_lock.acquire(blocking=False):
+        return
+    try:
+        if not _pv_surplus_lock.acquire(blocking=False):
+            return
+        try:
+            _run_ev_reserve_charging_locked(config)
+        finally:
+            _pv_surplus_lock.release()
+    finally:
+        _action_processing_lock.release()
+
+
+def run_ev_reserve_charging_periodically():
+    with app.app_context():
+        try:
+            run_ev_reserve_charging()
+        except Exception as e:
+            print("[Shyft] Sofortladen fehlgeschlagen:", repr(e))
 
 
 # number.set_value setzt nur einen Zahlenwert und aktiviert keine Warmwasserbereitung - die Solltemperatur kommt
@@ -6724,8 +7241,18 @@ def _record_action_test_result(ready_key, ok):
         _write_current_config(cfg)
         if ok:
             _clear_not_ready_problem(ready_key)
+            # Erstes erfolgreich getestetes steuerbares Geraet beendet den Demomodus (Konto anlegen).
+            # Im Hintergrund, damit die Testantwort nicht auf Bubble wartet.
+            threading.Thread(target=_create_account_after_test, args=(ready_key,), daemon=True).start()
     except Exception as e:
         print("[Shyft] actionTestPassed konnte nicht aktualisiert werden:", repr(e))
+
+
+def _create_account_after_test(ready_key):
+    try:
+        maybe_create_real_account(ready_key)
+    except Exception as e:
+        print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
 
 
 def _clear_not_ready_problem(ready_key):
@@ -7346,6 +7873,8 @@ def _keep_valid_entity_ids(incoming, existing, keys=("sensorMappings", "actorMap
             continue
         for inner_key, new_value in list(new_map.items()):
             old_value = old_map.get(inner_key)
+            if new_value in (STATIC_SENSOR_ON, STATIC_SENSOR_OFF):
+                continue  # feste An/Aus-Auswahl (siehe static_sensor_state), keine entity_id
             if (isinstance(new_value, str) and new_value and not _VALID_ENTITY_ID.match(new_value)
                     and isinstance(old_value, str) and _VALID_ENTITY_ID.match(old_value)):
                 print(f"[Shyft] Mapping '{key}.{inner_key}': ungueltiger Wert {new_value!r} ignoriert, behalte {old_value!r}.")
@@ -7454,11 +7983,6 @@ def writeConfig():
             maybe_detect_battery_flow_sign_convention()
         except Exception as e:
             print("[Shyft] Batterie-Vorzeichen-Erkennung fehlgeschlagen:", repr(e))
-
-    try:
-        maybe_create_real_account(data.get("integrationMappings", {}))
-    except Exception as e:
-        print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
 
     # Speichern der Zuordnung kann das Problem beheben (oder ausloesen) - nicht bis zum naechsten stuendlichen
     # Sync warten. Im Hintergrund, die Neubewertung liest alle Sensoren aus Home Assistant.
@@ -7707,6 +8231,11 @@ def testHeatingTargetTempBoost():
     if not entity_id:
         test_log("Keine Entität zugeordnet.", "error")
         return jsonify({"success": False, "message": "Keine Entity zugeordnet"}), 400
+    if entity_id.split(".")[0] not in ("number", "climate"):
+        message = _not_writable_entity_message(entity_id)
+        test_log(message, "error")
+        _record_action_test_result(control_key, False)
+        return jsonify({"success": False, "message": message}), 400
 
     original_value = _read_mapped_numeric(config, control["sensor_field"])
     if original_value is None:
@@ -7942,14 +8471,15 @@ BATTERY_UNAVAILABLE_STATES = ("unavailable", "unknown")
 # las sich wie eine Fehlerursache ("Zeitueberschreitung"), gemeint ist aber die Entitaet, die nicht gesetzt werden konnte.
 BATTERY_TIMEOUT_LABEL = "Command-Timeout (Watchdog)"
 BATTERY_UNAVAILABLE_GRACE_SECONDS = 30
-# Watchdog-Wert (Sekunden) fuer die "Command Timeout"-Entitaet, je Aktionstyp verschieden:
-# beim Netzladen reicht 1 h, beim Entlade-Stopp soll der Befehl bis zu 10 h stehen bleiben.
+# Watchdog-Wert (Sekunden) fuer die "Command Timeout"-Entitaet: fuer beide Aktionstypen 10 h (Nutzer-Vorgabe).
+# Frueher 1 h beim Netzladen - lief eine Netzlade-Aktion ueber den Stundenwechsel weiter (ohne neuen Befehl),
+# fiel der Wechselrichter nach genau einer Stunde auf den Standardmodus zurueck (01.11.2026, 04:00:49).
 # Wird nur bei "Batterie netzladen" und "Batterie-Entladen verschieben" aufgefrischt (siehe deren
 # Referenz-Automationen), und auch dort nur, wenn ueberhaupt eine Timeout-Entitaet zugeordnet ist -
 # kein Pflichtfeld, manche Wechselrichter-Integrationen haben keine (das Konfig-Feld dafuer ist
 # ausgeblendet, ein bestehendes Mapping bleibt aber erhalten und wird weiter genutzt).
 BATTERY_COMMAND_TIMEOUT_SECONDS = {
-    "battery_grid_charge": 3600,       # 60 min
+    "battery_grid_charge": 36000,      # 10 h
     "battery_discharge_shift": 36000,  # 10 h
 }
 
@@ -8107,7 +8637,27 @@ def _battery_retry_kwargs(action):
             "normalize_others": bool(action.get("_supersedes"))}
 
 
-def execute_battery_direct(action_key, phase, target_kw, config, retry_timeout_seconds=BATTERY_RETRY_TIMEOUT_SECONDS, notify_on_failure=True, unavailable_grace_seconds=None, normalize_others=False):
+# Laufende/zuletzt beendete Schreibvorgaenge von execute_battery_direct - der Entladen-verschieben-Watchdog
+# (siehe check_battery_discharge_shift_watchdog) greift waehrend und kurz nach einem eigenen Schreibvorgang nicht
+# ein: beim Beenden/Abloesen steht die Entladeleistung schon wieder auf dem Ruhewert, waehrend die Aktion im
+# Store noch "aktiv" ist - das waere sonst eine scheinbare Abweichung.
+_battery_write_activity = {"busy": 0, "last_end": 0.0}
+_battery_write_activity_lock = threading.Lock()
+
+
+def execute_battery_direct(*args, **kwargs):
+    "Siehe _execute_battery_direct_unguarded - zusaetzlich wird die Schreibaktivitaet fuer den Watchdog vermerkt."
+    with _battery_write_activity_lock:
+        _battery_write_activity["busy"] += 1
+    try:
+        return _execute_battery_direct_unguarded(*args, **kwargs)
+    finally:
+        with _battery_write_activity_lock:
+            _battery_write_activity["busy"] -= 1
+            _battery_write_activity["last_end"] = time.time()
+
+
+def _execute_battery_direct_unguarded(action_key, phase, target_kw, config, retry_timeout_seconds=BATTERY_RETRY_TIMEOUT_SECONDS, notify_on_failure=True, unavailable_grace_seconds=None, normalize_others=False):
     """Fuehrt die 'direkte Entitaets-Steuerung'-Variante eines Batterie-Aktionstyps aus (siehe
     Modulkommentar oben). target_kw ist der Target Value der Aktion (kW) - fuer "Batterie netzladen"
     der Ladezielwert, fuer "Batterie-Laden verschieben" der (kleine) Begrenzungswert, sonst
@@ -8547,6 +9097,7 @@ NOTIFICATION_TYPES = {
     "action_start_end": "Aktionen starten / beenden (alle)",
     "action_start_end_errors_only": "Aktionen starten / beenden (nur bei Fehlern)",
     "device_status_deviation": "Geräteverhalten abweichend von Shyft-Steuerung",
+    "charge_announcement": "Geplante Ladevorgänge ankündigen",
 }
 
 # Aktionstypen the addon controls directly (writes the mapped entity itself), no user-side
@@ -8656,6 +9207,224 @@ def notify_action_event(config, action, verb, is_error=False):
 
 
 # ============================================================================
+# Geplante Ladevorgaenge ankuendigen (Benachrichtigungs-Toggle "charge_announcement", Standard aus):
+#   - Um 6 und 18 Uhr (lokal, siehe announce_planned_charges_periodically) sowie sofort beim Wechsel des optionalen
+#     Sensors "Auto - Zuhause?" auf "Zuhause" (siehe _on_car_home_live_update) eine Nachricht, wenn in den naechsten
+#     CHARGE_ANNOUNCEMENT_HORIZON_HOURS Stunden eine "Auto laden"-Aktion geplant ist, das Auto NICHT eingesteckt ist und
+#     (falls der Sensor zugeordnet ist) nicht abwesend ist. Jede Ladung wird nur EINMAL angekuendigt, keine Erinnerung.
+#   - Aendert sich eine angekuendigte, noch nicht gestartete Ladung (verschoben/abgesagt), geht nach dem naechsten
+#     Optimierungslauf eine Update-Nachricht raus (siehe update_charge_announcements).
+# ============================================================================
+
+CHARGE_ANNOUNCEMENT_PATH = "/data/charge_announcements.json"
+CHARGE_ANNOUNCEMENT_HORIZON_HOURS = 12
+CHARGE_ANNOUNCEMENT_HOURS_LOCAL = (6, 18)
+# Verschiebung erst ab dieser Abweichung des Startzeitpunkts melden (Rundungs-/Lauf-Rauschen ignorieren).
+CHARGE_ANNOUNCEMENT_MOVE_TOLERANCE_MS = 30 * 60 * 1000
+# Nach einer Ankunft zu Hause wird die Neu-Optimierung abgewartet: neue Ladungen, die erst dann im Plan stehen, werden noch angekuendigt.
+CHARGE_ANNOUNCEMENT_ARRIVAL_WINDOW_SECONDS = 2 * 3600
+_charge_announcement_lock = threading.RLock()
+_charge_announcement_arrival = {"until": 0.0}
+
+
+def _read_announced_charges():
+    "Bereits angekuendigte Ladevorgaenge: [{startMs, endMs, kwh}]"
+    try:
+        with open(CHARGE_ANNOUNCEMENT_PATH, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_announced_charges(blocks):
+    try:
+        with open(CHARGE_ANNOUNCEMENT_PATH, "w") as f:
+            json.dump(blocks, f)
+    except Exception as e:
+        print("[Shyft] Ladevorgang-Ankuendigungen konnten nicht gespeichert werden:", repr(e))
+
+
+def _charge_blocks(statuses):
+    """Zusammenhaengende 'Auto laden'-Aktionen (Stunde fuer Stunde geplant bzw. verlaengert) als Bloecke
+    [{startMs, endMs, kwh, savings}], nach Start sortiert. Nur Aktionen mit einem der Status in statuses, die nicht per Steuerungs-Schalter
+    deaktiviert sind ("no, deactivated"). savings ist None, wenn keine der Aktionen eine Ersparnis hat."""
+    actions = [
+        a for a in _read_computed_actions()
+        if a.get("Action Name") == EV_CHARGE_ACTION_NAME
+        and (a.get("Status") or "").lower() in statuses
+        and a.get("Date Start") is not None and a.get("Date End") is not None
+        and a.get("Execution Status") != "no, deactivated"
+    ]
+    actions.sort(key=lambda a: a["Date Start"])
+    blocks = []
+    for a in actions:
+        savings = a.get("Savings")
+        if blocks and a["Date Start"] <= blocks[-1]["endMs"]:
+            block = blocks[-1]
+            block["endMs"] = max(block["endMs"], a["Date End"])
+            block["kwh"] += _safe_float(a.get("Energy (electr)"))
+            if savings is not None:
+                block["savings"] = (block["savings"] or 0.0) + _safe_float(savings)
+        else:
+            blocks.append({"startMs": a["Date Start"], "endMs": a["Date End"], "kwh": _safe_float(a.get("Energy (electr)")),
+                           "savings": None if savings is None else _safe_float(savings)})
+    return blocks
+
+
+def _blocks_overlap(a, b):
+    return a["startMs"] <= b["endMs"] and a["endMs"] >= b["startMs"]
+
+
+def _send_phone_notification(config, message):
+    "True, wenn die Nachricht verschickt wurde; False ohne Zielgeraet oder bei Fehler (der Aufrufer wiederholt es dann beim naechsten Anlass)."
+    target = (config.get("notificationTargets") or {}).get("phone", "")
+    if not target:
+        return False
+    try:
+        homeassistant_adapter.send_notification(target, message)
+        return True
+    except Exception as e:
+        print("[Shyft] Benachrichtigung fehlgeschlagen:", repr(e))
+        return False
+
+
+def _format_local_time(ms):
+    return datetime.fromtimestamp(ms / 1000, get_ha_timezone()).strftime("%H:%M")
+
+
+def _format_decimal(value, digits):
+    return f"{value:.{digits}f}".replace(".", ",")
+
+
+def _charge_announcement_enabled(config):
+    return bool((config.get("notificationsEnabled") or {}).get("charge_announcement", False))
+
+
+def announce_planned_charges(config=None, reason="geplant"):
+    """Schickt die Ankuendigung 'Verbinde dein Fahrzeug, geplante Ladung: ...' fuer alle in den naechsten
+    CHARGE_ANNOUNCEMENT_HORIZON_HOURS geplanten, noch nicht angekuendigten Ladevorgaenge - aber nur, wenn das Auto sicher NICHT eingesteckt ist
+    und nicht abwesend ist (Sensor 'Auto - Zuhause?'; ohne Sensor/bei unbekanntem Zustand wird nicht gebremst). True, wenn eine Nachricht rausging."""
+    with _charge_announcement_lock:
+        config = config or _read_current_config()
+        if not _charge_announcement_enabled(config) or is_demo_mode():
+            return False
+        # Nur ein sicher als "nicht eingesteckt" erkannter Wallbox-Zustand zaehlt (unbekannt/nicht zugeordnet: nichts senden).
+        wallbox_entity = (config.get("sensorMappings") or {}).get("wallbox_plugged", "")
+        if not wallbox_entity:
+            return False
+        try:
+            plugged = classify_wallbox_connection_state(homeassistant_adapter.load_entity_state(wallbox_entity).state, config)
+        except Exception:
+            return False
+        if plugged is not False:
+            return False
+        if read_car_home_state(config) is False:
+            return False  # Auto ist unterwegs - die Nachricht kommt, sobald es nach Hause kommt (siehe _on_car_home_live_update)
+
+        now_ms = time.time() * 1000
+        horizon_ms = now_ms + CHARGE_ANNOUNCEMENT_HORIZON_HOURS * 3600 * 1000
+        announced = [a for a in _read_announced_charges() if a.get("endMs", 0) > now_ms]
+        new_blocks = [
+            b for b in _charge_blocks(("geplant",))
+            if now_ms < b["startMs"] <= horizon_ms and not any(_blocks_overlap(b, a) for a in announced)
+        ]
+        if not new_blocks:
+            return False
+
+        kwh = sum(b["kwh"] for b in new_blocks)
+        savings_values = [b["savings"] for b in new_blocks if b["savings"] is not None]
+        savings = sum(savings_values) if savings_values else None
+        message = f"Verbinde dein Fahrzeug, geplante Ladung: {_format_decimal(kwh, 1)} kWh um {_format_local_time(new_blocks[0]['startMs'])} Uhr."
+        if savings is not None and savings > 0:
+            message += f" Ersparnis: {_format_decimal(savings, 2)} €"
+        if not _send_phone_notification(config, message):
+            return False
+        _write_announced_charges(announced + [{"startMs": b["startMs"], "endMs": b["endMs"], "kwh": b["kwh"]} for b in new_blocks])
+        print(f"[Shyft] Ladevorgang angekuendigt ({reason}): {message}")
+        return True
+
+
+def update_charge_announcements(config=None):
+    """Gleicht die angekuendigten, noch nicht gestarteten Ladevorgaenge mit dem aktuellen Plan ab (nach jedem Optimierungslauf) und schickt
+    'Ladevorgang auf HH:MM Uhr verschoben' bzw. 'Ladevorgang abgesagt'. Verschwindet eine Ladung, gilt sie als verschoben, wenn eine noch nicht
+    angekuendigte Ladung vergleichbarer Menge (mind. die halbe kWh) im Abstand von hoechstens CHARGE_ANNOUNCEMENT_HORIZON_HOURS dazu geplant ist,
+    sonst als abgesagt. Gestartete Ladungen bleiben unveraendert bis zu ihrem Ende. Danach, falls das Auto gerade zu Hause angekommen ist,
+    noch einmal die Ankuendigung neu geplanter Ladungen."""
+    with _charge_announcement_lock:
+        config = config or _read_current_config()
+        if is_demo_mode():
+            return
+        if not _charge_announcement_enabled(config):
+            if _read_announced_charges():
+                _write_announced_charges([])
+            return
+        now_ms = time.time() * 1000
+        announced = [a for a in _read_announced_charges() if a.get("endMs", 0) > now_ms]
+        current = _charge_blocks(("geplant", "aktiv"))
+        claimed = set()
+        result = []
+        pending = []
+
+        for a in announced:
+            if a["startMs"] <= now_ms:
+                result.append(a)  # laeuft bereits - keine Updates mehr
+                continue
+            match_index = next((i for i, b in enumerate(current) if i not in claimed and _blocks_overlap(a, b)), None)
+            if match_index is None:
+                pending.append(a)
+                continue
+            claimed.add(match_index)
+            match = current[match_index]
+            if abs(match["startMs"] - a["startMs"]) >= CHARGE_ANNOUNCEMENT_MOVE_TOLERANCE_MS:
+                message = f"Ladevorgang auf {_format_local_time(match['startMs'])} Uhr verschoben"
+                if not _send_phone_notification(config, message):
+                    result.append(a)  # beim naechsten Lauf erneut versuchen
+                    continue
+                print("[Shyft] Ladevorgang-Update:", message)
+            result.append({"startMs": match["startMs"], "endMs": match["endMs"], "kwh": match["kwh"]})
+
+        for a in pending:
+            candidates = [
+                (abs(b["startMs"] - a["startMs"]), i) for i, b in enumerate(current)
+                if i not in claimed and b["startMs"] > now_ms
+                and abs(b["startMs"] - a["startMs"]) <= CHARGE_ANNOUNCEMENT_HORIZON_HOURS * 3600 * 1000
+                and b["kwh"] >= 0.5 * a.get("kwh", 0)
+                and not any(_blocks_overlap(b, other) for other in announced if other is not a)
+            ]
+            if candidates:
+                _, i = min(candidates)
+                claimed.add(i)
+                b = current[i]
+                message = f"Ladevorgang auf {_format_local_time(b['startMs'])} Uhr verschoben"
+                replacement = {"startMs": b["startMs"], "endMs": b["endMs"], "kwh": b["kwh"]}
+            else:
+                message = "Ladevorgang abgesagt"
+                replacement = None
+            if not _send_phone_notification(config, message):
+                result.append(a)  # beim naechsten Lauf erneut versuchen
+                continue
+            print("[Shyft] Ladevorgang-Update:", message)
+            if replacement:
+                result.append(replacement)
+
+        _write_announced_charges(result)
+
+        if time.time() < _charge_announcement_arrival["until"]:
+            announce_planned_charges(config, reason="Ankunft")
+
+
+def announce_planned_charges_periodically():
+    "Stuendlicher Job (Minute 0): schickt die Ankuendigung nur zu den Uhrzeiten CHARGE_ANNOUNCEMENT_HOURS_LOCAL der (von Home Assistant konfigurierten) lokalen Zeit."
+    if _local_now().hour not in CHARGE_ANNOUNCEMENT_HOURS_LOCAL:
+        return
+    try:
+        announce_planned_charges(reason="Uhrzeit")
+    except Exception as e:
+        print("[Shyft] Ladevorgang-Ankuendigung fehlgeschlagen:", repr(e))
+
+
+# ============================================================================
 # Geraeteverhalten abweichend von Shyft-Steuerung: vergleicht bei jedem 15-Minuten-Poll (siehe
 # process_shyft_actions) die tatsaechlichen Home-Assistant-Werte gegen das, was Shyft gerade
 # befiehlt (eine aktive Aktion) bzw. befehlen wuerde, wenn KEINE Aktion des jeweiligen Typs laeuft
@@ -8681,7 +9450,7 @@ def notify_action_event(config, action, verb, is_error=False):
 DEVICE_DEVIATION_GRACE_MINUTES = 20
 BATTERY_DEVIATION_TOLERANCE_KW = 0.15
 HEATING_TARGET_TEMP_DEVIATION_TOLERANCE_C = 1.0
-DHW_TARGET_TEMP_DEVIATION_TOLERANCE_C = 1.5
+DHW_TARGET_TEMP_DEVIATION_TOLERANCE_C = 4.0
 
 
 def _device_deviation_problem_id(key):
@@ -8931,10 +9700,14 @@ def check_device_status_deviation(config):
         dhw_action = _active_computed_action(computed_actions, DHW_ACTION_NAME)
         expected_dhw_temp = dhw_action.get("Target Value") if dhw_action is not None and past_grace(dhw_action) else None
         live_dhw_temp = _read_mapped_numeric(config, DHW_TARGET_TEMP_SENSOR_FIELD)
+        # Push/Problemtext in ganzen Grad (statt 3+ Nachkommastellen); gemeldet wird erst ab > 4 °C Abweichung.
+        dhw_message = ""
+        if expected_dhw_temp is not None and live_dhw_temp is not None:
+            dhw_message = f"Warmwasser-Solltemperatur weicht ab: Shyft erwartet {round(expected_dhw_temp)} °C, gemessen werden {round(live_dhw_temp)} °C."
         _check_numeric_deviation(
             "warmwasser_soll_temp", expected_dhw_temp, live_dhw_temp,
             DHW_TARGET_TEMP_DEVIATION_TOLERANCE_C,
-            f"Warmwasser-Solltemperatur weicht ab: Shyft erwartet {expected_dhw_temp} °C, gemessen werden {live_dhw_temp} °C.",
+            dhw_message,
             config,
         )
     else:
@@ -8997,6 +9770,13 @@ def handle_shyft_action_start(action, actions_enabled, config):
         _append_action_log(action, "Steuerung deaktiviert - nur simuliert, kein Befehl ans Gerät gesendet.")
         _update_computed_action(action)
         notify_action_event(config, action, "gestartet (nur simuliert)")
+        return
+    # Auto beim Startzeitpunkt nicht eingesteckt: die Ladeaktion ist sinnlos und wird kommentarlos geloescht
+    # (kein Fehler, keine Benachrichtigung). "_discard" sorgt dafuer, dass der Stundenwechsel sie nicht zurueckschreibt.
+    if label == "Auto laden" and is_car_unplugged(config):
+        print(f"[Shyft] '{label}' beim Start verworfen: Auto ist nicht eingesteckt.")
+        action["_discard"] = True
+        _write_computed_actions([a for a in _read_computed_actions() if a.get("_id") != action.get("_id")])
         return
     _begin_attempt(action, "Starten")
 
@@ -9413,7 +10193,7 @@ def compute_ev_charge_actions(config, output_rows, input_rows, start, optimizer_
         soc_now = _safe_float(output_row.get("SOC_EV")) * 100
 
         if is_current_hour and pv_surplus:
-            max_soc_pct = config.get("evSocMaxPvSurplus")
+            max_soc_pct = ev_pv_surplus_soc_cap(config)
             if max_soc_pct is not None and soc_now >= float(max_soc_pct):
                 continue  # Ausnahme: Ziel-Ladestand (PV-Ueberschuss) fuer die laufende Stunde schon erreicht
             # soc_now oben ist der (evtl. veraltete) SOC_EV aus der letzten output.csv - zusaetzlich
@@ -11036,6 +11816,10 @@ def recompute_actions_from_optimizer_run(input_csv, output_csv, creation_date_ms
         process_shyft_actions(blocking=False)
     except Exception as e:
         print("[Shyft] Sofortstart nach Optimierungslauf fehlgeschlagen:", repr(e))
+    try:
+        update_charge_announcements()
+    except Exception as e:
+        print("[Shyft] Ladevorgang-Ankuendigung: Aktualisierung nach Optimierungslauf fehlgeschlagen:", repr(e))
 
 
 def _find_next_hour_action(group, current):
@@ -11234,7 +12018,7 @@ def _run_hourly_action_transition_unlocked():
                 started_ids.add(action_id)
 
     if changed:
-        result_actions = [a for a in actions if a.get("_id") not in to_remove_ids]
+        result_actions = [a for a in actions if a.get("_id") not in to_remove_ids and not a.get("_discard")]
         _write_computed_actions(result_actions)
         config["startedShyftActionIds"] = sorted(started_ids)
         config["endedShyftActionIds"] = sorted(ended_ids)
@@ -12112,10 +12896,97 @@ def finalize_completed_hour_periodically():
         energy_archive.finalize_hour(energy_archive.hour_key(hour_start), hour_end, import_kwh, export_kwh, usage_kwh)
     except Exception as e:
         print("[Shyft] Energie-Archiv: Stundenabschluss fehlgeschlagen:", repr(e))
+    backfill_missing_actual_hours(force=True)
     try:
         record_pv_forecast_accuracy()
     except Exception as e:
         print("[Shyft] PV-Prognose-Aufzeichnung fehlgeschlagen:", repr(e))
+
+
+# Ist-Kosten nachholen: der Stundenabschluss (finalize_completed_hour_periodically) laeuft nur um :03 fuer die GERADE abgelaufene Stunde und
+# braucht einen aufgezeichneten Optimierungslauf dieser Stunde - nach einem Neustart/Ausfall blieb die Stunde sonst fuer immer leer und die
+# Ist-Linie im Kosten-Chart hatte Luecken. Ist-Kosten sind aber nur historischer Preis x historischer Verbrauch (Netz-Sensor) und lassen sich
+# jederzeit nachrechnen: fehlende Stunden der letzten ACTUAL_COST_BACKFILL_HOURS werden hier nachgetragen (siehe backfill_missing_actual_hours).
+ACTUAL_COST_BACKFILL_HOURS = 72
+ACTUAL_COST_BACKFILL_MIN_INTERVAL_SECONDS = 600
+_actual_cost_backfill_lock = threading.Lock()
+_actual_cost_backfill_last_run = 0.0
+
+
+def _historic_prices_for_hour(config, hour_start):
+    """(Einkaufspreis, Einspeisepreis) in EUR/kWh fuer eine bereits vergangene Stunde, ohne den damaligen Optimierungslauf: dynamische Tarife
+    aus der Boersenpreis-Historie (plus heutigem Tarif-Aufschlag, siehe spot_history_buy_prices), sonst aus der Tarif-Konfiguration. (None, None),
+    wenn der Einkaufspreis nicht ermittelbar ist."""
+    buy = None
+    adder = _dynamic_tariff_adder(config)
+    if adder is not None:
+        spot, _ = _load_spot_history()
+        raw = spot.get(int(hour_start.timestamp() * 1000))
+        if raw is not None:
+            buy = raw + adder(hour_start)
+    if buy is None:
+        try:
+            arr = compute_price_buy_array(config, hour_start, 1)
+            buy = arr[0] if arr else None
+        except Exception as e:
+            print("[Shyft] Ist-Kosten: Einkaufspreis nicht ermittelbar:", repr(e))
+    if buy is None:
+        return None, None
+    try:
+        sell_arr = _price_sell_hourly(config, hour_start, 1)
+        sell = sell_arr[0] if sell_arr else 0.0
+    except Exception:
+        sell = 0.0
+    return buy, sell
+
+
+def backfill_missing_actual_hours(force=False):
+    """Trägt fuer alle abgelaufenen Stunden der letzten ACTUAL_COST_BACKFILL_HOURS, die im Energie-Archiv fehlen, Ist-Verbrauch und Ist-Kosten nach
+    (Netz-/Haushalts-Sensor-Historie x Preis der Stunde). Gibt es zur Stunde noch einen offenen Plan-Eintrag, wird er regulaer abgeschlossen
+    (mit geplant/Basisfall), sonst nur die Ist-Werte archiviert. Stunden ohne Netz-Sensor/-Historie oder ohne ermittelbaren Preis bleiben leer.
+    Hoechstens alle ACTUAL_COST_BACKFILL_MIN_INTERVAL_SECONDS (die HA-Historie-Abfragen sind nicht billig) - force=True ueberspringt das.
+    Gibt die Zahl nachgetragener Stunden zurueck."""
+    global _actual_cost_backfill_last_run
+    if is_demo_mode():
+        return 0
+    if not _actual_cost_backfill_lock.acquire(blocking=False):
+        return 0
+    try:
+        if not force and time.time() - _actual_cost_backfill_last_run < ACTUAL_COST_BACKFILL_MIN_INTERVAL_SECONDS:
+            return 0
+        _actual_cost_backfill_last_run = time.time()
+        now_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        first_hour = now_hour - timedelta(hours=ACTUAL_COST_BACKFILL_HOURS)
+        existing = energy_archive.existing_hour_keys(energy_archive.hour_key(first_hour), energy_archive.hour_key(now_hour))
+        config = _read_current_config()
+        written = 0
+        # neueste zuerst: die sichtbare heutige Linie wird zuerst gefuellt
+        for i in range(1, ACTUAL_COST_BACKFILL_HOURS + 1):
+            hour_start = now_hour - timedelta(hours=i)
+            key = energy_archive.hour_key(hour_start)
+            if key in existing:
+                continue
+            hour_end = hour_start + timedelta(hours=1)
+            import_kwh, export_kwh = _grid_import_export_kwh(hour_start, hour_end, config)
+            if import_kwh is None and export_kwh is None:
+                continue  # keine Netz-Sensor-Historie - nichts zu berechnen
+            usage_kwh = _household_usage_kwh(hour_start, hour_end, config)
+            if energy_archive.finalize_hour(key, hour_end, import_kwh, export_kwh, usage_kwh):
+                written += 1
+                continue
+            price_buy, price_sell = _historic_prices_for_hour(config, hour_start)
+            if price_buy is None:
+                continue
+            if energy_archive.record_actual_only_hour(key, import_kwh, export_kwh, usage_kwh, price_buy, price_sell):
+                written += 1
+        if written:
+            print(f"[Shyft] Energie-Archiv: {written} fehlende Stunde(n) mit Ist-Verbrauch/-Kosten nachgetragen.")
+        return written
+    except Exception as e:
+        print("[Shyft] Energie-Archiv: Nachtragen fehlender Ist-Stunden fehlgeschlagen:", repr(e))
+        return 0
+    finally:
+        _actual_cost_backfill_lock.release()
 
 
 # PV-Prognose vs. Ist (Analyse-Tab): der stuendliche Job holt die letzten PV_ACCURACY_LOOKBACK_HOURS nach (deckt Neustarts
@@ -12250,7 +13121,8 @@ def _write_dashboard_cache(input_csv, output_csv, creation_date_ms, optimizer_ru
     # Warmwasser-Tank, Batterie) statt jede Stunde vom echten/optimierten Zustand zu "erben" -
     # siehe base_case.compute_base_case-Docstring fuer die Begruendung (Nutzer-Beobachtung).
     state_overrides = _read_base_case_state_overrides(creation_date_ms) if input_csv else None
-    base = base_case.compute_base_case(input_csv, state_overrides, _opt_ev_end_kwh(input_csv, output_csv)) if input_csv else None
+    ev_comfort_soc = ev_tiers.EV_CHARGE_RULES[ev_tiers.charge_rule(_read_current_config())][1]
+    base = base_case.compute_base_case(input_csv, state_overrides, _opt_ev_end_kwh(input_csv, output_csv), ev_comfort_soc) if input_csv else None
     if base:
         payload.update(base)
         _write_base_case_state(creation_date_ms, base.get("nextState"))
@@ -13013,6 +13885,116 @@ def retry_failed_battery_actions_periodically():
     with app.app_context():
         retry_failed_battery_actions()
 
+
+# ============================================================================
+# Watchdog fuer "Batterie-Entladen verschieben" (Nutzer-Vorgabe, nach 01.11.2026 05:16: der Wechselrichter setzte
+# Entladeleistung und Command-Timeout von sich aus zurueck, die Batterie entlud sich trotz laufender Aktion, ohne
+# Eintrag im Log). Waehrend die Aktion am Geraet laeuft, wird die Entladeleistung ueberwacht - sofort per Live-
+# Watcher (Zustandsaenderung der Entitaet, mit kurzer Bestaetigungs-Wartezeit) und zusaetzlich alle
+# BATTERY_WATCHDOG_INTERVAL_SECONDS. Weicht sie von 0 W ab, werden die Startbefehle der Aktion erneut gesendet
+# (inkl. Command-Timeout) und ein Eintrag im Log der Aktion gesetzt. Gelingt das, gilt die Aktion weiterhin als
+# erfolgreich; misslingt es, wird sie als fehlerhaft markiert. Push-Benachrichtigung ueber notify_action_event
+# (is_error=True, also wenn "Aktionen starten / beenden" - alle oder nur bei Fehlern - eingeschaltet ist).
+# ============================================================================
+BATTERY_WATCHDOG_INTERVAL_SECONDS = 60
+BATTERY_WATCHDOG_CONFIRM_SECONDS = 20       # Live-Watcher: so lange warten, ob die Abweichung bestehen bleibt
+BATTERY_WATCHDOG_START_GRACE_SECONDS = 60   # nach dem Start der Aktion
+BATTERY_WATCHDOG_END_MARGIN_SECONDS = 90    # vor dem geplanten Ende (Stundenwechsel setzt den Ruhewert)
+BATTERY_WATCHDOG_QUIET_SECONDS = 90         # nach einem eigenen Schreibvorgang (Beenden/Abloesen/Start)
+BATTERY_WATCHDOG_MIN_REPEAT_SECONDS = 300   # hoechstens so oft je Aktion erneut senden
+_battery_watchdog_lock = threading.Lock()
+
+
+def _battery_watchdog_target_action(config, now_ms):
+    "Die laufende 'Batterie-Entladen verschieben'-Aktion, die der Watchdog gerade ueberwachen darf - sonst None."
+    if _battery_control_variant(config, "battery_discharge_shift") != "direct":
+        return None
+    if not is_action_type_enabled(config, BATTERY_DISCHARGE_SHIFT_ACTION_NAME):
+        return None
+    action = _active_computed_action(_read_computed_actions(), BATTERY_DISCHARGE_SHIFT_ACTION_NAME)
+    if action is None or action.get("Execution Status") != "yes, started" or action.get("_dischargeShiftHeld"):
+        return None
+    start, end = action.get("Date Start"), action.get("Date End")
+    if start is not None and now_ms - start < BATTERY_WATCHDOG_START_GRACE_SECONDS * 1000:
+        return None
+    if end is not None and end - now_ms < BATTERY_WATCHDOG_END_MARGIN_SECONDS * 1000:
+        return None
+    last = action.get("_watchdogLastAt")
+    if last is not None and now_ms - last < BATTERY_WATCHDOG_MIN_REPEAT_SECONDS * 1000:
+        return None
+    return action
+
+
+def check_battery_discharge_shift_watchdog():
+    """Prueft einmal, ob die laufende 'Batterie-Entladen verschieben'-Aktion am Geraet noch wirkt (Entladeleistung
+    0 W), und sendet die Startbefehle sonst erneut (siehe Modulkommentar oben). Gibt True zurueck, wenn eine
+    Abweichung erkannt und behandelt wurde."""
+    if is_demo_mode():
+        return False
+    if not _battery_watchdog_lock.acquire(blocking=False):
+        return False  # laeuft schon (Live-Watcher und Intervall gleichzeitig)
+    try:
+        with _battery_write_activity_lock:
+            busy = _battery_write_activity["busy"]
+            last_write = _battery_write_activity["last_end"]
+        if busy or time.time() - last_write < BATTERY_WATCHDOG_QUIET_SECONDS:
+            return False
+        config = _read_current_config()
+        now_ms = int(time.time() * 1000)
+        action = _battery_watchdog_target_action(config, now_ms)
+        if action is None:
+            return False
+        live_kw = _read_mapped_numeric(config, "battery_discharge_limit_current")
+        if live_kw is None or abs(live_kw) <= BATTERY_DEVIATION_TOLERANCE_KW:
+            return False
+
+        live_w = round(live_kw * 1000)
+        print(f"[Shyft] Watchdog 'Batterie-Entladen verschieben': Entladeleistung steht auf {live_w} W statt 0 W - "
+              f"Befehle werden erneut gesendet (Aktion {action.get('_id')}).")
+        action["_watchdogLastAt"] = now_ms
+        _update_computed_action(action)
+
+        error = None
+        try:
+            execute_battery_direct("battery_discharge_shift", "Watchdog", 0, config, notify_on_failure=False)
+        except Exception as e:
+            error = str(e) or repr(e)
+
+        # Frisch lesen: waehrend der (bis zu 2 Minuten langen) Wiederholversuche kann ein Poll die Aktion geaendert haben.
+        fresh = next((a for a in _read_computed_actions() if a.get("_id") == action.get("_id")), None) or action
+        fresh["_watchdogLastAt"] = now_ms
+        if error is None:
+            _append_action_log(fresh, f"Watchdog: Entladeleistung stand auf {live_w} W statt 0 W – Befehle erneut gesendet, "
+                                      f"Wert wieder übernommen.")
+            verb = "Abweichung erkannt, Befehle erneut gesendet"
+        else:
+            reason = error.strip().rstrip(".") + "."
+            _append_action_log(fresh, f"Watchdog: Entladeleistung stand auf {live_w} W statt 0 W – erneutes Senden "
+                                      f"fehlgeschlagen. Grund: {reason}")
+            fresh["Had Error"] = True
+            verb = "Abweichung erkannt, erneutes Senden fehlgeschlagen"
+        _update_computed_action(fresh)
+        notify_action_event(config, fresh, verb, is_error=True)
+        return True
+    finally:
+        _battery_watchdog_lock.release()
+
+
+def check_battery_discharge_shift_watchdog_periodically():
+    with app.app_context():
+        try:
+            check_battery_discharge_shift_watchdog()
+        except Exception as e:
+            print("[Shyft] Watchdog 'Batterie-Entladen verschieben' fehlgeschlagen:", repr(e))
+
+
+def _on_battery_discharge_limit_live_update(entity_id, old_state, new_state):
+    "Reagiert auf eine Aenderung der Entladeleistungs-Entitaet: nach BATTERY_WATCHDOG_CONFIRM_SECONDS pruefen (eigener Thread, der Live-Watcher wird nicht blockiert)."
+    def delayed():
+        time.sleep(BATTERY_WATCHDOG_CONFIRM_SECONDS)
+        check_battery_discharge_shift_watchdog_periodically()
+    threading.Thread(target=delayed, daemon=True, name="battery-discharge-watchdog").start()
+
 def run_hourly_action_transition_periodically():
     with app.app_context():
         run_hourly_action_transition()
@@ -13117,8 +14099,36 @@ def _on_battery_soc_live_update(entity_id, old_state, new_state):
 
 live_entity_watcher.register("photovoltaic_powerflow_grid", _on_grid_power_live_update)
 live_entity_watcher.register("electricity_grid_power_sensors", _on_grid_power_live_update)
+def _on_car_home_live_update(entity_id, old_state, new_state):
+    """Reagiert sofort auf einen Wechsel des optionalen Sensors "Auto - Zuhause?": kommt das Auto nach Hause (-> "Zuhause") und ist nicht
+    eingesteckt, geht SOFORT (ohne Wartezeit - lieber zu frueh als zu spaet) die Ankuendigung geplanter Ladevorgaenge raus, die bisher wegen
+    "Auto abwesend" unterdrueckt wurde. Da sich die Prognose mit dem Zustand "zu Hause" aendert (siehe compute_car_presence_forecast), folgt bei
+    nicht eingestecktem Auto eine Neu-Optimierung; neu dadurch geplante Ladungen werden danach noch angekuendigt (siehe update_charge_announcements)."""
+    with app.app_context():
+        was_home = classify_car_home_state((old_state or {}).get("state"))
+        is_home = classify_car_home_state((new_state or {}).get("state"))
+        if is_home is None or is_home == was_home:
+            return
+        try:
+            config = _read_current_config()
+            if is_home:
+                _charge_announcement_arrival["until"] = time.time() + CHARGE_ANNOUNCEMENT_ARRIVAL_WINDOW_SECONDS
+                announce_planned_charges(config, reason="Ankunft")
+            wallbox_entity = (config.get("sensorMappings") or {}).get("wallbox_plugged", "")
+            plugged = None
+            if wallbox_entity:
+                plugged = classify_wallbox_connection_state(homeassistant_adapter.load_entity_state(wallbox_entity).state, config)
+            if plugged is not True:
+                print(f"[Shyft] Auto: '{'Zuhause' if is_home else 'Abwesend'}' - stosse Neu-Optimierung an.")
+                sync_site_data()
+        except Exception as e:
+            print("[Shyft] Live-getriggerte Behandlung des Sensors 'Auto - Zuhause?' fehlgeschlagen:", repr(e))
+
+
 live_entity_watcher.register("wallbox_plugged", _on_wallbox_state_live_update)
+live_entity_watcher.register("electronicvehicle_home", _on_car_home_live_update)
 live_entity_watcher.register("battery_state_of_charge", _on_battery_soc_live_update)
+live_entity_watcher.register("battery_discharge_limit_current", _on_battery_discharge_limit_live_update)
 
 
 scheduler = BackgroundScheduler()
@@ -13136,10 +14146,14 @@ scheduler.add_job(sync_dashboard_chart_data_periodically, 'date', run_date=datet
 # on the hour and every 15 min after - actions can be created mid-hour for the current hour
 # and start immediately, so a coarser schedule would miss those until the next hour
 scheduler.add_job(process_shyft_actions_periodically, 'cron', minute="0,15,30,45")
+# Ankuendigung geplanter Ladevorgaenge: stuendlich pruefen, gesendet wird nur um 6 und 18 Uhr lokaler Zeit (siehe announce_planned_charges_periodically)
+scheduler.add_job(announce_planned_charges_periodically, 'cron', minute="0")
 # Allgemeiner Beenden/Starten/Verlaengern-Mechanismus zur vollen Stunde, siehe run_hourly_action_transition
 scheduler.add_job(run_hourly_action_transition_periodically, 'cron', minute="0")
 scheduler.add_job(retry_failed_battery_actions_periodically, 'interval', seconds=BATTERY_ACTION_RETRY_INTERVAL_SECONDS, max_instances=1, coalesce=True)
+scheduler.add_job(check_battery_discharge_shift_watchdog_periodically, 'interval', seconds=BATTERY_WATCHDOG_INTERVAL_SECONDS, max_instances=1, coalesce=True)
 scheduler.add_job(monitor_ev_charging_periodically, 'interval', seconds=EV_CHARGE_CHECK_INTERVAL_SECONDS, max_instances=1, coalesce=True)
+scheduler.add_job(run_ev_reserve_charging_periodically, 'interval', seconds=EV_CHARGE_CHECK_INTERVAL_SECONDS, max_instances=1, coalesce=True)
 # Energie-Archiv (Analyse-Tab): 3 Minuten nach der Stunde, damit der frische Optimierungslauf von
 # sync_dashboard_chart_data_periodically (Minute 0) den letzten Plan-Beitrag der GERADE
 # abgelaufenen Stunde schon abgegeben hat, bevor sie hier abgeschlossen wird (siehe
@@ -13289,6 +14303,11 @@ if __name__ == "__main__":
         _migrate_battery_pv_surplus_charge_limit()
     except Exception as e:
         print("Failed to migrate battery pv-surplus charge limit at startup:", repr(e))
+
+    try:
+        _migrate_ev_charge_rule()
+    except Exception as e:
+        print("Failed to migrate ev charge rule at startup:", repr(e))
 
     live_entity_watcher.start()
 

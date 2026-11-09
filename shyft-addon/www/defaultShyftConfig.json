@@ -16,7 +16,8 @@
   },
   "notificationsEnabled": {
     "action_start_end": true,
-    "device_status_deviation": true
+    "device_status_deviation": true,
+    "charge_announcement": false
   },
   "integrationMappings": {
     "wechselrichter": ["demo"],
@@ -48,6 +49,7 @@
     "heatpump_supply_temp_hp" : "",
     "heatpump_temp_indoor_measured": "",
     "electronicvehicle_state_of_charge": "",
+    "electronicvehicle_home": "",
     "wallbox_current_charging_power": "",
     "wallbox_plugged": ""
   },
