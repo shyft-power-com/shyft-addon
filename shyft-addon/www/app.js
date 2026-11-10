@@ -7358,6 +7358,9 @@ async function applyCommunitySuggestions(section, entryIds) {
         communitySuggestionMarks.push(mark);
         input.addEventListener('input', () => clearSuggestionMark(mark), {once: true});
     }
+    // Die roten "Pflichtfeld fehlt"-Rahmen stammen vom Aufbau der Kachel, als die Felder noch leer waren (der Abruf bei shyft-power
+    // dauert mehrere Sekunden): nach dem Vorbelegen neu bewerten, sonst bleibt ein rot umrandeter Vorschlag stehen.
+    renderSystemHealth();
 }
 
 function formatEntityDisplay(entityId) {
