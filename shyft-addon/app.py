@@ -4558,11 +4558,51 @@ def _not_writable_entity_message(entity_id):
             f"oder die Steuerung über eine eigene Home-Assistant-Automation wählen.")
 
 
-def sync_number_script(control_key, entity_id):
-    "Creates/updates or removes an auto-managed control's script so it always targets the currently mapped entity. Returns the resulting actorMappings value."
+SCRIPT_OWNER_PREFIX = "shyft-addon-owner="
+_own_script_slug_cache = None
+
+
+def _own_script_slug():
+    "Slug dieses Add-ons (Supervisor /addons/self/info), 1x gecacht; None, wenn nicht lesbar."
+    global _own_script_slug_cache
+    if _own_script_slug_cache is None:
+        try:
+            _own_script_slug_cache = _own_panel_path() or None
+        except Exception as e:
+            print("[Shyft] Eigener Add-on-Slug nicht lesbar:", repr(e))
+    return _own_script_slug_cache
+
+
+def _script_owner(script_config):
+    "Slug des Add-ons, das dieses Hilfsskript angelegt hat (steht in der description), sonst None (Skript ohne Markierung, z.B. aelteres Add-on)."
+    description = (script_config or {}).get("description") or ""
+    if SCRIPT_OWNER_PREFIX not in description:
+        return None
+    return description.split(SCRIPT_OWNER_PREFIX, 1)[1].split()[0].strip(".,;)") or None
+
+
+def sync_number_script(control_key, entity_id, startup=False, previous_entity_id=""):
+    """Creates/updates or removes an auto-managed control's script so it always targets the currently mapped entity. Returns the resulting actorMappings value.
+    Loeschen ist bewusst vorsichtig, weil sich mehrere shyft-Add-ons in einer HA-Instanz dieselben Skript-Namen teilen
+    koennen: Beim Start (startup=True) wird nie geloescht, und bei leerer Zuordnung nur ein Skript, das dieses Add-on
+    selbst angelegt hat (Markierung in der description) - bzw. ein unmarkiertes aelteres, wenn hier vorher eine Entitaet
+    zugeordnet war (previous_entity_id). Ein Skript eines anderen Add-ons bleibt unangetastet."""
     control = AUTO_MANAGED_CONTROLS[control_key]
     script_id = control["script_id"]
+    own_slug = _own_script_slug()
     if not entity_id:
+        if startup:
+            return ""
+        existing = homeassistant_adapter.get_script_config(script_id)
+        if existing is None:
+            return ""
+        owner = _script_owner(existing)
+        if owner and owner != own_slug:
+            print(f"[Shyft] script.{script_id} gehoert dem Add-on '{owner}', wird nicht geloescht.")
+            return ""
+        if not owner and not previous_entity_id:
+            print(f"[Shyft] script.{script_id} ohne Markierung und hier nie zugeordnet, wird nicht geloescht.")
+            return ""
         homeassistant_adapter.delete_script_config(script_id)
         homeassistant_adapter.call_service("script", "reload")
         return ""
@@ -4570,6 +4610,8 @@ def sync_number_script(control_key, entity_id):
     config = build_number_script_config(entity_id, control)
     if config is None:
         raise Exception(_not_writable_entity_message(entity_id))
+    if own_slug:
+        config["description"] = f"Von shyft-power automatisch verwaltet, bitte nicht ändern. {SCRIPT_OWNER_PREFIX}{own_slug}"
 
     homeassistant_adapter.put_script_config(script_id, config)
     # writing the config alone doesn't make HA (re-)register the script entity - it needs an explicit reload
@@ -4585,7 +4627,7 @@ def sync_all_auto_managed_scripts():
         if control["type"] != "number" or control_key in AUTOMATION_ONLY_CONTROL_KEYS:
             continue
         try:
-            sync_number_script(control_key, sensor_mappings.get(control["sensor_field"], ""))
+            sync_number_script(control_key, sensor_mappings.get(control["sensor_field"], ""), startup=True)
         except Exception as e:
             print(f"[Shyft] Startup-Sync fuer '{control_key}' fehlgeschlagen:", repr(e))
 
@@ -7923,7 +7965,8 @@ def writeConfig():
             continue
         entity_id = data.get("sensorMappings", {}).get(control["sensor_field"], "")
         try:
-            script_entity_id = sync_number_script(control_key, entity_id)
+            previous_entity_id = config_before_put.get("sensorMappings", {}).get(control["sensor_field"], "")
+            script_entity_id = sync_number_script(control_key, entity_id, previous_entity_id=previous_entity_id)
             if "actorMappings" in data:
                 data["actorMappings"][control["actor_key"]] = script_entity_id
         except Exception as e:
