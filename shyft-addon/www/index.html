@@ -486,6 +486,20 @@
             color: var(--color-text-secondary);
             font-size: 0.9em;
         }
+        /* Gruende, warum "Optimierung anstoßen" gesperrt ist (ungetestete Aktionen) - siehe applyTriggerButtonDemoState */
+        .triggerBlockers {
+            margin: 1em 0 0;
+            color: #c0392b;
+            font-size: 0.9em;
+        }
+        .triggerBlockers ul {
+            margin: 0.3em 0 0;
+            padding-left: 1.4em;
+        }
+        .systemHealthNextStep {
+            margin: 0.5em 0 0.8em;
+            font-weight: 600;
+        }
 
         .autoActionControl {
             margin-top: 1.5em;
@@ -3030,6 +3044,7 @@
     <div id="deviceSections"></div>
     <div id="notificationSection"></div>
     <div id="openOnStartSection"></div>
+    <div id="triggerBlockers" class="triggerBlockers" hidden></div>
     <div class="actionMenu">
         <button id="triggerOptimizationButton" onclick="trigger()">Optimierung anstoßen</button>
         <span id="triggerOptimizationHint" class="triggerOptimizationHint" hidden>Bitte zuerst ein eigenes Gerät hinterlegen.</span>

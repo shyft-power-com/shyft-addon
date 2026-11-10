@@ -696,7 +696,7 @@ const ACTION_TOGGLE_POSTFIX = "_toggle";
 const AUTO_MANAGED_CONTROLS = [
     // onlyIncrement: nur der +1°C-Test wird angeboten (Nutzer-Vorgabe: ein Absenktest bringt keinen
     // zusaetzlichen Erkenntnisgewinn gegenueber dem Erhoehungstest).
-    {key: 'heating_target_temp', type: 'number', sensorField: 'heatpump_heating_target_temp_normal', actionKeys: ['heating_target_temp'], titleLabel: 'Heizung Soll-Temperatur (aktuell)', unit: '°C', step: 1, onlyIncrement: true},
+    {key: 'heating_target_temp', type: 'number', sensorField: 'heatpump_heating_target_temp_normal', actionKeys: ['heating_target_temp'], titleLabel: 'Heizung Soll-Temperatur (aktuell)', unit: '°C', step: 1, onlyIncrement: true, hasAutomationVariant: true},
     // Reine Steuerungen ohne Sensor-Gegenstueck (kein sensorField, keine "Direkt steuern"-Option) -
     // siehe automationOnly in buildAutoManagedNumberControl.
     {key: 'pv_feed_in_limit', type: 'number', actionKeys: ['pv_feed_in_limit'], titleLabel: 'PV: Einspeisung begrenzen', unit: '', step: 1, automationOnly: true,
@@ -1282,17 +1282,68 @@ function applyConfigFieldErrorHighlights(fieldIds, fieldHints = {}) {
 // Account-Status kommt vom Server (/account-status), unabhaengig davon welche Geraete gerade
 // konfiguriert sind (z.B. wenn der Zugangsschluessel aus irgendeinem Grund verloren ging, obwohl
 // laengst echte Geraete hinterlegt sind).
+const NEXT_STEP_FIRST_TEST_TEXT = 'Nächster Schritt: Teste die Steuerung deines Geräts. Danach legt shyft-power automatisch dein Konto an und startet die Optimierung – ein manuelles „Optimierung anstoßen“ ist dafür nicht nötig.';
+
+// true, wenn noch kein echtes Konto existiert (Demomodus laut Server), schon ein echtes Geraet eingerichtet ist und
+// der naechste Schritt damit der erste Steuerungstest ist. warnings: die aktuellen Konfigurationswarnungen.
+async function isAwaitingFirstControlTest(warnings) {
+    if (isFullyDemoMode()) return false;
+    if (!(warnings || []).some(w => String(w.key || '').startsWith('action_test_failed:'))) return false;
+    try {
+        const status = await getJson(insideHomeAssistant + '/account-status');
+        return !!status.isDemo;
+    } catch (err) {
+        console.log(err);
+        return false;
+    }
+}
+
+// Eingerichtete, aber (noch) nicht erfolgreich getestete Aktionstypen - die Warnungen
+// "action_test_failed:<ready_key>" von /config/warnings (siehe _action_not_ready_warnings in app.py).
+// Solange es welche gibt, fuehrt das Addon diese Aktionen nicht aus; "Optimierung anstoßen" bleibt gesperrt.
+async function fetchUntestedActionWarnings() {
+    try {
+        const result = await getJson(insideHomeAssistant + '/config/warnings');
+        return (result.warnings || []).filter(w => String(w.key || '').startsWith('action_test_failed:'));
+    } catch (err) {
+        console.log(err);
+        return [];
+    }
+}
+
+// Sperrt "Optimierung anstoßen" im Demomodus UND solange eine eingerichtete Aktion ungetestet ist; je
+// ungetesteter Aktion steht ueber dem Button ein Hinweis mit Link zur Geraetekachel (testen oder Geraet entfernen).
 async function applyTriggerButtonDemoState() {
     const button = document.getElementById('triggerOptimizationButton');
     const hint = document.getElementById('triggerOptimizationHint');
+    const blockers = document.getElementById('triggerBlockers');
     if (!button || !hint) return;
+    let isDemo = false;
     try {
         const status = await getJson(insideHomeAssistant + '/account-status');
-        button.disabled = !!status.isDemo;
-        hint.hidden = !status.isDemo;
+        isDemo = !!status.isDemo;
     } catch (err) {
         console.log(err);
+        return;
     }
+    const untested = await fetchUntestedActionWarnings();
+    button.disabled = isDemo || untested.length > 0;
+    // Im Demomodus mit ungetesteter Aktion erklaert die Liste unten den naechsten Schritt besser als der Standardtext
+    hint.hidden = !isDemo || untested.length > 0;
+    if (!blockers) return;
+    blockers.innerHTML = '';
+    blockers.hidden = untested.length === 0;
+    if (untested.length === 0) return;
+    const intro = document.createElement('div');
+    intro.textContent = 'Die Optimierung kann erst angestoßen werden, wenn alle eingerichteten Steuerungen getestet sind:';
+    blockers.appendChild(intro);
+    const list = document.createElement('ul');
+    for (const warning of untested) {
+        list.appendChild(buildProblemListItem(
+            `„${warning.label || warning.key}“ wurde noch nicht erfolgreich getestet – bitte testen oder das Gerät entfernen.`,
+            warning.sectionKey, null));
+    }
+    blockers.appendChild(list);
 }
 
 // Schraeger Eck-Sticker "Add-on: TESTUMGEBUNG" / "vX.Y.Z.N" / "Bubble: TEST|LIVE" - erscheint
@@ -1507,6 +1558,14 @@ async function renderSystemHealth() {
         ? 'Ein Problem erfordert deine Aufmerksamkeit:'
         : count + ' Probleme erfordern deine Aufmerksamkeit:';
     container.appendChild(title);
+    // Naechster Einrichtungsschritt: Geraet ist eingerichtet, aber noch kein shyft-power-Konto - das legt das Addon
+    // automatisch an, sobald die erste Steuerung erfolgreich getestet ist (siehe maybe_create_real_account).
+    if (await isAwaitingFirstControlTest(warnings)) {
+        const nextStep = document.createElement('div');
+        nextStep.className = 'systemHealthNextStep';
+        nextStep.textContent = NEXT_STEP_FIRST_TEST_TEXT;
+        container.appendChild(nextStep);
+    }
     const list = document.createElement('ul');
     list.className = 'systemHealthProblemList';
     const errorFieldIds = [];
@@ -1768,7 +1827,10 @@ async function renderDashboardProblemBanner() {
     } catch (err) {
         console.log(err);
     }
-    if (accountIsDemo && !isFullyDemoMode()) {
+    if (accountIsDemo && !isFullyDemoMode() && (await fetchUntestedActionWarnings()).length > 0) {
+        // Noch kein Konto, weil noch keine Steuerung erfolgreich getestet wurde (siehe maybe_create_real_account)
+        bannerText = 'Nächster Schritt: Gerätesteuerung testen, um die Optimierung zu starten';
+    } else if (accountIsDemo && !isFullyDemoMode()) {
         bannerText = 'Optimierung nicht möglich. Prüfe deinen shyft_access_key in der Konfiguration des Addons oder wende dich an info@shyft-power.com.';
     } else if (isFullyDemoMode()) {
         bannerText = 'Demomodus. Jetzt Geräte einrichten';
@@ -5045,6 +5107,9 @@ function reapplyTestGates() {
 function markActionTested(readyKey, passed) {
     if (readyKey === null) return;
     actionTestStatusMap[readyKey] = passed;
+    // Hinweise oben (Konfigurationsseite, Dashboard) und die Sperre von "Optimierung anstoßen" neu bewerten
+    renderSystemHealth();
+    renderDashboardProblemBanner();
 }
 
 // Unauffaelliger Textlink am Ende einer Steuerung, der zwischen der Standard-Steuerung (direkte
@@ -5126,6 +5191,7 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction, staticO
 
     function selectValue(value) {
         input.value = value;
+        userIsTyping = false;
         input.dispatchEvent(new Event('change', {bubbles: true}));
         panel.hidden = true;
     }
@@ -5144,6 +5210,8 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction, staticO
     // Bleibt ueber mehrere renderPanel()-Aufrufe hinweg erhalten (Panel wird bei jedem Oeffnen neu
     // gebaut, siehe unten) - wie showOtherDevices beim Geraete-Picker (buildIntegrationPicker).
     let othersExpanded = false;
+    // true, sobald der Nutzer seit dem Oeffnen des Panels getippt hat (dann wird nach dem Feldinhalt gefiltert).
+    let userIsTyping = false;
 
     function renderPanel() {
         panel.innerHTML = '';
@@ -5178,7 +5246,9 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction, staticO
         const allOptions = datalist
             ? Array.from(datalist.options).map(opt => ({value: opt.value, label: opt.textContent || opt.value, bucket: opt.dataset.bucket, friendlyName: opt.dataset.friendlyName || ''}))
             : [];
-        const filterText = input.value.trim().toLowerCase();
+        // Eine bereits hinterlegte Entitaet zaehlt wie ein leerer Suchtext: erst sobald der Nutzer
+        // tippt (input-Event), wird gefiltert - sonst waere die Liste bei gesetztem Wert fast leer.
+        const filterText = userIsTyping ? input.value.trim().toLowerCase() : '';
         const filtered = filterText ? allOptions.filter(opt => (opt.label + ' ' + opt.friendlyName).toLowerCase().includes(filterText)) : allOptions;
 
         if (filtered.length === 0) {
@@ -5231,6 +5301,7 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction, staticO
     }
 
     input.addEventListener('focus', () => {
+        userIsTyping = false;
         renderPanel();
         panel.hidden = false;
     });
@@ -5242,6 +5313,7 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction, staticO
         panel.hidden = false;
     });
     input.addEventListener('input', () => {
+        userIsTyping = true;
         renderPanel();
         panel.hidden = false;
     });
@@ -5422,7 +5494,7 @@ function buildAutoManagedNumberControl(control) {
             return;
         }
         if (readyKey) markActionTested(readyKey, !!result.success);
-        if (control.onlyIncrement) {
+        if (control.onlyIncrement && variant === 'direct') {
             if (result.success) {
                 valueDisplay.textContent = `Erfolgreich: ${result.originalValue}${unitSuffix} → ${result.boostedValue}${unitSuffix} → zurückgesetzt.`;
                 valueDisplay.className = 'autoActionValue testSuccess';
@@ -5512,7 +5584,7 @@ function buildAutoManagedNumberControl(control) {
         // serverseitig synchron erhoeht, auf Bestaetigung wartet UND danach IMMER zurueckstellt
         // (siehe /actions/heating_target_temp/test) - kann daher spuerbar laenger dauern als der
         // generische Delta-Test.
-        valueDisplay.textContent = control.onlyIncrement ? 'Teste … (kann mehrere Minuten dauern)' : 'Teste...';
+        valueDisplay.textContent = control.onlyIncrement && variant === 'direct' ? 'Teste … (kann mehrere Minuten dauern)' : 'Teste...';
         pinnedTestError = null;
         const popup = openTestPopup('Test: ' + control.titleLabel);
         let result = null;
@@ -6472,7 +6544,8 @@ function buildHotWaterControl() {
         if (variant === 'ha_automation') {
             configured = !!automationInput.value;
         } else if (variant === 'direct') {
-            const serviceInput = document.getElementById('hot_water_hotWater_service');
+            // Im eigenen Block suchen: beim ersten Aufbau haengt die Kachel noch nicht im Dokument
+            const serviceInput = stageWrapper.querySelector('[id="hot_water_hotWater_service"]');
             configured = !!(serviceInput && serviceInput.value);
         } else {
             configured = false;
@@ -6480,8 +6553,9 @@ function buildHotWaterControl() {
         applyTestGate('hot_water', checkmark, hotWaterHint, configured);
     }
     automationInput.addEventListener('change', refreshCheckmark);
-    const hotWaterServiceInput = document.getElementById('hot_water_hotWater_service');
-    if (hotWaterServiceInput) hotWaterServiceInput.addEventListener('change', refreshCheckmark);
+    // change blubbert aus dem Befehls-Feld (auch ueber das "×") bis zum Block - der Listener haengt
+    // deshalb am Block statt per getElementById am (beim Aufbau noch nicht im Dokument liegenden) Feld.
+    stageWrapper.addEventListener('change', refreshCheckmark);
 
     const status = document.createElement('div');
     status.className = 'autoActionStatus';
@@ -7176,7 +7250,7 @@ function wrapEntityInputWithClear(dropdownEl, input, showArrow = true) {
     clearButton.setAttribute('aria-label', 'Eingabe löschen');
     clearButton.addEventListener('click', () => {
         input.value = '';
-        input.dispatchEvent(new Event('change'));
+        input.dispatchEvent(new Event('change', {bubbles: true}));
         input.focus();
     });
     wrapper.appendChild(clearButton);

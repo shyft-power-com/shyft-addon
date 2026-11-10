@@ -3384,6 +3384,7 @@ def _action_not_ready_warnings(config):
         out.append({
             "key": f"action_test_failed:{ready_key}",
             "sectionKey": section_key,
+            "label": label,
             "message": f"„{label}“: Noch nicht erfolgreich getestet – bitte in der Konfiguration testen.",
         })
     return out
@@ -8268,8 +8269,26 @@ def testHeatingTargetTempBoost():
     control = AUTO_MANAGED_CONTROLS[control_key]
     config = _read_current_config()
     if resolve_control_variant(control_key, config) != "direct":
-        test_log("Nur für 'Direkt steuern' verfügbar.", "error")
-        return jsonify({"success": False, "message": "Nur für 'Direkt steuern' verfügbar"}), 400
+        # Variante "Per Home-Assistant-Automation": die Automation wird mit der Standard-Temperatur ausgeloest
+        # (was sie danach tut, kann Shyft nicht pruefen - wie bei den anderen Automations-Tests).
+        automation_entity_id = (config.get("actorMappings", {}) or {}).get(control_key)
+        if not automation_entity_id:
+            test_log("Keine Automation ausgewählt.", "error")
+            return jsonify({"success": False, "message": "Keine Automation ausgewählt"}), 400
+        target = _heizung_default_temp(config)
+        try:
+            test_log(f"Löse die Automation {automation_entity_id} aus (Zielwert {target}) …")
+            trigger_ha_automation(automation_entity_id, "start", target)
+            test_log("Automation ausgelöst – was sie danach tut, kann Shyft nicht prüfen.", "ok")
+            _clear_control_action_problems(control_key)
+            _record_action_test_result(control_key, True)
+            return jsonify({"success": True, "value": target, "confirmed": False})
+        except Exception as e:
+            test_log(f"Auslösen fehlgeschlagen: {e}", "error")
+            log_error_to_shyft(f"{control_key}_test", classify_error(str(e)), str(e),
+                                service_called="automation.trigger", data_sent={"target": target})
+            _record_action_test_result(control_key, False)
+            return jsonify({"success": False, "message": str(e)}), 500
     entity_id = config.get("sensorMappings", {}).get(control["sensor_field"], "")
     if not entity_id:
         test_log("Keine Entität zugeordnet.", "error")

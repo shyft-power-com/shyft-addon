@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.45.374
+
+* **Warmwasserbereitung: roter Hinweis „Bitte Gerätesteuerung testen“ erscheint jetzt, sobald ein Befehl gewählt ist.** Der Hinweis wurde bisher erst nach einem Neuladen der Seite angezeigt, weil sein Listener am Befehlsfeld beim Aufbau der Kachel noch ins Leere lief. Auch das Leeren des Felds über das „×“ löst jetzt die Neubewertung aus.
+* **Heizung Soll-Temperatur: „Volle Individualität: Per Home-Assistant-Automation steuern“.** Wie bei den anderen Steuerungen lässt sich statt der direkten Entität eine eigene Automation hinterlegen (Zielwert als `{{ target }}`). Der Test löst die Automation mit der Standard-Temperatur aus; was sie danach tut, kann Shyft nicht prüfen.
+* **„Optimierung anstoßen“ ist gesperrt, solange eine eingerichtete Steuerung nicht erfolgreich getestet ist.** Über dem Button steht je ungetesteter Aktion ein Hinweis mit Link zur Gerätekachel (testen oder Gerät entfernen). Die Hinweise oben auf der Seite (inkl. Zähler) gab es schon und werden nach jedem Test sofort neu bewertet.
+* **Neuer Hinweis „Nächster Schritt: Gerätesteuerung testen“** auf der Konfigurationsseite und im Dashboard, solange noch kein shyft-power-Konto existiert, aber ein echtes Gerät eingerichtet ist. Das Konto (Token) legt das Add-on automatisch nach dem ersten erfolgreichen Test an und stößt die erste Optimierung selbst an – ein manuelles „Optimierung anstoßen“ ist dafür nicht nötig.
+
+## 0.0.45.373
+
+* **Konfiguration: Entitäts-Dropdown zeigt bei hinterlegter Entität die volle Liste.** Beim Öffnen eines Entitäts-Felds mit bereits gesetztem Wert wird dieser nicht mehr als Suchtext gewertet, sondern wie ein leeres Feld behandelt: Das Dropdown zeigt alles, was auch bei leerem Feld erscheint. Gefiltert wird erst, sobald du tippst.
+
 ## 0.0.45.372
 
 * **Fix: Hilfsskripte (z. B. `script.shyft_heizung_soll_temperatur`) verschwinden nicht mehr, wenn mehrere shyft-Add-ons in einer Home-Assistant-Instanz laufen.** Die Skript-Namen sind für alle Instanzen gleich. Beim Start löschte ein Add-on mit leerer Zuordnung das Skript einer anderen Instanz, und die Aktion „Heizung Soll-Temperatur“ scheiterte mit „Hilfsskript existiert nicht“. Jetzt löscht das Add-on beim Start nie mehr ein Skript (es legt fehlende nur an bzw. aktualisiert sie). Beim Speichern einer geleerten Zuordnung wird nur ein Skript gelöscht, das dieses Add-on selbst angelegt hat. Dafür trägt jedes automatisch verwaltete Skript in der `description` den Slug seines Add-ons (`shyft-addon-owner=<slug>`). Ältere Skripte ohne Markierung werden nur gelöscht, wenn hier vorher eine Entität zugeordnet war. Skript-Namen und Konfiguration bleiben unverändert, eine Migration ist nicht nötig.
