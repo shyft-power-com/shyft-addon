@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.377
+
+* **Community-Vorschläge: eigene Skripte, Automationen, Szenen, Gruppen, Templates und Helfer werden nicht mehr gemeldet oder vorbelegt.** Bisher ging bei „Heizung Soll-Temperatur“ das vom Add-on selbst angelegte Hilfsskript (`script.shyft_heizung_soll_temperatur`) als Vorschlag nach Bubble. Das gibt es beim nächsten Nutzer nicht von allein. Gemeldet werden nur Entitäten und Befehle der Integration selbst (z. B. der Warmwasser-Befehl `button.press` auf „Activate one-time charge“).
+
 ## 0.0.45.376
 
 * **Warmwasserbereitung: nach bestandenem Test nur noch das grüne Häkchen.** Wie bei der Heizung entfällt die grüne Erfolgsmeldung samt Hinweis „Der Test beendet die Warmwasserbereitung nicht. Bitte manuell beenden!“. Schlägt der Test fehl, aber die Warmwasserbereitung wurde schon aktiviert, steht der Hinweis weiter bei der Fehlermeldung.

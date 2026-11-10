@@ -44,12 +44,20 @@ def _clean(text):
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
+# Selbst gebaute Entitaeten eines Nutzers (u.a. das vom Add-on verwaltete Hilfsskript script.shyft_*): gibt es beim
+# naechsten Nutzer nicht bzw. nur zufaellig - sie sind kein Teil einer Integrations-Konfiguration und werden weder gemeldet noch vorbelegt.
+LOCAL_PLATFORMS = ("script", "automation", "scene", "group", "template")
+
+
 def build_entity_info(entities):
     """Entity-Registry-Liste -> {entity_id: {"ref": "<platform>/<key>"}}; Eintraege ohne platform oder
-    ohne stabilen Schluessel (translation_key bzw. original_name) fehlen (z.B. Helfer/Automationen)."""
+    ohne stabilen Schluessel (translation_key bzw. original_name) sowie Skripte/Automationen/Szenen/Gruppen/Templates
+    (LOCAL_PLATFORMS) und Helfer (input_*) fehlen."""
     info = {}
     for entity in entities or []:
         platform = _clean(entity.get("platform"))
+        if platform in LOCAL_PLATFORMS or platform.startswith("input_"):
+            continue
         key = _clean(entity.get("translation_key") or entity.get("original_name"))
         if platform and key and entity.get("entity_id"):
             info[entity["entity_id"]] = {"ref": f"{platform}/{key}"}
