@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.379
+
+* **Community-Vorschläge: kein roter Rand mehr um vorbelegte Felder.** Der Abruf der Vorschläge dauert einige Sekunden. Die roten „Pflichtfeld fehlt“-Rahmen stammten noch vom Aufbau der Kachel mit leeren Feldern und blieben um den gelben Vorschlag stehen, bis die Seite neu geladen wurde. Nach dem Vorbelegen werden die Pflichtfelder jetzt sofort neu bewertet.
+
 ## 0.0.45.378
 
 * **Community-Vorschläge: leere Ergebnisse werden nicht mehr bis zum Neuladen der Seite zwischengespeichert.** War shyft-power beim ersten Abruf nicht erreichbar, blieben die Felder bis zum Neuladen rot und leer, auch wenn der Abruf danach wieder funktionierte. Das Add-on-Log nennt jetzt je Abruf, wie viele Vorschläge aus shyft-power kamen und wie viele zu den eigenen Entitäten passen.
