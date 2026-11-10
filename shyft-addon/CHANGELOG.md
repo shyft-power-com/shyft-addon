@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.376
+
+* **Warmwasserbereitung: nach bestandenem Test nur noch das grüne Häkchen.** Wie bei der Heizung entfällt die grüne Erfolgsmeldung samt Hinweis „Der Test beendet die Warmwasserbereitung nicht. Bitte manuell beenden!“. Schlägt der Test fehl, aber die Warmwasserbereitung wurde schon aktiviert, steht der Hinweis weiter bei der Fehlermeldung.
+
 ## 0.0.45.375
 
 * **Community-Vorschläge für Zuordnungen.** Nach einem erfolgreichen Aktionstest meldet das Add-on anonym an shyft-power, welche Entitäten (und bei „Warmwasser“/„Auto laden“ welche Service-Rezepte) für die gewählte Integration funktioniert haben – als stabiler Schlüssel aus Integrations-Domain und `translation_key`/`original_name`, nicht als umbenennbare `entity_id`, ohne Zahlenwerte, Geräte-IDs oder Nutzerbezug. Mit dem letzten bestandenen Test einer Kachel gehen auch deren übrige Sensoren mit. Ein unveränderter Wiederholungstest meldet nichts. Wählt ein neuer Nutzer dieselbe Integration, werden leere Sensor-/Steuerungsfelder mit dem häufigsten Vorschlag belegt (nur Entitäten, die er hat; bei mehreren gleichen die erste), gelb markiert mit Badge „Vorschlag“; Platz 2 und 3 stehen oben im Dropdown. Die Markierung verschwindet nach Änderung des Felds oder erfolgreichem Test. Auch die Rezepte „Warmwasserbereitung“ und „Auto laden“ (Befehl, Entität und feste Auswahlwerte je Stufe) werden vorbelegt und gelb markiert, sofern die Befehle in Home Assistant existieren; die Geräte-ID setzt das Add-on selbst ein. Gibt es mehrere passende Rezepte, wird das häufigste eingetragen und die Plätze 2 und 3 stehen in einer Auswahl „Vorschlag 1 von 3“ am Badge zur Verfügung.
