@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.378
+
+* **Community-Vorschläge: leere Ergebnisse werden nicht mehr bis zum Neuladen der Seite zwischengespeichert.** War shyft-power beim ersten Abruf nicht erreichbar, blieben die Felder bis zum Neuladen rot und leer, auch wenn der Abruf danach wieder funktionierte. Das Add-on-Log nennt jetzt je Abruf, wie viele Vorschläge aus shyft-power kamen und wie viele zu den eigenen Entitäten passen.
+
 ## 0.0.45.377
 
 * **Community-Vorschläge: eigene Skripte, Automationen, Szenen, Gruppen, Templates und Helfer werden nicht mehr gemeldet oder vorbelegt.** Bisher ging bei „Heizung Soll-Temperatur“ das vom Add-on selbst angelegte Hilfsskript (`script.shyft_heizung_soll_temperatur`) als Vorschlag nach Bubble. Das gibt es beim nächsten Nutzer nicht von allein. Gemeldet werden nur Entitäten und Befehle der Integration selbst (z. B. der Warmwasser-Befehl `button.press` auf „Activate one-time charge“).
