@@ -94,3 +94,16 @@ def test_hot_water_recipe_roundtrip_uses_main_stage():
     resolved = cs.resolve_suggestions([{"slot": slot, "steps": json.loads(steps_json), "used": 1}],
                                       cs.build_ref_index(cs.build_entity_info([{"entity_id": "button.other", "platform": "easee", "translation_key": "start_charging"}])))
     assert resolved[slot][0]["value"] == {"main": {"service": "button.press", "sharedFields": {"entity_id": "button.other"}}}
+
+
+def test_own_scripts_and_automations_are_never_reported_or_suggested():
+    entities = ENTITIES + [
+        {"entity_id": "script.shyft_heizung_soll_temperatur", "platform": "script", "original_name": "Shyft: Heizung Soll-Temperatur"},
+        {"entity_id": "automation.mine", "platform": "automation", "original_name": "Meine Automation"},
+    ]
+    info = cs.build_entity_info(entities)
+    assert "script.shyft_heizung_soll_temperatur" not in info and "automation.mine" not in info
+    config = {"sensorMappings": {"heatpump_heating_target_temp_normal": "sensor.legacy"},
+              "actorMappings": {"heating_target_temp": "script.shyft_heizung_soll_temperatur"}}
+    slots = [slot for slot, _ in cs.build_report_items(config, "heating_target_temp", info)]
+    assert slots == ["sensor:heatpump_heating_target_temp_normal"]

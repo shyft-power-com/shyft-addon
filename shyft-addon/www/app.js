@@ -7189,8 +7189,14 @@ const communitySuggestionMarks = [];   // {inputs, badge, sectionKey}
 async function loadCommunitySuggestions(sectionKey, entryId) {
     const cacheKey = sectionKey + '|' + entryId;
     if (!communitySuggestionCache[cacheKey]) {
-        communitySuggestionCache[cacheKey] = getJson(insideHomeAssistant + '/suggestions/' + encodeURIComponent(sectionKey)
+        // Nur nicht-leere Antworten bleiben gecacht: ein leeres Ergebnis (Fehler, Bubble gerade nicht erreichbar) wuerde sonst bis zum
+        // Neuladen der Seite jede Vorbelegung verhindern - auch wenn Bubble zwischenzeitlich wieder antwortet.
+        const request = getJson(insideHomeAssistant + '/suggestions/' + encodeURIComponent(sectionKey)
             + '?entry=' + encodeURIComponent(entryId)).catch(() => ({}));
+        communitySuggestionCache[cacheKey] = request;
+        request.then(result => {
+            if (!result || !Object.keys(result).length) delete communitySuggestionCache[cacheKey];
+        });
     }
     return communitySuggestionCache[cacheKey];
 }

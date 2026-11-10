@@ -7358,7 +7358,9 @@ def readCommunitySuggestions(section_key):
         index = community_suggestions.build_ref_index(data.get("entityInfo") or {})
         devices = (data.get("deviceMap") or {}).get(entry_id) or []
         rows = community_suggestions.parse_rows(shyft_adapter.get_suggestions(domain))
-        return jsonify(community_suggestions.resolve_suggestions(rows, index, device_id=devices[0]["id"] if devices else None))
+        result = community_suggestions.resolve_suggestions(rows, index, device_id=devices[0]["id"] if devices else None)
+        print(f"[Shyft] Community-Vorschlaege fuer {domain} ({section_key}): {len(rows)} Eintraege aus shyft-power, {len(result)} davon fuer diese Entitaeten passend.")
+        return jsonify(result)
     except Exception as e:
         print("[Shyft] Community-Vorschlaege konnten nicht geladen werden:", repr(e))
         return jsonify({})
