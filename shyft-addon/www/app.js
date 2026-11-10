@@ -6622,13 +6622,14 @@ function buildHotWaterControl() {
                 status.textContent = 'Test abgebrochen.';
                 status.className = 'autoActionStatus';
             } else if (success) {
-                status.textContent = `Erfolgreich: Solltemperatur ${result.originalValue} °C → ${result.boostedValue} °C → zurückgesetzt, "Warmwasser gerade erwärmt?" ist auf An gesprungen.`;
-                status.className = 'autoActionStatus status-ok';
+                // Wie bei der Heizung zeigt nur das grüne Häkchen (applyTestGate unten) den bestandenen Test an - kein Meldungstext.
+                status.textContent = '';
+                status.className = 'autoActionStatus';
             } else {
                 status.textContent = 'Fehler: ' + (result.message || 'unbekannt');
                 status.className = 'autoActionStatus status-error';
             }
-            if (result.activated) {
+            if (result.activated && !success) {
                 status.textContent += ' Der Test beendet die Warmwasserbereitung nicht. Bitte manuell beenden!';
             }
             applyTestGate('hot_water', checkmark, hotWaterHint, true);
