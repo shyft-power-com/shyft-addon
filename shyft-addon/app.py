@@ -23,6 +23,7 @@ import csv
 import io
 import functools
 import contextlib
+import community_suggestions
 import threading
 import requests
 from datetime import datetime, timezone, timedelta, date
@@ -7271,8 +7272,11 @@ def _record_action_test_result(ready_key, ok):
         cfg = _read_current_config()
         passed = cfg.setdefault("actionTestPassed", {})
         failed = cfg.setdefault("actionTestFailed", {})
+        config_changed_since_last_pass = False
         if ok:
-            passed[ready_key] = _action_type_fingerprint(cfg, ready_key)
+            new_fingerprint = _action_type_fingerprint(cfg, ready_key)
+            config_changed_since_last_pass = passed.get(ready_key) != new_fingerprint
+            passed[ready_key] = new_fingerprint
             failed.pop(ready_key, None)
         else:
             passed.pop(ready_key, None)
@@ -7286,16 +7290,78 @@ def _record_action_test_result(ready_key, ok):
             _clear_not_ready_problem(ready_key)
             # Erstes erfolgreich getestetes steuerbares Geraet beendet den Demomodus (Konto anlegen).
             # Im Hintergrund, damit die Testantwort nicht auf Bubble wartet.
-            threading.Thread(target=_create_account_after_test, args=(ready_key,), daemon=True).start()
+            # Erneutes Testen mit unveraenderter Konfiguration meldet nichts (nur neue/geaenderte Setups zaehlen).
+            threading.Thread(target=_create_account_after_test, args=(ready_key, config_changed_since_last_pass), daemon=True).start()
     except Exception as e:
         print("[Shyft] actionTestPassed konnte nicht aktualisiert werden:", repr(e))
 
 
-def _create_account_after_test(ready_key):
+def _create_account_after_test(ready_key, report_suggestions=False):
     try:
         maybe_create_real_account(ready_key)
     except Exception as e:
         print("[Shyft] Automatische Konto-Erstellung fehlgeschlagen:", repr(e))
+    if report_suggestions:
+        # Erst nach der Konto-Erstellung: der Upload braucht den Zugangstoken (im Demomodus ohne Token entfaellt er).
+        report_community_suggestions(ready_key)
+
+
+def _section_fully_tested(config, section_key):
+    "True, wenn alle vollstaendig eingerichteten Aktionstypen dieser Geraetekachel ihren Test mit der aktuellen Konfiguration bestanden haben."
+    passed = config.get("actionTestPassed", {}) or {}
+    keys = [key for key, (_, section) in _READY_KEY_TO_LABEL_SECTION.items() if section == section_key]
+    configured = [key for key in keys if all(_action_type_config_state(config, key)["flags"].values())]
+    return bool(configured) and all(passed.get(key) == _action_type_fingerprint(config, key) for key in configured)
+
+
+def report_community_suggestions(ready_key):
+    """Meldet die Konfiguration eines gerade erfolgreich getesteten Aktionstyps anonym an shyft-power
+    (siehe community_suggestions.py): die fuer die Aktion noetigen Entitaeten/Rezepte, und mit dem letzten bestandenen
+    Test der Kachel zusaetzlich deren uebrige Sensoren. Best effort - Fehler werden nur geloggt, nie gemeldet."""
+    try:
+        if is_demo_mode() or not extract_shyft_user_id(shyft_adapter.bubble_token):
+            return
+        label_section = _READY_KEY_TO_LABEL_SECTION.get(ready_key)
+        if not label_section:
+            return
+        section_key = label_section[1]
+        config = _read_current_config()
+        entry_ids = (config.get("integrationMappings") or {}).get(section_key) or []
+        if not _is_real_device(entry_ids):
+            return
+        data = homeassistant_adapter.get_integrations_and_entities()
+        domain = next((i.get("domain") for i in data["integrations"] if i["id"] == entry_ids[0]), "")
+        if not domain:
+            return
+        remaining = section_key if _section_fully_tested(config, section_key) else None
+        items = community_suggestions.build_report_items(
+            config, ready_key, data.get("entityInfo") or {}, include_remaining_sensors_for=remaining,
+            allowed_entity_ids=set((data.get("entityMap") or {}).get(entry_ids[0], [])))
+        for slot, steps_json in items:
+            shyft_adapter.report_suggestion(slot, domain, steps_json)
+        print(f"[Shyft] {len(items)} Community-Vorschlag/-Vorschlaege fuer {domain} gemeldet ({ready_key}).")
+    except Exception as e:
+        print("[Shyft] Community-Vorschlaege konnten nicht gemeldet werden:", repr(e))
+
+
+@app.route("/suggestions/<section_key>", methods=["GET"])
+def readCommunitySuggestions(section_key):
+    """Community-Vorschlaege fuer die in der Kachel section_key gewaehlte Integration, gefiltert auf Entitaeten, die der Nutzer hat:
+    {slot: [{value, used}, ...]} (je Slot die haeufigsten drei). Query ?entry=<config_entry_id> waehlt die Integration (sonst die gespeicherte).
+    Fehler/keine Treffer -> {} (Vorschlaege sind nie noetig)."""
+    try:
+        data = homeassistant_adapter.get_integrations_and_entities()
+        entry_id = request.args.get("entry") or next(iter((_read_current_config().get("integrationMappings") or {}).get(section_key) or []), "")
+        domain = next((i.get("domain") for i in data["integrations"] if i["id"] == entry_id), "")
+        if not domain or entry_id == DEMO_INTEGRATION_ID:
+            return jsonify({})
+        index = community_suggestions.build_ref_index(data.get("entityInfo") or {})
+        devices = (data.get("deviceMap") or {}).get(entry_id) or []
+        rows = community_suggestions.parse_rows(shyft_adapter.get_suggestions(domain))
+        return jsonify(community_suggestions.resolve_suggestions(rows, index, device_id=devices[0]["id"] if devices else None))
+    except Exception as e:
+        print("[Shyft] Community-Vorschlaege konnten nicht geladen werden:", repr(e))
+        return jsonify({})
 
 
 def _clear_not_ready_problem(ready_key):

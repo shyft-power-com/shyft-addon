@@ -7,6 +7,8 @@ import os
 import requests
 import websocket
 import json
+
+import community_suggestions
 import logging
 import urllib.parse
 
@@ -373,7 +375,9 @@ class HomeAssistantAdapter:
                     device_map[entry_id].append({"id": device["id"], "name": device_name})
 
         integration_list.sort(key=lambda i: i["name"].lower())
-        return {"integrations": integration_list, "entityMap": entity_map, "deviceMap": device_map}
+        # entityInfo: stabile, umbenennungsfeste Schluessel je Entitaet fuer die Community-Vorschlaege (siehe community_suggestions.py)
+        return {"integrations": integration_list, "entityMap": entity_map, "deviceMap": device_map,
+                "entityInfo": community_suggestions.build_entity_info(entities)}
 
     def get_from_homeassistant(self, path, timeout=None):
         headers = {

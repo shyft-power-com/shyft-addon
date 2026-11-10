@@ -3965,6 +3965,11 @@ function buildIntegrationPicker(section, currentIds, onChange) {
 }
 
 function renderSectionBody(bodyDiv, section, entryIds) {
+    renderSectionBodyContent(bodyDiv, section, entryIds);
+    applyCommunitySuggestions(section, entryIds);
+}
+
+function renderSectionBodyContent(bodyDiv, section, entryIds) {
     bodyDiv.innerHTML = '';
 
     // Demo-Geraet: keine echten Entities zum Mappen, keine echte Steuerung - kurzer Hinweis statt
@@ -5110,6 +5115,7 @@ function markActionTested(readyKey, passed) {
     // Hinweise oben (Konfigurationsseite, Dashboard) und die Sperre von "Optimierung anstoßen" neu bewerten
     renderSystemHealth();
     renderDashboardProblemBanner();
+    refreshCommunitySuggestionMarks();
 }
 
 // Unauffaelliger Textlink am Ende einer Steuerung, der zwischen der Standard-Steuerung (direkte
@@ -7165,6 +7171,187 @@ function buildBatterySteuerungSection(bodyDiv, section, entryIds, candidateEntit
 // im Eingabefeld als "An"/"Aus".
 const STATIC_SENSOR_ON = 'static_on';
 const STATIC_SENSOR_OFF = 'static_off';
+
+// ---- Community-Vorschlaege (siehe community_suggestions.py) ----------------------------------
+// Fuer die gewaehlte Integration liefert das Add-on (GET /suggestions/<section>) die haeufigsten Entitaets-
+// Zuordnungen anderer Nutzer, schon auf Entitaeten gefiltert, die dieser Nutzer hat. Leere Sensor-/Steuerungs-
+// felder werden mit dem haeufigsten Vorschlag belegt und gelb mit "Vorschlag"-Badge markiert; Platz 2 und 3
+// stehen oben im Dropdown. Die Markierung verschwindet, sobald der Nutzer das Feld aendert oder eine Aktion
+// der Kachel erfolgreich getestet wurde (dann hat der Vorschlag sich bewaehrt).
+const SECTION_READY_KEYS = {
+    waermepumpe: ['hot_water', 'heating_target_temp'], heizstab: ['heating_rod'], wallbox: ['car_charge_start'],
+    auto: ['car_charge_start'], batterie: ['battery_charge_shift_pv_surplus', 'battery_discharge_shift', 'battery_grid_charge'],
+};
+const communitySuggestionCache = {};
+const communitySuggestionMarks = [];   // {inputs, badge, sectionKey}
+
+async function loadCommunitySuggestions(sectionKey, entryId) {
+    const cacheKey = sectionKey + '|' + entryId;
+    if (!communitySuggestionCache[cacheKey]) {
+        communitySuggestionCache[cacheKey] = getJson(insideHomeAssistant + '/suggestions/' + encodeURIComponent(sectionKey)
+            + '?entry=' + encodeURIComponent(entryId)).catch(() => ({}));
+    }
+    return communitySuggestionCache[cacheKey];
+}
+
+function isSectionTestPassed(sectionKey) {
+    return (SECTION_READY_KEYS[sectionKey] || []).some(k => actionTestStatusMap[k] === true);
+}
+
+function clearSuggestionMark(mark) {
+    for (const input of mark.inputs) input.classList.remove('communitySuggested');
+    if (mark.badge) mark.badge.remove();
+    mark.badge = null;
+}
+
+function refreshCommunitySuggestionMarks() {
+    for (const mark of communitySuggestionMarks) {
+        if (mark.badge && (!mark.inputs[0].isConnected || isSectionTestPassed(mark.sectionKey))) clearSuggestionMark(mark);
+    }
+}
+
+// Rezept-Formulare (Warmwasser, Auto laden): Slot -> Praefix der Element-Ids und Stufen -> Bloecke im DOM
+// (Stufen mit Zweigen heissen <stufe>_<zweig>, siehe buildBranchStage).
+const RECIPE_FORMS = {
+    'recipe:hot_water': {prefix: 'hot_water_', stages: {main: 'hotWater'}},
+    'recipe:car_charge': {prefix: 'car_charge_', stages: {phaseCount: 'phaseCount', amperage: 'amperage', control: 'control'}},
+};
+
+function recipeTargets(slot, value) {
+    const form = RECIPE_FORMS[slot];
+    const targets = [];
+    for (const [stageKey, block] of Object.entries(value || {})) {
+        const domStage = form.stages[stageKey];
+        if (!domStage) return null;
+        const blocks = block.branches
+            ? Object.entries(block.branches).map(([branch, b]) => [domStage + '_' + branch, b])
+            : [[domStage, block]];
+        for (const [domKey, b] of blocks) {
+            const serviceInput = document.getElementById(form.prefix + domKey + '_service');
+            const el = serviceInput && serviceInput.closest('.carChargeStage');
+            // der Befehl muss in Home Assistant existieren, sonst laesst sich das Formular nicht sinnvoll fuellen
+            if (!serviceInput || !el || !el.applyState || !allServiceOptions.some(o => o.service === b.service)) return null;
+            targets.push({serviceInput, el, service: b.service, fields: b.sharedFields || {}});
+        }
+    }
+    return targets.length ? targets : null;
+}
+
+function describeRecipeTargets(targets) {
+    const services = [...new Set(targets.map(t => t.service))].join(' / ');
+    const entityId = targets.map(t => Object.values(t.fields).find(v => typeof v === 'string' && /^[a-z_]+\.[a-z0-9_]+$/.test(v))).find(Boolean);
+    return entityId ? services + ' → ' + formatEntityDisplay(entityId) : services;
+}
+
+function applyRecipeSuggestion(section, slot, entries) {
+    // Alle Vorschlaege, die sich hier umsetzen lassen (Befehle existieren in HA), in Reihenfolge der Haeufigkeit.
+    const options = entries.map(entry => ({entry, targets: recipeTargets(slot, entry.value)})).filter(o => o.targets);
+    if (!options.length) return;
+    const targets0 = options[0].targets;
+    const wasEmpty = targets0.every(t => !t.serviceInput.value.trim());
+    const matching = options.findIndex(o => o.targets.every(t => t.serviceInput.value === t.service));
+    const stillSuggested = !wasEmpty && matching >= 0 && !isSectionTestPassed(section.key);
+    if (!wasEmpty && !stillSuggested) return;
+
+    const host = targets0[0].el.closest('.autoActionControl') || targets0[0].el;
+    const mark = {inputs: [], badge: null, sectionKey: section.key};
+    const title = 'Von anderen Nutzern mit derselben Integration erfolgreich verwendet - bitte testen.';
+
+    function applyOption(index) {
+        const option = options[index];
+        for (const t of option.targets) t.el.applyState({service: t.service, fields: t.fields});
+        // applyState baut die Felder neu auf - Markierung auf den neuen Eingabefeldern setzen
+        for (const input of mark.inputs) input.classList.remove('communitySuggested');
+        mark.inputs = option.targets.flatMap(t => [...t.el.querySelectorAll('input.sensorInput')].filter(i => i.value));
+        if (!mark.inputs.length) mark.inputs = [option.targets[0].serviceInput];
+        for (const input of mark.inputs) input.classList.add('communitySuggested');
+    }
+
+    if (wasEmpty) {
+        applyOption(0);
+        autoSave();   // speichert, damit "Testen" die Zuordnung kennt
+    } else {
+        applyOption(matching);
+    }
+
+    let badge;
+    if (options.length > 1) {
+        // Platz 2 und 3: Auswahl am Badge (ein Vorschlag besteht aus mehreren Feldern, passt also nicht in ein einzelnes Dropdown-Feld)
+        badge = document.createElement('select');
+        badge.className = 'communitySuggestionBadge communitySuggestionPicker';
+        options.forEach((o, i) => {
+            const el = document.createElement('option');
+            el.value = String(i);
+            el.textContent = `Vorschlag ${i + 1} von ${options.length}: ${describeRecipeTargets(o.targets)}`;
+            badge.appendChild(el);
+        });
+        badge.value = String(wasEmpty ? 0 : matching);
+        badge.addEventListener('change', (event) => {
+            event.stopPropagation();   // zaehlt nicht als Aenderung des Nutzers am Formular
+            applyOption(Number(badge.value));
+            autoSave();
+        });
+    } else {
+        badge = document.createElement('span');
+        badge.textContent = 'Vorschlag';
+        badge.className = 'communitySuggestionBadge';
+    }
+    badge.title = title;
+    mark.badge = badge;
+    host.insertBefore(badge, host.children[1] || null);
+    communitySuggestionMarks.push(mark);
+
+    // jede Aenderung im Formular (ausser der Vorschlagsauswahl) heisst: der Nutzer macht es zu seinem eigenen Setup
+    const onUserEdit = (event) => {
+        if (!event.isTrusted) return;
+        clearSuggestionMark(mark);
+        host.removeEventListener('input', onUserEdit);
+        host.removeEventListener('change', onUserEdit);
+    };
+    host.addEventListener('input', onUserEdit);
+    host.addEventListener('change', onUserEdit);
+}
+
+async function applyCommunitySuggestions(section, entryIds) {
+    if (entryIds.length !== 1 || entryIds[0] === DEMO_INTEGRATION_ID) return;
+    const suggestions = await loadCommunitySuggestions(section.key, entryIds[0]);
+    for (const [slot, entries] of Object.entries(suggestions || {})) {
+        const [kind, key] = slot.split(':');
+        if (kind === 'recipe') { applyRecipeSuggestion(section, slot, entries); continue; }
+        if (kind !== 'sensor' && kind !== 'actor') continue;
+        const input = document.getElementById(key + (kind === 'sensor' ? VALUE_POSTFIX : ACTOR_VALUE_POSTFIX));
+        if (!input || typeof input.value !== 'string' || !entries.length) continue;
+        // Alternativen (Platz 2 und 3) oben im Dropdown
+        const datalist = document.getElementById('entityOptions_' + section.key + '_' + key);
+        if (datalist) {
+            for (const entry of entries.slice(1).reverse()) {
+                const option = document.createElement('option');
+                option.value = formatEntityDisplay(entry.value);
+                option.dataset.bucket = 'match';
+                datalist.insertBefore(option, datalist.firstChild);
+            }
+        }
+        const top = formatEntityDisplay(entries[0].value);
+        const wasEmpty = !input.value.trim();
+        // Bereits per Vorschlag belegt (vor dem letzten Neurendern gespeichert): Markierung erneut setzen,
+        // solange noch kein Test der Kachel bestanden ist.
+        const stillSuggested = !wasEmpty && input.value === top && !isSectionTestPassed(section.key);
+        if (!wasEmpty && !stillSuggested) continue;
+        if (wasEmpty) {
+            input.value = top;
+            input.dispatchEvent(new Event('change', {bubbles: true}));   // speichert (autoSave), damit "Testen" die Zuordnung kennt
+        }
+        const badge = document.createElement('span');
+        badge.className = 'communitySuggestionBadge';
+        badge.textContent = 'Vorschlag';
+        badge.title = 'Von anderen Nutzern mit derselben Integration erfolgreich verwendet - bitte testen.';
+        input.classList.add('communitySuggested');
+        input.parentNode.appendChild(badge);
+        const mark = {inputs: [input], badge, sectionKey: section.key};
+        communitySuggestionMarks.push(mark);
+        input.addEventListener('input', () => clearSuggestionMark(mark), {once: true});
+    }
+}
 
 function formatEntityDisplay(entityId) {
     if (!entityId) return '';

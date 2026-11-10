@@ -80,6 +80,23 @@ class ShyftAdapter:
     # komplett lokal im Addon (siehe recompute_actions_from_optimizer_run in app.py), Bubble wird
     # dafuer weder gelesen noch beschrieben.
 
+    def report_suggestion(self, slot: str, ha_integration: str, steps_json: str, timeout=15):
+        """Meldet einen erfolgreich getesteten Konfigurations-Slot anonym an shyft-power (ha_app_suggestion_report):
+        Bubble legt die Kombination an oder zaehlt #used hoch. Wirft bei Netzwerk-/HTTP-Fehler (Aufrufer faengt ab)."""
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.bubble_token}"}
+        payload = {"slot": slot, "ha_integration": ha_integration, "steps_json": steps_json}
+        response = requests.post(self._create_complete_uri("ha_app_suggestion_report"), headers=headers,
+                                 data=json.dumps(payload), timeout=timeout)
+        response.raise_for_status()
+
+    def get_suggestions(self, ha_integration: str, timeout=10):
+        "Haeufigste Community-Konfigurationen fuer eine Integrations-Domain (ha_app_suggestion_get, ohne Anmeldung, auch im Demomodus). Gibt den rohen Antworttext zurueck."
+        response = requests.post(self._create_complete_uri("ha_app_suggestion_get"),
+                                 headers={"Content-Type": "application/json"},
+                                 data=json.dumps({"ha_integration": ha_integration}), timeout=timeout)
+        response.raise_for_status()
+        return response.text
+
     def create_user(self, test_environment=False):
         """Signs a new shyft-power account up (create_user_addon workflow) in the background, the
         first time a demo-mode addon user successfully tests a controllable real device (see
