@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.372
+
+* **Fix: Hilfsskripte (z. B. `script.shyft_heizung_soll_temperatur`) verschwinden nicht mehr, wenn mehrere shyft-Add-ons in einer Home-Assistant-Instanz laufen.** Die Skript-Namen sind für alle Instanzen gleich. Beim Start löschte ein Add-on mit leerer Zuordnung das Skript einer anderen Instanz, und die Aktion „Heizung Soll-Temperatur“ scheiterte mit „Hilfsskript existiert nicht“. Jetzt löscht das Add-on beim Start nie mehr ein Skript (es legt fehlende nur an bzw. aktualisiert sie). Beim Speichern einer geleerten Zuordnung wird nur ein Skript gelöscht, das dieses Add-on selbst angelegt hat. Dafür trägt jedes automatisch verwaltete Skript in der `description` den Slug seines Add-ons (`shyft-addon-owner=<slug>`). Ältere Skripte ohne Markierung werden nur gelöscht, wenn hier vorher eine Entität zugeordnet war. Skript-Namen und Konfiguration bleiben unverändert, eine Migration ist nicht nötig.
+
 ## 0.0.45.371
 
 * **Base Case: E-Auto ohne festen Ladeverlust, Selbstentladung 0,0004.** Der Optimierer (Server 0.46.31.0, `OPTIMIZER_VERSION` v52) rechnet den festen Ladeverlust von 0,2 kWh je Ladestunde nicht mehr mit und setzt die Selbstentladung des Autos von 0,00004 auf 0,0004 je Stunde (ca. 30 W bei 75 kWh). Der Base Case in `base_case.py` zieht nach: `EV_FIXED_LOSS_KWH` ist 0, `EV_LOSS` ist 0,0004. Damit stimmen die Ladestände von Base Case und Optimierer-Plan im Vergleich wieder überein. Die Schwelle, ab der der Base Case ein Komfort-Defizit unter `ev_soc_norm` nachlädt, bleibt bei 0,2 kWh (neue Konstante `EV_CHARGE_HYSTERESIS_KWH`), das Regelverhalten ändert sich also nicht. Reihenfolge beim Ausrollen: erst Server 0.46.31.0, dann dieses Add-on.

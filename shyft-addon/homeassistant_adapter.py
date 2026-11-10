@@ -461,6 +461,16 @@ class HomeAssistantAdapter:
         "Creates or updates a Home Assistant script via the config REST API (the same endpoint the UI script editor uses)"
         return self.post_to_homeassistant(f"/api/config/script/config/{script_id}", config)
 
+    def get_script_config(self, script_id):
+        "Liest die Konfiguration des HA-Skripts script_id (config REST API); None, wenn es nicht existiert."
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        response = requests.get(self.homeassistant_uri + f"/api/config/script/config/{script_id}", headers=headers, timeout=10)
+        if response.status_code == 404 or (response.status_code == 400 and "Resource not found" in response.text):
+            return None
+        if not response.ok:
+            raise Exception(f"GET script config {script_id} failed: {response.status_code} {response.text}")
+        return response.json()
+
     def delete_script_config(self, script_id):
         self.delete_from_homeassistant(f"/api/config/script/config/{script_id}")
 
