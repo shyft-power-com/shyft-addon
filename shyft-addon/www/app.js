@@ -7275,6 +7275,7 @@ function applyRecipeSuggestion(section, slot, entries) {
     if (!wasEmpty && !stillSuggested) return;
 
     const host = targets0[0].el.closest('.autoActionControl') || targets0[0].el;
+    if (host.querySelector('.communitySuggestionBadge')) return;   // schon markiert (zweiter, gleichzeitiger Durchlauf)
     const mark = {inputs: [], badge: null, sectionKey: section.key};
     const title = 'Von anderen Nutzern mit derselben Integration erfolgreich verwendet - bitte testen.';
 
@@ -7345,6 +7346,9 @@ async function applyCommunitySuggestions(section, entryIds, firstSetup = false) 
         // Die haeufigsten Vorschlaege (Platz 1 bis 3) stehen im Dropdown ganz oben mit dem Label "Vorschlag" (siehe attachEntityDropdown)
         const datalist = document.getElementById('entityOptions_' + section.key + '_' + key);
         if (datalist) datalist.communitySuggestions = entries.map(entry => formatEntityDisplay(entry.value));
+        // Schon markiert: ein zweiter, gleichzeitiger Durchlauf fuer dieselbe frisch gebaute Kachel (z.B. durch zwei Render-Aufrufe
+        // hintereinander) wuerde sonst ein zweites "Vorschlag"-Badge anhaengen.
+        if (input.classList.contains('communitySuggested')) continue;
         const top = formatEntityDisplay(entries[0].value);
         // Bei der Ersteinrichtung ersetzt ein Vorschlag auch den automatischen Standard "An" (siehe Neueinrichtung der Waermepumpe
         // im Geraete-Picker); gibt es keinen Vorschlag, bleibt "An" stehen.

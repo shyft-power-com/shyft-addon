@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.383
+
+* **Community-Vorschläge: „Vorschlag“-Label erscheint nur noch einmal.** Wurde eine Kachel kurz hintereinander zweimal gebaut, lief die Vorbelegung zweimal und hängte ein zweites Label an dasselbe Feld. Ein bereits markiertes Feld (bzw. Rezept) wird jetzt übersprungen.
+
 ## 0.0.45.382
 
 * **Info-Text „Netz: Aktuelle Leistung“ (Strom-Kachel) gekürzt.** Der Text erklärt jetzt knapp: Bezug und Einspeisung können als getrennte Entitäten angegeben werden, und ein zusätzlich am Wechselrichter befüllter Netz-Sensor wird mit dem jeweils aktuellsten Wert beider Quellen genutzt.
