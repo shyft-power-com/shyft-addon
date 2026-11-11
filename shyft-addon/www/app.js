@@ -6926,7 +6926,8 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason, op
             statusIcon.textContent = '✓';
             statusIcon.className = 'batteryTestStatusIcon status-ok';
             statusIcon.hidden = false;
-            statusText.textContent = entry ? `Erfolgreich getestet am ${entry.label}` : 'Erfolgreich getestet';
+            statusText.textContent = 'Erfolgreich getestet';
+            if (entry) statusText.title = `Getestet am ${entry.label}`;   // Zeitpunkt nur noch als Tooltip
             statusText.className = 'autoActionValue testSuccess';
         }
     }

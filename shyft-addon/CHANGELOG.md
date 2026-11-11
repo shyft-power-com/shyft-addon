@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.387
+
+* **Batterie-Tests: Erfolgsmeldung gekürzt auf „Erfolgreich getestet“.** Der Zeitpunkt („am 11.11.2026, 21:50 Uhr“) steht nur noch im Tooltip.
+
 ## 0.0.45.386
 
 * **Community-Vorschläge: eigene Eingaben bleiben ein Vorschlag, werden aber erst nach einer Stunde zurückgespielt.** Der Add-on-seitige Filter für eigene Meldungen (0.0.45.384/385) entfällt. Stattdessen liefert shyft-power eine Zuordnung erst aus, wenn ihr Eintrag mehr als eine Stunde alt ist; später eingerichtete Nutzer sind davon nicht betroffen, weil sich das Erstellungsdatum nicht ändert. Damit taucht eine gerade eingegebene Entität nicht sofort mit dem Label „Vorschlag“ im eigenen Feld auf.
