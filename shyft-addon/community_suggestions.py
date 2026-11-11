@@ -167,9 +167,9 @@ def _required_entity_fields(config, ready_key):
         "heating_rod": [("sensor", "heating_rod_switch")],
         "hot_water": [("sensor", "heatpump_dhw_target_temp")],
         "heating_target_temp": [("sensor", "heatpump_heating_target_temp_normal"), ("actor", "heating_target_temp")],
-        "battery_charge_shift_pv_surplus": [("sensor", "battery_charge_limit_current_pv_surplus"), ("actor", "battery_charge_shift_pv_surplus")],
-        "battery_discharge_shift": [("sensor", "battery_discharge_limit_current"), ("actor", "battery_discharge_shift")],
-        "battery_grid_charge": [("sensor", "battery_charge_limit_current"), ("actor", "battery_grid_charge")],
+        "battery_charge_shift_pv_surplus": [("sensor", "battery_charge_limit_current_pv_surplus"), ("actor", "battery_charge_shift_pv_surplus"), ("sensor", "battery_command_timeout")],
+        "battery_discharge_shift": [("sensor", "battery_discharge_limit_current"), ("actor", "battery_discharge_shift"), ("sensor", "battery_command_timeout")],
+        "battery_grid_charge": [("sensor", "battery_charge_limit_current"), ("actor", "battery_grid_charge"), ("sensor", "battery_command_timeout")],
     }
     return from_app.get(ready_key, [])
 
@@ -257,6 +257,7 @@ SENSOR_RULES = {
     "battery_charge_limit_current_pv_surplus": ("num", 0, 1000, "kw"),
     "battery_discharge_limit_current": ("num", 0, 1000, "kw"),
     "battery_storage_command_mode": ("state",),
+    "battery_command_timeout": ("num", 0, 10000000, ""),   # Sekunden
     "heatpump_dhw_tank_temp": ("num", -30, 120, ""),
     "heatpump_dhw_target_temp": ("num", -30, 120, ""),
     "heatpump_heating_target_temp_normal": ("num", -30, 120, ""),
