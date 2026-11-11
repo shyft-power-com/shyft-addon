@@ -189,14 +189,6 @@ def parse_rows(raw):
     return out
 
 
-def drop_own_reports(rows, reported, domain):
-    """Eigene Meldungen sind kein Vorschlag fuer den Meldenden selbst: eine Zeile, die dieses Add-on genau so gemeldet hat
-    (reported: {"<domain>|<slot>": steps_json}, siehe COMMUNITY_REPORTED_PATH in app.py), wird nicht zurueckgespielt. shyft-power
-    liefert bewusst keinen Zaehler mit (er liesse Rueckschluesse auf die Nutzerzahl zu), nur die Reihenfolge nach Haeufigkeit - deshalb
-    faellt eine eigene Zuordnung auch dann weg, wenn andere sie ebenfalls gemeldet haben; der Nutzer hat sie ja schon."""
-    return [row for row in rows if (reported or {}).get(f"{domain}|{row['slot']}") != _canonical(row["steps"])]
-
-
 def _resolve_block(block, index, device_id):
     "Block aus steps_json -> Config-Block {service, sharedFields, amountFields}; None, wenn der Nutzer eine Entitaet nicht hat."
     fields = {}

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.386
+
+* **Community-Vorschläge: eigene Eingaben bleiben ein Vorschlag, werden aber erst nach einer Stunde zurückgespielt.** Der Add-on-seitige Filter für eigene Meldungen (0.0.45.384/385) entfällt. Stattdessen liefert shyft-power eine Zuordnung erst aus, wenn ihr Eintrag mehr als eine Stunde alt ist; später eingerichtete Nutzer sind davon nicht betroffen, weil sich das Erstellungsdatum nicht ändert. Damit taucht eine gerade eingegebene Entität nicht sofort mit dem Label „Vorschlag“ im eigenen Feld auf.
+
 ## 0.0.45.385
 
 * **Community-Vorschläge: shyft-power liefert keinen Zähler mehr mit.** Der öffentliche Abruf enthielt bisher je Vorschlag, wie oft er gemeldet wurde, und ließ so Rückschlüsse auf die Nutzerzahl zu. Jetzt kommen nur noch Slot und Zuordnung, sortiert nach Häufigkeit; die Rangfolge (Platz 1 bis 3) ergibt sich aus der Reihenfolge. Eigene Meldungen eines Add-ons werden ihm dadurch nie als Vorschlag zurückgespielt, auch nicht, wenn andere dieselbe Zuordnung ebenfalls gemeldet haben.

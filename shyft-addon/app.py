@@ -7422,8 +7422,6 @@ def readCommunitySuggestions(section_key):
         index = community_suggestions.build_ref_index(data.get("entityInfo") or {})
         devices = (data.get("deviceMap") or {}).get(entry_id) or []
         rows = community_suggestions.parse_rows(shyft_adapter.get_suggestions(domain))
-        # Eigene, bisher nur von diesem Add-on gemeldete Zuordnungen sind kein Vorschlag fuer den Nutzer selbst
-        rows = community_suggestions.drop_own_reports(rows, _load_community_reported(), domain)
         result = community_suggestions.resolve_suggestions(rows, index, device_id=devices[0]["id"] if devices else None)
         print(f"[Shyft] Community-Vorschlaege fuer {domain} ({section_key}): {len(rows)} Eintraege aus shyft-power, {len(result)} davon fuer diese Entitaeten passend.")
         return jsonify(result)

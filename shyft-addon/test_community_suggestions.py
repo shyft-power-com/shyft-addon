@@ -138,16 +138,6 @@ def test_sensor_items_only_plausible_allowed_and_stable_entities():
     assert cs.build_sensor_items(config, "kachel_ohne_sensoren", info, None, states) == []
 
 
-def test_own_reports_are_not_suggested_back():
-    steps = [{"e": "vicare/dhw_temperature"}]
-    rows = [{"slot": "sensor:a", "steps": steps, "used": 0},   # von mir gemeldet
-            {"slot": "sensor:c", "steps": steps, "used": 0},   # von einem anderen
-            {"slot": "sensor:d", "steps": [{"e": "vicare/other"}], "used": 0}]  # gleicher Slot, aber andere Zuordnung als von mir gemeldet
-    reported = {"vicare|sensor:a": cs._canonical(steps), "vicare|sensor:d": cs._canonical(steps)}
-    assert [row["slot"] for row in cs.drop_own_reports(rows, reported, "vicare")] == ["sensor:c", "sensor:d"]
-    assert len(cs.drop_own_reports(rows, {}, "vicare")) == 3
-
-
 def test_rows_without_counter_keep_the_order_from_shyft_power():
     rows = cs.parse_rows(json.dumps([
         {"slot": "sensor:x", "steps": json.dumps([{"e": "vicare/first"}])},
