@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.0.45.386
+
+* **Community-Vorschläge: eigene Eingaben bleiben ein Vorschlag, werden aber erst nach einer Stunde zurückgespielt.** Der Add-on-seitige Filter für eigene Meldungen (0.0.45.384/385) entfällt. Stattdessen liefert shyft-power eine Zuordnung erst aus, wenn ihr Eintrag mehr als eine Stunde alt ist; später eingerichtete Nutzer sind davon nicht betroffen, weil sich das Erstellungsdatum nicht ändert. Damit taucht eine gerade eingegebene Entität nicht sofort mit dem Label „Vorschlag“ im eigenen Feld auf.
+
+## 0.0.45.385
+
+* **Community-Vorschläge: shyft-power liefert keinen Zähler mehr mit.** Der öffentliche Abruf enthielt bisher je Vorschlag, wie oft er gemeldet wurde, und ließ so Rückschlüsse auf die Nutzerzahl zu. Jetzt kommen nur noch Slot und Zuordnung, sortiert nach Häufigkeit; die Rangfolge (Platz 1 bis 3) ergibt sich aus der Reihenfolge. Eigene Meldungen eines Add-ons werden ihm dadurch nie als Vorschlag zurückgespielt, auch nicht, wenn andere dieselbe Zuordnung ebenfalls gemeldet haben.
+
+## 0.0.45.384
+
+* **Community-Vorschläge: eigene Meldungen kommen nicht mehr als „Vorschlag“ zurück.** Gab man selbst eine Entität ein und wurde sie (nach einem Test oder dem Sensor-Check) gemeldet, tauchte sie kurz darauf mit dem Label „Vorschlag“ im eigenen Feld auf. Jetzt merkt sich das Add-on, was es selbst gemeldet hat, und zeigt eine Zuordnung nicht an, wenn sie nur von diesem Add-on stammt (Zähler 1). Haben mindestens zwei Nutzer dieselbe Zuordnung gemeldet, bleibt sie ein Vorschlag. Vorschläge anderer Nutzer erscheinen weiter schon ab dem ersten Nutzer.
+
+## 0.0.45.383
+
+* **Community-Vorschläge: „Vorschlag“-Label erscheint nur noch einmal.** Wurde eine Kachel kurz hintereinander zweimal gebaut, lief die Vorbelegung zweimal und hängte ein zweites Label an dasselbe Feld. Ein bereits markiertes Feld (bzw. Rezept) wird jetzt übersprungen.
+
+## 0.0.45.382
+
+* **Info-Text „Netz: Aktuelle Leistung“ (Strom-Kachel) gekürzt.** Der Text erklärt jetzt knapp: Bezug und Einspeisung können als getrennte Entitäten angegeben werden, und ein zusätzlich am Wechselrichter befüllter Netz-Sensor wird mit dem jeweils aktuellsten Wert beider Quellen genutzt.
+
 ## 0.0.45.381
 
 * **Community-Vorschläge auch für Sensoren ohne Aktionstest (Wechselrichter, Netzsensor, Batterie-, Wallbox- und Auto-Sensoren).** Bisher wurde nur nach einem bestandenen Aktionstest gemeldet, Kacheln ohne Aktion lieferten deshalb nie Vorschläge. Jetzt prüft das Add-on kurz nach dem Start und danach alle 6 Stunden, ob ein zugeordneter Sensor der gewählten Integration gerade einen plausiblen Wert liefert (z. B. Leistung in sinnvollem Bereich, Ladestand 0–100 %, An/Aus), und meldet ihn anonym als Schlüssel aus Integration und Entitätsname. Je Zuordnung geht die Meldung nur einmal (bzw. nach einer Änderung erneut) raus. Nicht gemeldet werden Demo-Geräte, feste An/Aus-Werte, Skripte/Helfer und Sensoren ohne gültigen Wert.

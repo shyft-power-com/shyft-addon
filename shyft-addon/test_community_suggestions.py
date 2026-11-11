@@ -136,3 +136,12 @@ def test_sensor_items_only_plausible_allowed_and_stable_entities():
     items = cs.build_sensor_items(config, "wechselrichter", info, {"sensor.grid_w", "sensor.pv_dead"}, states)
     assert items == [("sensor:photovoltaic_powerflow_grid", json.dumps([{"e": "solaredge/ac_power"}], separators=(",", ":")))]
     assert cs.build_sensor_items(config, "kachel_ohne_sensoren", info, None, states) == []
+
+
+def test_rows_without_counter_keep_the_order_from_shyft_power():
+    rows = cs.parse_rows(json.dumps([
+        {"slot": "sensor:x", "steps": json.dumps([{"e": "vicare/first"}])},
+        {"slot": "sensor:x", "steps": json.dumps([{"e": "vicare/second"}])}]))
+    index = {"vicare/first": "sensor.first", "vicare/second": "sensor.second"}
+    result = cs.resolve_suggestions(rows, index)
+    assert [entry["value"] for entry in result["sensor:x"]] == ["sensor.first", "sensor.second"]

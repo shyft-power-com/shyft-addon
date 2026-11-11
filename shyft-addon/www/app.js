@@ -32,7 +32,7 @@ let actionTestResultsMap = {};
 const helpinformation = {
     'electricity_grid_power_sensors': {
         label: 'Netz: Aktuelle Leistung',
-        description: ' Die aktuelle Leistung, die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist. Du kannst mehrere Entitäten auswählen. Auch vom Wechselrichter kannst du den Sensor "Netz: Aktuelle Leistung" messen lassen. Bei mehreren Sensoren (z. B. getrennte Sensoren für Bezug und Einspeisung) betrachtet Shyft nur die, die gerade aktuell melden (Aktualisierung höchstens eine Minute hinter dem aktuellsten), und nimmt davon den Wert mit dem größten Betrag - ein träger Sensor wie der des Wechselrichters zählt dann nicht mit. Ein Sensor, dessen Name "Einspeise" enthält, wird automatisch als Einspeisung (negatives Vorzeichen) gewertet.'
+        description: ' Aktuelle Leistung, die du aus dem Stromnetz beziehst bzw. dorthin einspeist. Es können mehrere Entitäten ausgewählt werden, wenn Bezug und Einspeisung separat gemessen werden. Wenn der Sensor "Netz: Aktuelle Leistung" am Wechselrichter ebenfalls befüllt wird, nutzt Shyft den jeweils aktuellsten Wert aus beiden Quellen.'
     },
     'photovoltaic_powerflow_load': {
         label: 'Haushalt: Aktuelle Leistung',
@@ -7275,6 +7275,7 @@ function applyRecipeSuggestion(section, slot, entries) {
     if (!wasEmpty && !stillSuggested) return;
 
     const host = targets0[0].el.closest('.autoActionControl') || targets0[0].el;
+    if (host.querySelector('.communitySuggestionBadge')) return;   // schon markiert (zweiter, gleichzeitiger Durchlauf)
     const mark = {inputs: [], badge: null, sectionKey: section.key};
     const title = 'Von anderen Nutzern mit derselben Integration erfolgreich verwendet - bitte testen.';
 
@@ -7345,6 +7346,9 @@ async function applyCommunitySuggestions(section, entryIds, firstSetup = false) 
         // Die haeufigsten Vorschlaege (Platz 1 bis 3) stehen im Dropdown ganz oben mit dem Label "Vorschlag" (siehe attachEntityDropdown)
         const datalist = document.getElementById('entityOptions_' + section.key + '_' + key);
         if (datalist) datalist.communitySuggestions = entries.map(entry => formatEntityDisplay(entry.value));
+        // Schon markiert: ein zweiter, gleichzeitiger Durchlauf fuer dieselbe frisch gebaute Kachel (z.B. durch zwei Render-Aufrufe
+        // hintereinander) wuerde sonst ein zweites "Vorschlag"-Badge anhaengen.
+        if (input.classList.contains('communitySuggested')) continue;
         const top = formatEntityDisplay(entries[0].value);
         // Bei der Ersteinrichtung ersetzt ein Vorschlag auch den automatischen Standard "An" (siehe Neueinrichtung der Waermepumpe
         // im Geraete-Picker); gibt es keinen Vorschlag, bleibt "An" stehen.
