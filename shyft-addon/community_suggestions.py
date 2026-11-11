@@ -238,3 +238,83 @@ def resolve_suggestions(rows, index, device_id=None, per_slot=3):
         if value and len(bucket) < per_slot and all(entry["value"] != value for entry in bucket):
             bucket.append({"value": value, "used": row["used"]})
     return {slot: entries for slot, entries in result.items() if entries}
+
+
+# ---- Sensor-Zuordnungen ohne Aktionstest ----------------------------------------------------------------------------
+# Kacheln ohne Aktion (Wechselrichter, Netzsensor, ...) haben keinen Test, der eine Meldung ausloest. Dort gilt ein Sensor als
+# brauchbar, wenn er gerade einen plausiblen Wert liefert (siehe plausible_sensor_value) - das Add-on meldet ihn dann einmal je
+# Zuordnung (siehe report_plausible_sensor_suggestions in app.py).
+AMBIGUOUS_STATES = {"", "unknown", "unavailable", "none", "null", "nan"}
+
+# Feld -> ("num", min, max, einheit) | ("onoff",) | ("state",). Zahlen: Leistungen in kW (W wird umgerechnet), Temperaturen in °C, Ladestand in %.
+SENSOR_RULES = {
+    "photovoltaic_powerflow_pv": ("num", -0.1, 1000, "kw"),
+    "photovoltaic_powerflow_load": ("num", -0.1, 1000, "kw"),
+    "photovoltaic_powerflow_grid": ("num", -1000, 1000, "kw"),
+    "photovoltaic_powerflow_battery": ("num", -1000, 1000, "kw"),
+    "battery_state_of_charge": ("num", 0, 100, ""),
+    "battery_charge_limit_current": ("num", 0, 1000, "kw"),
+    "battery_charge_limit_current_pv_surplus": ("num", 0, 1000, "kw"),
+    "battery_discharge_limit_current": ("num", 0, 1000, "kw"),
+    "battery_storage_command_mode": ("state",),
+    "heatpump_dhw_tank_temp": ("num", -30, 120, ""),
+    "heatpump_dhw_target_temp": ("num", -30, 120, ""),
+    "heatpump_heating_target_temp_normal": ("num", -30, 120, ""),
+    "heatpump_supply_temp_hp": ("num", -30, 120, ""),
+    "heatpump_temp_indoor_measured": ("num", -30, 60, ""),
+    "heatpump_current_power_elect": ("num", -0.1, 100, "kw"),
+    "heatpump_dhw_activated": ("onoff",),
+    "heatpump_dhw_on_off": ("onoff",),
+    "heatpump_heating_activated": ("onoff",),
+    "heatpump_on_off": ("onoff",),
+    "electronicvehicle_state_of_charge": ("num", 0, 100, ""),
+    "wallbox_current_charging_power": ("num", -0.1, 1000, "kw"),
+    "wallbox_plugged": ("state",),
+}
+
+
+def _finite_number(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number and number not in (float("inf"), float("-inf")) else None
+
+
+def plausible_sensor_value(field, state, unit=None):
+    """Liefert der Sensor `field` mit Zustand `state` (und Einheit `unit`) gerade einen brauchbaren Wert? Unbekannte Felder: nein."""
+    rule = SENSOR_RULES.get(field)
+    if rule is None:
+        return False
+    text = str(state if state is not None else "").strip().lower()
+    if rule[0] == "onoff":
+        return text in ("on", "off")
+    if rule[0] == "state":
+        return text not in AMBIGUOUS_STATES
+    number = _finite_number(state)
+    if number is None:
+        return False
+    if rule[3] == "kw" and unit in ("W", "w"):
+        number /= 1000
+    return rule[1] <= number <= rule[2]
+
+
+def build_sensor_items(config, section_key, info, allowed_entity_ids, states):
+    """Sensor-Zuordnungen der Kachel section_key, die gerade einen plausiblen Wert liefern: Liste von (slot, steps_json).
+    states: {entity_id: {"state": ..., "unit": ...}}; allowed_entity_ids: nur Entitaeten der gewaehlten Integration."""
+    prefixes = SECTION_SENSOR_PREFIXES.get(section_key, ())
+    items = []
+    for field, entity_id in (config.get("sensorMappings") or {}).items():
+        if not prefixes or not field.startswith(prefixes) or not isinstance(entity_id, str):
+            continue
+        if allowed_entity_ids is not None and entity_id not in allowed_entity_ids:
+            continue
+        current = (states or {}).get(entity_id)
+        if not current or not plausible_sensor_value(field, current.get("state"), current.get("unit")):
+            continue
+        ref = _ref_for(entity_id, info)
+        if ref:
+            items.append((f"sensor:{field}", _canonical([{"e": ref}])))
+    return items

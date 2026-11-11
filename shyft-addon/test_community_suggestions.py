@@ -107,3 +107,32 @@ def test_own_scripts_and_automations_are_never_reported_or_suggested():
               "actorMappings": {"heating_target_temp": "script.shyft_heizung_soll_temperatur"}}
     slots = [slot for slot, _ in cs.build_report_items(config, "heating_target_temp", info)]
     assert slots == ["sensor:heatpump_heating_target_temp_normal"]
+
+
+def test_plausible_sensor_values():
+    p = cs.plausible_sensor_value
+    assert p("photovoltaic_powerflow_grid", "-1.5", "kW") and p("photovoltaic_powerflow_grid", "1500", "W")
+    assert p("photovoltaic_powerflow_pv", "0.0", "kW")  # nachts 0 ist plausibel
+    assert not p("photovoltaic_powerflow_pv", "unavailable", "kW")
+    assert not p("photovoltaic_powerflow_pv", "5000000", "W")  # 5000 kW
+    assert not p("battery_state_of_charge", "120", "%") and p("battery_state_of_charge", "65", "%")
+    assert p("heatpump_on_off", "on") and not p("heatpump_on_off", "unknown")
+    assert p("battery_storage_command_mode", "Maximize Self Consumption") and not p("battery_storage_command_mode", "")
+    assert not p("not_a_known_field", "1")
+
+
+def test_sensor_items_only_plausible_allowed_and_stable_entities():
+    info = cs.build_entity_info([
+        {"entity_id": "sensor.grid_w", "platform": "solaredge", "translation_key": "ac_power"},
+        {"entity_id": "sensor.pv_dead", "platform": "solaredge", "translation_key": "dc_power"},
+        {"entity_id": "sensor.foreign", "platform": "other", "translation_key": "grid"},
+    ])
+    config = {"sensorMappings": {
+        "photovoltaic_powerflow_grid": "sensor.grid_w", "photovoltaic_powerflow_pv": "sensor.pv_dead",
+        "photovoltaic_powerflow_load": "sensor.foreign", "photovoltaic_powerflow_battery": "static_on",
+        "heatpump_dhw_tank_temp": "sensor.grid_w"}}
+    states = {"sensor.grid_w": {"state": "800", "unit": "W"}, "sensor.pv_dead": {"state": "unavailable"},
+              "sensor.foreign": {"state": "1.0", "unit": "kW"}}
+    items = cs.build_sensor_items(config, "wechselrichter", info, {"sensor.grid_w", "sensor.pv_dead"}, states)
+    assert items == [("sensor:photovoltaic_powerflow_grid", json.dumps([{"e": "solaredge/ac_power"}], separators=(",", ":")))]
+    assert cs.build_sensor_items(config, "kachel_ohne_sensoren", info, None, states) == []

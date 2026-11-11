@@ -7337,11 +7337,75 @@ def report_community_suggestions(ready_key):
         items = community_suggestions.build_report_items(
             config, ready_key, data.get("entityInfo") or {}, include_remaining_sensors_for=remaining,
             allowed_entity_ids=set((data.get("entityMap") or {}).get(entry_ids[0], [])))
+        reported = _load_community_reported()
         for slot, steps_json in items:
             shyft_adapter.report_suggestion(slot, domain, steps_json)
+            reported[f"{domain}|{slot}"] = steps_json   # damit der Sensor-Job (unten) dieselbe Zuordnung nicht noch einmal meldet
+        _save_community_reported(reported)
         print(f"[Shyft] {len(items)} Community-Vorschlag/-Vorschlaege fuer {domain} gemeldet ({ready_key}).")
     except Exception as e:
         print("[Shyft] Community-Vorschlaege konnten nicht gemeldet werden:", repr(e))
+
+
+# Bereits gemeldete Zuordnungen ("<domain>|<slot>" -> steps_json): jede Zuordnung geht je Add-on nur einmal (bzw. nach einer Aenderung erneut)
+# an shyft-power, sonst zaehlte ein einzelner Nutzer den Zaehler "used" bei jedem Lauf hoch.
+COMMUNITY_REPORTED_PATH = "/data/community_reported.json"
+
+
+def _load_community_reported():
+    try:
+        with open(COMMUNITY_REPORTED_PATH, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_community_reported(reported):
+    try:
+        with open(COMMUNITY_REPORTED_PATH, "w") as f:
+            json.dump(reported, f)
+    except Exception as e:
+        print("[Shyft] Gemeldete Community-Vorschlaege konnten nicht gespeichert werden:", repr(e))
+
+
+def report_plausible_sensor_suggestions():
+    """Meldet Sensor-Zuordnungen, die gerade einen plausiblen Wert liefern (siehe community_suggestions.plausible_sensor_value), anonym an
+    shyft-power - gedacht fuer Kacheln ohne Aktionstest (Wechselrichter, Netzsensor, ...), deren Zuordnungen sonst nie gemeldet wuerden.
+    Je Zuordnung nur einmal (siehe COMMUNITY_REPORTED_PATH). Best effort - Fehler werden nur geloggt."""
+    try:
+        if is_demo_mode() or not extract_shyft_user_id(shyft_adapter.bubble_token):
+            return
+        config = _read_current_config()
+        mappings = config.get("integrationMappings") or {}
+        sections = [key for key in community_suggestions.SECTION_SENSOR_PREFIXES if _is_real_device(mappings.get(key) or [])]
+        if not sections:
+            return
+        data = homeassistant_adapter.get_integrations_and_entities()
+        info = data.get("entityInfo") or {}
+        states = {}
+        for state in homeassistant_adapter.get_from_homeassistant("/api/states", timeout=30) or []:
+            states[state.get("entity_id")] = {"state": state.get("state"), "unit": (state.get("attributes") or {}).get("unit_of_measurement")}
+        reported = _load_community_reported()
+        sent = 0
+        for section_key in sections:
+            entry_id = mappings[section_key][0]
+            domain = next((i.get("domain") for i in data["integrations"] if i["id"] == entry_id), "")
+            if not domain:
+                continue
+            allowed = set((data.get("entityMap") or {}).get(entry_id, []))
+            for slot, steps_json in community_suggestions.build_sensor_items(config, section_key, info, allowed, states):
+                key = f"{domain}|{slot}"
+                if reported.get(key) == steps_json:
+                    continue
+                shyft_adapter.report_suggestion(slot, domain, steps_json)
+                reported[key] = steps_json
+                _save_community_reported(reported)
+                sent += 1
+        if sent:
+            print(f"[Shyft] {sent} Sensor-Zuordnung(en) mit plausiblem Wert als Community-Vorschlag gemeldet.")
+    except Exception as e:
+        print("[Shyft] Sensor-Vorschlaege konnten nicht gemeldet werden:", repr(e))
 
 
 @app.route("/suggestions/<section_key>", methods=["GET"])
@@ -14293,6 +14357,10 @@ scheduler.add_job(backfill_pv_forecast_accuracy, "date", run_date=datetime.now(t
 scheduler.add_job(refresh_input_csv_health_if_problem_active, 'interval', minutes=5)
 scheduler.add_job(update_base_load_periodically, 'cron', minute="7", next_run_time=datetime.now(timezone.utc) + timedelta(seconds=120))
 scheduler.add_job(backfill_household_usage_periodically, 'interval', minutes=30, next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90))
+# Sensor-Zuordnungen mit plausiblem Wert als Community-Vorschlag melden (Kacheln ohne Aktionstest, siehe report_plausible_sensor_suggestions) -
+# kurz nach dem Start und danach alle 6 Stunden; schon gemeldete Zuordnungen werden uebersprungen, der Lauf kostet dann nur einen HA-Abruf.
+scheduler.add_job(report_plausible_sensor_suggestions, 'cron', hour="*/6", minute="25", max_instances=1, coalesce=True,
+                  next_run_time=datetime.now(timezone.utc) + timedelta(seconds=240))
 # on the hour, alongside the other hourly syncs - one snapshot per hour is exactly the
 # resolution the Anwesenheitsprognose needs (see compute_car_presence_forecast)
 scheduler.add_job(sync_car_presence_log_periodically, 'cron', minute="0")
