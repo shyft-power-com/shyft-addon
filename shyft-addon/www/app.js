@@ -3454,7 +3454,7 @@ function renderIntegrationSections() {
                 }
             }
             if (selectedIds.length > 0) {
-                renderSectionBody(bodyDiv, section, selectedIds);
+                renderSectionBody(bodyDiv, section, selectedIds, wasEmpty || (wasDemo && becameReal));
                 if (wasEmpty || (wasDemo && becameReal)) expanded = true;
             } else {
                 bodyDiv.innerHTML = '';
@@ -3964,9 +3964,11 @@ function buildIntegrationPicker(section, currentIds, onChange) {
     return wrapper;
 }
 
-function renderSectionBody(bodyDiv, section, entryIds) {
+// firstSetup: das Geraet wurde gerade erstmals eingerichtet (siehe Geraete-Picker) - nur dann ersetzt ein Community-Vorschlag
+// auch den automatischen Standardwert "An" eines Felds.
+function renderSectionBody(bodyDiv, section, entryIds, firstSetup = false) {
     renderSectionBodyContent(bodyDiv, section, entryIds);
-    applyCommunitySuggestions(section, entryIds);
+    applyCommunitySuggestions(section, entryIds, firstSetup);
 }
 
 function renderSectionBodyContent(bodyDiv, section, entryIds) {
@@ -5206,6 +5208,13 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction, staticO
         const row = document.createElement('div');
         row.className = 'entityDropdownOption';
         row.textContent = opt.label;
+        if (opt.suggested) {
+            // Community-Vorschlag (siehe applyCommunitySuggestions): kleines Label hinter dem Namen
+            const tag = document.createElement('span');
+            tag.className = 'entityDropdownSuggestionTag';
+            tag.textContent = 'Vorschlag';
+            row.appendChild(tag);
+        }
         row.addEventListener('mousedown', (event) => {
             event.preventDefault();
             selectValue(opt.value);
@@ -5268,10 +5277,15 @@ function attachEntityDropdown(input, {datalistId, headerText, topAction, staticO
         // "Passende Sensoren"/"Sonstige Sensoren"-Aufteilung nur, wenn ueberhaupt beide Gruppen
         // vorkommen (siehe populateSensorDatalist/scoreSensorEntityForField) - sonst (z.B. noch kein
         // Geraet ausgewaehlt, oder alle Optionen gleichermassen unklar) eine schlichte flache Liste.
-        const matching = filtered.filter(opt => opt.bucket === 'match');
-        const others = filtered.filter(opt => opt.bucket === 'other');
+        // Community-Vorschlaege (datalist.communitySuggestions, gesetzt von applyCommunitySuggestions; bleibt beim Neubefuellen der
+        // Optionen erhalten) stehen als erste Eintraege - bei geteilter Liste unter "Passende Sensoren" - und tragen das Label "Vorschlag".
+        const suggestedValues = (datalist && datalist.communitySuggestions) || [];
+        const suggested = suggestedValues.map(value => filtered.find(opt => opt.value === value)).filter(Boolean).map(opt => ({...opt, suggested: true}));
+        const rest = suggested.length ? filtered.filter(opt => !suggestedValues.includes(opt.value)) : filtered;
+        const matching = suggested.concat(rest.filter(opt => opt.bucket === 'match'));
+        const others = rest.filter(opt => opt.bucket === 'other');
         if (matching.length === 0 || others.length === 0) {
-            for (const opt of filtered) appendOptionRow(opt);
+            for (const opt of suggested.concat(rest)) appendOptionRow(opt);
             return;
         }
 
@@ -7319,7 +7333,7 @@ function applyRecipeSuggestion(section, slot, entries) {
     host.addEventListener('change', onUserEdit);
 }
 
-async function applyCommunitySuggestions(section, entryIds) {
+async function applyCommunitySuggestions(section, entryIds, firstSetup = false) {
     if (entryIds.length !== 1 || entryIds[0] === DEMO_INTEGRATION_ID) return;
     const suggestions = await loadCommunitySuggestions(section.key, entryIds[0]);
     for (const [slot, entries] of Object.entries(suggestions || {})) {
@@ -7328,18 +7342,14 @@ async function applyCommunitySuggestions(section, entryIds) {
         if (kind !== 'sensor' && kind !== 'actor') continue;
         const input = document.getElementById(key + (kind === 'sensor' ? VALUE_POSTFIX : ACTOR_VALUE_POSTFIX));
         if (!input || typeof input.value !== 'string' || !entries.length) continue;
-        // Alternativen (Platz 2 und 3) oben im Dropdown
+        // Die haeufigsten Vorschlaege (Platz 1 bis 3) stehen im Dropdown ganz oben mit dem Label "Vorschlag" (siehe attachEntityDropdown)
         const datalist = document.getElementById('entityOptions_' + section.key + '_' + key);
-        if (datalist) {
-            for (const entry of entries.slice(1).reverse()) {
-                const option = document.createElement('option');
-                option.value = formatEntityDisplay(entry.value);
-                option.dataset.bucket = 'match';
-                datalist.insertBefore(option, datalist.firstChild);
-            }
-        }
+        if (datalist) datalist.communitySuggestions = entries.map(entry => formatEntityDisplay(entry.value));
         const top = formatEntityDisplay(entries[0].value);
-        const wasEmpty = !input.value.trim();
+        // Bei der Ersteinrichtung ersetzt ein Vorschlag auch den automatischen Standard "An" (siehe Neueinrichtung der Waermepumpe
+        // im Geraete-Picker); gibt es keinen Vorschlag, bleibt "An" stehen.
+        const isAutoDefault = firstSetup && (configData['sensorMappings'] || {})[key] === STATIC_SENSOR_ON;
+        const wasEmpty = !input.value.trim() || isAutoDefault;
         // Bereits per Vorschlag belegt (vor dem letzten Neurendern gespeichert): Markierung erneut setzen,
         // solange noch kein Test der Kachel bestanden ist.
         const stillSuggested = !wasEmpty && input.value === top && !isSectionTestPassed(section.key);
