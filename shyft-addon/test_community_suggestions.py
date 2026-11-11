@@ -136,3 +136,16 @@ def test_sensor_items_only_plausible_allowed_and_stable_entities():
     items = cs.build_sensor_items(config, "wechselrichter", info, {"sensor.grid_w", "sensor.pv_dead"}, states)
     assert items == [("sensor:photovoltaic_powerflow_grid", json.dumps([{"e": "solaredge/ac_power"}], separators=(",", ":")))]
     assert cs.build_sensor_items(config, "kachel_ohne_sensoren", info, None, states) == []
+
+
+def test_own_single_reports_are_not_suggested_back():
+    steps = [{"e": "vicare/dhw_temperature"}]
+    rows = [{"slot": "sensor:a", "steps": steps, "used": 1},      # nur ich
+            {"slot": "sensor:b", "steps": steps, "used": 2},      # ich und mindestens ein anderer
+            {"slot": "sensor:c", "steps": steps, "used": 1},      # von einem anderen
+            {"slot": "sensor:d", "steps": [{"e": "vicare/other"}], "used": 1}]  # gleiche Slot-Art, aber andere Zuordnung als gemeldet
+    reported = {"vicare|sensor:a": cs._canonical(steps), "vicare|sensor:b": cs._canonical(steps),
+                "vicare|sensor:d": cs._canonical(steps)}
+    kept = [row["slot"] for row in cs.drop_own_reports(rows, reported, "vicare")]
+    assert kept == ["sensor:b", "sensor:c", "sensor:d"]
+    assert [row["slot"] for row in cs.drop_own_reports(rows, {}, "vicare")] == ["sensor:a", "sensor:b", "sensor:c", "sensor:d"]

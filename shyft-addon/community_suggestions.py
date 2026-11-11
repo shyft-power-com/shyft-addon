@@ -189,6 +189,19 @@ def parse_rows(raw):
     return out
 
 
+def drop_own_reports(rows, reported, domain):
+    """Eigene Meldungen sind kein Vorschlag fuer den Meldenden selbst: eine Zeile, die dieses Add-on genau so gemeldet hat
+    (reported: {"<domain>|<slot>": steps_json}, siehe COMMUNITY_REPORTED_PATH in app.py) und die nur einmal gezaehlt wurde (used <= 1),
+    stammt von diesem Nutzer allein. Ab used >= 2 hat mindestens ein anderer dieselbe Zuordnung gemeldet - sie bleibt."""
+    kept = []
+    for row in rows:
+        mine = (reported or {}).get(f"{domain}|{row['slot']}") == _canonical(row["steps"])
+        if mine and row["used"] <= 1:
+            continue
+        kept.append(row)
+    return kept
+
+
 def _resolve_block(block, index, device_id):
     "Block aus steps_json -> Config-Block {service, sharedFields, amountFields}; None, wenn der Nutzer eine Entitaet nicht hat."
     fields = {}

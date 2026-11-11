@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.384
+
+* **Community-Vorschläge: eigene Meldungen kommen nicht mehr als „Vorschlag“ zurück.** Gab man selbst eine Entität ein und wurde sie (nach einem Test oder dem Sensor-Check) gemeldet, tauchte sie kurz darauf mit dem Label „Vorschlag“ im eigenen Feld auf. Jetzt merkt sich das Add-on, was es selbst gemeldet hat, und zeigt eine Zuordnung nicht an, wenn sie nur von diesem Add-on stammt (Zähler 1). Haben mindestens zwei Nutzer dieselbe Zuordnung gemeldet, bleibt sie ein Vorschlag. Vorschläge anderer Nutzer erscheinen weiter schon ab dem ersten Nutzer.
+
 ## 0.0.45.383
 
 * **Community-Vorschläge: „Vorschlag“-Label erscheint nur noch einmal.** Wurde eine Kachel kurz hintereinander zweimal gebaut, lief die Vorbelegung zweimal und hängte ein zweites Label an dasselbe Feld. Ein bereits markiertes Feld (bzw. Rezept) wird jetzt übersprungen.
