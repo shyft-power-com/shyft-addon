@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.381
+
+* **Community-Vorschläge auch für Sensoren ohne Aktionstest (Wechselrichter, Netzsensor, Batterie-, Wallbox- und Auto-Sensoren).** Bisher wurde nur nach einem bestandenen Aktionstest gemeldet, Kacheln ohne Aktion lieferten deshalb nie Vorschläge. Jetzt prüft das Add-on kurz nach dem Start und danach alle 6 Stunden, ob ein zugeordneter Sensor der gewählten Integration gerade einen plausiblen Wert liefert (z. B. Leistung in sinnvollem Bereich, Ladestand 0–100 %, An/Aus), und meldet ihn anonym als Schlüssel aus Integration und Entitätsname. Je Zuordnung geht die Meldung nur einmal (bzw. nach einer Änderung erneut) raus. Nicht gemeldet werden Demo-Geräte, feste An/Aus-Werte, Skripte/Helfer und Sensoren ohne gültigen Wert.
+
 ## 0.0.45.380
 
 * **Community-Vorschläge im Dropdown ganz oben mit Label „Vorschlag“.** Die bis zu drei häufigsten Vorschläge stehen im Entitäten-Dropdown als erste Einträge (bei geteilter Liste unter „Passende Sensoren“) mit einem kleinen Label „Vorschlag“. Sie bleiben dort auch, wenn die Liste neu aufgebaut wird; vorher waren sie nicht zu sehen.
