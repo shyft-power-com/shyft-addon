@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.382
+
+* **Info-Text „Netz: Aktuelle Leistung“ (Strom-Kachel) gekürzt.** Der Text erklärt jetzt knapp: Bezug und Einspeisung können als getrennte Entitäten angegeben werden, und ein zusätzlich am Wechselrichter befüllter Netz-Sensor wird mit dem jeweils aktuellsten Wert beider Quellen genutzt.
+
 ## 0.0.45.381
 
 * **Community-Vorschläge auch für Sensoren ohne Aktionstest (Wechselrichter, Netzsensor, Batterie-, Wallbox- und Auto-Sensoren).** Bisher wurde nur nach einem bestandenen Aktionstest gemeldet, Kacheln ohne Aktion lieferten deshalb nie Vorschläge. Jetzt prüft das Add-on kurz nach dem Start und danach alle 6 Stunden, ob ein zugeordneter Sensor der gewählten Integration gerade einen plausiblen Wert liefert (z. B. Leistung in sinnvollem Bereich, Ladestand 0–100 %, An/Aus), und meldet ihn anonym als Schlüssel aus Integration und Entitätsname. Je Zuordnung geht die Meldung nur einmal (bzw. nach einer Änderung erneut) raus. Nicht gemeldet werden Demo-Geräte, feste An/Aus-Werte, Skripte/Helfer und Sensoren ohne gültigen Wert.

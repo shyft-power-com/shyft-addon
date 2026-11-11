@@ -32,7 +32,7 @@ let actionTestResultsMap = {};
 const helpinformation = {
     'electricity_grid_power_sensors': {
         label: 'Netz: Aktuelle Leistung',
-        description: ' Die aktuelle Leistung, die dein Haushalt aus dem öffentlichen Stromnetz bezieht bzw. dorthin einspeist. Du kannst mehrere Entitäten auswählen. Auch vom Wechselrichter kannst du den Sensor "Netz: Aktuelle Leistung" messen lassen. Bei mehreren Sensoren (z. B. getrennte Sensoren für Bezug und Einspeisung) betrachtet Shyft nur die, die gerade aktuell melden (Aktualisierung höchstens eine Minute hinter dem aktuellsten), und nimmt davon den Wert mit dem größten Betrag - ein träger Sensor wie der des Wechselrichters zählt dann nicht mit. Ein Sensor, dessen Name "Einspeise" enthält, wird automatisch als Einspeisung (negatives Vorzeichen) gewertet.'
+        description: ' Aktuelle Leistung, die du aus dem Stromnetz beziehst bzw. dorthin einspeist. Es können mehrere Entitäten ausgewählt werden, wenn Bezug und Einspeisung separat gemessen werden. Wenn der Sensor "Netz: Aktuelle Leistung" am Wechselrichter ebenfalls befüllt wird, nutzt Shyft den jeweils aktuellsten Wert aus beiden Quellen.'
     },
     'photovoltaic_powerflow_load': {
         label: 'Haushalt: Aktuelle Leistung',
