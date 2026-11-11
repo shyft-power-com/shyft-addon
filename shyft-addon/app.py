@@ -7290,8 +7290,10 @@ def _record_action_test_result(ready_key, ok):
             _clear_not_ready_problem(ready_key)
             # Erstes erfolgreich getestetes steuerbares Geraet beendet den Demomodus (Konto anlegen).
             # Im Hintergrund, damit die Testantwort nicht auf Bubble wartet.
-            # Erneutes Testen mit unveraenderter Konfiguration meldet nichts (nur neue/geaenderte Setups zaehlen).
-            threading.Thread(target=_create_account_after_test, args=(ready_key, config_changed_since_last_pass), daemon=True).start()
+            # Gemeldet wird nach jedem bestandenen Test; was dieses Add-on schon gemeldet hat, filtert report_community_suggestions
+            # anhand der Liste der gemeldeten Zuordnungen heraus (nicht an der Konfigurationsaenderung seit dem letzten Test festgemacht:
+            # ein schon frueher bestandener Test haette sonst nie gemeldet).
+            threading.Thread(target=_create_account_after_test, args=(ready_key, True), daemon=True).start()
     except Exception as e:
         print("[Shyft] actionTestPassed konnte nicht aktualisiert werden:", repr(e))
 
@@ -7338,11 +7340,15 @@ def report_community_suggestions(ready_key):
             config, ready_key, data.get("entityInfo") or {}, include_remaining_sensors_for=remaining,
             allowed_entity_ids=set((data.get("entityMap") or {}).get(entry_ids[0], [])))
         reported = _load_community_reported()
+        sent = 0
         for slot, steps_json in items:
+            if reported.get(f"{domain}|{slot}") == steps_json:
+                continue   # schon gemeldet (von einem frueheren Test oder dem Sensor-Job unten)
             shyft_adapter.report_suggestion(slot, domain, steps_json)
-            reported[f"{domain}|{slot}"] = steps_json   # damit der Sensor-Job (unten) dieselbe Zuordnung nicht noch einmal meldet
-        _save_community_reported(reported)
-        print(f"[Shyft] {len(items)} Community-Vorschlag/-Vorschlaege fuer {domain} gemeldet ({ready_key}).")
+            reported[f"{domain}|{slot}"] = steps_json
+            _save_community_reported(reported)
+            sent += 1
+        print(f"[Shyft] {sent} neue(r) Community-Vorschlag/-Vorschlaege fuer {domain} gemeldet ({ready_key}, {len(items) - sent} schon gemeldet).")
     except Exception as e:
         print("[Shyft] Community-Vorschlaege konnten nicht gemeldet werden:", repr(e))
 

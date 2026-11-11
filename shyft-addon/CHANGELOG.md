@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.45.388
+
+* **Community-Vorschläge: jeder bestandene Test meldet, was noch nicht gemeldet wurde, und der Command Timeout geht mit.** Bisher meldete nur ein Test, bei dem sich die Konfiguration seit dem letzten bestandenen Test geändert hatte; war eine Steuerung schon einmal bestanden, kam danach nie eine Meldung. Jetzt meldet jeder bestandene Test, und das Add-on überspringt nur, was es selbst schon genauso gemeldet hat. Bei den Batterie-Aktionen (Entladen/Laden verschieben, Netzladen) wird außerdem der zugeordnete „Command Timeout“ mitgemeldet, und der Sensor-Check kennt ihn als Zuordnung mit plausiblem Wert.
+
+## 0.0.45.387
+
+* **Batterie-Tests: Erfolgsmeldung gekürzt auf „Erfolgreich getestet“.** Der Zeitpunkt („am 11.11.2026, 21:50 Uhr“) steht nur noch im Tooltip.
+
 ## 0.0.45.386
 
 * **Community-Vorschläge: eigene Eingaben bleiben ein Vorschlag, werden aber erst nach einer Stunde zurückgespielt.** Der Add-on-seitige Filter für eigene Meldungen (0.0.45.384/385) entfällt. Stattdessen liefert shyft-power eine Zuordnung erst aus, wenn ihr Eintrag mehr als eine Stunde alt ist; später eingerichtete Nutzer sind davon nicht betroffen, weil sich das Erstellungsdatum nicht ändert. Damit taucht eine gerade eingegebene Entität nicht sofort mit dem Label „Vorschlag“ im eigenen Feld auf.

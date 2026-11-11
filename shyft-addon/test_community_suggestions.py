@@ -145,3 +145,14 @@ def test_rows_without_counter_keep_the_order_from_shyft_power():
     index = {"vicare/first": "sensor.first", "vicare/second": "sensor.second"}
     result = cs.resolve_suggestions(rows, index)
     assert [entry["value"] for entry in result["sensor:x"]] == ["sensor.first", "sensor.second"]
+
+
+def test_battery_actions_include_command_timeout_and_plausible_rule():
+    info = cs.build_entity_info([
+        {"entity_id": "number.limit", "platform": "solaredge", "original_name": "Storage Discharge Limit"},
+        {"entity_id": "number.timeout", "platform": "solaredge", "original_name": "Storage Command Timeout"}])
+    config = {"sensorMappings": {"battery_discharge_limit_current": "number.limit", "battery_command_timeout": "number.timeout"}}
+    slots = [slot for slot, _ in cs.build_report_items(config, "battery_discharge_shift", info)]
+    assert slots == ["sensor:battery_discharge_limit_current", "sensor:battery_command_timeout"]
+    assert cs.plausible_sensor_value("battery_command_timeout", "36000", "s")
+    assert not cs.plausible_sensor_value("battery_command_timeout", "unavailable", "s")

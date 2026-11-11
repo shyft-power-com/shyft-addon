@@ -56,3 +56,24 @@ def test_nothing_reported_in_demo_mode_or_without_real_device(monkeypatch, tmp_p
     monkeypatch.setattr(app, "_read_current_config", lambda: CONFIG)
     app.report_plausible_sensor_suggestions()
     assert shyft.reported == []
+
+
+class FakeHABattery(FakeHA):
+    def get_integrations_and_entities(self):
+        return {
+            "integrations": [{"id": "entry1", "domain": "solaredge"}],
+            "entityMap": {"entry1": ["number.limit", "number.timeout"]},
+            "entityInfo": {"number.limit": {"ref": "solaredge/storage discharge limit"},
+                           "number.timeout": {"ref": "solaredge/storage command timeout"}},
+        }
+
+
+def test_passed_test_reports_once_even_if_config_unchanged(monkeypatch, tmp_path):
+    shyft = _setup(monkeypatch, tmp_path, {
+        "integrationMappings": {"batterie": ["entry1"]},
+        "sensorMappings": {"battery_discharge_limit_current": "number.limit", "battery_command_timeout": "number.timeout"}})
+    monkeypatch.setattr(app, "homeassistant_adapter", FakeHABattery())
+    app.report_community_suggestions("battery_discharge_shift")
+    assert [slot for slot, _, _ in shyft.reported] == ["sensor:battery_discharge_limit_current", "sensor:battery_command_timeout"]
+    app.report_community_suggestions("battery_discharge_shift")   # zweiter bestandener Test: nichts Neues
+    assert len(shyft.reported) == 2
