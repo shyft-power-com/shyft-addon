@@ -191,15 +191,10 @@ def parse_rows(raw):
 
 def drop_own_reports(rows, reported, domain):
     """Eigene Meldungen sind kein Vorschlag fuer den Meldenden selbst: eine Zeile, die dieses Add-on genau so gemeldet hat
-    (reported: {"<domain>|<slot>": steps_json}, siehe COMMUNITY_REPORTED_PATH in app.py) und die nur einmal gezaehlt wurde (used <= 1),
-    stammt von diesem Nutzer allein. Ab used >= 2 hat mindestens ein anderer dieselbe Zuordnung gemeldet - sie bleibt."""
-    kept = []
-    for row in rows:
-        mine = (reported or {}).get(f"{domain}|{row['slot']}") == _canonical(row["steps"])
-        if mine and row["used"] <= 1:
-            continue
-        kept.append(row)
-    return kept
+    (reported: {"<domain>|<slot>": steps_json}, siehe COMMUNITY_REPORTED_PATH in app.py), wird nicht zurueckgespielt. shyft-power
+    liefert bewusst keinen Zaehler mit (er liesse Rueckschluesse auf die Nutzerzahl zu), nur die Reihenfolge nach Haeufigkeit - deshalb
+    faellt eine eigene Zuordnung auch dann weg, wenn andere sie ebenfalls gemeldet haben; der Nutzer hat sie ja schon."""
+    return [row for row in rows if (reported or {}).get(f"{domain}|{row['slot']}") != _canonical(row["steps"])]
 
 
 def _resolve_block(block, index, device_id):

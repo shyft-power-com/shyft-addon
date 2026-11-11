@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.385
+
+* **Community-Vorschläge: shyft-power liefert keinen Zähler mehr mit.** Der öffentliche Abruf enthielt bisher je Vorschlag, wie oft er gemeldet wurde, und ließ so Rückschlüsse auf die Nutzerzahl zu. Jetzt kommen nur noch Slot und Zuordnung, sortiert nach Häufigkeit; die Rangfolge (Platz 1 bis 3) ergibt sich aus der Reihenfolge. Eigene Meldungen eines Add-ons werden ihm dadurch nie als Vorschlag zurückgespielt, auch nicht, wenn andere dieselbe Zuordnung ebenfalls gemeldet haben.
+
 ## 0.0.45.384
 
 * **Community-Vorschläge: eigene Meldungen kommen nicht mehr als „Vorschlag“ zurück.** Gab man selbst eine Entität ein und wurde sie (nach einem Test oder dem Sensor-Check) gemeldet, tauchte sie kurz darauf mit dem Label „Vorschlag“ im eigenen Feld auf. Jetzt merkt sich das Add-on, was es selbst gemeldet hat, und zeigt eine Zuordnung nicht an, wenn sie nur von diesem Add-on stammt (Zähler 1). Haben mindestens zwei Nutzer dieselbe Zuordnung gemeldet, bleibt sie ein Vorschlag. Vorschläge anderer Nutzer erscheinen weiter schon ab dem ersten Nutzer.
