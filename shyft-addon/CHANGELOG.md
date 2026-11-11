@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.380
+
+* **Community-Vorschläge im Dropdown ganz oben mit Label „Vorschlag“.** Die bis zu drei häufigsten Vorschläge stehen im Entitäten-Dropdown als erste Einträge (bei geteilter Liste unter „Passende Sensoren“) mit einem kleinen Label „Vorschlag“. Sie bleiben dort auch, wenn die Liste neu aufgebaut wird; vorher waren sie nicht zu sehen.
+* **Bei der Ersteinrichtung ersetzt ein Vorschlag auch den Standardwert „An“.** „Warmwasserbereitung aktiviert“ und „Heizung aktiviert“ starten bei einer neuen Wärmepumpe mit „An“ und galten deshalb nicht als leer. Gibt es einen Community-Vorschlag, wird er jetzt gesetzt; ohne Vorschlag bleibt „An“. Bei bereits eingerichteten Geräten ändert sich nichts.
+
 ## 0.0.45.379
 
 * **Community-Vorschläge: kein roter Rand mehr um vorbelegte Felder.** Der Abruf der Vorschläge dauert einige Sekunden. Die roten „Pflichtfeld fehlt“-Rahmen stammten noch vom Aufbau der Kachel mit leeren Feldern und blieben um den gelben Vorschlag stehen, bis die Seite neu geladen wurde. Nach dem Vorbelegen werden die Pflichtfelder jetzt sofort neu bewertet.
