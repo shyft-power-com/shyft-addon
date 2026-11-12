@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.389
+
+* **Batterie-Aktionen: Testen-Button auch für die Variante „Per Home-Assistant-Automation“.** Bisher gab es für die Automations-Variante keinen Testen-Button, obwohl „Bitte Gerätesteuerung testen“ dastand. Jetzt löst der Test die hinterlegte Automation mit Testwerten aus (`phase = start`, `target = 0,5 kW`; bei „Batterie-Aktion beenden“ `phase = stop`) und prüft, dass sie existiert und eingeschaltet ist, wirklich ausgeführt wurde (`last_triggered`) und – soweit der Trace lesbar ist – ohne Fehler lief und `target`/`phase` erhalten hat. Was die Automation danach am Gerät tut, kann Shyft nicht prüfen. Ist kein Trace verfügbar, genügt der Nachweis der Ausführung.
+
 ## 0.0.45.388
 
 * **Community-Vorschläge: jeder bestandene Test meldet, was noch nicht gemeldet wurde, und der Command Timeout geht mit.** Bisher meldete nur ein Test, bei dem sich die Konfiguration seit dem letzten bestandenen Test geändert hatte; war eine Steuerung schon einmal bestanden, kam danach nie eine Meldung. Jetzt meldet jeder bestandene Test, und das Add-on überspringt nur, was es selbst schon genauso gemeldet hat. Bei den Batterie-Aktionen (Entladen/Laden verschieben, Netzladen) wird außerdem der zugeordnete „Command Timeout“ mitgemeldet, und der Sensor-Check kennt ihn als Zuordnung mit plausiblem Wert.

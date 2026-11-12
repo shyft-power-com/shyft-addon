@@ -328,6 +328,54 @@ class HomeAssistantAdapter:
         failed.sort(key=lambda run: (run.get("timestamp") or {}).get("start") or "")
         return str(failed[-1]["error"])[:400]
 
+    def get_automation_run_info(self, automation_entity_id):
+        """Zustand einer Automation fuer den Automations-Test: {'state': 'on'|'off'|..., 'last_triggered': iso|None,
+        'config_id': <interne id fuer trace/list>|None}. Wirft, wenn die Entitaet nicht existiert."""
+        response = self.get_from_homeassistant(f"/api/states/{automation_entity_id}")
+        if not isinstance(response, dict) or "state" not in response:
+            raise Exception(f"Automation {automation_entity_id} nicht gefunden")
+        attributes = response.get("attributes") or {}
+        return {"state": response.get("state"), "last_triggered": attributes.get("last_triggered"),
+                "config_id": attributes.get("id")}
+
+    def latest_automation_trace_variables(self, config_id, started_after_iso=None):
+        """Variablen des neuesten Laufs (nach started_after_iso) einer Automation aus den Traces (Websocket trace/list +
+        trace/get). Rueckgabe {'found': bool, 'error': str|None, 'variables': {name: wert}}. Best effort: der Trace
+        steht nicht in jeder HA-Version/Konfiguration zur Verfuegung (z.B. stored_traces 0) - dann found=False."""
+        result = {"found": False, "error": None, "variables": {}}
+        if not config_id:
+            return result
+        ws_uri = self.homeassistant_uri.replace("https://", "wss://").replace("http://", "ws://") + WEBSOCKET_PATH
+        ws = websocket.create_connection(ws_uri, timeout=10)
+        try:
+            ws.recv()  # auth_required
+            ws.send(json.dumps({"type": "auth", "access_token": self._token()}))
+            if json.loads(ws.recv()).get("type") != "auth_ok":
+                return result
+            runs = self._ws_command(ws, 1, "trace/list", {"domain": "automation", "item_id": config_id}) or []
+            if started_after_iso:
+                runs = [run for run in runs if ((run.get("timestamp") or {}).get("start") or "") >= started_after_iso]
+            if not runs:
+                return result
+            runs.sort(key=lambda run: (run.get("timestamp") or {}).get("start") or "")
+            latest = runs[-1]
+            result["found"] = True
+            result["error"] = str(latest["error"])[:400] if latest.get("error") else None
+            detail = self._ws_command(ws, 2, "trace/get", {"domain": "automation", "item_id": config_id, "run_id": latest.get("run_id")})
+        finally:
+            ws.close()
+        # Die Variablen stehen als "changes" in den Trace-Schritten (der erste Schritt traegt die uebergebenen Werte).
+        variables = {}
+        for steps in ((detail or {}).get("trace") or {}).values():
+            for step in steps or []:
+                changes = step.get("changes") if isinstance(step, dict) else None
+                if isinstance(changes, dict):
+                    for name in ("target", "phase"):
+                        if name in changes and name not in variables:
+                            variables[name] = changes[name]
+        result["variables"] = variables
+        return result
+
     def _ws_command(self, ws, msg_id, command_type, payload=None):
         ws.send(json.dumps({"id": msg_id, "type": command_type, **(payload or {})}))
         response = json.loads(ws.recv())

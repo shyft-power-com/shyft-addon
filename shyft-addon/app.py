@@ -9257,6 +9257,76 @@ def batteryDirectControlStatus(action_key):
     return jsonify({"values": _battery_direct_field_values(config, action_key)})
 
 
+BATTERY_AUTOMATION_TEST_WAIT_SECONDS = 15
+BATTERY_AUTOMATION_TEST_POLL_SECONDS = 0.5
+
+
+def _test_battery_automation(action_key, config):
+    """Test der Variante 'Per Home-Assistant-Automation' einer Batterie-Aktion. Was die Automation danach am Geraet tut,
+    kann Shyft nicht wissen - geprueft wird: (1) die Automation existiert und ist aktiv, (2) sie wurde durch den Aufruf
+    wirklich ausgefuehrt (last_triggered aendert sich), (3) soweit der Trace lesbar ist: sie lief ohne Fehler und hat
+    target/phase erhalten. Wirft bei einem Fehlschlag eine Exception mit Klartext, sonst Rueckgabe der Erfolgsmeldung."""
+    automation_entity_id = (config.get("actorMappings", {}) or {}).get(action_key)
+    if not automation_entity_id:
+        raise Exception("Keine Automation ausgewählt")
+    is_stop = action_key == "battery_action_stop"
+    phase = "stop" if is_stop else "start"
+    target = None if is_stop else BATTERY_DIRECT_TEST_TARGET_KW
+
+    info = homeassistant_adapter.get_automation_run_info(automation_entity_id)
+    test_log(f"Automation {automation_entity_id} gefunden (Zustand: {info['state']}).")
+    if info["state"] == "unavailable":
+        raise Exception(f"Die Automation {automation_entity_id} ist in Home Assistant nicht verfügbar.")
+    if info["state"] == "off":
+        raise Exception(f"Die Automation {automation_entity_id} ist ausgeschaltet – bitte in Home Assistant einschalten.")
+
+    before = info["last_triggered"]
+    started_iso = datetime.now(timezone.utc).isoformat()
+    test_log(f"Löse die Automation aus (phase = {phase}, target = {target}) …")
+    trigger_ha_automation(automation_entity_id, phase, target)
+
+    deadline = time.time() + BATTERY_AUTOMATION_TEST_WAIT_SECONDS
+    ran = False
+    while True:
+        if homeassistant_adapter.get_automation_run_info(automation_entity_id)["last_triggered"] != before:
+            ran = True
+            break
+        if time.time() >= deadline:
+            break
+        test_sleep(BATTERY_AUTOMATION_TEST_POLL_SECONDS)
+    if not ran:
+        raise Exception(f"Die Automation {automation_entity_id} wurde nicht ausgeführt (last_triggered unverändert) – "
+                        "läuft sie gerade noch (Modus „single“) oder ist sie blockiert?")
+    test_log("Die Automation wurde ausgeführt.", "ok")
+
+    # Trace: best effort - nicht jede HA-Konfiguration speichert Traces, dann bleibt es beim Nachweis der Ausfuehrung.
+    try:
+        trace = homeassistant_adapter.latest_automation_trace_variables(info["config_id"], started_iso)
+    except Exception as e:
+        print(f"[Shyft] Trace der Automation {automation_entity_id} nicht lesbar:", repr(e))
+        trace = {"found": False, "error": None, "variables": {}}
+    if not trace["found"]:
+        test_log("Kein Trace gefunden – die Übergabe von target/phase kann nicht geprüft werden.", "warn")
+        return "Automation ausgelöst und ausgeführt (Übergabe von target/phase nicht prüfbar)"
+    if trace["error"]:
+        raise Exception(f"Die Automation lief mit einem Fehler: {trace['error']}")
+    variables = trace["variables"]
+    if "phase" not in variables and "target" not in variables:
+        test_log("Der Trace enthält die übergebenen Werte nicht – Übergabe von target/phase nicht prüfbar.", "warn")
+        return "Automation ausgelöst und ohne Fehler ausgeführt (Übergabe von target/phase nicht prüfbar)"
+    if variables.get("phase") != phase:
+        raise Exception(f"Die Automation hat phase = {variables.get('phase')!r} erhalten, erwartet {phase!r}.")
+    if target is not None:
+        try:
+            received_target = float(variables.get("target"))
+        except (TypeError, ValueError):
+            received_target = None
+        if received_target is None or abs(received_target - target) > 1e-9:
+            raise Exception(f"Die Automation hat target = {variables.get('target')!r} erhalten, erwartet {target}.")
+    test_log(f"Übergeben und angekommen: phase = {phase}" + (f", target = {target}" if target is not None else "") + ".", "ok")
+    return "Automation ausgelöst, ohne Fehler ausgeführt, target/phase sind angekommen"
+
+
 @app.route("/actions/battery/<action_key>/test", methods=["POST"])
 @_records_action_test()
 @_with_test_session
@@ -9265,6 +9335,23 @@ def testBatteryDirectControl(action_key):
         return jsonify({"success": False, "message": "unbekannte Steuerung"}), 404
     config = _read_current_config()
     title = ACTION_TYPE_TOGGLE_KEYS.get(action_key, "Batterie-Aktion beenden")
+    # Wie die Konfigurationsseite (app.js: Standard "direct", solange nichts gewaehlt ist) - nicht _battery_control_variant,
+    # dessen Standard "ha_automation" ist: sonst wuerde der Button einer sichtbar auf "direkt" stehenden Steuerung die Automation testen.
+    if (config.get("controlVariant", {}) or {}).get(action_key) == "ha_automation":
+        test_log(f"Teste „{title}“ (Variante Home-Assistant-Automation) – was die Automation danach tut, kann Shyft nicht prüfen.")
+        try:
+            message = _test_battery_automation(action_key, config)
+            for label in _battery_test_problem_labels(action_key):
+                _note_action_outcome(label, "getestet", None)
+            test_log(message + ".", "ok")
+            return jsonify({"success": True, "message": message})
+        except _TestCancelled:
+            test_log("Test abgebrochen.", "warn")
+            return jsonify({"success": False, "cancelled": True, "message": "Test abgebrochen"})
+        except Exception as e:
+            print(f"[Shyft] Batterie-Automations-Test '{action_key}' fehlgeschlagen (Version {VERSION}):", repr(e))
+            test_log(f"Test fehlgeschlagen: {e}", "error")
+            return jsonify({"success": False, "message": str(e)}), 500
     test_log(f"Teste „{title}“ (direkte Entitäts-Steuerung) – dieselbe Logik wie bei einer echten Aktion, ohne Push-Benachrichtigung.")
     pre_test_state = _capture_battery_pre_test_state(config, action_key)
     try:
