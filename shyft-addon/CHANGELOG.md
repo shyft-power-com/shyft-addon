@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.392
+
+* **Automations-Test der Batterie-Aktionen: „Test bedingt erfolgreich“ in Orange, verständlichere Hinweise.** Lässt sich nicht prüfen, ob die Automation `target` und `phase` erhalten hat (Home Assistant hat keinen Trace gespeichert oder die Werte stehen nicht darin), endet das Test-Popup jetzt orange mit „Test bedingt erfolgreich“ statt grün mit „Test erfolgreich“. Der Hinweis erklärt auf Deutsch, was der Trace ist, und verweist auf die Traces der Automation in Home Assistant; das Gating wird weiterhin freigegeben. Die übrigen Meldungen des Tests sind ebenfalls neu formuliert („Zielleistung“ statt `target`).
+
 ## 0.0.45.389
 
 * **Batterie-Aktionen: Testen-Button auch für die Variante „Per Home-Assistant-Automation“.** Bisher gab es für die Automations-Variante keinen Testen-Button, obwohl „Bitte Gerätesteuerung testen“ dastand. Jetzt löst der Test die hinterlegte Automation mit Testwerten aus (`phase = start`, `target = 0,5 kW`; bei „Batterie-Aktion beenden“ `phase = stop`) und prüft, dass sie existiert und eingeschaltet ist, wirklich ausgeführt wurde (`last_triggered`) und – soweit der Trace lesbar ist – ohne Fehler lief und `target`/`phase` erhalten hat. Was die Automation danach am Gerät tut, kann Shyft nicht prüfen. Ist kein Trace verfügbar, genügt der Nachweis der Ausführung.

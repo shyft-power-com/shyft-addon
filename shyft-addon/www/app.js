@@ -459,7 +459,7 @@ async function getJson(url, timeoutMs = GET_JSON_TIMEOUT_MS) {
 //   headers          - an JEDEN Test-Request dieses Popups haengen (fetch(..., {headers: {...popup.headers}}))
 //   log(text, level) - eigene (clientseitige) Zeile, level: info|ok|warn|error|wait
 //   isCancelRequested()
-//   finish(result)   - Test ist zu Ende: result {success, cancelled, message}; holt zuerst noch Zeilen von
+//   finish(result)   - Test ist zu Ende: result {success, partial, cancelled, message} (partial = bedingt erfolgreich, orange); holt zuerst noch Zeilen von
 //                      Hintergrundschritten (z.B. Zuruecksetzen), zeigt dann das Ergebnis und "Schliessen"
 //   closed           - Promise, die beim Schliessen des Popups aufgeloest wird
 // options.sessionId: an einen bereits laufenden Test anhaengen (z.B. Heizungs-Test nach Seiten-Neuladen).
@@ -515,7 +515,7 @@ function openTestPopup(title, options = {}) {
     function addLine(line) {
         const level = line.level || 'info';
         const row = document.createElement('div');
-        row.className = 'testPopupLine level-' + level;
+        row.className = 'testPopupLine level-' + level + (line.tone === 'warn' ? ' level-warn' : '');
         const time = document.createElement('span');
         time.className = 'testPopupTime';
         time.textContent = line.t || new Date().toLocaleTimeString('de-DE');
@@ -616,6 +616,11 @@ function openTestPopup(title, options = {}) {
             statusEl.textContent = 'Test abgebrochen';
             statusEl.className = 'testPopupStatus status-warn';
             addLine({level: 'result', text: 'Ergebnis: Test abgebrochen.' + (outcome.message && outcome.message !== 'Test abgebrochen' ? ' ' + outcome.message : '')});
+        } else if (outcome.success && outcome.partial) {
+            // Bedingt erfolgreich (orange): der Test ist bestanden, ein Teil konnte aber nicht geprueft werden - der Nutzer soll nachsehen.
+            statusEl.textContent = 'Test bedingt erfolgreich';
+            statusEl.className = 'testPopupStatus status-warn';
+            addLine({level: 'result', tone: 'warn', text: 'Ergebnis: Test bedingt erfolgreich.' + (outcome.message ? ' ' + outcome.message : '')});
         } else if (outcome.success) {
             statusEl.textContent = 'Test erfolgreich';
             statusEl.className = 'testPopupStatus status-ok';

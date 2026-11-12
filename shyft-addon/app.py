@@ -9265,7 +9265,8 @@ def _test_battery_automation(action_key, config):
     """Test der Variante 'Per Home-Assistant-Automation' einer Batterie-Aktion. Was die Automation danach am Geraet tut,
     kann Shyft nicht wissen - geprueft wird: (1) die Automation existiert und ist aktiv, (2) sie wurde durch den Aufruf
     wirklich ausgefuehrt (last_triggered aendert sich), (3) soweit der Trace lesbar ist: sie lief ohne Fehler und hat
-    target/phase erhalten. Wirft bei einem Fehlschlag eine Exception mit Klartext, sonst Rueckgabe der Erfolgsmeldung."""
+    target/phase erhalten. Wirft bei einem Fehlschlag eine Exception mit Klartext, sonst Rueckgabe (Meldung, partial):
+    partial=True = bedingt erfolgreich (ausgefuehrt, aber die Uebergabe von target/phase liess sich nicht pruefen)."""
     automation_entity_id = (config.get("actorMappings", {}) or {}).get(action_key)
     if not automation_entity_id:
         raise Exception("Keine Automation ausgewählt")
@@ -9295,36 +9296,43 @@ def _test_battery_automation(action_key, config):
             break
         test_sleep(BATTERY_AUTOMATION_TEST_POLL_SECONDS)
     if not ran:
-        raise Exception(f"Die Automation {automation_entity_id} wurde nicht ausgeführt (last_triggered unverändert) – "
+        raise Exception(f"Die Automation {automation_entity_id} wurde nicht ausgeführt (Home Assistant meldet keinen neuen Lauf) – "
                         "läuft sie gerade noch (Modus „single“) oder ist sie blockiert?")
-    test_log("Die Automation wurde ausgeführt.", "ok")
+    test_log("Die Automation wurde von Home Assistant ausgeführt.", "ok")
 
-    # Trace: best effort - nicht jede HA-Konfiguration speichert Traces, dann bleibt es beim Nachweis der Ausfuehrung.
+    # Ablaufverlauf ("Trace"): best effort - nicht jede HA-Konfiguration speichert ihn. Fehlt er oder lassen sich die
+    # uebergebenen Werte nicht darin finden, gilt der Test nur als "bedingt erfolgreich" (partial=True, orange im Popup).
     try:
         trace = homeassistant_adapter.latest_automation_trace_variables(info["config_id"], started_iso)
     except Exception as e:
         print(f"[Shyft] Trace der Automation {automation_entity_id} nicht lesbar:", repr(e))
         trace = {"found": False, "error": None, "variables": {}}
+    sent = f"die Phase „{phase}“" + (f" und die Zielleistung {target} kW" if target is not None else "")
+    not_checkable = (f"Ob die Automation {sent} wirklich erhalten hat, konnte Shyft nicht prüfen. "
+                     "Bitte in Home Assistant unter Einstellungen → Automationen & Szenen → deine Automation → Traces nachsehen, "
+                     "ob sie gelaufen ist und das Richtige getan hat.")
     if not trace["found"]:
-        test_log("Kein Trace gefunden – die Übergabe von target/phase kann nicht geprüft werden.", "warn")
-        return "Automation ausgelöst und ausgeführt (Übergabe von target/phase nicht prüfbar)"
+        test_log("Home Assistant hat zu diesem Lauf keinen Ablaufverlauf (Trace) gespeichert. Darin protokolliert Home Assistant, "
+                 "was bei einem Automationslauf passiert ist und welche Werte sie bekommen hat.", "warn")
+        return not_checkable, True
     if trace["error"]:
-        raise Exception(f"Die Automation lief mit einem Fehler: {trace['error']}")
+        raise Exception(f"Die Automation ist gelaufen, hat aber mit einem Fehler abgebrochen: {trace['error']}")
     variables = trace["variables"]
     if "phase" not in variables and "target" not in variables:
-        test_log("Der Trace enthält die übergebenen Werte nicht – Übergabe von target/phase nicht prüfbar.", "warn")
-        return "Automation ausgelöst und ohne Fehler ausgeführt (Übergabe von target/phase nicht prüfbar)"
+        test_log("Im Ablaufverlauf (Trace) dieser Automation hat Shyft die übergebenen Werte nicht gefunden. "
+                 "Der Trace protokolliert, was bei einem Automationslauf passiert ist und welche Werte sie bekommen hat.", "warn")
+        return not_checkable, True
     if variables.get("phase") != phase:
-        raise Exception(f"Die Automation hat phase = {variables.get('phase')!r} erhalten, erwartet {phase!r}.")
+        raise Exception(f"Die Automation hat die Phase {variables.get('phase')!r} erhalten, erwartet war {phase!r}.")
     if target is not None:
         try:
             received_target = float(variables.get("target"))
         except (TypeError, ValueError):
             received_target = None
         if received_target is None or abs(received_target - target) > 1e-9:
-            raise Exception(f"Die Automation hat target = {variables.get('target')!r} erhalten, erwartet {target}.")
-    test_log(f"Übergeben und angekommen: phase = {phase}" + (f", target = {target}" if target is not None else "") + ".", "ok")
-    return "Automation ausgelöst, ohne Fehler ausgeführt, target/phase sind angekommen"
+            raise Exception(f"Die Automation hat die Zielleistung {variables.get('target')!r} erhalten, erwartet waren {target} kW.")
+    test_log(f"Die Automation hat {sent} erhalten.", "ok")
+    return f"Die Automation ist gelaufen und hat {sent} erhalten", False
 
 
 @app.route("/actions/battery/<action_key>/test", methods=["POST"])
@@ -9340,11 +9348,11 @@ def testBatteryDirectControl(action_key):
     if (config.get("controlVariant", {}) or {}).get(action_key) == "ha_automation":
         test_log(f"Teste „{title}“ (Variante Home-Assistant-Automation) – was die Automation danach tut, kann Shyft nicht prüfen.")
         try:
-            message = _test_battery_automation(action_key, config)
+            message, partial = _test_battery_automation(action_key, config)
             for label in _battery_test_problem_labels(action_key):
                 _note_action_outcome(label, "getestet", None)
-            test_log(message + ".", "ok")
-            return jsonify({"success": True, "message": message})
+            test_log(message + ".", "warn" if partial else "ok")
+            return jsonify({"success": True, "partial": partial, "message": message})
         except _TestCancelled:
             test_log("Test abgebrochen.", "warn")
             return jsonify({"success": False, "cancelled": True, "message": "Test abgebrochen"})
