@@ -5111,6 +5111,31 @@ function reapplyTestGates() {
 // Nach einem abgeschlossenen Testklick: lokalen Cache sofort aktualisieren (kein erneuter Fetch
 // noetig, der Server hat actionTestPassed/actionTestFailed synchron im selben Request aktualisiert,
 // siehe _records_action_test).
+// Zeilen mit eigener Ergebnisanzeige ("Erfolgreich getestet" / "Test fehlgeschlagen") melden hier ihre Neuzeichnen-Funktion an.
+const testResultRefreshers = new Set();
+
+// Nach dem Wechsel zwischen direkter Steuerung und HA-Automation: Test-Stand frisch vom Server holen (der Test-Fingerprint enthaelt
+// die Variante - das Ergebnis der anderen Variante gilt dort nicht und wird nicht angezeigt; beim Zurueckwechseln erscheint das
+// fruehere Ergebnis wieder) und alle Anzeigen neu zeichnen. Erst NACH dem Speichern aufrufen (autoSave liefert ein Promise).
+async function reloadTestState() {
+    try {
+        actionTestStatusMap = await getJson(actionTestStatusUri);
+        actionTestResultsMap = await getJson(actionTestResultsUri);
+    } catch (err) {
+        console.log(err);
+        return;
+    }
+    for (const refresh of [...testResultRefreshers]) refresh();
+    reapplyTestGates();
+    renderSystemHealth();
+    renderDashboardProblemBanner();
+    refreshCommunitySuggestionMarks();
+}
+
+function onControlVariantSaved(savePromise) {
+    Promise.resolve(savePromise).then(reloadTestState);
+}
+
 function markActionTested(readyKey, passed) {
     if (readyKey === null) return;
     actionTestStatusMap[readyKey] = passed;
@@ -5647,7 +5672,7 @@ function buildAutoManagedNumberControl(control) {
             variant = active ? 'ha_automation' : 'direct';
             automationRow.style.display = active ? '' : 'none';
             valueDisplay.textContent = 'Aktueller Wert: –';
-            autoSave();
+            onControlVariantSaved(autoSave());
             refreshStatus();
         }));
     }
@@ -5835,7 +5860,7 @@ function buildAutoManagedSwitchControl(control) {
             valueDisplay.textContent = 'Aktueller Status: –';
             nextPhase = 'start';
             testButton.textContent = 'Test: Start';
-            autoSave();
+            onControlVariantSaved(autoSave());
             refreshStatus();
         }));
     }
@@ -6517,7 +6542,7 @@ function buildCarChargeControl() {
         carChargeAutomationActive = active;
         stagesWrapper.style.display = active ? 'none' : '';
         automationWrapper.style.display = active ? '' : 'none';
-        autoSave();
+        onControlVariantSaved(autoSave());
     }));
 
     wrapper.__refresh = refreshWallboxStatus;
@@ -6678,7 +6703,7 @@ function buildHotWaterControl() {
         stageWrapper.style.display = active ? 'none' : '';
         automationRow.style.display = active ? '' : 'none';
         refreshCheckmark();
-        autoSave();
+        onControlVariantSaved(autoSave());
     }));
 
     wrapper.__refresh = refreshHotWaterStatus;
@@ -6985,6 +7010,8 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason, op
     wrapper.appendChild(controls);
 
     renderLastResult();
+    wrapper.refreshResult = renderLastResult;
+    testResultRefreshers.add(() => { if (wrapper.isConnected) renderLastResult(); });
     return wrapper;
 }
 
@@ -7064,7 +7091,7 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
         configData['controlVariant'][actionKey] = active ? 'ha_automation' : 'direct';
         directFields.style.display = active ? 'none' : '';
         automationFields.style.display = active ? '' : 'none';
-        autoSave();
+        onControlVariantSaved(autoSave());
     }));
 
     return wrapper;

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.391
+
+* **Wechsel zwischen direkter Steuerung und HA-Automation setzt die Test-Anzeige zurück.** Bisher blieb „Erfolgreich getestet“ (bzw. eine Fehlermeldung) und der grüne Haken stehen, wenn man per Link zwischen „Direkte Steuerung“ und „Per Home-Assistant-Automation steuern“ wechselte, obwohl der Test nur für die jeweils andere Variante gilt. Jetzt zeigt die gewählte Variante nur ihr eigenes Testergebnis; wechselt man zurück, erscheint das frühere Ergebnis wieder (solange man die andere Variante nicht inzwischen getestet hat). Gilt für Batterie-Aktionen, Heizung Soll-Temperatur, Sonstigen Verbraucher, Warmwasser und Auto laden.
+
 ## 0.0.45.390
 
 * **Community-Vorschläge: Label „Vorschlag“ verschwindet auch beim „Sonstigen Verbraucher“, sobald dessen Test bestanden ist.** Auf der Konfigurationsseite blieb das gelbe „Vorschlag“-Label bei dieser Kachel dauerhaft stehen, weil ihr Test nicht berücksichtigt wurde. Im Dropdown bleibt das Label unverändert erhalten.
