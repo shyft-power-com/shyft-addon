@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.390
+
+* **Community-Vorschläge: Label „Vorschlag“ verschwindet auch beim „Sonstigen Verbraucher“, sobald dessen Test bestanden ist.** Auf der Konfigurationsseite blieb das gelbe „Vorschlag“-Label bei dieser Kachel dauerhaft stehen, weil ihr Test nicht berücksichtigt wurde. Im Dropdown bleibt das Label unverändert erhalten.
+
 ## 0.0.45.389
 
 * **Batterie-Aktionen: Testen-Button auch für die Variante „Per Home-Assistant-Automation“.** Bisher gab es für die Automations-Variante keinen Testen-Button, obwohl „Bitte Gerätesteuerung testen“ dastand. Jetzt löst der Test die hinterlegte Automation mit Testwerten aus (`phase = start`, `target = 0,5 kW`; bei „Batterie-Aktion beenden“ `phase = stop`) und prüft, dass sie existiert und eingeschaltet ist, wirklich ausgeführt wurde (`last_triggered`) und – soweit der Trace lesbar ist – ohne Fehler lief und `target`/`phase` erhalten hat. Was die Automation danach am Gerät tut, kann Shyft nicht prüfen. Ist kein Trace verfügbar, genügt der Nachweis der Ausführung.

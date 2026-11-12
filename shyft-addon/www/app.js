@@ -7202,7 +7202,7 @@ const STATIC_SENSOR_OFF = 'static_off';
 // der Kachel erfolgreich getestet wurde (dann hat der Vorschlag sich bewaehrt).
 const SECTION_READY_KEYS = {
     waermepumpe: ['hot_water', 'heating_target_temp'], heizstab: ['heating_rod'], wallbox: ['car_charge_start'],
-    auto: ['car_charge_start'], batterie: ['battery_charge_shift_pv_surplus', 'battery_discharge_shift', 'battery_grid_charge'],
+    auto: ['car_charge_start'], sonstiger_verbraucher: ['consumer_on_off'], batterie: ['battery_charge_shift_pv_surplus', 'battery_discharge_shift', 'battery_grid_charge'],
 };
 const communitySuggestionCache = {};
 const communitySuggestionMarks = [];   // {inputs, badge, sectionKey}
