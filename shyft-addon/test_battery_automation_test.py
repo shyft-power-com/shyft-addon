@@ -41,15 +41,17 @@ def _config(key="battery_grid_charge"):
 
 
 def test_success_passes_target_and_phase(env):
-    message = app._test_battery_automation("battery_grid_charge", _config())
+    message, partial = app._test_battery_automation("battery_grid_charge", _config())
     assert env["triggered"] == [(AUTOMATION, "start", app.BATTERY_DIRECT_TEST_TARGET_KW)]
-    assert "angekommen" in message
+    assert not partial
+    assert "erhalten" in message
 
 
 def test_stop_action_sends_stop_without_target(env):
     env["trace"]["variables"] = {"target": None, "phase": "stop"}
-    app._test_battery_automation("battery_action_stop", _config("battery_action_stop"))
+    _, partial = app._test_battery_automation("battery_action_stop", _config("battery_action_stop"))
     assert env["triggered"] == [(AUTOMATION, "stop", None)]
+    assert not partial
 
 
 def test_no_automation_selected(env):
@@ -86,20 +88,21 @@ def test_automation_error_in_trace_fails(env):
 
 def test_wrong_target_fails(env):
     env["trace"]["variables"]["target"] = 7
-    with pytest.raises(Exception, match="target"):
+    with pytest.raises(Exception, match="Zielleistung"):
         app._test_battery_automation("battery_grid_charge", _config())
 
 
 def test_wrong_phase_fails(env):
     env["trace"]["variables"]["phase"] = "stop"
-    with pytest.raises(Exception, match="phase"):
+    with pytest.raises(Exception, match="Phase"):
         app._test_battery_automation("battery_grid_charge", _config())
 
 
 @pytest.mark.parametrize("trace", [{"found": False, "error": None, "variables": {}},
                                    {"found": True, "error": None, "variables": {}},
                                    Exception("ws down")])
-def test_unreadable_trace_still_passes_if_it_ran(env, trace):
+def test_unreadable_trace_is_only_partially_successful(env, trace):
     env["trace"] = trace
-    message = app._test_battery_automation("battery_grid_charge", _config())
-    assert "nicht prüfbar" in message
+    message, partial = app._test_battery_automation("battery_grid_charge", _config())
+    assert partial
+    assert "nicht prüfen" in message and "Traces" in message

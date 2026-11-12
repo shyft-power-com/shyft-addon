@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.392
+
+* **Automations-Test der Batterie-Aktionen: „Test bedingt erfolgreich“ in Orange, verständlichere Hinweise.** Lässt sich nicht prüfen, ob die Automation `target` und `phase` erhalten hat (Home Assistant hat keinen Trace gespeichert oder die Werte stehen nicht darin), endet das Test-Popup jetzt orange mit „Test bedingt erfolgreich“ statt grün mit „Test erfolgreich“. Der Hinweis erklärt auf Deutsch, was der Trace ist, und verweist auf die Traces der Automation in Home Assistant; das Gating wird weiterhin freigegeben. Die übrigen Meldungen des Tests sind ebenfalls neu formuliert („Zielleistung“ statt `target`).
+
 ## 0.0.45.391
 
 * **Wechsel zwischen direkter Steuerung und HA-Automation setzt die Test-Anzeige zurück.** Bisher blieb „Erfolgreich getestet“ (bzw. eine Fehlermeldung) und der grüne Haken stehen, wenn man per Link zwischen „Direkte Steuerung“ und „Per Home-Assistant-Automation steuern“ wechselte, obwohl der Test nur für die jeweils andere Variante gilt. Jetzt zeigt die gewählte Variante nur ihr eigenes Testergebnis; wechselt man zurück, erscheint das frühere Ergebnis wieder (solange man die andere Variante nicht inzwischen getestet hat). Gilt für Batterie-Aktionen, Heizung Soll-Temperatur, Sonstigen Verbraucher, Warmwasser und Auto laden.
