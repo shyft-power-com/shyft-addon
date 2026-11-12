@@ -7045,8 +7045,14 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     const automationRow = buildAutomationEntityRow('HA-Automation auswählen',
         'Zum Auslösen dieser Aktion kannst du deine selber erstellte Automation hinterlegen.',
         actionKey + '_ha_automation_entity', (configData['actorMappings'] || {})[actionKey], 'z.B. automation.meine_aktion');
-    automationRow.style.display = variant === 'ha_automation' ? '' : 'none';
-    wrapper.appendChild(automationRow);
+    // Auch die HA-Automation-Variante hat einen Testen-Button (loest die Automation mit Testwerten aus und prueft, dass sie
+    // lief und target/phase ankamen - siehe _test_battery_automation in app.py): ohne ihn bliebe der rote Hinweis
+    // "Bitte Gerätesteuerung testen" dauerhaft stehen. Die Zeile liegt zusammen mit dem Automations-Feld in einem Container.
+    const automationFields = document.createElement('div');
+    automationFields.style.display = variant === 'ha_automation' ? '' : 'none';
+    automationFields.appendChild(automationRow);
+    automationFields.appendChild(buildBatteryDirectTestRow(actionKey, gated ? checkmark : null, gated ? hint : null, testBlockedReason));
+    wrapper.appendChild(automationFields);
 
     // Sichtbarkeit direkt umschalten statt ueber refresh() neu zu rendern: refresh() haengt von
     // configData ab, das aber erst NACH dem asynchronen PUT in autoSave() aktualisiert wird - ein
@@ -7057,7 +7063,7 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
         configData['controlVariant'] = configData['controlVariant'] || {};
         configData['controlVariant'][actionKey] = active ? 'ha_automation' : 'direct';
         directFields.style.display = active ? 'none' : '';
-        automationRow.style.display = active ? '' : 'none';
+        automationFields.style.display = active ? '' : 'none';
         autoSave();
     }));
 
