@@ -7406,7 +7406,11 @@ async function applyCommunitySuggestions(section, entryIds, firstSetup = false) 
         badge.textContent = 'Vorschlag';
         badge.title = 'Von anderen Nutzern mit derselben Integration erfolgreich verwendet - bitte testen.';
         input.classList.add('communitySuggested');
-        input.parentNode.appendChild(badge);
+        // Bei Feldern mit "×"/Pfeil (.clearableInput) hinter den Wrapper statt hinein: sonst wird der Wrapper um das Label
+        // hoeher, und das mittig (top: 50%) positionierte "×" sitzt nicht mehr auf Hoehe des Eingabefelds.
+        const clearable = input.closest('.clearableInput');
+        if (clearable) clearable.after(badge);
+        else input.parentNode.appendChild(badge);
         const mark = {inputs: [input], badge, sectionKey: section.key};
         communitySuggestionMarks.push(mark);
         input.addEventListener('input', () => clearSuggestionMark(mark), {once: true});

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.394
+
+* **Konfiguration: „×“ zum Löschen sitzt wieder mittig im Eingabefeld.** Bei Feldern mit „Vorschlag“-Label saß das „×“ (und der Dropdown-Pfeil) zu tief, weil das Label die Höhe des Feldwrappers vergrößerte und die Mitte nach unten rutschte. Das Label steht jetzt unter dem Wrapper statt darin.
+
 ## 0.0.45.393
 
 * **Hilfe-Chat: Aus dem Log-Formular kommt man wieder zur Eingabemaske der KI zurück.** Nach Klick auf „Log senden“ wurde die Eingabe für die KI dauerhaft ausgeblendet, und der Chat blieb auch bei Klick daneben offen. Jetzt gibt es im Formular „← Zurück zum Chat“ (ein schon gestartetes Logging läuft weiter, das Formular erscheint über „Log senden“ wieder), und der Chat lässt sich außerhalb wieder schließen, sobald das Formular ausgeblendet ist.
