@@ -261,6 +261,31 @@ def static_sensor_state(config, sensor_key):
         return "off"
     return None
 
+
+# Feste Zahl statt einer Home-Assistant-Entitaet (nur Heizstab): die Warmwasser-Solltemperatur wird durch keine Heizstab-Aktion gesteuert,
+# sie darf daher als feste Zahl (20-90 °C) in sensorMappings stehen, z.B. "60" oder "60.5" (keine entity_id: kein Buchstabe, kein Domain-Praefix).
+STATIC_NUMBER_SENSOR_KEYS = ("heatpump_dhw_target_temp",)
+STATIC_TEMP_MIN_C = 20.0
+STATIC_TEMP_MAX_C = 90.0
+_STATIC_NUMBER_RE = re.compile(r"^\d+(?:\.\d+)?$")
+
+
+def is_static_number_value(value):
+    "True, wenn der gespeicherte Mapping-Wert eine feste Zahl ('60', '55.5') statt einer entity_id ist."
+    return isinstance(value, str) and bool(_STATIC_NUMBER_RE.match(value.strip()))
+
+
+def static_sensor_number(config, sensor_key):
+    """Feste Zahl (float) fuer sensor_key, wenn dort statt einer Entitaet eine Zahl zwischen 20 und 90 hinterlegt ist UND der Heizstab aktiv
+    ist (die Waermepumpe nutzt das Feld als echte, beschreibbare Entitaet), sonst None. Zahlen ausserhalb von 20-90 zaehlen als nicht gesetzt."""
+    if sensor_key not in STATIC_NUMBER_SENSOR_KEYS or not heating_rod_active(config):
+        return None
+    value = (config.get("sensorMappings", {}) or {}).get(sensor_key)
+    if not is_static_number_value(value):
+        return None
+    number = float(value)
+    return number if STATIC_TEMP_MIN_C <= number <= STATIC_TEMP_MAX_C else None
+
 # Letzter bekannter An/Aus-Zustand von "Warmwassermodus aktiviert?" (heatpump_dhw_activated) - bei "unknown"/"unavailable" gilt dieser Wert
 # weiter, nicht automatisch "aus" (siehe resolve_dhw_activated).
 DHW_ACTIVATED_LAST_STATE_PATH = "/data/dhw_activated_last_state.json"
@@ -322,7 +347,10 @@ def mapped_entity_id(config, sensor_key):
         switch_entity = mappings.get(HEATING_ROD_SWITCH_SENSOR_KEY)
         if switch_entity:
             return switch_entity
-    return mappings.get(sensor_key, "")
+    value = mappings.get(sensor_key, "")
+    if sensor_key in STATIC_NUMBER_SENSOR_KEYS and is_static_number_value(value):
+        return ""  # feste Zahl, keine Entitaet (siehe static_sensor_number)
+    return value
 
 
 HEATING_ROD_MAX_POWER_KW_DEFAULT = 4.0
@@ -584,6 +612,11 @@ class SyncService:
         static_state = static_sensor_state(data, key)
         if static_state is not None:
             return {"entity_id": None, "state": static_state, "unit": None, "sensor": bubbleSensorIdentifier}
+        static_number = static_sensor_number(data, key)
+        if static_number is not None:
+            return {"entity_id": None, "state": f"{static_number:g}", "unit": EXPECTED_UNITS.get(key), "sensor": bubbleSensorIdentifier}
+        if key in STATIC_NUMBER_SENSOR_KEYS and is_static_number_value(data["sensorMappings"].get(key)):
+            return ""  # feste Zahl, aber ausserhalb 20-90 oder kein Heizstab: nicht als Entitaet behandeln
         sensorId = mapped_entity_id(data, key) or data["sensorMappings"][key]
         try:
             sensorValue = self.homeassistant_adapter.load_entity_state(sensorId)

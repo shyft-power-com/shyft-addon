@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.395
+
+* **„Batterie-Aktion beenden“ muss jetzt getestet werden.** Bisher zählte der Test nicht: die Batterie in der Navigation wurde auch ohne ihn grün und „Optimierung anstoßen“ nicht gesperrt, obwohl eine nicht funktionierende Rückstellung die Batterie nach einer Aktion im falschen Modus lassen kann. Jetzt gilt „Beenden“ wie die drei anderen Batterie-Aktionen: Ist sie eingerichtet (und die drei anderen Aktionen auch), steht sie ungetestet als „Noch nicht erfolgreich getestet“ in der Navigation und sperrt die Optimierung, bis der Test bestanden ist. Bereits früher bestandene Tests von „Beenden“ gelten nicht mehr und müssen einmal wiederholt werden.
+* **Der Hinweis „Bitte Gerätesteuerung testen“ steht bei den Batterie-Aktionen jetzt direkt über dem „Testen“-Button** statt unter der Überschrift der Aktion.
+
 ## 0.0.45.394
 
 * **Konfiguration: „×“ zum Löschen sitzt wieder mittig im Eingabefeld.** Bei Feldern mit „Vorschlag“-Label saß das „×“ (und der Dropdown-Pfeil) zu tief, weil das Label die Höhe des Feldwrappers vergrößerte und die Mitte nach unten rutschte. Das Label steht jetzt unter dem Wrapper statt darin.

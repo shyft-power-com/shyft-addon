@@ -3343,6 +3343,8 @@ _READY_KEY_TO_LABEL_SECTION = {
     "battery_charge_shift_pv_surplus": ("Batterie-Laden verschieben (PV-Überschuss)", "batterie"),
     "battery_discharge_shift": ("Batterie-Entladen verschieben", "batterie"),
     "battery_grid_charge": ("Batterie netzladen", "batterie"),
+    # Gemeinsame Beenden-Steuerung der drei Batterie-Aktionen: ohne funktionierende Rueckstellung bliebe die Batterie nach einer Aktion im falschen Modus.
+    "battery_action_stop": ("Batterie-Aktion beenden", "batterie"),
 }
 
 
@@ -7239,6 +7241,25 @@ def _action_type_config_state(config, ready_key):
         variant = cv.get(ready_key, "ha_automation")
         entity_ok = bool(am.get(ready_key)) if variant == "ha_automation" else bool(sm.get(BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[ready_key]))
         return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
+    if ready_key == "battery_action_stop":
+        variant = _battery_control_variant(config, ready_key)
+        # Direkt: setzt die Entitaeten der drei Batterie-Aktionen zurueck - ohne deren Einrichtung gibt es nichts zu testen (wie in
+        # isBatteryDirectActionConfigured in app.js; per Toggle deaktivierte Aktionen zaehlen nicht als Voraussetzung).
+        enabled = config.get("actionTypeEnabled", {}) or {}
+
+        def _other_configured(key):
+            if enabled.get(key, True) is False:
+                return True
+            if _battery_control_variant(config, key) == "ha_automation":
+                return bool(am.get(key))
+            return bool(sm.get(BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[key]))
+
+        if variant == "ha_automation":
+            entity_ok = bool(am.get(ready_key))
+        else:
+            entity_ok = all(_other_configured(key) for key in BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS)
+        return {"flags": {"entity": entity_ok},
+                "fp": {"variant": variant, "entity": entity_ok, "mode": config.get("batteryModeSelfConsumptionValue") or ""}}
     return {"flags": {}, "fp": {}}
 
 

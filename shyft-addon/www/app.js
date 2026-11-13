@@ -6905,7 +6905,7 @@ function buildBatteryCoupledEntityField(sensorKey, datalistId, onChange, suggest
 // Aktionstyp naechste zufaellig durch den Optimierer erneut UND dabei erfolgreich ausgeloest wurde.
 // checkmark/hint: vom Aufrufer (buildBatteryControlBlock) uebergebene Elemente aus dessen
 // Ueberschrift, nur fuer gegatete Aktionstypen gesetzt (siehe dort) - null bei "Batterie-Aktion
-// beenden", die kein eigenes Bereitschafts-Gating hat (siehe aber blockedReason).
+// beenden" ebenfalls gegatet (siehe blockedReason fuer den noch nicht testbaren Fall).
 // blockedReason (optional): "Batterie-Aktion beenden" setzt bei den anderen drei Batterie-
 // Aktionstypen die dort konfigurierte(n) Entitaet(en) zurueck (siehe execute_battery_direct) - ein
 // Testklick vor deren Einrichtung wuerde deshalb nur mit "Entitaet fehlt" scheitern. Button bleibt
@@ -7012,6 +7012,9 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason, op
     controls.appendChild(button);
     controls.appendChild(statusIcon);
     controls.appendChild(statusText);
+    // Der rote Hinweis "Bitte Gerätesteuerung testen" steht direkt ueber dem Testen-Button (bereits eingefuegte Hinweise, z.B. beim
+    // Heizstab, bleiben wo sie sind).
+    if (hint && !hint.parentNode) wrapper.appendChild(hint);
     wrapper.appendChild(controls);
 
     renderLastResult();
@@ -7048,7 +7051,7 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     if (tooltip) title.appendChild(buildTooltip(tooltip));
     headingRow.appendChild(title);
     // Nur Aktionstypen mit eigenem Bereitschafts-Gating (siehe _READY_KEY_TO_LABEL_SECTION in
-    // app.py) bekommen einen Haken - "Batterie-Aktion beenden" ist nicht gegatet, siehe
+    // app.py) bekommen einen Haken - der Haken steht neben dem Testen-Button, siehe
     // buildBatteryDirectTestRow.
     const gated = actionKey in actionTestStatusMap;
     const checkmark = document.createElement('span');
@@ -7060,18 +7063,17 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     // Der Steuerungs-Schalter dieses Batterie-Aktionstyps steht auf der Gerätesteuerung-Seite (siehe
     // renderControlToggles), nicht mehr hier.
     wrapper.appendChild(headingRow);
-    const hint = buildTestGateHint();
-    if (gated) {
-        wrapper.appendChild(hint);
-        applyTestGate(actionKey, checkmark, hint, true);
-    }
+    // Je Variante (direkt / HA-Automation) ein eigener Hinweis, der in der jeweiligen Testen-Zeile ueber dem Button steht
+    // (buildBatteryDirectTestRow fuegt ihn ein). Ist der Test gesperrt (testBlockedReason), gibt es noch nichts zu testen.
+    const gateHints = [buildTestGateHint(), buildTestGateHint()];
+    if (gated) for (const gateHint of gateHints) applyTestGate(actionKey, checkmark, gateHint, !testBlockedReason);
 
     const variant = (configData['controlVariant'] || {})[actionKey] || 'direct';
 
     const directFields = document.createElement('div');
     directFields.style.display = variant === 'direct' ? '' : 'none';
     directFields.appendChild(buildDirectFields());
-    directFields.appendChild(buildBatteryDirectTestRow(actionKey, gated ? checkmark : null, gated ? hint : null, testBlockedReason));
+    directFields.appendChild(buildBatteryDirectTestRow(actionKey, gated ? checkmark : null, gated ? gateHints[0] : null, testBlockedReason));
     wrapper.appendChild(directFields);
 
     const automationRow = buildAutomationEntityRow('HA-Automation auswählen',
@@ -7083,7 +7085,7 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     const automationFields = document.createElement('div');
     automationFields.style.display = variant === 'ha_automation' ? '' : 'none';
     automationFields.appendChild(automationRow);
-    automationFields.appendChild(buildBatteryDirectTestRow(actionKey, gated ? checkmark : null, gated ? hint : null, testBlockedReason));
+    automationFields.appendChild(buildBatteryDirectTestRow(actionKey, gated ? checkmark : null, gated ? gateHints[1] : null, testBlockedReason));
     wrapper.appendChild(automationFields);
 
     // Sichtbarkeit direkt umschalten statt ueber refresh() neu zu rendern: refresh() haengt von
