@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.45.397
+
+* **Abgelehnte Aufrufe an shyft-power stehen jetzt im Log.** Antwortet shyft-power auf einen Aufruf (z. B. Standort, Daten, Fehlermeldungen) mit einem Fehlerstatus – etwa 401 bei ungültigem oder abgelaufenem Zugangsschlüssel –, schrieb das Add-on das bisher nur bei aktiviertem ausführlichem Logging. Jetzt steht immer eine Zeile „shyft-power hat … abgelehnt: HTTP …“ im Log.
+
+## 0.0.45.396
+
+* **Heizstab: Warmwasser-Solltemperatur kann eine feste Zahl sein.** Der Heizstab steuert diese Temperatur nicht selbst – bisher musste trotzdem eine Home-Assistant-Entität zugeordnet werden. Jetzt kannst du im Feld „Warmwasser: Solltemperatur (°C)“ der Heizstab-Kachel statt einer Entität auch eine Zahl zwischen 20 und 90 °C eintragen (z. B. „60“). Sie dient wie bisher als Untergrenze für die Warmwasserplanung. Zahlen außerhalb von 20–90 werden auf den Bereich begrenzt. Bei der Wärmepumpe bleibt das Feld eine Entität.
+
 ## 0.0.45.395
 
 * **„Batterie-Aktion beenden“ muss jetzt getestet werden.** Bisher zählte der Test nicht: die Batterie in der Navigation wurde auch ohne ihn grün und „Optimierung anstoßen“ nicht gesperrt, obwohl eine nicht funktionierende Rückstellung die Batterie nach einer Aktion im falschen Modus lassen kann. Jetzt gilt „Beenden“ wie die drei anderen Batterie-Aktionen: Ist sie eingerichtet (und die drei anderen Aktionen auch), steht sie ungetestet als „Noch nicht erfolgreich getestet“ in der Navigation und sperrt die Optimierung, bis der Test bestanden ist. Bereits früher bestandene Tests von „Beenden“ gelten nicht mehr und müssen einmal wiederholt werden.

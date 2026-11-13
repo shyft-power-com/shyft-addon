@@ -153,7 +153,8 @@ const heatingRodHelpInformation = {
     'heatpump_dhw_target_temp': {
         label: 'Warmwasser: Solltemperatur (°C)',
         bold: false,
-        description: ' Die Home-Assistant-Entity (number oder climate), an der die Ziel-/Solltemperatur des Warmwassers eingestellt ist. Daraus leitet Shyft die Untergrenze für die Warmwasserplanung ab.'
+        description: ' Die Home-Assistant-Entity (number oder climate), an der die Ziel-/Solltemperatur des Warmwassers eingestellt ist. Daraus leitet Shyft die Untergrenze für die Warmwasserplanung ab. Da der Heizstab diese Temperatur nicht selbst steuert, kannst du stattdessen auch eine feste Zahl zwischen 20 und 90 °C eintragen.',
+        staticNumber: {min: 20, max: 90, placeholder: 'Entität oder Zahl 20–90 °C'}
     },
     [HEATING_ROD_SWITCH_KEY]: {
         label: 'Heizstab ein-/ausschalten',
@@ -6773,6 +6774,9 @@ function extractEntityId(value) {
     if (!text) return '';
     if (text === 'An') return STATIC_SENSOR_ON;
     if (text === 'Aus') return STATIC_SENSOR_OFF;
+    // Feste Zahl statt Entitaet (Heizstab: Warmwasser-Solltemperatur), z.B. "60", "60,5" oder "60 °C" -> "60" / "60.5"
+    const number = text.match(/^(\d+(?:[.,]\d+)?)\s*(?:°\s*C)?$/i);
+    if (number) return number[1].replace(',', '.');
     const byLabel = allSensorIdOptions.find(entity => entity.label === text);
     if (byLabel) return byLabel.entity_id;
     const inParens = text.match(/\(([a-z0-9_]+\.[a-z0-9_]+),/);
@@ -7730,7 +7734,13 @@ function buildMappingRow(key, value, helpInfo, valuePostfix, datalistId, showLiv
     if (context.staticOnOff) inputValue.placeholder = 'An (Standard)';
     inputValue.setAttribute("class", "sensorInput");
     inputValue.setAttribute("autocomplete", "off");
+    if (context.staticNumber) inputValue.placeholder = context.staticNumber.placeholder;
     inputValue.addEventListener('change', async () => {
+        if (context.staticNumber && /^\d+(?:[.,]\d+)?\s*(?:°\s*C)?$/i.test(inputValue.value.trim())) {
+            // Feste Zahl: auf den erlaubten Bereich begrenzen (Server ignoriert Werte ausserhalb)
+            const clamped = Math.min(context.staticNumber.max, Math.max(context.staticNumber.min, parseFloat(extractEntityId(inputValue.value))));
+            inputValue.value = String(clamped);
+        }
         if (showLiveValue) {
             inputValue.value = formatEntityDisplay(extractEntityId(inputValue.value));
         }

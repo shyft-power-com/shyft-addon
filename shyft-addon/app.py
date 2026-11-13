@@ -1,4 +1,4 @@
-from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id, resolve_dhw_activated, static_sensor_state, STATIC_SENSOR_ON, STATIC_SENSOR_OFF
+from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id, resolve_dhw_activated, static_sensor_state, static_sensor_number, is_static_number_value, STATIC_NUMBER_SENSOR_KEYS, STATIC_SENSOR_ON, STATIC_SENSOR_OFF
 from homeassistant_adapter import HomeAssistantAdapter, EntityState
 from shyft_adapter import ShyftAdapter
 from constants import DEV_ACCESS_KEY_PREFIX
@@ -5397,6 +5397,9 @@ def _read_mapped_entity_state(config, sensor_key):
     static_state = static_sensor_state(config, sensor_key)
     if static_state is not None:
         return EntityState(static_state, "", datetime.now(timezone.utc))
+    static_number = static_sensor_number(config, sensor_key)
+    if static_number is not None:
+        return EntityState(f"{static_number:g}", "°C", datetime.now(timezone.utc))
     entity_id = mapped_entity_id(config, sensor_key)
     if not entity_id:
         return None
@@ -6822,7 +6825,8 @@ DHW_TARGET_TEMP_TEST_BOOST_C = 5
 
 
 def _dhw_target_temp_entity(config):
-    return (config.get("sensorMappings", {}) or {}).get(DHW_TARGET_TEMP_SENSOR_FIELD, "")
+    value = (config.get("sensorMappings", {}) or {}).get(DHW_TARGET_TEMP_SENSOR_FIELD, "")
+    return "" if is_static_number_value(value) else value  # feste Zahl (nur Heizstab) ist keine Entitaet
 
 
 # ============================================================================
@@ -6855,7 +6859,11 @@ def compute_hw_soc_min(config):
     letzten Zuruecksetzen einer "Warmwasser"-Aktion kein Fehlschlag aktiv gemeldet ist (siehe
     Modul-Kommentar oben) UND tatsaechlich verwertbare Messwerte in der Historie liegen - sonst wird
     der zuletzt zwischengespeicherte Wert (falls vorhanden) unveraendert zurueckgegeben, damit ein
-    einzelner luecken-/fehlerhafter Durchlauf keinen bereits bekannten guten Wert verwirft."""
+    einzelner luecken-/fehlerhafter Durchlauf keinen bereits bekannten guten Wert verwirft.
+    Mit fester Zahl statt Entitaet (nur Heizstab, siehe static_sensor_number) ist diese Zahl die Untergrenze."""
+    static_number = static_sensor_number(config, DHW_TARGET_TEMP_SENSOR_FIELD)
+    if static_number is not None:
+        return static_number
     entity_id = _dhw_target_temp_entity(config)
     if not entity_id:
         return None
@@ -8077,6 +8085,8 @@ def _keep_valid_entity_ids(incoming, existing, keys=("sensorMappings", "actorMap
             old_value = old_map.get(inner_key)
             if new_value in (STATIC_SENSOR_ON, STATIC_SENSOR_OFF):
                 continue  # feste An/Aus-Auswahl (siehe static_sensor_state), keine entity_id
+            if inner_key in STATIC_NUMBER_SENSOR_KEYS and is_static_number_value(new_value):
+                continue  # feste Zahl statt Entitaet (siehe static_sensor_number)
             if (isinstance(new_value, str) and new_value and not _VALID_ENTITY_ID.match(new_value)
                     and isinstance(old_value, str) and _VALID_ENTITY_ID.match(old_value)):
                 print(f"[Shyft] Mapping '{key}.{inner_key}': ungueltiger Wert {new_value!r} ignoriert, behalte {old_value!r}.")
