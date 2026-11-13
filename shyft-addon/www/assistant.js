@@ -5,7 +5,9 @@
 const PLACEHOLDER_AI_AVAILABLE = 'Frage die KI um Hilfe';
 const PLACEHOLDER_AI_MISSING = 'Nutze deine KI, um nach Hilfe zu fragen. Binde hierfür die Integration "Google -> Google Gemini" in Home Assistant ein.';
 const PRIVACY_NOTICE = 'Hinweis: Bei der Nutzung der Hilfe-Funktion teilst du deine Sensorzustände sowie einen Auszug aus dem Add-on-Log (nur Fehler- und Warnzeilen, ohne Zugangsdaten) mit deinem KI-Anbieter.';
-const SUPPORT_LINK_INTRO = 'Du kannst uns bei einem Problem deine Log-Dateien senden. Wir schauen uns das Problem dann an und versuchen es zu beheben. ';
+// Vorbelegung der Beschreibung, wenn der Nutzer das Support-Formular ueber „Log senden“ oeffnet.
+const SUPPORT_FORM_PREFILL = 'Hallo, ich habe folgendes Problem: ';
+const SUPPORT_LINK_INTRO ='Du kannst uns bei einem Problem deine Log-Dateien senden. Wir schauen uns das Problem dann an und versuchen es zu beheben. ';
 const TEAM_NOTICE_TEXT ='Bei Fragen an das Shyft-Team schreibe bitte an ';
 const TEAM_MAIL = 'info@shyft-power.com';
 const MAX_HISTORY_SENT = 3;
@@ -251,6 +253,20 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
         result.hidden = true;
         card.appendChild(result);
 
+        // Zurueck zur Eingabemaske fuer die KI. Ein bereits gestartetes Logging laeuft weiter (das Add-on sendet das Log
+        // selbst); das Formular bleibt nur ausgeblendet und erscheint ueber „Log senden“ wieder.
+        const backToChat = document.createElement('button');
+        backToChat.type = 'button';
+        backToChat.className = 'assistantSupportLink assistantSupportBack';
+        backToChat.textContent = '← Zurück zum Chat';
+        backToChat.addEventListener('click', () => {
+            card.hidden = true;
+            aiSection.hidden = false;
+            aiDivider.hidden = false;
+            if (aiAvailable) input.focus();
+        });
+        card.appendChild(backToChat);
+
         let started = false;
         let sendAtMs = 0;
         let ticker = null;
@@ -258,7 +274,8 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
 
         // Ohne Beschreibung kein Log: der Button ist erst mit Text klickbar und nach dem Start gesperrt.
         function updateStartButton() {
-            startSupport.disabled = started || !summary.value.trim();
+            const text = summary.value.trim();
+            startSupport.disabled = started || !text || text === SUPPORT_FORM_PREFILL.trim();
         }
 
         function setStarted(value) {
@@ -316,7 +333,7 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
         }
 
         startSupport.addEventListener('click', async () => {
-            if (!summary.value.trim()) return;
+            if (startSupport.disabled) return;
             setStarted(true);
             result.hidden = true;
             try {
@@ -342,26 +359,23 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
         messages.appendChild(card);
         messages.scrollTop = messages.scrollHeight;
         supportCard = card;
+        return summary;
     }
 
     // Oeffnet das Support-Formular ueber den Link (ohne Angebot der KI): Beschreibung mit den aktuell aktiven Problemen
     // vorbelegt (bearbeitbar). Pro Chat gibt es nur ein Formular - ein zweiter Klick springt zu ihm.
-    async function openSupportForm() {
+    function openSupportForm() {
         aiSection.hidden = true;
         aiDivider.hidden = true;
         if (supportCard) {
+            supportCard.hidden = false;
             messages.scrollTop = supportCard.offsetTop - messages.offsetTop;
             return;
         }
         supportOffered = true;
-        let summary = '';
-        try {
-            const health = await getJson(baseUri + '/system-health');
-            summary = (health.problems || []).slice(0, 3).map(p => p.message).join('\n');
-        } catch (err) {
-            console.log(err);
-        }
-        if (!supportCard) addSupportForm(summary);
+        const summary = addSupportForm(SUPPORT_FORM_PREFILL);
+        summary.focus();
+        summary.setSelectionRange(summary.value.length, summary.value.length);
     }
 
     function applyAvailability() {
@@ -452,7 +466,7 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
     // Klick ausserhalb des Assistenten schliesst das Popup (Klicks auf Icon/Panel selbst nicht). Mit offenem
     // Support-Formular bleibt es offen - der Nutzer soll das Problem im Add-on nachstellen koennen.
     document.addEventListener('pointerdown', (event) => {
-        if (!panel.hidden && !supportCard && !root.contains(event.target)) setOpen(false);
+        if (!panel.hidden && !(supportCard && !supportCard.hidden) && !root.contains(event.target)) setOpen(false);
     });
 
     applyAvailability();

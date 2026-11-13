@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.45.393
+
+* **Hilfe-Chat: Aus dem Log-Formular kommt man wieder zur Eingabemaske der KI zurück.** Nach Klick auf „Log senden“ wurde die Eingabe für die KI dauerhaft ausgeblendet, und der Chat blieb auch bei Klick daneben offen. Jetzt gibt es im Formular „← Zurück zum Chat“ (ein schon gestartetes Logging läuft weiter, das Formular erscheint über „Log senden“ wieder), und der Chat lässt sich außerhalb wieder schließen, sobald das Formular ausgeblendet ist.
+* **Log-Formular startet mit „Hallo, ich habe folgendes Problem:“.** Statt der automatisch eingetragenen Systemmeldungen (z. B. „Es wird keine Optimierung gestartet. …“) beginnt die Beschreibung mit diesem Satz. „Logging starten“ ist erst klickbar, wenn danach noch etwas ergänzt wurde.
+
 ## 0.0.45.392
 
 * **Automations-Test der Batterie-Aktionen: „Test bedingt erfolgreich“ in Orange, verständlichere Hinweise.** Lässt sich nicht prüfen, ob die Automation `target` und `phase` erhalten hat (Home Assistant hat keinen Trace gespeichert oder die Werte stehen nicht darin), endet das Test-Popup jetzt orange mit „Test bedingt erfolgreich“ statt grün mit „Test erfolgreich“. Der Hinweis erklärt auf Deutsch, was der Trace ist, und verweist auf die Traces der Automation in Home Assistant; das Gating wird weiterhin freigegeben. Die übrigen Meldungen des Tests sind ebenfalls neu formuliert („Zielleistung“ statt `target`).
