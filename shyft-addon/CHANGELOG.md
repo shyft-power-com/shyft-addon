@@ -1,8 +1,42 @@
 # Changelog
 
+## 0.0.45.398
+
+* **Fehlende Sensor-Zuordnung bricht die Übertragung an shyft-power nicht mehr ab.** Fehlte in der Konfiguration ein Sensor-Schlüssel ganz (nicht nur leer) – z. B. „Warmwasser: Solltemperatur“ bei einer Anlage ohne Wärmepumpe –, brach das Einsammeln der Live-Werte mit einem Fehler ab (im Log: „Neubewertung 'input_csv_missing_data' fehlgeschlagen: KeyError('heatpump_dhw_target_temp')“). Dadurch wurde auch die stündliche Übertragung an shyft-power nicht ausgeführt, und es kam keine Optimierung zustande. Ein fehlender Schlüssel gilt jetzt wie ein nicht zugeordneter Sensor und wird übersprungen.
+
+## 0.0.45.397
+
+* **Abgelehnte Aufrufe an shyft-power stehen jetzt im Log.** Antwortet shyft-power auf einen Aufruf (z. B. Standort, Daten, Fehlermeldungen) mit einem Fehlerstatus – etwa 401 bei ungültigem oder abgelaufenem Zugangsschlüssel –, schrieb das Add-on das bisher nur bei aktiviertem ausführlichem Logging. Jetzt steht immer eine Zeile „shyft-power hat … abgelehnt: HTTP …“ im Log.
+
+## 0.0.45.396
+
+* **Heizstab: Warmwasser-Solltemperatur kann eine feste Zahl sein.** Der Heizstab steuert diese Temperatur nicht selbst – bisher musste trotzdem eine Home-Assistant-Entität zugeordnet werden. Jetzt kannst du im Feld „Warmwasser: Solltemperatur (°C)“ der Heizstab-Kachel statt einer Entität auch eine Zahl zwischen 20 und 90 °C eintragen (z. B. „60“). Sie dient wie bisher als Untergrenze für die Warmwasserplanung. Zahlen außerhalb von 20–90 werden auf den Bereich begrenzt. Bei der Wärmepumpe bleibt das Feld eine Entität.
+
+## 0.0.45.395
+
+* **„Batterie-Aktion beenden“ muss jetzt getestet werden.** Bisher zählte der Test nicht: die Batterie in der Navigation wurde auch ohne ihn grün und „Optimierung anstoßen“ nicht gesperrt, obwohl eine nicht funktionierende Rückstellung die Batterie nach einer Aktion im falschen Modus lassen kann. Jetzt gilt „Beenden“ wie die drei anderen Batterie-Aktionen: Ist sie eingerichtet (und die drei anderen Aktionen auch), steht sie ungetestet als „Noch nicht erfolgreich getestet“ in der Navigation und sperrt die Optimierung, bis der Test bestanden ist. Bereits früher bestandene Tests von „Beenden“ gelten nicht mehr und müssen einmal wiederholt werden.
+* **Der Hinweis „Bitte Gerätesteuerung testen“ steht bei den Batterie-Aktionen jetzt direkt über dem „Testen“-Button** statt unter der Überschrift der Aktion.
+
+## 0.0.45.394
+
+* **Konfiguration: „×“ zum Löschen sitzt wieder mittig im Eingabefeld.** Bei Feldern mit „Vorschlag“-Label saß das „×“ (und der Dropdown-Pfeil) zu tief, weil das Label die Höhe des Feldwrappers vergrößerte und die Mitte nach unten rutschte. Das Label steht jetzt unter dem Wrapper statt darin.
+
+## 0.0.45.393
+
+* **Hilfe-Chat: Aus dem Log-Formular kommt man wieder zur Eingabemaske der KI zurück.** Nach Klick auf „Log senden“ wurde die Eingabe für die KI dauerhaft ausgeblendet, und der Chat blieb auch bei Klick daneben offen. Jetzt gibt es im Formular „← Zurück zum Chat“ (ein schon gestartetes Logging läuft weiter, das Formular erscheint über „Log senden“ wieder), und der Chat lässt sich außerhalb wieder schließen, sobald das Formular ausgeblendet ist.
+* **Log-Formular startet mit „Hallo, ich habe folgendes Problem:“.** Statt der automatisch eingetragenen Systemmeldungen (z. B. „Es wird keine Optimierung gestartet. …“) beginnt die Beschreibung mit diesem Satz. „Logging starten“ ist erst klickbar, wenn danach noch etwas ergänzt wurde.
+
 ## 0.0.45.392
 
 * **Automations-Test der Batterie-Aktionen: „Test bedingt erfolgreich“ in Orange, verständlichere Hinweise.** Lässt sich nicht prüfen, ob die Automation `target` und `phase` erhalten hat (Home Assistant hat keinen Trace gespeichert oder die Werte stehen nicht darin), endet das Test-Popup jetzt orange mit „Test bedingt erfolgreich“ statt grün mit „Test erfolgreich“. Der Hinweis erklärt auf Deutsch, was der Trace ist, und verweist auf die Traces der Automation in Home Assistant; das Gating wird weiterhin freigegeben. Die übrigen Meldungen des Tests sind ebenfalls neu formuliert („Zielleistung“ statt `target`).
+
+## 0.0.45.391
+
+* **Wechsel zwischen direkter Steuerung und HA-Automation setzt die Test-Anzeige zurück.** Bisher blieb „Erfolgreich getestet“ (bzw. eine Fehlermeldung) und der grüne Haken stehen, wenn man per Link zwischen „Direkte Steuerung“ und „Per Home-Assistant-Automation steuern“ wechselte, obwohl der Test nur für die jeweils andere Variante gilt. Jetzt zeigt die gewählte Variante nur ihr eigenes Testergebnis; wechselt man zurück, erscheint das frühere Ergebnis wieder (solange man die andere Variante nicht inzwischen getestet hat). Gilt für Batterie-Aktionen, Heizung Soll-Temperatur, Sonstigen Verbraucher, Warmwasser und Auto laden.
+
+## 0.0.45.390
+
+* **Community-Vorschläge: Label „Vorschlag“ verschwindet auch beim „Sonstigen Verbraucher“, sobald dessen Test bestanden ist.** Auf der Konfigurationsseite blieb das gelbe „Vorschlag“-Label bei dieser Kachel dauerhaft stehen, weil ihr Test nicht berücksichtigt wurde. Im Dropdown bleibt das Label unverändert erhalten.
 
 ## 0.0.45.389
 

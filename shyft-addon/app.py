@@ -1,4 +1,4 @@
-from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id, resolve_dhw_activated, static_sensor_state, STATIC_SENSOR_ON, STATIC_SENSOR_OFF
+from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id, resolve_dhw_activated, static_sensor_state, static_sensor_number, is_static_number_value, STATIC_NUMBER_SENSOR_KEYS, STATIC_SENSOR_ON, STATIC_SENSOR_OFF
 from homeassistant_adapter import HomeAssistantAdapter, EntityState
 from shyft_adapter import ShyftAdapter
 from constants import DEV_ACCESS_KEY_PREFIX
@@ -3343,6 +3343,8 @@ _READY_KEY_TO_LABEL_SECTION = {
     "battery_charge_shift_pv_surplus": ("Batterie-Laden verschieben (PV-Überschuss)", "batterie"),
     "battery_discharge_shift": ("Batterie-Entladen verschieben", "batterie"),
     "battery_grid_charge": ("Batterie netzladen", "batterie"),
+    # Gemeinsame Beenden-Steuerung der drei Batterie-Aktionen: ohne funktionierende Rueckstellung bliebe die Batterie nach einer Aktion im falschen Modus.
+    "battery_action_stop": ("Batterie-Aktion beenden", "batterie"),
 }
 
 
@@ -5395,6 +5397,9 @@ def _read_mapped_entity_state(config, sensor_key):
     static_state = static_sensor_state(config, sensor_key)
     if static_state is not None:
         return EntityState(static_state, "", datetime.now(timezone.utc))
+    static_number = static_sensor_number(config, sensor_key)
+    if static_number is not None:
+        return EntityState(f"{static_number:g}", "°C", datetime.now(timezone.utc))
     entity_id = mapped_entity_id(config, sensor_key)
     if not entity_id:
         return None
@@ -6820,7 +6825,8 @@ DHW_TARGET_TEMP_TEST_BOOST_C = 5
 
 
 def _dhw_target_temp_entity(config):
-    return (config.get("sensorMappings", {}) or {}).get(DHW_TARGET_TEMP_SENSOR_FIELD, "")
+    value = (config.get("sensorMappings", {}) or {}).get(DHW_TARGET_TEMP_SENSOR_FIELD, "")
+    return "" if is_static_number_value(value) else value  # feste Zahl (nur Heizstab) ist keine Entitaet
 
 
 # ============================================================================
@@ -6853,7 +6859,11 @@ def compute_hw_soc_min(config):
     letzten Zuruecksetzen einer "Warmwasser"-Aktion kein Fehlschlag aktiv gemeldet ist (siehe
     Modul-Kommentar oben) UND tatsaechlich verwertbare Messwerte in der Historie liegen - sonst wird
     der zuletzt zwischengespeicherte Wert (falls vorhanden) unveraendert zurueckgegeben, damit ein
-    einzelner luecken-/fehlerhafter Durchlauf keinen bereits bekannten guten Wert verwirft."""
+    einzelner luecken-/fehlerhafter Durchlauf keinen bereits bekannten guten Wert verwirft.
+    Mit fester Zahl statt Entitaet (nur Heizstab, siehe static_sensor_number) ist diese Zahl die Untergrenze."""
+    static_number = static_sensor_number(config, DHW_TARGET_TEMP_SENSOR_FIELD)
+    if static_number is not None:
+        return static_number
     entity_id = _dhw_target_temp_entity(config)
     if not entity_id:
         return None
@@ -7239,6 +7249,25 @@ def _action_type_config_state(config, ready_key):
         variant = cv.get(ready_key, "ha_automation")
         entity_ok = bool(am.get(ready_key)) if variant == "ha_automation" else bool(sm.get(BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[ready_key]))
         return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
+    if ready_key == "battery_action_stop":
+        variant = _battery_control_variant(config, ready_key)
+        # Direkt: setzt die Entitaeten der drei Batterie-Aktionen zurueck - ohne deren Einrichtung gibt es nichts zu testen (wie in
+        # isBatteryDirectActionConfigured in app.js; per Toggle deaktivierte Aktionen zaehlen nicht als Voraussetzung).
+        enabled = config.get("actionTypeEnabled", {}) or {}
+
+        def _other_configured(key):
+            if enabled.get(key, True) is False:
+                return True
+            if _battery_control_variant(config, key) == "ha_automation":
+                return bool(am.get(key))
+            return bool(sm.get(BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[key]))
+
+        if variant == "ha_automation":
+            entity_ok = bool(am.get(ready_key))
+        else:
+            entity_ok = all(_other_configured(key) for key in BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS)
+        return {"flags": {"entity": entity_ok},
+                "fp": {"variant": variant, "entity": entity_ok, "mode": config.get("batteryModeSelfConsumptionValue") or ""}}
     return {"flags": {}, "fp": {}}
 
 
@@ -8056,6 +8085,8 @@ def _keep_valid_entity_ids(incoming, existing, keys=("sensorMappings", "actorMap
             old_value = old_map.get(inner_key)
             if new_value in (STATIC_SENSOR_ON, STATIC_SENSOR_OFF):
                 continue  # feste An/Aus-Auswahl (siehe static_sensor_state), keine entity_id
+            if inner_key in STATIC_NUMBER_SENSOR_KEYS and is_static_number_value(new_value):
+                continue  # feste Zahl statt Entitaet (siehe static_sensor_number)
             if (isinstance(new_value, str) and new_value and not _VALID_ENTITY_ID.match(new_value)
                     and isinstance(old_value, str) and _VALID_ENTITY_ID.match(old_value)):
                 print(f"[Shyft] Mapping '{key}.{inner_key}': ungueltiger Wert {new_value!r} ignoriert, behalte {old_value!r}.")

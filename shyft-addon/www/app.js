@@ -153,7 +153,8 @@ const heatingRodHelpInformation = {
     'heatpump_dhw_target_temp': {
         label: 'Warmwasser: Solltemperatur (°C)',
         bold: false,
-        description: ' Die Home-Assistant-Entity (number oder climate), an der die Ziel-/Solltemperatur des Warmwassers eingestellt ist. Daraus leitet Shyft die Untergrenze für die Warmwasserplanung ab.'
+        description: ' Die Home-Assistant-Entity (number oder climate), an der die Ziel-/Solltemperatur des Warmwassers eingestellt ist. Daraus leitet Shyft die Untergrenze für die Warmwasserplanung ab. Da der Heizstab diese Temperatur nicht selbst steuert, kannst du stattdessen auch eine feste Zahl zwischen 20 und 90 °C eintragen.',
+        staticNumber: {min: 20, max: 90, placeholder: 'Entität oder Zahl 20–90 °C'}
     },
     [HEATING_ROD_SWITCH_KEY]: {
         label: 'Heizstab ein-/ausschalten',
@@ -5116,6 +5117,31 @@ function reapplyTestGates() {
 // Nach einem abgeschlossenen Testklick: lokalen Cache sofort aktualisieren (kein erneuter Fetch
 // noetig, der Server hat actionTestPassed/actionTestFailed synchron im selben Request aktualisiert,
 // siehe _records_action_test).
+// Zeilen mit eigener Ergebnisanzeige ("Erfolgreich getestet" / "Test fehlgeschlagen") melden hier ihre Neuzeichnen-Funktion an.
+const testResultRefreshers = new Set();
+
+// Nach dem Wechsel zwischen direkter Steuerung und HA-Automation: Test-Stand frisch vom Server holen (der Test-Fingerprint enthaelt
+// die Variante - das Ergebnis der anderen Variante gilt dort nicht und wird nicht angezeigt; beim Zurueckwechseln erscheint das
+// fruehere Ergebnis wieder) und alle Anzeigen neu zeichnen. Erst NACH dem Speichern aufrufen (autoSave liefert ein Promise).
+async function reloadTestState() {
+    try {
+        actionTestStatusMap = await getJson(actionTestStatusUri);
+        actionTestResultsMap = await getJson(actionTestResultsUri);
+    } catch (err) {
+        console.log(err);
+        return;
+    }
+    for (const refresh of [...testResultRefreshers]) refresh();
+    reapplyTestGates();
+    renderSystemHealth();
+    renderDashboardProblemBanner();
+    refreshCommunitySuggestionMarks();
+}
+
+function onControlVariantSaved(savePromise) {
+    Promise.resolve(savePromise).then(reloadTestState);
+}
+
 function markActionTested(readyKey, passed) {
     if (readyKey === null) return;
     actionTestStatusMap[readyKey] = passed;
@@ -5652,7 +5678,7 @@ function buildAutoManagedNumberControl(control) {
             variant = active ? 'ha_automation' : 'direct';
             automationRow.style.display = active ? '' : 'none';
             valueDisplay.textContent = 'Aktueller Wert: –';
-            autoSave();
+            onControlVariantSaved(autoSave());
             refreshStatus();
         }));
     }
@@ -5840,7 +5866,7 @@ function buildAutoManagedSwitchControl(control) {
             valueDisplay.textContent = 'Aktueller Status: –';
             nextPhase = 'start';
             testButton.textContent = 'Test: Start';
-            autoSave();
+            onControlVariantSaved(autoSave());
             refreshStatus();
         }));
     }
@@ -6522,7 +6548,7 @@ function buildCarChargeControl() {
         carChargeAutomationActive = active;
         stagesWrapper.style.display = active ? 'none' : '';
         automationWrapper.style.display = active ? '' : 'none';
-        autoSave();
+        onControlVariantSaved(autoSave());
     }));
 
     wrapper.__refresh = refreshWallboxStatus;
@@ -6683,7 +6709,7 @@ function buildHotWaterControl() {
         stageWrapper.style.display = active ? 'none' : '';
         automationRow.style.display = active ? '' : 'none';
         refreshCheckmark();
-        autoSave();
+        onControlVariantSaved(autoSave());
     }));
 
     wrapper.__refresh = refreshHotWaterStatus;
@@ -6748,6 +6774,9 @@ function extractEntityId(value) {
     if (!text) return '';
     if (text === 'An') return STATIC_SENSOR_ON;
     if (text === 'Aus') return STATIC_SENSOR_OFF;
+    // Feste Zahl statt Entitaet (Heizstab: Warmwasser-Solltemperatur), z.B. "60", "60,5" oder "60 °C" -> "60" / "60.5"
+    const number = text.match(/^(\d+(?:[.,]\d+)?)\s*(?:°\s*C)?$/i);
+    if (number) return number[1].replace(',', '.');
     const byLabel = allSensorIdOptions.find(entity => entity.label === text);
     if (byLabel) return byLabel.entity_id;
     const inParens = text.match(/\(([a-z0-9_]+\.[a-z0-9_]+),/);
@@ -6880,7 +6909,7 @@ function buildBatteryCoupledEntityField(sensorKey, datalistId, onChange, suggest
 // Aktionstyp naechste zufaellig durch den Optimierer erneut UND dabei erfolgreich ausgeloest wurde.
 // checkmark/hint: vom Aufrufer (buildBatteryControlBlock) uebergebene Elemente aus dessen
 // Ueberschrift, nur fuer gegatete Aktionstypen gesetzt (siehe dort) - null bei "Batterie-Aktion
-// beenden", die kein eigenes Bereitschafts-Gating hat (siehe aber blockedReason).
+// beenden" ebenfalls gegatet (siehe blockedReason fuer den noch nicht testbaren Fall).
 // blockedReason (optional): "Batterie-Aktion beenden" setzt bei den anderen drei Batterie-
 // Aktionstypen die dort konfigurierte(n) Entitaet(en) zurueck (siehe execute_battery_direct) - ein
 // Testklick vor deren Einrichtung wuerde deshalb nur mit "Entitaet fehlt" scheitern. Button bleibt
@@ -6987,9 +7016,14 @@ function buildBatteryDirectTestRow(actionKey, checkmark, hint, blockedReason, op
     controls.appendChild(button);
     controls.appendChild(statusIcon);
     controls.appendChild(statusText);
+    // Der rote Hinweis "Bitte Gerätesteuerung testen" steht direkt ueber dem Testen-Button (bereits eingefuegte Hinweise, z.B. beim
+    // Heizstab, bleiben wo sie sind).
+    if (hint && !hint.parentNode) wrapper.appendChild(hint);
     wrapper.appendChild(controls);
 
     renderLastResult();
+    wrapper.refreshResult = renderLastResult;
+    testResultRefreshers.add(() => { if (wrapper.isConnected) renderLastResult(); });
     return wrapper;
 }
 
@@ -7021,7 +7055,7 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     if (tooltip) title.appendChild(buildTooltip(tooltip));
     headingRow.appendChild(title);
     // Nur Aktionstypen mit eigenem Bereitschafts-Gating (siehe _READY_KEY_TO_LABEL_SECTION in
-    // app.py) bekommen einen Haken - "Batterie-Aktion beenden" ist nicht gegatet, siehe
+    // app.py) bekommen einen Haken - der Haken steht neben dem Testen-Button, siehe
     // buildBatteryDirectTestRow.
     const gated = actionKey in actionTestStatusMap;
     const checkmark = document.createElement('span');
@@ -7033,18 +7067,17 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     // Der Steuerungs-Schalter dieses Batterie-Aktionstyps steht auf der Gerätesteuerung-Seite (siehe
     // renderControlToggles), nicht mehr hier.
     wrapper.appendChild(headingRow);
-    const hint = buildTestGateHint();
-    if (gated) {
-        wrapper.appendChild(hint);
-        applyTestGate(actionKey, checkmark, hint, true);
-    }
+    // Je Variante (direkt / HA-Automation) ein eigener Hinweis, der in der jeweiligen Testen-Zeile ueber dem Button steht
+    // (buildBatteryDirectTestRow fuegt ihn ein). Ist der Test gesperrt (testBlockedReason), gibt es noch nichts zu testen.
+    const gateHints = [buildTestGateHint(), buildTestGateHint()];
+    if (gated) for (const gateHint of gateHints) applyTestGate(actionKey, checkmark, gateHint, !testBlockedReason);
 
     const variant = (configData['controlVariant'] || {})[actionKey] || 'direct';
 
     const directFields = document.createElement('div');
     directFields.style.display = variant === 'direct' ? '' : 'none';
     directFields.appendChild(buildDirectFields());
-    directFields.appendChild(buildBatteryDirectTestRow(actionKey, gated ? checkmark : null, gated ? hint : null, testBlockedReason));
+    directFields.appendChild(buildBatteryDirectTestRow(actionKey, gated ? checkmark : null, gated ? gateHints[0] : null, testBlockedReason));
     wrapper.appendChild(directFields);
 
     const automationRow = buildAutomationEntityRow('HA-Automation auswählen',
@@ -7056,7 +7089,7 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
     const automationFields = document.createElement('div');
     automationFields.style.display = variant === 'ha_automation' ? '' : 'none';
     automationFields.appendChild(automationRow);
-    automationFields.appendChild(buildBatteryDirectTestRow(actionKey, gated ? checkmark : null, gated ? hint : null, testBlockedReason));
+    automationFields.appendChild(buildBatteryDirectTestRow(actionKey, gated ? checkmark : null, gated ? gateHints[1] : null, testBlockedReason));
     wrapper.appendChild(automationFields);
 
     // Sichtbarkeit direkt umschalten statt ueber refresh() neu zu rendern: refresh() haengt von
@@ -7069,7 +7102,7 @@ function buildBatteryControlBlock(actionKey, label, tooltip, buildDirectFields, 
         configData['controlVariant'][actionKey] = active ? 'ha_automation' : 'direct';
         directFields.style.display = active ? 'none' : '';
         automationFields.style.display = active ? '' : 'none';
-        autoSave();
+        onControlVariantSaved(autoSave());
     }));
 
     return wrapper;
@@ -7207,7 +7240,7 @@ const STATIC_SENSOR_OFF = 'static_off';
 // der Kachel erfolgreich getestet wurde (dann hat der Vorschlag sich bewaehrt).
 const SECTION_READY_KEYS = {
     waermepumpe: ['hot_water', 'heating_target_temp'], heizstab: ['heating_rod'], wallbox: ['car_charge_start'],
-    auto: ['car_charge_start'], batterie: ['battery_charge_shift_pv_surplus', 'battery_discharge_shift', 'battery_grid_charge'],
+    auto: ['car_charge_start'], sonstiger_verbraucher: ['consumer_on_off'], batterie: ['battery_charge_shift_pv_surplus', 'battery_discharge_shift', 'battery_grid_charge'],
 };
 const communitySuggestionCache = {};
 const communitySuggestionMarks = [];   // {inputs, badge, sectionKey}
@@ -7379,7 +7412,11 @@ async function applyCommunitySuggestions(section, entryIds, firstSetup = false) 
         badge.textContent = 'Vorschlag';
         badge.title = 'Von anderen Nutzern mit derselben Integration erfolgreich verwendet - bitte testen.';
         input.classList.add('communitySuggested');
-        input.parentNode.appendChild(badge);
+        // Bei Feldern mit "×"/Pfeil (.clearableInput) hinter den Wrapper statt hinein: sonst wird der Wrapper um das Label
+        // hoeher, und das mittig (top: 50%) positionierte "×" sitzt nicht mehr auf Hoehe des Eingabefelds.
+        const clearable = input.closest('.clearableInput');
+        if (clearable) clearable.after(badge);
+        else input.parentNode.appendChild(badge);
         const mark = {inputs: [input], badge, sectionKey: section.key};
         communitySuggestionMarks.push(mark);
         input.addEventListener('input', () => clearSuggestionMark(mark), {once: true});
@@ -7697,7 +7734,13 @@ function buildMappingRow(key, value, helpInfo, valuePostfix, datalistId, showLiv
     if (context.staticOnOff) inputValue.placeholder = 'An (Standard)';
     inputValue.setAttribute("class", "sensorInput");
     inputValue.setAttribute("autocomplete", "off");
+    if (context.staticNumber) inputValue.placeholder = context.staticNumber.placeholder;
     inputValue.addEventListener('change', async () => {
+        if (context.staticNumber && /^\d+(?:[.,]\d+)?\s*(?:°\s*C)?$/i.test(inputValue.value.trim())) {
+            // Feste Zahl: auf den erlaubten Bereich begrenzen (Server ignoriert Werte ausserhalb)
+            const clamped = Math.min(context.staticNumber.max, Math.max(context.staticNumber.min, parseFloat(extractEntityId(inputValue.value))));
+            inputValue.value = String(clamped);
+        }
         if (showLiveValue) {
             inputValue.value = formatEntityDisplay(extractEntityId(inputValue.value));
         }

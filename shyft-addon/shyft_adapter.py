@@ -176,6 +176,10 @@ class ShyftAdapter:
             response = requests.post(complete_uri, headers=headers, data=payload)
             self._log_info("_call_workflow " + str(response))
             status_code = response.status_code
+            if not response.ok:
+                # Immer loggen (nicht nur bei detailed_logging): der Rueckgabewert wird von den meisten Aufrufern ignoriert, ein
+                # abgelehnter/abgelaufener Zugangsschluessel (401) wuerde sonst alle Meldungen an shyft-power still scheitern lassen.
+                print(f"[Shyft] shyft-power hat {workflow_name} abgelehnt: HTTP {status_code} {(response.text or '')[:200]}")
             return json.dumps({
                 "status": "success",
                 "payload": payload,
