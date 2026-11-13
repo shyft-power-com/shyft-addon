@@ -615,9 +615,13 @@ class SyncService:
         static_number = static_sensor_number(data, key)
         if static_number is not None:
             return {"entity_id": None, "state": f"{static_number:g}", "unit": EXPECTED_UNITS.get(key), "sensor": bubbleSensorIdentifier}
-        if key in STATIC_NUMBER_SENSOR_KEYS and is_static_number_value(data["sensorMappings"].get(key)):
+        if key in STATIC_NUMBER_SENSOR_KEYS and is_static_number_value((data.get("sensorMappings") or {}).get(key)):
             return ""  # feste Zahl, aber ausserhalb 20-90 oder kein Heizstab: nicht als Entitaet behandeln
-        sensorId = mapped_entity_id(data, key) or data["sensorMappings"][key]
+        # .get statt []: fehlt der Schluessel in sensorMappings ganz (z.B. Nutzer ohne Waermepumpe, dessen Konfiguration ihn nie angelegt hat),
+        # ist der Sensor einfach nicht zugeordnet - ein KeyError hier braeche sonst die ganze Uebertragung an shyft-power ab.
+        sensorId = mapped_entity_id(data, key) or (data.get("sensorMappings") or {}).get(key)
+        if not sensorId:
+            return ""
         try:
             sensorValue = self.homeassistant_adapter.load_entity_state(sensorId)
             state, unit = convert_to_expected_unit(key, sensorValue.state, sensorValue.unit)

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.398
+
+* **Fehlende Sensor-Zuordnung bricht die Übertragung an shyft-power nicht mehr ab.** Fehlte in der Konfiguration ein Sensor-Schlüssel ganz (nicht nur leer) – z. B. „Warmwasser: Solltemperatur“ bei einer Anlage ohne Wärmepumpe –, brach das Einsammeln der Live-Werte mit einem Fehler ab (im Log: „Neubewertung 'input_csv_missing_data' fehlgeschlagen: KeyError('heatpump_dhw_target_temp')“). Dadurch wurde auch die stündliche Übertragung an shyft-power nicht ausgeführt, und es kam keine Optimierung zustande. Ein fehlender Schlüssel gilt jetzt wie ein nicht zugeordneter Sensor und wird übersprungen.
+
 ## 0.0.45.397
 
 * **Abgelehnte Aufrufe an shyft-power stehen jetzt im Log.** Antwortet shyft-power auf einen Aufruf (z. B. Standort, Daten, Fehlermeldungen) mit einem Fehlerstatus – etwa 401 bei ungültigem oder abgelaufenem Zugangsschlüssel –, schrieb das Add-on das bisher nur bei aktiviertem ausführlichem Logging. Jetzt steht immer eine Zeile „shyft-power hat … abgelehnt: HTTP …“ im Log.
