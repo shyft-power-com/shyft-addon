@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.403
+
+* **Wallbox: Der rote Hinweis „Bitte Gerätesteuerung testen“ erscheint jetzt auch über dem Test-Button „Laden starten und beenden“.** Er wurde nur einmal beim Aufbau der Kachel bewertet – war die Ladesteuerung da noch leer und wurde erst danach ausgefüllt (von Hand oder per Vorschlag), blieb der Hinweis versteckt. Jetzt wird er nach jedem Speichern neu bewertet.
+
 ## 0.0.45.402
 
 * **„Optimierung anstoßen“ und die Hinweise dazu schweben jetzt am unteren Bildrand.** Solange noch Steuerungen getestet werden müssen (oder noch kein eigenes Gerät eingerichtet ist) und die erste Optimierung noch nicht angekommen ist, bleiben der Button und die Liste „… wurde noch nicht erfolgreich getestet“ am unteren Rand der Konfigurationsseite sichtbar – auch am Handy (dort mit kleinerer Schrift und begrenzter Höhe, rechts Platz für das Hilfe-Symbol). Danach liegt der Block wieder wie gewohnt am Seitenende.

@@ -1925,6 +1925,7 @@ async function autoSave() {
             statusElement.textContent = 'Speichere...';
         }
         await saveConfigurationNow();
+        reapplyTestGates();
         renderSystemHealth();
         if (statusElement) {
             statusElement.classList.remove('status-error');
@@ -5132,11 +5133,13 @@ const READY_KEY_TO_TOGGLE_KEY = {consumer_on_off: 'consumer_on', heating_rod: 'h
 function applyTestGate(readyKey, checkmark, hint, configured) {
     if (readyKey === null) return;
     // Argumente merken, damit ein Umschalten des Toggles den Hinweis neu bewerten kann (siehe reapplyTestGates)
+    // configured darf eine Funktion sein: wird dann bei jedem Neubewerten frisch ausgewertet (z.B. nach dem Speichern, siehe autoSave)
     hint.__gate = {readyKey, checkmark, configured};
     const passed = !!actionTestStatusMap[readyKey];
     checkmark.hidden = !passed;
+    const isConfigured = typeof configured === 'function' ? !!configured() : !!configured;
     // Deaktivierte Steuerung (Toggle aus): kein roter "Bitte testen"-Hinweis
-    hint.hidden = !configured || passed || isActionToggleOff(READY_KEY_TO_TOGGLE_KEY[readyKey] || readyKey);
+    hint.hidden = !isConfigured || passed || isActionToggleOff(READY_KEY_TO_TOGGLE_KEY[readyKey] || readyKey);
 }
 
 function reapplyTestGates() {
@@ -6359,12 +6362,18 @@ function buildCarChargeControl() {
     const phaseCountStage = recipe.phaseCount || {};
     const amperageStage = recipe.amperage || {};
     const controlStage = recipe.control || {};
-    const isThreeStageComplete = recipe.type === 'three_stage' && isBranchStageComplete(phaseCountStage, CAR_CHARGE_STAGE_BRANCHES.phaseCount.keys)
-        && amperageStage.service && (amperageStage.amountFields || []).length > 0 && isBranchStageComplete(controlStage, CAR_CHARGE_STAGE_BRANCHES.control.keys);
-    const isHaAutomationComplete = recipe.type === 'ha_automation' && !!recipe.haAutomationEntityId;
-    const carChargeConfigured = isThreeStageComplete || isHaAutomationComplete;
     const carChargeHint = buildTestGateHint();
-    applyTestGate('car_charge_start', checkmark, carChargeHint, carChargeConfigured);
+    // Als Funktion: Der Hinweis muss auch erscheinen, wenn die Steuerung erst nach dem Aufbau der Kachel ausgefuellt wird
+    // (von Hand oder per Community-Vorschlag) - autoSave bewertet ihn nach jedem Speichern neu (reapplyTestGates).
+    applyTestGate('car_charge_start', checkmark, carChargeHint, () => {
+        const current = configData['carChargeRecipe'] || {};
+        const currentAmperage = current.amperage || {};
+        return current.type === 'ha_automation'
+            ? !!current.haAutomationEntityId
+            : current.type === 'three_stage' && isBranchStageComplete(current.phaseCount, CAR_CHARGE_STAGE_BRANCHES.phaseCount.keys)
+                && !!currentAmperage.service && (currentAmperage.amountFields || []).length > 0
+                && isBranchStageComplete(current.control, CAR_CHARGE_STAGE_BRANCHES.control.keys);
+    });
 
     const candidateServices = allServiceOptions.filter(s => getIntegrationServiceDomains('wallbox').has(s.service.split('.')[0]));
 
