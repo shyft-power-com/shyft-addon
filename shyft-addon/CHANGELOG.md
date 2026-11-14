@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.405
+
+* **Fix: Vor der ersten Optimierung erschien die Meldung „‚Sonstiger Verbraucher‘ weicht ab: Shyft erwartet ‚off‘, gemessen wird ‚on‘“ (und entsprechende für die Batterie).** Der Soll-Ist-Abgleich nahm im Ruhezustand ohne laufende Aktion automatisch „aus“ als Soll an – auch wenn shyft noch nie optimiert und das Gerät nie gesteuert hatte (z. B. weil es von Hand an ist). Jetzt gibt es diese Ruhezustands-Erwartung erst, wenn mindestens eine Optimierung von shyft-power empfangen wurde. Der Abgleich während laufender Aktionen ändert sich nicht.
+
 ## 0.0.45.404
 
 * **Fix: Eingaben (z. B. Batterie-Kapazität und Mindest-Ladestand) gingen beim Speichern verloren, das Feld blieb rot.** Beim Öffnen und Anklicken von Feldern löst die Konfigurationsseite mehrere Speicherungen kurz hintereinander aus. Sie benutzten dieselbe Zwischendatei – eine Speicherung scheiterte dann mit „No such file or directory: config.json.tmp“ (HTTP-Fehler 500), ihr Wert wurde nicht abgelegt, und die Seite fiel auf den Standardwert zurück. Jetzt hat jede Speicherung ihre eigene Zwischendatei, und gleichzeitige Speicherungen laufen nacheinander ab, sodass keine ältere eine neuere überschreibt.

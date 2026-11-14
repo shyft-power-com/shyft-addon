@@ -9896,8 +9896,15 @@ def check_device_status_deviation(config):
         start = action.get("Date Start")
         return start is not None and (now_ms - start) >= grace_ms
 
+    # Ruhezustand-Erwartung ("Shyft erwartet off/Eigenverbrauch/...") gibt es erst, wenn shyft-power das Geraet ueberhaupt schon
+    # gesteuert haben kann - ohne je empfangene Optimierung existieren keine Aktionen, und "keine Aktion aktiv" waere sonst
+    # faelschlich "soll aus", obwohl nie etwas befohlen wurde (z.B. der Verbraucher laeuft von Hand).
+    optimization_received = _has_received_optimization()
+
     def baseline_ok(action_names):
-        "True, wenn KEINE dieser Aktionsarten gerade aktiv ist UND keine von ihnen innerhalb der Karenzzeit geendet hat."
+        "True, wenn KEINE dieser Aktionsarten gerade aktiv ist UND keine von ihnen innerhalb der Karenzzeit geendet hat - und shyft schon mindestens eine Optimierung empfangen hat."
+        if not optimization_received:
+            return False
         if any(_active_computed_action(computed_actions, name) is not None for name in action_names):
             return False
         recent_end = _most_recent_action_end_ms(computed_actions, action_names)
