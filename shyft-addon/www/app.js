@@ -1325,15 +1325,20 @@ async function applyTriggerButtonDemoState() {
     const blockers = document.getElementById('triggerBlockers');
     if (!button || !hint) return;
     let isDemo = false;
+    let hasOptimization = true;
     try {
         const status = await getJson(insideHomeAssistant + '/account-status');
         isDemo = !!status.isDemo;
+        hasOptimization = !!status.hasOptimization;
     } catch (err) {
         console.log(err);
         return;
     }
     const untested = await fetchUntestedActionWarnings();
     button.disabled = isDemo || untested.length > 0;
+    // Solange noch etwas offen ist und die erste Optimierung nicht angekommen ist, schwebt Button + Hinweis am unteren Rand (siehe .triggerDock).
+    const dock = document.getElementById('triggerDock');
+    if (dock) dock.classList.toggle('is-floating', !hasOptimization && button.disabled);
     // Im Demomodus mit ungetesteter Aktion erklaert die Liste unten den naechsten Schritt besser als der Standardtext
     hint.hidden = !isDemo || untested.length > 0;
     if (!blockers) return;

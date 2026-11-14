@@ -527,6 +527,34 @@
             margin: 0.3em 0 0;
             padding-left: 1.4em;
         }
+        /* Button + Hinweise schweben am unteren Bildrand (sticky), solange noch Einrichtungsschritte offen sind und die erste
+           Optimierung noch nicht angekommen ist - siehe applyTriggerButtonDemoState. Rechts Platz fuer das Assistent-Icon. */
+        .triggerDock.is-floating {
+            position: sticky;
+            bottom: 0;
+            z-index: 800;
+            background: var(--color-bg);
+            border-top: 1px solid var(--color-border);
+            box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.12);
+            padding: 0.7em 72px calc(0.7em + env(safe-area-inset-bottom, 0px)) 0.8em;
+        }
+        .triggerDock.is-floating .triggerBlockers {
+            margin: 0 0 0.6em;
+            max-height: 30vh;
+            overflow-y: auto;
+        }
+        .triggerDock.is-floating .actionMenu {
+            margin: 0;
+        }
+        @media (max-width: 600px) {
+            .triggerDock.is-floating {
+                padding-right: 64px;
+            }
+            .triggerDock.is-floating .triggerBlockers {
+                font-size: 0.82em;
+                max-height: 24vh;
+            }
+        }
         .systemHealthNextStep {
             margin: 0.5em 0 0.8em;
             font-weight: 600;
@@ -3081,11 +3109,13 @@
     <div id="deviceSections"></div>
     <div id="notificationSection"></div>
     <div id="openOnStartSection"></div>
-    <div id="triggerBlockers" class="triggerBlockers" hidden></div>
-    <div class="actionMenu">
-        <button id="triggerOptimizationButton" onclick="trigger()">Optimierung anstoßen</button>
-        <span id="triggerOptimizationHint" class="triggerOptimizationHint" hidden>Bitte zuerst ein eigenes Gerät hinterlegen.</span>
-        <span id="saveStatus"></span>
+    <div id="triggerDock" class="triggerDock">
+        <div id="triggerBlockers" class="triggerBlockers" hidden></div>
+        <div class="actionMenu">
+            <button id="triggerOptimizationButton" onclick="trigger()">Optimierung anstoßen</button>
+            <span id="triggerOptimizationHint" class="triggerOptimizationHint" hidden>Bitte zuerst ein eigenes Gerät hinterlegen.</span>
+            <span id="saveStatus"></span>
+        </div>
     </div>
 </div>
 

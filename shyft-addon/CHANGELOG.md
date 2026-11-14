@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.402
+
+* **„Optimierung anstoßen“ und die Hinweise dazu schweben jetzt am unteren Bildrand.** Solange noch Steuerungen getestet werden müssen (oder noch kein eigenes Gerät eingerichtet ist) und die erste Optimierung noch nicht angekommen ist, bleiben der Button und die Liste „… wurde noch nicht erfolgreich getestet“ am unteren Rand der Konfigurationsseite sichtbar – auch am Handy (dort mit kleinerer Schrift und begrenzter Höhe, rechts Platz für das Hilfe-Symbol). Danach liegt der Block wieder wie gewohnt am Seitenende.
+
 ## 0.0.45.401
 
 * **Auch der Hinweis oben auf dem Dashboard sagt jetzt „Noch X Schritte, bis shyft bei dir eingerichtet ist“.** Bis zur ersten empfangenen Optimierung steht im Banner unter der Navigation dieselbe einladende Formulierung wie in der Karte darunter statt „X Probleme erfordern deine Aufmerksamkeit“.
