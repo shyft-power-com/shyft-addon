@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.406
+
+* **Neu: Klare Meldung bei ungültigem shyft_access_key.** Lehnt shyft-power die Optimierungsanfrage mit „401 Invalid or expired token“ ab, stand im Dashboard nur „Noch keine Dashboard-Daten von shyft-power vorhanden – die nächste stündliche Aktualisierung steht noch aus.“, und es kam nie eine Optimierung. Jetzt erscheint „Probleme mit deinem shyft_access_key. Bitte wende dich an den shyft-Service“ im Dashboard und in der Problemkarte, jeweils mit dem Link „shyft-Service kontaktieren (Log senden)“, der den Hilfe-Chat mit dem Formular zum Senden der Log-Dateien öffnet. Die Meldung verschwindet, sobald shyft-power die Anfrage wieder annimmt.
+
 ## 0.0.45.405
 
 * **Fix: Vor der ersten Optimierung erschien die Meldung „‚Sonstiger Verbraucher‘ weicht ab: Shyft erwartet ‚off‘, gemessen wird ‚on‘“ (und entsprechende für die Batterie).** Der Soll-Ist-Abgleich nahm im Ruhezustand ohne laufende Aktion automatisch „aus“ als Soll an – auch wenn shyft noch nie optimiert und das Gerät nie gesteuert hatte (z. B. weil es von Hand an ist). Jetzt gibt es diese Ruhezustands-Erwartung erst, wenn mindestens eine Optimierung von shyft-power empfangen wurde. Der Abgleich während laufender Aktionen ändert sich nicht.

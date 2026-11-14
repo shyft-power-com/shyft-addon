@@ -1196,9 +1196,29 @@ function sensorProblemHaLink(problemId) {
     };
 }
 
-function buildProblemListItem(message, sectionKey, fieldId, haLink) {
+// Link, der den Hilfe-Chat oeffnet und dort direkt das Formular "Log senden" an den shyft-Service zeigt (siehe window.shyftOpenSupport
+// in assistant.js).
+function buildSupportLink(className) {
+    const link = document.createElement('a');
+    link.href = '#';
+    link.className = className;
+    link.textContent = 'shyft-Service kontaktieren (Log senden)';
+    link.addEventListener('click', (event) => {
+        event.preventDefault();
+        if (window.shyftOpenSupport) window.shyftOpenSupport();
+    });
+    return link;
+}
+
+const ACCESS_KEY_PROBLEM_ID = 'access_key_invalid';
+
+function buildProblemListItem(message, sectionKey, fieldId, haLink, supportLink = false) {
     const item = document.createElement('li');
     item.appendChild(document.createTextNode(message));
+    if (supportLink) {
+        item.appendChild(document.createTextNode(' '));
+        item.appendChild(buildSupportLink('systemHealthProblemLink'));
+    }
     if (haLink) {
         const link = document.createElement('a');
         link.href = haLink.href;
@@ -1599,7 +1619,7 @@ async function renderSystemHealth() {
         // Abweichungen (device_deviation) nur melden, das Sensorfeld nicht rot umranden: an der Sensorauswahl laesst sich nichts aendern.
         if (fieldId && !deviceDeviationKey(problem.id)) errorFieldIds.push(fieldId);
         const sectionKey = actionFailedProblemSectionKey(problem.id) || deviceDeviationProblemSectionKey(problem.id) || availability.sectionKey;
-        list.appendChild(buildProblemListItem(problem.message, sectionKey, fieldId, sensorProblemHaLink(problem.id)));
+        list.appendChild(buildProblemListItem(problem.message, sectionKey, fieldId, sensorProblemHaLink(problem.id), problem.id === ACCESS_KEY_PROBLEM_ID));
     }
     for (const warning of warnings) {
         errorFieldIds.push(...(warning.fieldIds || (warning.fieldId ? [warning.fieldId] : [])));
@@ -12298,7 +12318,7 @@ function showDashboardChartLoadError(container, message, immediate = false) {
 // Hinweis "wird geladen" (neutral, kein Fehler) solange noch kein Widget steht - z.B. direkt nach dem Klick auf "Dashboard" oder wenn der
 // Server (Home Assistant Ingress, frisch gestartetes Add-on) einige Sekunden zum Antworten braucht. Wird vom ersten angehaengten Widget entfernt
 // (siehe updateOrAppendDashboardWidget).
-function showDashboardLoadingNotice(container, text) {
+function showDashboardLoadingNotice(container, text, withSupportLink = false) {
     let notice = container.querySelector('.dashboardLoadingNotice');
     if (!notice) {
         container.querySelectorAll('.shyftActionsError').forEach(el => el.remove());
@@ -12307,6 +12327,10 @@ function showDashboardLoadingNotice(container, text) {
         container.appendChild(notice);
     }
     notice.textContent = text;
+    if (withSupportLink) {
+        notice.appendChild(document.createTextNode(' '));
+        notice.appendChild(buildSupportLink('systemHealthProblemLink'));
+    }
 }
 
 // Automatische Wiederholungen des allerersten Ladens (Pause vor dem 2., 3., ... Versuch) - erst danach gilt es als Fehler.
@@ -12348,7 +12372,7 @@ async function loadDashboardImpl() {
         if (data.status !== 'success') {
             if (isInitialLoad) {
                 // Server antwortet, hat aber (noch) keine Daten - z.B. nach einer Neuinstallation vor der ersten Optimierung: Hinweis, kein Fehler.
-                showDashboardLoadingNotice(container, data.message || 'Noch keine Diagrammdaten vorhanden.');
+                showDashboardLoadingNotice(container, data.message || 'Noch keine Diagrammdaten vorhanden.', !!data.supportLink);
                 return;
             }
             showDashboardChartLoadError(container, data.message || 'Diagrammdaten konnten nicht geladen werden.');

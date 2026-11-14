@@ -147,6 +147,10 @@ ADDON_VERSION_NUMBER = addon_version_number(VERSION)
 # update_site_addon antwortet mit 400, wenn addon_version unter der von shyft-power gesetzten Mindestversion liegt.
 ADDON_VERSION_PROBLEM_ID = "addon_version_unsupported"
 ADDON_VERSION_UNSUPPORTED_MESSAGE = "Optimierung fehlgeschlagen. Aktualisiere deine Shyft-App, deine Version wird nicht mehr unterstützt."
+# update_site_addon antwortet mit 401, wenn der shyft_access_key ungueltig/abgelaufen ist - ohne Hinweis bliebe das Dashboard einfach leer.
+ACCESS_KEY_PROBLEM_ID = "access_key_invalid"
+ACCESS_KEY_PROBLEM_MESSAGE = ("Probleme mit deinem shyft_access_key. Bitte wende dich an den shyft-Service "
+                              "(Chat-Button unten rechts, dort „Log senden“).")
 BUILD_BRANCH = load_build_branch()
 SHYFT_ACCESS_KEY = "not_set_yet"
 DETAILED_LOGGING = False
@@ -1702,8 +1706,15 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         print(f"[Shyft] update_site_addon abgelehnt (HTTP 400): Add-on-Version {ADDON_VERSION_NUMBER} wird nicht mehr unterstuetzt.")
         problem_registry.register(ADDON_VERSION_PROBLEM_ID, ADDON_VERSION_UNSUPPORTED_MESSAGE)
         return result
+    if external_status == 401:
+        # Zugangsschluessel ungueltig/abgelaufen: es laeuft keine Optimierung - nicht auf ein Ergebnis warten, sondern den Nutzer auf den
+        # shyft-Service verweisen (Problem-Karte + Dashboard-Hinweis).
+        print("[Shyft] update_site_addon abgelehnt (HTTP 401): shyft_access_key ungueltig oder abgelaufen.")
+        problem_registry.register(ACCESS_KEY_PROBLEM_ID, ACCESS_KEY_PROBLEM_MESSAGE)
+        return result
     if external_status is not None and external_status < 300:
         problem_registry.clear(ADDON_VERSION_PROBLEM_ID)
+        problem_registry.clear(ACCESS_KEY_PROBLEM_ID)
     _last_site_data_submit["at"] = submitted_at
     _record_price_horizon_used(config)
     try:
@@ -2110,6 +2121,9 @@ def readDashboardChartData():
         with open(DASHBOARD_CACHE_PATH, "r") as f:
             cache = json.load(f)
     except Exception:
+        if problem_registry.is_active(ACCESS_KEY_PROBLEM_ID):
+            # supportLink: das Frontend haengt einen Link an, der den Hilfe-Chat mit dem Log-Senden-Formular oeffnet.
+            return jsonify({"status": "error", "message": ACCESS_KEY_PROBLEM_MESSAGE, "supportLink": True})
         return jsonify({"status": "error", "message": "Noch keine Dashboard-Daten von shyft-power vorhanden - die nächste stündliche Aktualisierung steht noch aus."})
 
     input_csv = cache.get("input_csv")

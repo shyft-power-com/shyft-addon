@@ -454,6 +454,8 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
     closeButton.addEventListener('click', () => { setOpen(false); launcher.focus(); });
     sendButton.addEventListener('click', send);
     supportLink.addEventListener('click', openSupportForm);
+    // Fuer Links ausserhalb des Widgets (z.B. Problemmeldung zum shyft_access_key): Chat oeffnen und direkt das Log-Senden-Formular zeigen.
+    window.shyftOpenSupport = () => { setOpen(true); openSupportForm(); };
     input.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
