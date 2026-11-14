@@ -24,6 +24,7 @@ import io
 import functools
 import contextlib
 import community_suggestions
+import tempfile
 import threading
 import requests
 from datetime import datetime, timezone, timedelta, date
@@ -398,6 +399,17 @@ def is_demo_mode():
     return not SHYFT_ACCESS_KEY or SHYFT_ACCESS_KEY == UNSET_SHYFT_ACCESS_KEY
 
 
+def _has_received_optimization():
+    "True, sobald mindestens ein echter Optimierungslauf von shyft-power empfangen wurde (Dashboard-Cache mit optimizer_run_id; die Demo-Daten haben keine)."
+    if is_demo_mode():
+        return False
+    try:
+        with open(DASHBOARD_CACHE_PATH, "r") as f:
+            return bool(json.load(f).get("optimizer_run_id"))
+    except Exception:
+        return False
+
+
 @app.route("/account-status", methods=["GET"])
 def accountStatusEndpoint():
     """Tells the frontend whether the addon is still in demo mode (no real shyft_access_key
@@ -412,7 +424,8 @@ def accountStatusEndpoint():
     Live-Umgebung von shyft-power spricht. Beide Kombinationen sind moeglich und sollen es auch
     bleiben (z.B. ein main-Build testweise mit einem test_-Schluessel)."""
     return jsonify({"isDemo": is_demo_mode(), "isTestEnvironment": shyft_adapter.development_mode,
-                    "isTestBuild": BUILD_BRANCH == "test", "version": VERSION})
+                    "isTestBuild": BUILD_BRANCH == "test", "version": VERSION,
+                    "hasOptimization": _has_received_optimization()})
 
 
 ADDON_UPDATE_STATUS_CACHE_SECONDS = 300
@@ -8095,6 +8108,11 @@ def _keep_valid_entity_ids(incoming, existing, keys=("sensorMappings", "actorMap
 
 @app.route("/config", methods=["PUT"])
 def writeConfig():
+    with _CONFIG_PUT_LOCK:
+        return _write_config_locked()
+
+
+def _write_config_locked():
     content = request.get_data(as_text=True)
     incoming = json.loads(content)
 
@@ -8638,12 +8656,29 @@ def _read_current_config():
         return recovered
 
 
+_CONFIG_FILE_LOCK = threading.RLock()
+# Serialisiert PUT /config: lesen-zusammenfuehren-schreiben darf nicht ueberlappen, sonst ueberschreibt eine langsamere, aeltere
+# Speicherung die neuere (verlorene Eingaben).
+_CONFIG_PUT_LOCK = threading.RLock()
+
+
 def _write_current_config(data):
     "Atomares Schreiben (temp-Datei im selben Verzeichnis + os.replace) - verhindert, dass ein ueberlappender oder unterbrochener Schreibzugriff die Datei mit Restbytes eines laengeren vorherigen Inhalts beschädigt zurücklässt (siehe _read_current_config)."
-    tmp_path = CONFIG_PATH + ".tmp"
-    with open(tmp_path, "w") as file:
-        file.write(json.dumps(data))
-    os.replace(tmp_path, CONFIG_PATH)
+    # Eigene temp-Datei je Schreibvorgang: mit einem festen Namen (config.json.tmp) kamen sich mehrere gleichzeitige Speicherungen in
+    # die Quere (Auto-Save feuert beim Oeffnen/Fokussieren mehrfach kurz hintereinander) - der eine os.replace verschob die Datei,
+    # der andere scheiterte mit FileNotFoundError (HTTP 500, der Wert wurde nicht gespeichert) bzw. ein Leser sah eine leere config.json.
+    with _CONFIG_FILE_LOCK:
+        fd, tmp_path = tempfile.mkstemp(prefix="config.json.", suffix=".tmp", dir=os.path.dirname(CONFIG_PATH) or ".")
+        try:
+            with os.fdopen(fd, "w") as file:
+                file.write(json.dumps(data))
+            os.replace(tmp_path, CONFIG_PATH)
+        except BaseException:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
 
 
 # Which actorMappings keys represent a distinct Aktionstyp shyft-power schedules, and the exact

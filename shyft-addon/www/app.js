@@ -1325,15 +1325,20 @@ async function applyTriggerButtonDemoState() {
     const blockers = document.getElementById('triggerBlockers');
     if (!button || !hint) return;
     let isDemo = false;
+    let hasOptimization = true;
     try {
         const status = await getJson(insideHomeAssistant + '/account-status');
         isDemo = !!status.isDemo;
+        hasOptimization = !!status.hasOptimization;
     } catch (err) {
         console.log(err);
         return;
     }
     const untested = await fetchUntestedActionWarnings();
     button.disabled = isDemo || untested.length > 0;
+    // Solange noch etwas offen ist und die erste Optimierung nicht angekommen ist, schwebt Button + Hinweis am unteren Rand (siehe .triggerDock).
+    const dock = document.getElementById('triggerDock');
+    if (dock) dock.classList.toggle('is-floating', !hasOptimization && button.disabled);
     // Im Demomodus mit ungetesteter Aktion erklaert die Liste unten den naechsten Schritt besser als der Standardtext
     hint.hidden = !isDemo || untested.length > 0;
     if (!blockers) return;
@@ -1560,9 +1565,22 @@ async function renderSystemHealth() {
     container.className = 'systemHealthCard has-problems';
     const title = document.createElement('div');
     title.className = 'systemHealthCardTitle';
-    title.textContent = count === 1
-        ? 'Ein Problem erfordert deine Aufmerksamkeit:'
-        : count + ' Probleme erfordern deine Aufmerksamkeit:';
+    // Solange noch keine Optimierung empfangen wurde, ist es Einrichtung statt Problem - werblicher formuliert.
+    let optimizationReceived = true;
+    try {
+        optimizationReceived = !!(await getJson(insideHomeAssistant + '/account-status')).hasOptimization;
+    } catch (err) {
+        console.log(err);
+    }
+    if (!optimizationReceived) {
+        title.textContent = count === 1
+            ? 'Noch 1 Schritt, bis shyft bei dir eingerichtet ist:'
+            : `Noch ${count} Schritte, bis shyft bei dir eingerichtet ist:`;
+    } else {
+        title.textContent = count === 1
+            ? 'Ein Problem erfordert deine Aufmerksamkeit:'
+            : count + ' Probleme erfordern deine Aufmerksamkeit:';
+    }
     container.appendChild(title);
     // Naechster Einrichtungsschritt: Geraet ist eingerichtet, aber noch kein shyft-power-Konto - das legt das Addon
     // automatisch an, sobald die erste Steuerung erfolgreich getestet ist (siehe maybe_create_real_account).
@@ -1858,9 +1876,22 @@ async function renderDashboardProblemBanner() {
         }
         problemCount += computeMissingRequiredFieldsWarnings().length;
         if (problemCount > 0) {
-            bannerText = problemCount === 1
-                ? '1 Problem erfordert deine Aufmerksamkeit'
-                : `${problemCount} Probleme erfordern deine Aufmerksamkeit`;
+            // Wie in renderSystemHealth: vor der ersten empfangenen Optimierung ist es Einrichtung statt Problem.
+            let optimizationReceived = true;
+            try {
+                optimizationReceived = !!(await getJson(insideHomeAssistant + '/account-status')).hasOptimization;
+            } catch (err) {
+                console.log(err);
+            }
+            if (!optimizationReceived) {
+                bannerText = problemCount === 1
+                    ? 'Noch 1 Schritt, bis shyft bei dir eingerichtet ist'
+                    : `Noch ${problemCount} Schritte, bis shyft bei dir eingerichtet ist`;
+            } else {
+                bannerText = problemCount === 1
+                    ? '1 Problem erfordert deine Aufmerksamkeit'
+                    : `${problemCount} Probleme erfordern deine Aufmerksamkeit`;
+            }
         }
     }
     if (!bannerText) {
@@ -1894,6 +1925,7 @@ async function autoSave() {
             statusElement.textContent = 'Speichere...';
         }
         await saveConfigurationNow();
+        reapplyTestGates();
         renderSystemHealth();
         if (statusElement) {
             statusElement.classList.remove('status-error');
@@ -5101,11 +5133,13 @@ const READY_KEY_TO_TOGGLE_KEY = {consumer_on_off: 'consumer_on', heating_rod: 'h
 function applyTestGate(readyKey, checkmark, hint, configured) {
     if (readyKey === null) return;
     // Argumente merken, damit ein Umschalten des Toggles den Hinweis neu bewerten kann (siehe reapplyTestGates)
+    // configured darf eine Funktion sein: wird dann bei jedem Neubewerten frisch ausgewertet (z.B. nach dem Speichern, siehe autoSave)
     hint.__gate = {readyKey, checkmark, configured};
     const passed = !!actionTestStatusMap[readyKey];
     checkmark.hidden = !passed;
+    const isConfigured = typeof configured === 'function' ? !!configured() : !!configured;
     // Deaktivierte Steuerung (Toggle aus): kein roter "Bitte testen"-Hinweis
-    hint.hidden = !configured || passed || isActionToggleOff(READY_KEY_TO_TOGGLE_KEY[readyKey] || readyKey);
+    hint.hidden = !isConfigured || passed || isActionToggleOff(READY_KEY_TO_TOGGLE_KEY[readyKey] || readyKey);
 }
 
 function reapplyTestGates() {
@@ -6328,12 +6362,18 @@ function buildCarChargeControl() {
     const phaseCountStage = recipe.phaseCount || {};
     const amperageStage = recipe.amperage || {};
     const controlStage = recipe.control || {};
-    const isThreeStageComplete = recipe.type === 'three_stage' && isBranchStageComplete(phaseCountStage, CAR_CHARGE_STAGE_BRANCHES.phaseCount.keys)
-        && amperageStage.service && (amperageStage.amountFields || []).length > 0 && isBranchStageComplete(controlStage, CAR_CHARGE_STAGE_BRANCHES.control.keys);
-    const isHaAutomationComplete = recipe.type === 'ha_automation' && !!recipe.haAutomationEntityId;
-    const carChargeConfigured = isThreeStageComplete || isHaAutomationComplete;
     const carChargeHint = buildTestGateHint();
-    applyTestGate('car_charge_start', checkmark, carChargeHint, carChargeConfigured);
+    // Als Funktion: Der Hinweis muss auch erscheinen, wenn die Steuerung erst nach dem Aufbau der Kachel ausgefuellt wird
+    // (von Hand oder per Community-Vorschlag) - autoSave bewertet ihn nach jedem Speichern neu (reapplyTestGates).
+    applyTestGate('car_charge_start', checkmark, carChargeHint, () => {
+        const current = configData['carChargeRecipe'] || {};
+        const currentAmperage = current.amperage || {};
+        return current.type === 'ha_automation'
+            ? !!current.haAutomationEntityId
+            : current.type === 'three_stage' && isBranchStageComplete(current.phaseCount, CAR_CHARGE_STAGE_BRANCHES.phaseCount.keys)
+                && !!currentAmperage.service && (currentAmperage.amountFields || []).length > 0
+                && isBranchStageComplete(current.control, CAR_CHARGE_STAGE_BRANCHES.control.keys);
+    });
 
     const candidateServices = allServiceOptions.filter(s => getIntegrationServiceDomains('wallbox').has(s.service.split('.')[0]));
 
@@ -12708,14 +12748,16 @@ setInterval(refreshDashboard, ENERGY_FLOW_REFRESH_INTERVAL_MS);
 // planmaessigen 30s-Tick von refreshDashboard/refreshShyftActions zu warten - deren visibilityState-
 // Check haette den ausstehenden Tick sonst ohnehin uebersprungen, waehrend der Tab/die Seite nicht
 // sichtbar war (Nutzer-Feedback: Werte nach laengerer Inaktivitaet erst nach bis zu 30s aktuell).
-function refreshActiveTabNow() {
+function refreshActiveTabNow(withLoader = false) {
     const activeButton = document.querySelector('.tabButton.active');
     const tab = activeButton ? activeButton.dataset.tab : null;
+    let loading = null;
     if (tab === 'dashboard') {
-        loadDashboard();
+        loading = loadDashboard();
     } else if (tab === 'geraetesteuerung') {
-        loadShyftActions();
+        loading = loadShyftActions();
     }
+    if (withLoader && loading) showLoaderWhileLoading(loading);
 }
 
 // ============================================================================
@@ -12905,7 +12947,7 @@ function setupTabs() {
     // refreshLiveSensorValues), ohne dies koennten seit der letzten Sichtbarkeit Stunden vergangen sein.
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-            refreshActiveTabNow();
+            refreshActiveTabNow(true);
             refreshLiveSensorValues();
             renderSystemHealth();
             renderDashboardProblemBanner();
@@ -12915,7 +12957,7 @@ function setupTabs() {
     // feuert dort nicht zuverlaessig, die Timer standen aber still - also ebenfalls sofort auffrischen.
     window.addEventListener('pageshow', event => {
         if (event.persisted && document.visibilityState === 'visible') {
-            refreshActiveTabNow();
+            refreshActiveTabNow(true);
             refreshLiveSensorValues();
             renderSystemHealth();
             renderDashboardProblemBanner();
@@ -13045,6 +13087,7 @@ function setupPullToRefresh() {
     document.body.appendChild(indicator);
 
     let startX = 0, startY = null, pull = 0, tracking = false, refreshing = false;
+    let backgroundLoads = 0;
     const atTop = () => (window.scrollY || document.documentElement.scrollTop || 0) <= 0;
     const render = () => {
         const progress = Math.min(1, pull / PULL_REFRESH_THRESHOLD_PX);
@@ -13114,15 +13157,43 @@ function setupPullToRefresh() {
     };
     window.addEventListener('touchend', onEnd, {passive: true});
     window.addEventListener('touchcancel', onEnd, {passive: true});
+
+    // Gleicher Loader fuer Ladevorgaenge ohne Herunterziehen (App oeffnen, Seite wieder sichtbar, erstes Laden):
+    // dreht, bis das Laden fertig ist (hoechstens PULL_REFRESH_TIMEOUT_MS). Ein laufendes Herunterziehen hat Vorrang.
+    trackBackgroundLoadSpinner = promise => {
+        backgroundLoads++;
+        if (!refreshing && !tracking) {
+            pull = PULL_REFRESH_THRESHOLD_PX;
+            indicator.classList.add('is-settling', 'is-spinning');
+            indicator.style.transform = `translate(-50%, ${pull - 48}px)`;
+            indicator.style.opacity = '1';
+        }
+        const done = () => {
+            backgroundLoads = Math.max(0, backgroundLoads - 1);
+            if (backgroundLoads > 0 || refreshing || tracking) return;
+            indicator.classList.remove('is-spinning');
+            reset();
+        };
+        Promise.race([Promise.resolve(promise), new Promise(resolve => setTimeout(resolve, PULL_REFRESH_TIMEOUT_MS))])
+            .catch(err => console.log('[Shyft] Laden im Hintergrund fehlgeschlagen:', err))
+            .then(done);
+        return promise;
+    };
+}
+
+// Wird von setupPullToRefresh gesetzt (nur auf Touch-Geraeten); ohne Loader laeuft das Laden einfach ohne Anzeige.
+let trackBackgroundLoadSpinner = null;
+function showLoaderWhileLoading(promise) {
+    return trackBackgroundLoadSpinner ? trackBackgroundLoadSpinner(promise) : promise;
 }
 
 // loadShyftActions waits for loadConfiguration so the action cards' brand icons (getActionIconUrl)
 // have integrationsData/currentIntegrationSelections available on the very first render
 if (document.readyState === 'complete') {
     loadConfiguration().then(loadShyftActions);
-    loadDashboard();
-    setupTabs();
     setupPullToRefresh();
+    showLoaderWhileLoading(loadDashboard());
+    setupTabs();
     syncTopBarHeightVar();
     syncDeviceNavHeightVar();
     setupFullscreenToggle();
@@ -13134,9 +13205,9 @@ if (document.readyState === 'complete') {
 } else {
     window.addEventListener('load', () => {
         loadConfiguration().then(loadShyftActions);
-        loadDashboard();
-        setupTabs();
         setupPullToRefresh();
+        showLoaderWhileLoading(loadDashboard());
+        setupTabs();
         syncTopBarHeightVar();
         syncDeviceNavHeightVar();
         setupFullscreenToggle();

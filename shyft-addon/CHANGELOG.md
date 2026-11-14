@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.0.45.404
+
+* **Fix: Eingaben (z. B. Batterie-Kapazität und Mindest-Ladestand) gingen beim Speichern verloren, das Feld blieb rot.** Beim Öffnen und Anklicken von Feldern löst die Konfigurationsseite mehrere Speicherungen kurz hintereinander aus. Sie benutzten dieselbe Zwischendatei – eine Speicherung scheiterte dann mit „No such file or directory: config.json.tmp“ (HTTP-Fehler 500), ihr Wert wurde nicht abgelegt, und die Seite fiel auf den Standardwert zurück. Jetzt hat jede Speicherung ihre eigene Zwischendatei, und gleichzeitige Speicherungen laufen nacheinander ab, sodass keine ältere eine neuere überschreibt.
+
+## 0.0.45.403
+
+* **Wallbox: Der rote Hinweis „Bitte Gerätesteuerung testen“ erscheint jetzt auch über dem Test-Button „Laden starten und beenden“.** Er wurde nur einmal beim Aufbau der Kachel bewertet – war die Ladesteuerung da noch leer und wurde erst danach ausgefüllt (von Hand oder per Vorschlag), blieb der Hinweis versteckt. Jetzt wird er nach jedem Speichern neu bewertet.
+
+## 0.0.45.402
+
+* **„Optimierung anstoßen“ und die Hinweise dazu schweben jetzt am unteren Bildrand.** Solange noch Steuerungen getestet werden müssen (oder noch kein eigenes Gerät eingerichtet ist) und die erste Optimierung noch nicht angekommen ist, bleiben der Button und die Liste „… wurde noch nicht erfolgreich getestet“ am unteren Rand der Konfigurationsseite sichtbar – auch am Handy (dort mit kleinerer Schrift und begrenzter Höhe, rechts Platz für das Hilfe-Symbol). Danach liegt der Block wieder wie gewohnt am Seitenende.
+
+## 0.0.45.401
+
+* **Auch der Hinweis oben auf dem Dashboard sagt jetzt „Noch X Schritte, bis shyft bei dir eingerichtet ist“.** Bis zur ersten empfangenen Optimierung steht im Banner unter der Navigation dieselbe einladende Formulierung wie in der Karte darunter statt „X Probleme erfordern deine Aufmerksamkeit“.
+
+## 0.0.45.400
+
+* **Einrichtungs-Hinweis auf dem Dashboard klingt jetzt einladender.** Solange noch keine Optimierung von shyft-power empfangen wurde, steht über der Liste nicht mehr „5 Probleme erfordern deine Aufmerksamkeit:“, sondern „Noch 5 Schritte, bis shyft bei dir eingerichtet ist:“ (bei einem Schritt: „Noch 1 Schritt, …“). Sobald die erste Optimierung angekommen ist, gilt wieder die bisherige Formulierung.
+
+## 0.0.45.399
+
+* **Der Lade-Kreis erscheint jetzt auch, wenn die Daten im Hintergrund nachladen.** Bisher drehte sich der Kreis oben nur beim Herunterziehen der Seite. Jetzt zeigt er sich auch beim Öffnen der App (erstes Laden des Dashboards) und wenn du zur App zurückkehrst und das Dashboard (oder die Gerätesteuerung) sich aktualisiert – er dreht, bis die Daten da sind. Die regelmäßige Auffrischung alle 30 Sekunden bleibt unauffällig ohne Kreis.
+
 ## 0.0.45.398
 
 * **Fehlende Sensor-Zuordnung bricht die Übertragung an shyft-power nicht mehr ab.** Fehlte in der Konfiguration ein Sensor-Schlüssel ganz (nicht nur leer) – z. B. „Warmwasser: Solltemperatur“ bei einer Anlage ohne Wärmepumpe –, brach das Einsammeln der Live-Werte mit einem Fehler ab (im Log: „Neubewertung 'input_csv_missing_data' fehlgeschlagen: KeyError('heatpump_dhw_target_temp')“). Dadurch wurde auch die stündliche Übertragung an shyft-power nicht ausgeführt, und es kam keine Optimierung zustande. Ein fehlender Schlüssel gilt jetzt wie ein nicht zugeordneter Sensor und wird übersprungen.
