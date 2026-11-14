@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.399
+
+* **Der Lade-Kreis erscheint jetzt auch, wenn die Daten im Hintergrund nachladen.** Bisher drehte sich der Kreis oben nur beim Herunterziehen der Seite. Jetzt zeigt er sich auch beim Öffnen der App (erstes Laden des Dashboards) und wenn du zur App zurückkehrst und das Dashboard (oder die Gerätesteuerung) sich aktualisiert – er dreht, bis die Daten da sind. Die regelmäßige Auffrischung alle 30 Sekunden bleibt unauffällig ohne Kreis.
+
 ## 0.0.45.398
 
 * **Fehlende Sensor-Zuordnung bricht die Übertragung an shyft-power nicht mehr ab.** Fehlte in der Konfiguration ein Sensor-Schlüssel ganz (nicht nur leer) – z. B. „Warmwasser: Solltemperatur“ bei einer Anlage ohne Wärmepumpe –, brach das Einsammeln der Live-Werte mit einem Fehler ab (im Log: „Neubewertung 'input_csv_missing_data' fehlgeschlagen: KeyError('heatpump_dhw_target_temp')“). Dadurch wurde auch die stündliche Übertragung an shyft-power nicht ausgeführt, und es kam keine Optimierung zustande. Ein fehlender Schlüssel gilt jetzt wie ein nicht zugeordneter Sensor und wird übersprungen.

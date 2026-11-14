@@ -12708,14 +12708,16 @@ setInterval(refreshDashboard, ENERGY_FLOW_REFRESH_INTERVAL_MS);
 // planmaessigen 30s-Tick von refreshDashboard/refreshShyftActions zu warten - deren visibilityState-
 // Check haette den ausstehenden Tick sonst ohnehin uebersprungen, waehrend der Tab/die Seite nicht
 // sichtbar war (Nutzer-Feedback: Werte nach laengerer Inaktivitaet erst nach bis zu 30s aktuell).
-function refreshActiveTabNow() {
+function refreshActiveTabNow(withLoader = false) {
     const activeButton = document.querySelector('.tabButton.active');
     const tab = activeButton ? activeButton.dataset.tab : null;
+    let loading = null;
     if (tab === 'dashboard') {
-        loadDashboard();
+        loading = loadDashboard();
     } else if (tab === 'geraetesteuerung') {
-        loadShyftActions();
+        loading = loadShyftActions();
     }
+    if (withLoader && loading) showLoaderWhileLoading(loading);
 }
 
 // ============================================================================
@@ -12905,7 +12907,7 @@ function setupTabs() {
     // refreshLiveSensorValues), ohne dies koennten seit der letzten Sichtbarkeit Stunden vergangen sein.
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-            refreshActiveTabNow();
+            refreshActiveTabNow(true);
             refreshLiveSensorValues();
             renderSystemHealth();
             renderDashboardProblemBanner();
@@ -12915,7 +12917,7 @@ function setupTabs() {
     // feuert dort nicht zuverlaessig, die Timer standen aber still - also ebenfalls sofort auffrischen.
     window.addEventListener('pageshow', event => {
         if (event.persisted && document.visibilityState === 'visible') {
-            refreshActiveTabNow();
+            refreshActiveTabNow(true);
             refreshLiveSensorValues();
             renderSystemHealth();
             renderDashboardProblemBanner();
@@ -13045,6 +13047,7 @@ function setupPullToRefresh() {
     document.body.appendChild(indicator);
 
     let startX = 0, startY = null, pull = 0, tracking = false, refreshing = false;
+    let backgroundLoads = 0;
     const atTop = () => (window.scrollY || document.documentElement.scrollTop || 0) <= 0;
     const render = () => {
         const progress = Math.min(1, pull / PULL_REFRESH_THRESHOLD_PX);
@@ -13114,15 +13117,43 @@ function setupPullToRefresh() {
     };
     window.addEventListener('touchend', onEnd, {passive: true});
     window.addEventListener('touchcancel', onEnd, {passive: true});
+
+    // Gleicher Loader fuer Ladevorgaenge ohne Herunterziehen (App oeffnen, Seite wieder sichtbar, erstes Laden):
+    // dreht, bis das Laden fertig ist (hoechstens PULL_REFRESH_TIMEOUT_MS). Ein laufendes Herunterziehen hat Vorrang.
+    trackBackgroundLoadSpinner = promise => {
+        backgroundLoads++;
+        if (!refreshing && !tracking) {
+            pull = PULL_REFRESH_THRESHOLD_PX;
+            indicator.classList.add('is-settling', 'is-spinning');
+            indicator.style.transform = `translate(-50%, ${pull - 48}px)`;
+            indicator.style.opacity = '1';
+        }
+        const done = () => {
+            backgroundLoads = Math.max(0, backgroundLoads - 1);
+            if (backgroundLoads > 0 || refreshing || tracking) return;
+            indicator.classList.remove('is-spinning');
+            reset();
+        };
+        Promise.race([Promise.resolve(promise), new Promise(resolve => setTimeout(resolve, PULL_REFRESH_TIMEOUT_MS))])
+            .catch(err => console.log('[Shyft] Laden im Hintergrund fehlgeschlagen:', err))
+            .then(done);
+        return promise;
+    };
+}
+
+// Wird von setupPullToRefresh gesetzt (nur auf Touch-Geraeten); ohne Loader laeuft das Laden einfach ohne Anzeige.
+let trackBackgroundLoadSpinner = null;
+function showLoaderWhileLoading(promise) {
+    return trackBackgroundLoadSpinner ? trackBackgroundLoadSpinner(promise) : promise;
 }
 
 // loadShyftActions waits for loadConfiguration so the action cards' brand icons (getActionIconUrl)
 // have integrationsData/currentIntegrationSelections available on the very first render
 if (document.readyState === 'complete') {
     loadConfiguration().then(loadShyftActions);
-    loadDashboard();
-    setupTabs();
     setupPullToRefresh();
+    showLoaderWhileLoading(loadDashboard());
+    setupTabs();
     syncTopBarHeightVar();
     syncDeviceNavHeightVar();
     setupFullscreenToggle();
@@ -13134,9 +13165,9 @@ if (document.readyState === 'complete') {
 } else {
     window.addEventListener('load', () => {
         loadConfiguration().then(loadShyftActions);
-        loadDashboard();
-        setupTabs();
         setupPullToRefresh();
+        showLoaderWhileLoading(loadDashboard());
+        setupTabs();
         syncTopBarHeightVar();
         syncDeviceNavHeightVar();
         setupFullscreenToggle();
