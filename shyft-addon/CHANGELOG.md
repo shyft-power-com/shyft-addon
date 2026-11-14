@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.404
+
+* **Fix: Eingaben (z. B. Batterie-Kapazität und Mindest-Ladestand) gingen beim Speichern verloren, das Feld blieb rot.** Beim Öffnen und Anklicken von Feldern löst die Konfigurationsseite mehrere Speicherungen kurz hintereinander aus. Sie benutzten dieselbe Zwischendatei – eine Speicherung scheiterte dann mit „No such file or directory: config.json.tmp“ (HTTP-Fehler 500), ihr Wert wurde nicht abgelegt, und die Seite fiel auf den Standardwert zurück. Jetzt hat jede Speicherung ihre eigene Zwischendatei, und gleichzeitige Speicherungen laufen nacheinander ab, sodass keine ältere eine neuere überschreibt.
+
 ## 0.0.45.403
 
 * **Wallbox: Der rote Hinweis „Bitte Gerätesteuerung testen“ erscheint jetzt auch über dem Test-Button „Laden starten und beenden“.** Er wurde nur einmal beim Aufbau der Kachel bewertet – war die Ladesteuerung da noch leer und wurde erst danach ausgefüllt (von Hand oder per Vorschlag), blieb der Hinweis versteckt. Jetzt wird er nach jedem Speichern neu bewertet.
