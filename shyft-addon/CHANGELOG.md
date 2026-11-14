@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.401
+
+* **Auch der Hinweis oben auf dem Dashboard sagt jetzt „Noch X Schritte, bis shyft bei dir eingerichtet ist“.** Bis zur ersten empfangenen Optimierung steht im Banner unter der Navigation dieselbe einladende Formulierung wie in der Karte darunter statt „X Probleme erfordern deine Aufmerksamkeit“.
+
 ## 0.0.45.400
 
 * **Einrichtungs-Hinweis auf dem Dashboard klingt jetzt einladender.** Solange noch keine Optimierung von shyft-power empfangen wurde, steht über der Liste nicht mehr „5 Probleme erfordern deine Aufmerksamkeit:“, sondern „Noch 5 Schritte, bis shyft bei dir eingerichtet ist:“ (bei einem Schritt: „Noch 1 Schritt, …“). Sobald die erste Optimierung angekommen ist, gilt wieder die bisherige Formulierung.

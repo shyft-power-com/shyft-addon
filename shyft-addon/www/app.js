@@ -1871,9 +1871,22 @@ async function renderDashboardProblemBanner() {
         }
         problemCount += computeMissingRequiredFieldsWarnings().length;
         if (problemCount > 0) {
-            bannerText = problemCount === 1
-                ? '1 Problem erfordert deine Aufmerksamkeit'
-                : `${problemCount} Probleme erfordern deine Aufmerksamkeit`;
+            // Wie in renderSystemHealth: vor der ersten empfangenen Optimierung ist es Einrichtung statt Problem.
+            let optimizationReceived = true;
+            try {
+                optimizationReceived = !!(await getJson(insideHomeAssistant + '/account-status')).hasOptimization;
+            } catch (err) {
+                console.log(err);
+            }
+            if (!optimizationReceived) {
+                bannerText = problemCount === 1
+                    ? 'Noch 1 Schritt, bis shyft bei dir eingerichtet ist'
+                    : `Noch ${problemCount} Schritte, bis shyft bei dir eingerichtet ist`;
+            } else {
+                bannerText = problemCount === 1
+                    ? '1 Problem erfordert deine Aufmerksamkeit'
+                    : `${problemCount} Probleme erfordern deine Aufmerksamkeit`;
+            }
         }
     }
     if (!bannerText) {
