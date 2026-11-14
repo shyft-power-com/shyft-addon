@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.400
+
+* **Einrichtungs-Hinweis auf dem Dashboard klingt jetzt einladender.** Solange noch keine Optimierung von shyft-power empfangen wurde, steht über der Liste nicht mehr „5 Probleme erfordern deine Aufmerksamkeit:“, sondern „Noch 5 Schritte, bis shyft bei dir eingerichtet ist:“ (bei einem Schritt: „Noch 1 Schritt, …“). Sobald die erste Optimierung angekommen ist, gilt wieder die bisherige Formulierung.
+
 ## 0.0.45.399
 
 * **Der Lade-Kreis erscheint jetzt auch, wenn die Daten im Hintergrund nachladen.** Bisher drehte sich der Kreis oben nur beim Herunterziehen der Seite. Jetzt zeigt er sich auch beim Öffnen der App (erstes Laden des Dashboards) und wenn du zur App zurückkehrst und das Dashboard (oder die Gerätesteuerung) sich aktualisiert – er dreht, bis die Daten da sind. Die regelmäßige Auffrischung alle 30 Sekunden bleibt unauffällig ohne Kreis.

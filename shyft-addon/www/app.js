@@ -1560,9 +1560,22 @@ async function renderSystemHealth() {
     container.className = 'systemHealthCard has-problems';
     const title = document.createElement('div');
     title.className = 'systemHealthCardTitle';
-    title.textContent = count === 1
-        ? 'Ein Problem erfordert deine Aufmerksamkeit:'
-        : count + ' Probleme erfordern deine Aufmerksamkeit:';
+    // Solange noch keine Optimierung empfangen wurde, ist es Einrichtung statt Problem - werblicher formuliert.
+    let optimizationReceived = true;
+    try {
+        optimizationReceived = !!(await getJson(insideHomeAssistant + '/account-status')).hasOptimization;
+    } catch (err) {
+        console.log(err);
+    }
+    if (!optimizationReceived) {
+        title.textContent = count === 1
+            ? 'Noch 1 Schritt, bis shyft bei dir eingerichtet ist:'
+            : `Noch ${count} Schritte, bis shyft bei dir eingerichtet ist:`;
+    } else {
+        title.textContent = count === 1
+            ? 'Ein Problem erfordert deine Aufmerksamkeit:'
+            : count + ' Probleme erfordern deine Aufmerksamkeit:';
+    }
     container.appendChild(title);
     // Naechster Einrichtungsschritt: Geraet ist eingerichtet, aber noch kein shyft-power-Konto - das legt das Addon
     // automatisch an, sobald die erste Steuerung erfolgreich getestet ist (siehe maybe_create_real_account).
