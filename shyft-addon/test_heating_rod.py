@@ -1,5 +1,5 @@
 from sync_service import (heating_rod_active, heating_rod_power_kw, legacy_hp_power_label, dhw_max_temp_c,
-                          HEATING_ROD_MAX_POWER_KW_LIMIT)
+                          HEATING_ROD_MAX_POWER_KW_LIMIT, static_sensor_number, mapped_entity_id)
 
 
 def _config(**extra):
@@ -68,3 +68,26 @@ def test_rod_status_comes_from_the_control_switch_not_from_a_sensor_field():
     # ohne zugeordneten Schalter bleibt es bei der bisherigen Zuordnung; andere Sensoren sind nie betroffen
     assert mapped_entity_id(_config(heatingRodControl=True, sensorMappings={"heatpump_dhw_on_off": "x"}), "heatpump_dhw_on_off") == "x"
     assert mapped_entity_id(rod, "heatpump_dhw_tank_temp") == ""
+
+
+def test_dhw_target_temp_can_be_a_static_number_between_20_and_90():
+    key = "heatpump_dhw_target_temp"
+    assert static_sensor_number(_config(sensorMappings={key: "60"}), key) == 60.0
+    assert static_sensor_number(_config(sensorMappings={key: "55.5"}), key) == 55.5
+    assert static_sensor_number(_config(sensorMappings={key: "20"}), key) == 20.0
+    assert static_sensor_number(_config(sensorMappings={key: "90"}), key) == 90.0
+    assert static_sensor_number(_config(sensorMappings={key: "19"}), key) is None
+    assert static_sensor_number(_config(sensorMappings={key: "91"}), key) is None
+    assert static_sensor_number(_config(sensorMappings={key: "number.ww_soll"}), key) is None
+    assert static_sensor_number(_config(sensorMappings={}), key) is None
+
+
+def test_static_number_only_counts_for_the_heating_rod_and_is_never_an_entity():
+    key = "heatpump_dhw_target_temp"
+    rod_off = _config(heatingRodControl=False, sensorMappings={key: "60"})
+    assert static_sensor_number(rod_off, key) is None
+    assert mapped_entity_id(rod_off, key) == ""
+    assert mapped_entity_id(_config(sensorMappings={key: "60"}), key) == ""
+    assert mapped_entity_id(_config(sensorMappings={key: "number.ww_soll"}), key) == "number.ww_soll"
+    # andere Sensoren bleiben unberuehrt
+    assert static_sensor_number(_config(sensorMappings={"heatpump_dhw_tank_temp": "60"}), "heatpump_dhw_tank_temp") is None

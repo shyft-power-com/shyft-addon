@@ -1,4 +1,4 @@
-from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id, resolve_dhw_activated, static_sensor_state, STATIC_SENSOR_ON, STATIC_SENSOR_OFF
+from sync_service import SyncService, convert_to_expected_unit, compute_wallbox_max_kw, is_demo_sensor, get_demo_value, feed_in_limit_kw, heating_rod_active, heating_rod_power_kw, dhw_max_temp_c, mapped_entity_id, resolve_dhw_activated, static_sensor_state, static_sensor_number, is_static_number_value, STATIC_NUMBER_SENSOR_KEYS, STATIC_SENSOR_ON, STATIC_SENSOR_OFF
 from homeassistant_adapter import HomeAssistantAdapter, EntityState
 from shyft_adapter import ShyftAdapter
 from constants import DEV_ACCESS_KEY_PREFIX
@@ -24,6 +24,7 @@ import io
 import functools
 import contextlib
 import community_suggestions
+import tempfile
 import threading
 import requests
 from datetime import datetime, timezone, timedelta, date
@@ -146,6 +147,10 @@ ADDON_VERSION_NUMBER = addon_version_number(VERSION)
 # update_site_addon antwortet mit 400, wenn addon_version unter der von shyft-power gesetzten Mindestversion liegt.
 ADDON_VERSION_PROBLEM_ID = "addon_version_unsupported"
 ADDON_VERSION_UNSUPPORTED_MESSAGE = "Optimierung fehlgeschlagen. Aktualisiere deine Shyft-App, deine Version wird nicht mehr unterstützt."
+# update_site_addon antwortet mit 401, wenn der shyft_access_key ungueltig/abgelaufen ist - ohne Hinweis bliebe das Dashboard einfach leer.
+ACCESS_KEY_PROBLEM_ID = "access_key_invalid"
+# Kein Log-Versand als Weg: er nutzt denselben (abgelehnten) Schluessel und wuerde ebenfalls scheitern - daher nur die E-Mail.
+ACCESS_KEY_PROBLEM_MESSAGE = "Probleme mit deinem shyft_access_key. Bitte wende dich an den shyft-Service: info@shyft-power.com."
 BUILD_BRANCH = load_build_branch()
 SHYFT_ACCESS_KEY = "not_set_yet"
 DETAILED_LOGGING = False
@@ -398,6 +403,17 @@ def is_demo_mode():
     return not SHYFT_ACCESS_KEY or SHYFT_ACCESS_KEY == UNSET_SHYFT_ACCESS_KEY
 
 
+def _has_received_optimization():
+    "True, sobald mindestens ein echter Optimierungslauf von shyft-power empfangen wurde (Dashboard-Cache mit optimizer_run_id; die Demo-Daten haben keine)."
+    if is_demo_mode():
+        return False
+    try:
+        with open(DASHBOARD_CACHE_PATH, "r") as f:
+            return bool(json.load(f).get("optimizer_run_id"))
+    except Exception:
+        return False
+
+
 @app.route("/account-status", methods=["GET"])
 def accountStatusEndpoint():
     """Tells the frontend whether the addon is still in demo mode (no real shyft_access_key
@@ -412,7 +428,8 @@ def accountStatusEndpoint():
     Live-Umgebung von shyft-power spricht. Beide Kombinationen sind moeglich und sollen es auch
     bleiben (z.B. ein main-Build testweise mit einem test_-Schluessel)."""
     return jsonify({"isDemo": is_demo_mode(), "isTestEnvironment": shyft_adapter.development_mode,
-                    "isTestBuild": BUILD_BRANCH == "test", "version": VERSION})
+                    "isTestBuild": BUILD_BRANCH == "test", "version": VERSION,
+                    "hasOptimization": _has_received_optimization()})
 
 
 ADDON_UPDATE_STATUS_CACHE_SECONDS = 300
@@ -453,13 +470,16 @@ def addonUpdateStatusEndpoint():
 @app.route("/assistant/status", methods=["GET"])
 def assistantStatusEndpoint():
     """Hilfe-Assistent (KI-Chat): ist in Home Assistant eine KI (ai_task-Entitaet, z.B. Google Gemini)
-    eingerichtet? Das Frontend waehlt danach den Platzhaltertext."""
+    eingerichtet? Das Frontend waehlt danach den Platzhaltertext. supportAvailable: der Log-Versand an den shyft-Service
+    (Support-Formular) wird nur angeboten, wenn ein echter shyft-power-Account existiert (nicht im Demomodus)."""
+    support_available = not is_demo_mode()
     try:
         states = homeassistant_adapter.get_from_homeassistant("/api/states", timeout=15)
-        return jsonify({"enabled": True, "aiAvailable": assistant.find_ai_task_entity(states) is not None})
+        return jsonify({"enabled": True, "aiAvailable": assistant.find_ai_task_entity(states) is not None,
+                        "supportAvailable": support_available})
     except Exception as e:
         print("[Shyft] Hilfe-Assistent: Status konnte nicht ermittelt werden:", repr(e))
-        return jsonify({"enabled": True, "aiAvailable": False})
+        return jsonify({"enabled": True, "aiAvailable": False, "supportAvailable": support_available})
 
 
 def _assistant_log_excerpt():
@@ -578,7 +598,7 @@ def assistantSupportSend():
     summary, email, error = assistant.normalize_support_input(body.get("summary"), body.get("email"))
     if error:
         return jsonify({"status": "error", "message": error}), 400
-    if not extract_shyft_user_id(shyft_adapter.bubble_token):
+    if is_demo_mode() or not extract_shyft_user_id(shyft_adapter.bubble_token):
         return jsonify({"status": "error", "message": "Ohne shyft-power-Konto (Demomodus) kann keine Anfrage gesendet werden. Schreibe uns bitte an info@shyft-power.com."}), 400
     with _support_lock:
         now = time.time()
@@ -1689,8 +1709,15 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         print(f"[Shyft] update_site_addon abgelehnt (HTTP 400): Add-on-Version {ADDON_VERSION_NUMBER} wird nicht mehr unterstuetzt.")
         problem_registry.register(ADDON_VERSION_PROBLEM_ID, ADDON_VERSION_UNSUPPORTED_MESSAGE)
         return result
+    if external_status == 401:
+        # Zugangsschluessel ungueltig/abgelaufen: es laeuft keine Optimierung - nicht auf ein Ergebnis warten, sondern den Nutzer auf den
+        # shyft-Service (E-Mail) verweisen (Problem-Karte + Dashboard-Hinweis).
+        print("[Shyft] update_site_addon abgelehnt (HTTP 401): shyft_access_key ungueltig oder abgelaufen.")
+        problem_registry.register(ACCESS_KEY_PROBLEM_ID, ACCESS_KEY_PROBLEM_MESSAGE)
+        return result
     if external_status is not None and external_status < 300:
         problem_registry.clear(ADDON_VERSION_PROBLEM_ID)
+        problem_registry.clear(ACCESS_KEY_PROBLEM_ID)
     _last_site_data_submit["at"] = submitted_at
     _record_price_horizon_used(config)
     try:
@@ -2097,6 +2124,8 @@ def readDashboardChartData():
         with open(DASHBOARD_CACHE_PATH, "r") as f:
             cache = json.load(f)
     except Exception:
+        if problem_registry.is_active(ACCESS_KEY_PROBLEM_ID):
+            return jsonify({"status": "error", "message": ACCESS_KEY_PROBLEM_MESSAGE})
         return jsonify({"status": "error", "message": "Noch keine Dashboard-Daten von shyft-power vorhanden - die nächste stündliche Aktualisierung steht noch aus."})
 
     input_csv = cache.get("input_csv")
@@ -3343,6 +3372,8 @@ _READY_KEY_TO_LABEL_SECTION = {
     "battery_charge_shift_pv_surplus": ("Batterie-Laden verschieben (PV-Überschuss)", "batterie"),
     "battery_discharge_shift": ("Batterie-Entladen verschieben", "batterie"),
     "battery_grid_charge": ("Batterie netzladen", "batterie"),
+    # Gemeinsame Beenden-Steuerung der drei Batterie-Aktionen: ohne funktionierende Rueckstellung bliebe die Batterie nach einer Aktion im falschen Modus.
+    "battery_action_stop": ("Batterie-Aktion beenden", "batterie"),
 }
 
 
@@ -5395,6 +5426,9 @@ def _read_mapped_entity_state(config, sensor_key):
     static_state = static_sensor_state(config, sensor_key)
     if static_state is not None:
         return EntityState(static_state, "", datetime.now(timezone.utc))
+    static_number = static_sensor_number(config, sensor_key)
+    if static_number is not None:
+        return EntityState(f"{static_number:g}", "°C", datetime.now(timezone.utc))
     entity_id = mapped_entity_id(config, sensor_key)
     if not entity_id:
         return None
@@ -6820,7 +6854,8 @@ DHW_TARGET_TEMP_TEST_BOOST_C = 5
 
 
 def _dhw_target_temp_entity(config):
-    return (config.get("sensorMappings", {}) or {}).get(DHW_TARGET_TEMP_SENSOR_FIELD, "")
+    value = (config.get("sensorMappings", {}) or {}).get(DHW_TARGET_TEMP_SENSOR_FIELD, "")
+    return "" if is_static_number_value(value) else value  # feste Zahl (nur Heizstab) ist keine Entitaet
 
 
 # ============================================================================
@@ -6853,7 +6888,11 @@ def compute_hw_soc_min(config):
     letzten Zuruecksetzen einer "Warmwasser"-Aktion kein Fehlschlag aktiv gemeldet ist (siehe
     Modul-Kommentar oben) UND tatsaechlich verwertbare Messwerte in der Historie liegen - sonst wird
     der zuletzt zwischengespeicherte Wert (falls vorhanden) unveraendert zurueckgegeben, damit ein
-    einzelner luecken-/fehlerhafter Durchlauf keinen bereits bekannten guten Wert verwirft."""
+    einzelner luecken-/fehlerhafter Durchlauf keinen bereits bekannten guten Wert verwirft.
+    Mit fester Zahl statt Entitaet (nur Heizstab, siehe static_sensor_number) ist diese Zahl die Untergrenze."""
+    static_number = static_sensor_number(config, DHW_TARGET_TEMP_SENSOR_FIELD)
+    if static_number is not None:
+        return static_number
     entity_id = _dhw_target_temp_entity(config)
     if not entity_id:
         return None
@@ -7239,6 +7278,25 @@ def _action_type_config_state(config, ready_key):
         variant = cv.get(ready_key, "ha_automation")
         entity_ok = bool(am.get(ready_key)) if variant == "ha_automation" else bool(sm.get(BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[ready_key]))
         return {"flags": {"entity": entity_ok}, "fp": {"variant": variant, "entity": entity_ok}}
+    if ready_key == "battery_action_stop":
+        variant = _battery_control_variant(config, ready_key)
+        # Direkt: setzt die Entitaeten der drei Batterie-Aktionen zurueck - ohne deren Einrichtung gibt es nichts zu testen (wie in
+        # isBatteryDirectActionConfigured in app.js; per Toggle deaktivierte Aktionen zaehlen nicht als Voraussetzung).
+        enabled = config.get("actionTypeEnabled", {}) or {}
+
+        def _other_configured(key):
+            if enabled.get(key, True) is False:
+                return True
+            if _battery_control_variant(config, key) == "ha_automation":
+                return bool(am.get(key))
+            return bool(sm.get(BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS[key]))
+
+        if variant == "ha_automation":
+            entity_ok = bool(am.get(ready_key))
+        else:
+            entity_ok = all(_other_configured(key) for key in BATTERY_DIRECT_REQUIRED_SENSOR_FIELDS)
+        return {"flags": {"entity": entity_ok},
+                "fp": {"variant": variant, "entity": entity_ok, "mode": config.get("batteryModeSelfConsumptionValue") or ""}}
     return {"flags": {}, "fp": {}}
 
 
@@ -8056,6 +8114,8 @@ def _keep_valid_entity_ids(incoming, existing, keys=("sensorMappings", "actorMap
             old_value = old_map.get(inner_key)
             if new_value in (STATIC_SENSOR_ON, STATIC_SENSOR_OFF):
                 continue  # feste An/Aus-Auswahl (siehe static_sensor_state), keine entity_id
+            if inner_key in STATIC_NUMBER_SENSOR_KEYS and is_static_number_value(new_value):
+                continue  # feste Zahl statt Entitaet (siehe static_sensor_number)
             if (isinstance(new_value, str) and new_value and not _VALID_ENTITY_ID.match(new_value)
                     and isinstance(old_value, str) and _VALID_ENTITY_ID.match(old_value)):
                 print(f"[Shyft] Mapping '{key}.{inner_key}': ungueltiger Wert {new_value!r} ignoriert, behalte {old_value!r}.")
@@ -8064,6 +8124,11 @@ def _keep_valid_entity_ids(incoming, existing, keys=("sensorMappings", "actorMap
 
 @app.route("/config", methods=["PUT"])
 def writeConfig():
+    with _CONFIG_PUT_LOCK:
+        return _write_config_locked()
+
+
+def _write_config_locked():
     content = request.get_data(as_text=True)
     incoming = json.loads(content)
 
@@ -8607,12 +8672,29 @@ def _read_current_config():
         return recovered
 
 
+_CONFIG_FILE_LOCK = threading.RLock()
+# Serialisiert PUT /config: lesen-zusammenfuehren-schreiben darf nicht ueberlappen, sonst ueberschreibt eine langsamere, aeltere
+# Speicherung die neuere (verlorene Eingaben).
+_CONFIG_PUT_LOCK = threading.RLock()
+
+
 def _write_current_config(data):
     "Atomares Schreiben (temp-Datei im selben Verzeichnis + os.replace) - verhindert, dass ein ueberlappender oder unterbrochener Schreibzugriff die Datei mit Restbytes eines laengeren vorherigen Inhalts beschädigt zurücklässt (siehe _read_current_config)."
-    tmp_path = CONFIG_PATH + ".tmp"
-    with open(tmp_path, "w") as file:
-        file.write(json.dumps(data))
-    os.replace(tmp_path, CONFIG_PATH)
+    # Eigene temp-Datei je Schreibvorgang: mit einem festen Namen (config.json.tmp) kamen sich mehrere gleichzeitige Speicherungen in
+    # die Quere (Auto-Save feuert beim Oeffnen/Fokussieren mehrfach kurz hintereinander) - der eine os.replace verschob die Datei,
+    # der andere scheiterte mit FileNotFoundError (HTTP 500, der Wert wurde nicht gespeichert) bzw. ein Leser sah eine leere config.json.
+    with _CONFIG_FILE_LOCK:
+        fd, tmp_path = tempfile.mkstemp(prefix="config.json.", suffix=".tmp", dir=os.path.dirname(CONFIG_PATH) or ".")
+        try:
+            with os.fdopen(fd, "w") as file:
+                file.write(json.dumps(data))
+            os.replace(tmp_path, CONFIG_PATH)
+        except BaseException:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
 
 
 # Which actorMappings keys represent a distinct Aktionstyp shyft-power schedules, and the exact
@@ -9257,6 +9339,84 @@ def batteryDirectControlStatus(action_key):
     return jsonify({"values": _battery_direct_field_values(config, action_key)})
 
 
+BATTERY_AUTOMATION_TEST_WAIT_SECONDS = 15
+BATTERY_AUTOMATION_TEST_POLL_SECONDS = 0.5
+
+
+def _test_battery_automation(action_key, config):
+    """Test der Variante 'Per Home-Assistant-Automation' einer Batterie-Aktion. Was die Automation danach am Geraet tut,
+    kann Shyft nicht wissen - geprueft wird: (1) die Automation existiert und ist aktiv, (2) sie wurde durch den Aufruf
+    wirklich ausgefuehrt (last_triggered aendert sich), (3) soweit der Trace lesbar ist: sie lief ohne Fehler und hat
+    target/phase erhalten. Wirft bei einem Fehlschlag eine Exception mit Klartext, sonst Rueckgabe (Meldung, partial):
+    partial=True = bedingt erfolgreich (ausgefuehrt, aber die Uebergabe von target/phase liess sich nicht pruefen)."""
+    automation_entity_id = (config.get("actorMappings", {}) or {}).get(action_key)
+    if not automation_entity_id:
+        raise Exception("Keine Automation ausgewählt")
+    is_stop = action_key == "battery_action_stop"
+    phase = "stop" if is_stop else "start"
+    target = None if is_stop else BATTERY_DIRECT_TEST_TARGET_KW
+
+    info = homeassistant_adapter.get_automation_run_info(automation_entity_id)
+    test_log(f"Automation {automation_entity_id} gefunden (Zustand: {info['state']}).")
+    if info["state"] == "unavailable":
+        raise Exception(f"Die Automation {automation_entity_id} ist in Home Assistant nicht verfügbar.")
+    if info["state"] == "off":
+        raise Exception(f"Die Automation {automation_entity_id} ist ausgeschaltet – bitte in Home Assistant einschalten.")
+
+    before = info["last_triggered"]
+    started_iso = datetime.now(timezone.utc).isoformat()
+    test_log(f"Löse die Automation aus (phase = {phase}, target = {target}) …")
+    trigger_ha_automation(automation_entity_id, phase, target)
+
+    deadline = time.time() + BATTERY_AUTOMATION_TEST_WAIT_SECONDS
+    ran = False
+    while True:
+        if homeassistant_adapter.get_automation_run_info(automation_entity_id)["last_triggered"] != before:
+            ran = True
+            break
+        if time.time() >= deadline:
+            break
+        test_sleep(BATTERY_AUTOMATION_TEST_POLL_SECONDS)
+    if not ran:
+        raise Exception(f"Die Automation {automation_entity_id} wurde nicht ausgeführt (Home Assistant meldet keinen neuen Lauf) – "
+                        "läuft sie gerade noch (Modus „single“) oder ist sie blockiert?")
+    test_log("Die Automation wurde von Home Assistant ausgeführt.", "ok")
+
+    # Ablaufverlauf ("Trace"): best effort - nicht jede HA-Konfiguration speichert ihn. Fehlt er oder lassen sich die
+    # uebergebenen Werte nicht darin finden, gilt der Test nur als "bedingt erfolgreich" (partial=True, orange im Popup).
+    try:
+        trace = homeassistant_adapter.latest_automation_trace_variables(info["config_id"], started_iso)
+    except Exception as e:
+        print(f"[Shyft] Trace der Automation {automation_entity_id} nicht lesbar:", repr(e))
+        trace = {"found": False, "error": None, "variables": {}}
+    sent = f"die Phase „{phase}“" + (f" und die Zielleistung {target} kW" if target is not None else "")
+    not_checkable = (f"Ob die Automation {sent} wirklich erhalten hat, konnte Shyft nicht prüfen. "
+                     "Bitte in Home Assistant unter Einstellungen → Automationen & Szenen → deine Automation → Traces nachsehen, "
+                     "ob sie gelaufen ist und das Richtige getan hat.")
+    if not trace["found"]:
+        test_log("Home Assistant hat zu diesem Lauf keinen Ablaufverlauf (Trace) gespeichert. Darin protokolliert Home Assistant, "
+                 "was bei einem Automationslauf passiert ist und welche Werte sie bekommen hat.", "warn")
+        return not_checkable, True
+    if trace["error"]:
+        raise Exception(f"Die Automation ist gelaufen, hat aber mit einem Fehler abgebrochen: {trace['error']}")
+    variables = trace["variables"]
+    if "phase" not in variables and "target" not in variables:
+        test_log("Im Ablaufverlauf (Trace) dieser Automation hat Shyft die übergebenen Werte nicht gefunden. "
+                 "Der Trace protokolliert, was bei einem Automationslauf passiert ist und welche Werte sie bekommen hat.", "warn")
+        return not_checkable, True
+    if variables.get("phase") != phase:
+        raise Exception(f"Die Automation hat die Phase {variables.get('phase')!r} erhalten, erwartet war {phase!r}.")
+    if target is not None:
+        try:
+            received_target = float(variables.get("target"))
+        except (TypeError, ValueError):
+            received_target = None
+        if received_target is None or abs(received_target - target) > 1e-9:
+            raise Exception(f"Die Automation hat die Zielleistung {variables.get('target')!r} erhalten, erwartet waren {target} kW.")
+    test_log(f"Die Automation hat {sent} erhalten.", "ok")
+    return f"Die Automation ist gelaufen und hat {sent} erhalten", False
+
+
 @app.route("/actions/battery/<action_key>/test", methods=["POST"])
 @_records_action_test()
 @_with_test_session
@@ -9265,6 +9425,23 @@ def testBatteryDirectControl(action_key):
         return jsonify({"success": False, "message": "unbekannte Steuerung"}), 404
     config = _read_current_config()
     title = ACTION_TYPE_TOGGLE_KEYS.get(action_key, "Batterie-Aktion beenden")
+    # Wie die Konfigurationsseite (app.js: Standard "direct", solange nichts gewaehlt ist) - nicht _battery_control_variant,
+    # dessen Standard "ha_automation" ist: sonst wuerde der Button einer sichtbar auf "direkt" stehenden Steuerung die Automation testen.
+    if (config.get("controlVariant", {}) or {}).get(action_key) == "ha_automation":
+        test_log(f"Teste „{title}“ (Variante Home-Assistant-Automation) – was die Automation danach tut, kann Shyft nicht prüfen.")
+        try:
+            message, partial = _test_battery_automation(action_key, config)
+            for label in _battery_test_problem_labels(action_key):
+                _note_action_outcome(label, "getestet", None)
+            test_log(message + ".", "warn" if partial else "ok")
+            return jsonify({"success": True, "partial": partial, "message": message})
+        except _TestCancelled:
+            test_log("Test abgebrochen.", "warn")
+            return jsonify({"success": False, "cancelled": True, "message": "Test abgebrochen"})
+        except Exception as e:
+            print(f"[Shyft] Batterie-Automations-Test '{action_key}' fehlgeschlagen (Version {VERSION}):", repr(e))
+            test_log(f"Test fehlgeschlagen: {e}", "error")
+            return jsonify({"success": False, "message": str(e)}), 500
     test_log(f"Teste „{title}“ (direkte Entitäts-Steuerung) – dieselbe Logik wie bei einer echten Aktion, ohne Push-Benachrichtigung.")
     pre_test_state = _capture_battery_pre_test_state(config, action_key)
     try:
@@ -9735,8 +9912,15 @@ def check_device_status_deviation(config):
         start = action.get("Date Start")
         return start is not None and (now_ms - start) >= grace_ms
 
+    # Ruhezustand-Erwartung ("Shyft erwartet off/Eigenverbrauch/...") gibt es erst, wenn shyft-power das Geraet ueberhaupt schon
+    # gesteuert haben kann - ohne je empfangene Optimierung existieren keine Aktionen, und "keine Aktion aktiv" waere sonst
+    # faelschlich "soll aus", obwohl nie etwas befohlen wurde (z.B. der Verbraucher laeuft von Hand).
+    optimization_received = _has_received_optimization()
+
     def baseline_ok(action_names):
-        "True, wenn KEINE dieser Aktionsarten gerade aktiv ist UND keine von ihnen innerhalb der Karenzzeit geendet hat."
+        "True, wenn KEINE dieser Aktionsarten gerade aktiv ist UND keine von ihnen innerhalb der Karenzzeit geendet hat - und shyft schon mindestens eine Optimierung empfangen hat."
+        if not optimization_received:
+            return False
         if any(_active_computed_action(computed_actions, name) is not None for name in action_names):
             return False
         recent_end = _most_recent_action_end_ms(computed_actions, action_names)
