@@ -2,7 +2,8 @@
 
 ## 0.0.45.406
 
-* **Neu: Klare Meldung bei ungültigem shyft_access_key.** Lehnt shyft-power die Optimierungsanfrage mit „401 Invalid or expired token“ ab, stand im Dashboard nur „Noch keine Dashboard-Daten von shyft-power vorhanden – die nächste stündliche Aktualisierung steht noch aus.“, und es kam nie eine Optimierung. Jetzt erscheint „Probleme mit deinem shyft_access_key. Bitte wende dich an den shyft-Service“ im Dashboard und in der Problemkarte, jeweils mit dem Link „shyft-Service kontaktieren (Log senden)“, der den Hilfe-Chat mit dem Formular zum Senden der Log-Dateien öffnet. Die Meldung verschwindet, sobald shyft-power die Anfrage wieder annimmt.
+* **Neu: Klare Meldung bei ungültigem shyft_access_key.** Lehnt shyft-power die Optimierungsanfrage mit „401 Invalid or expired token“ ab, stand im Dashboard nur „Noch keine Dashboard-Daten von shyft-power vorhanden – die nächste stündliche Aktualisierung steht noch aus.“, und es kam nie eine Optimierung. Jetzt erscheint „Probleme mit deinem shyft_access_key. Bitte wende dich an den shyft-Service: info@shyft-power.com.“ im Dashboard und in der Problemkarte. Der Log-Versand wird hier bewusst nicht angeboten, da er denselben abgelehnten Schlüssel nutzt und ebenfalls scheitern würde. Die Meldung verschwindet, sobald shyft-power die Anfrage wieder annimmt.
+* **Hilfe-Chat: „Log senden“ wird im Demomodus nicht mehr angeboten.** Ohne echtes shyft-power-Konto (kein shyft_access_key) kann der Log-Versand nicht funktionieren. Die Zeile „Du kannst uns bei einem Problem deine Log-Dateien senden“ und das Support-Angebot der KI erscheinen daher erst mit echtem Konto; im Demomodus bleibt der Hinweis auf die E-Mail an info@shyft-power.com.
 
 ## 0.0.45.405
 
