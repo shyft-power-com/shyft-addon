@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.405
+
+* **Fix: Der Link „Jetzt aktualisieren“ im Hinweis auf eine neue Version führte zu einer 404-Seite.** Er zeigte auf `/hassio/addon/<slug>`; die Home-Assistant-Seite des Add-ons liegt aber unter `/hassio/addon/<slug>/info`. Der Link verweist jetzt dorthin.
+
 ## 0.0.45.404
 
 * **Fix: Eingaben (z. B. Batterie-Kapazität und Mindest-Ladestand) gingen beim Speichern verloren, das Feld blieb rot.** Beim Öffnen und Anklicken von Feldern löst die Konfigurationsseite mehrere Speicherungen kurz hintereinander aus. Sie benutzten dieselbe Zwischendatei – eine Speicherung scheiterte dann mit „No such file or directory: config.json.tmp“ (HTTP-Fehler 500), ihr Wert wurde nicht abgelegt, und die Seite fiel auf den Standardwert zurück. Jetzt hat jede Speicherung ihre eigene Zwischendatei, und gleichzeitige Speicherungen laufen nacheinander ab, sodass keine ältere eine neuere überschreibt.

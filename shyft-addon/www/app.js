@@ -1496,7 +1496,8 @@ async function renderUpdateBanner() {
     text.appendChild(document.createTextNode(`Es gibt eine neue Version von shyft-power (${status.latest}, installiert: ${status.installed || '?'}). `));
     if (status.slug) {
         const link = document.createElement('a');
-        link.href = `/hassio/addon/${status.slug}`;
+        // Die HA-Frontend-Route ist /hassio/addon/<slug>/info; ohne "/info" liefert HA eine 404-Seite.
+        link.href = `/hassio/addon/${encodeURIComponent(status.slug)}/info`;
         link.target = '_blank';
         link.rel = 'noopener';
         link.textContent = 'Jetzt aktualisieren';
