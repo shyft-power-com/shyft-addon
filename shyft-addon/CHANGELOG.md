@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.405
+
+* **Neue Dashboard-Kachel „Ersparnis vs. fossiler Haushalt“.** Sie vergleicht die letzten 30 Tage: Was hätten Gas (statt Wärmepumpe) und Benzin E10 (statt E-Auto) gekostet – im Vergleich zum Strom, den Wärmepumpe und Wallbox tatsächlich verbraucht haben? Gas- und E10-Preis holt das Add-on aus shyft-power (Quellen: Destatis, Tankerkönig/MTS-K, Berlin-Mitte; Tankerkönig-Daten unter CC BY 4.0). Die Kachel ist eine Näherung (Jahresarbeitszahl 3,5, Kessel 92 %, E-Auto 18 kWh/100 km, Benziner 7,5 l/100 km, durchschnittlicher Netzbezugspreis) – die Annahmen stehen als Fußnote darunter. Ohne Preise oder ohne Wärmepumpen-/Wallbox-Sensor bleibt die Kachel ausgeblendet.
+
 ## 0.0.45.404
 
 * **Fix: Eingaben (z. B. Batterie-Kapazität und Mindest-Ladestand) gingen beim Speichern verloren, das Feld blieb rot.** Beim Öffnen und Anklicken von Feldern löst die Konfigurationsseite mehrere Speicherungen kurz hintereinander aus. Sie benutzten dieselbe Zwischendatei – eine Speicherung scheiterte dann mit „No such file or directory: config.json.tmp“ (HTTP-Fehler 500), ihr Wert wurde nicht abgelegt, und die Seite fiel auf den Standardwert zurück. Jetzt hat jede Speicherung ihre eigene Zwischendatei, und gleichzeitige Speicherungen laufen nacheinander ab, sodass keine ältere eine neuere überschreibt.

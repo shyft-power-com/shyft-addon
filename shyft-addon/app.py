@@ -10,6 +10,7 @@ import base_case
 import ev_tiers
 import energy_archive
 import base_load
+import fossil_comparison
 
 import os
 from flask import Flask, send_from_directory, jsonify, request, Response
@@ -640,6 +641,68 @@ def readAnalysisSummary():
         return jsonify({"status": "success", "granularity": granularity, "rows": rows})
     except Exception as e:
         print("[Shyft] Analyse: Zusammenfassung konnte nicht geladen werden:", repr(e))
+        return jsonify({"status": "error", "message": str(e)})
+
+
+# Fossil-Vergleich: Preise (E10/Gas) kommen aus dem Shyft-Admin-Objekt (Bubble aktualisiert sie taeglich um 13 Uhr), das Addon holt sie hoechstens
+# alle FOSSIL_PRICES_CACHE_SECONDS; die Einzelverbraucher-kWh (Waermepumpe/Wallbox) aus der HA-Historie sind teuer und werden laenger gecacht.
+FOSSIL_PRICES_CACHE_SECONDS = 6 * 3600
+FOSSIL_USAGE_CACHE_SECONDS = 3600
+_fossil_prices_cache = {"at": 0.0, "data": None}
+_fossil_usage_cache = {}
+_fossil_lock = threading.Lock()
+
+
+def _fossil_prices():
+    "Zuletzt bekannte Preise (bei Abruffehler bleibt der alte Stand erhalten), None ohne jeden Stand."
+    with _fossil_lock:
+        if time.time() - _fossil_prices_cache["at"] >= FOSSIL_PRICES_CACHE_SECONDS:
+            _fossil_prices_cache["at"] = time.time()  # auch bei Fehler: nicht bei jedem Dashboard-Refresh neu versuchen
+            try:
+                parsed = fossil_comparison.parse_fossil_prices_response(shyft_adapter.get_fossil_prices())
+                if parsed:
+                    _fossil_prices_cache["data"] = parsed
+            except Exception as e:
+                print("[Shyft] Fossil-Vergleich: Preise konnten nicht geladen werden:", repr(e))
+        return _fossil_prices_cache["data"]
+
+
+@app.route("/analysis/fossil-savings", methods=["GET"])
+def readFossilSavings():
+    "Kachel 'Ersparnis vs. fossiler Haushalt': letzte N Tage (Query days, Default 30) Waermepumpe+Wallbox-kWh aus der HA-Historie, bewertet mit dem durchschnittlichen Netzbezugspreis (Energie-Archiv) gegen Gas-/E10-Preis aus Bubble, siehe fossil_comparison (Annahmen werden mitgeliefert)."
+    if is_demo_mode():
+        return jsonify({"status": "unavailable", "reason": "demo"})
+    try:
+        days = max(1, min(int(request.args.get("days", fossil_comparison.DEFAULT_DAYS)), 365))
+    except ValueError:
+        days = fossil_comparison.DEFAULT_DAYS
+    try:
+        prices = _fossil_prices()
+        if not prices:
+            return jsonify({"status": "unavailable", "reason": "prices"})
+        end = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        start = end - timedelta(days=days)
+        cached = _fossil_usage_cache.get(days)
+        if cached and time.time() - cached[0] < FOSSIL_USAGE_CACHE_SECONDS:
+            heat_kwh, car_kwh, price = cached[1]
+        else:
+            config = _read_current_config()
+            heat_kwh = _sensor_history_kwh("heatpump_current_power_elect", start, end, config)[0]
+            car_kwh = _sensor_history_kwh("wallbox_current_charging_power", start, end, config)[0]
+            rows = energy_archive.query_summary("yearly", energy_archive.hour_key(start), energy_archive.hour_key(end))
+            imp = sum(r["actual_import_kwh"] or 0 for r in rows)
+            cost = sum(r["actual_cost_eur"] or 0 for r in rows)
+            price = (cost / imp) if imp > 0 and cost > 0 else None
+            _fossil_usage_cache[days] = (time.time(), (heat_kwh, car_kwh, price))
+        result = fossil_comparison.compute_fossil_savings(heat_kwh, car_kwh, price, prices["e10_eur_per_l"], prices["gas_ct_per_kwh"])
+        if result is None:
+            return jsonify({"status": "unavailable", "reason": "data"})
+        result.update({"status": "success", "days": days, "avg_power_price_eur_kwh": round(price, 4),
+                       "e10_eur_per_l": prices["e10_eur_per_l"], "gas_ct_per_kwh": prices["gas_ct_per_kwh"],
+                       "prices_updated": {"e10": prices["e10_updated"], "gas": prices["gas_updated"]}})
+        return jsonify(result)
+    except Exception as e:
+        print("[Shyft] Fossil-Vergleich fehlgeschlagen:", repr(e))
         return jsonify({"status": "error", "message": str(e)})
 
 

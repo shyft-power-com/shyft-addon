@@ -97,6 +97,16 @@ class ShyftAdapter:
         response.raise_for_status()
         return response.text
 
+    def get_fossil_prices(self, timeout=10):
+        """Tagesaktueller E10-Preis (EUR/l) und Gaspreis (ct/kWh) aus dem Shyft-Admin-Objekt (Bubble-Workflow fossil_prices_get;
+        Quelle Tankerkoenig/MTS-K bzw. Destatis, wird von Bubble taeglich um 13 Uhr bzw. monatlich aktualisiert). Gibt das geparste JSON
+        zurueck, wirft bei Netz-/HTTP-Fehlern."""
+        response = requests.post(self._create_complete_uri("fossil_prices_get"),
+                                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.bubble_token}"},
+                                 data=json.dumps({}), timeout=timeout)
+        response.raise_for_status()
+        return response.json()
+
     def create_user(self, test_environment=False):
         """Signs a new shyft-power account up (create_user_addon workflow) in the background, the
         first time a demo-mode addon user successfully tests a controllable real device (see

@@ -8555,6 +8555,54 @@ const EINSATZPLAN_STATS = [
     ['stromertrag_eur', 'Stromertrag', '€', 2],
 ];
 
+// Kachel "Ersparnis vs. fossiler Haushalt" (siehe /analysis/fossil-savings und fossil_comparison.py): Strom von Waermepumpe + Wallbox gegen
+// Gas (Destatis) und E10 (Tankerkoenig). Nutzt das Kartenlayout des Einsatzplans; die Annahmen stehen als Fussnote dabei, da es Naeherungswerte sind.
+function buildFossilSavingsCard(d) {
+    const card = document.createElement('div');
+    card.className = 'einsatzplanCard';
+    const title = document.createElement('div');
+    title.className = 'einsatzplanTitle';
+    title.textContent = `Ersparnis vs. fossiler Haushalt (${d.days} Tage)`;
+    card.appendChild(title);
+    const grid = document.createElement('div');
+    grid.className = 'einsatzplanGrid';
+    const fmt = (v, dec) => v.toLocaleString('de-DE', {minimumFractionDigits: dec, maximumFractionDigits: dec});
+    const stats = [
+        ['Ersparnis', fmt(d.savings_eur, 2), '€'],
+        ['Fossile Kosten', fmt(d.fossil_cost_eur, 2), '€'],
+        ['Stromkosten WP + Auto', fmt(d.electric_cost_eur, 2), '€'],
+        ['Gas / Benzin', `${fmt(d.fossil_gas_cost_eur, 0)} | ${fmt(d.fossil_fuel_cost_eur, 0)}`, '€'],
+    ];
+    for (const [label, value, unit] of stats) {
+        const stat = document.createElement('div');
+        stat.className = 'einsatzplanStat';
+        const labelEl = document.createElement('div');
+        labelEl.className = 'einsatzplanStatLabel';
+        labelEl.textContent = label;
+        const valueRow = document.createElement('div');
+        valueRow.className = 'einsatzplanStatValueRow';
+        const valueEl = document.createElement('span');
+        valueEl.className = 'einsatzplanStatValue';
+        valueEl.textContent = value;
+        const unitEl = document.createElement('span');
+        unitEl.className = 'einsatzplanStatUnit';
+        unitEl.textContent = unit;
+        valueRow.appendChild(valueEl);
+        valueRow.appendChild(unitEl);
+        stat.appendChild(labelEl);
+        stat.appendChild(valueRow);
+        grid.appendChild(stat);
+    }
+    card.appendChild(grid);
+    const a = d.assumptions || {};
+    const note = document.createElement('div');
+    note.className = 'einsatzplanLegend';
+    note.textContent = `Näherung: Gas ${fmt(d.gas_ct_per_kwh, 1)} ct/kWh (Destatis), E10 ${fmt(d.e10_eur_per_l, 3)} €/l (Tankerkönig, Berlin-Mitte), Strom ø ${fmt(d.avg_power_price_eur_kwh * 100, 1)} ct/kWh. `
+        + `Annahmen: JAZ ${a.heatpump_cop}, Kessel ${Math.round((a.boiler_efficiency || 0) * 100)} %, E-Auto ${a.ev_kwh_per_100km} kWh/100 km, Benziner ${a.ice_l_per_100km} l/100 km (${d.km} km).`;
+    card.appendChild(note);
+    return card;
+}
+
 function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
     const card = document.createElement('div');
     card.className = 'einsatzplanCard';
@@ -12495,6 +12543,15 @@ async function loadDashboardImpl() {
         }
         if (data.einsatzplan) {
             updateOrAppendDashboardWidget(container, 'einsatzplan', buildEinsatzplanCard(data.einsatzplan, data.optimizer_running));
+        }
+        // best-effort: ohne Preise/Waermepumpe-/Wallbox-Daten (status 'unavailable') oder bei Fehler keine Kachel
+        try {
+            const fossil = await getJson(insideHomeAssistant + '/analysis/fossil-savings');
+            if (fossil.status === 'success') {
+                updateOrAppendDashboardWidget(container, 'fossilSavings', buildFossilSavingsCard(fossil));
+            }
+        } catch (err) {
+            console.log(err);
         }
         // "Innenraum" (Zweitkurve): Ist aus der echten Sensorhistorie statt der bisher gezeigten,
         // vom Optimierer nur SIMULIERTEN Innentemperatur (Nutzer-Vorgabe) - best-effort wie bei den
