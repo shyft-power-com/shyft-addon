@@ -679,13 +679,23 @@ def _fossil_prices():
         return _fossil_prices_cache["data"]
 
 
-def _device_energy_of_row(row, t_out):
-    "(elektr. Waermepumpe kWh, thermische Waerme kWh, Auto kWh) einer Optimierer-Stunde (kW ueber eine Stunde = kWh)."
+def _device_energy_of_row(row, next_row, t_out, heating_rod=False):
+    """(elektr. Waermepumpe kWh, thermische Waerme kWh, Auto kWh) einer Optimierer-Stunde (kW ueber eine Stunde = kWh). COP wie im Julia-Modell
+    (run_SHEMS.jl): Heizen = die exportierte Spalte 'COP' dieser Stunde; Warmwasser = 5,5 - (mittlere Speichertemperatur T_HW[h]/T_HW[h+1] -
+    Aussentemperatur) / 20, mindestens 0,5; Heizstab (Warmwasser) COP 1."""
     hp_fh = max(0.0, _safe_float(row.get("HP_FH")))
     hp_hw = max(0.0, _safe_float(row.get("HP_HW")))
-    t_hw = _safe_float(row.get("T_HW")) or fossil_comparison.DHW_DEFAULT_TANK_TEMP_C
-    heat = hp_fh * fossil_comparison.hp_cop(fossil_comparison.FLOOR_HEATING_FLOW_TEMP_C, t_out) + hp_hw * fossil_comparison.hp_cop(t_hw, t_out)
-    return hp_fh + hp_hw, heat, max(0.0, _safe_float(row.get("EV_sum")))
+    if row.get("COP") not in (None, ""):
+        cop_fh = max(fossil_comparison.COP_MIN, _safe_float(row.get("COP")))
+    else:
+        cop_fh = fossil_comparison.hp_cop(fossil_comparison.FLOOR_HEATING_FLOW_TEMP_C, t_out)
+    if heating_rod:
+        cop_hw = 1.0
+    else:
+        t_hw = _safe_float(row.get("T_HW")) or fossil_comparison.DHW_DEFAULT_TANK_TEMP_C
+        t_hw_next = _safe_float(next_row.get("T_HW")) if next_row is not None and next_row.get("T_HW") not in (None, "") else t_hw
+        cop_hw = fossil_comparison.hp_cop((t_hw + t_hw_next) / 2.0, t_out)
+    return hp_fh + hp_hw, hp_fh * cop_fh + hp_hw * cop_hw, max(0.0, _safe_float(row.get("EV_sum")))
 
 
 def _compute_fossil_summary(output_rows, temperature, plan_idx, past_usage_kwh, avg_price_eur_kwh, config):
@@ -698,7 +708,9 @@ def _compute_fossil_summary(output_rows, temperature, plan_idx, past_usage_kwh, 
     prices = _fossil_prices()
     if not prices or avg_price_eur_kwh is None:
         return None
-    totals = [(_safe_float(r.get("X_sum")),) + _device_energy_of_row(r, temperature[i] if i < len(temperature) else 10.0)
+    rod = heating_rod_active(config)
+    totals = [(_safe_float(r.get("X_sum")),) + _device_energy_of_row(r, output_rows[i + 1] if i + 1 < len(output_rows) else None,
+                                                                     temperature[i] if i < len(temperature) else 10.0, rod)
               for i, r in enumerate(output_rows)]
     x_all = sum(t[0] for t in totals)
     hp_all, heat_all, ev_all = sum(t[1] for t in totals), sum(t[2] for t in totals), sum(t[3] for t in totals)

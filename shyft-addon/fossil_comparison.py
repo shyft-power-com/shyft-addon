@@ -11,7 +11,7 @@ wird der durchschnittliche Netzstrompreis (ø Netzstrom der Einsatzplan-Kachel) 
 
 BOILER_EFFICIENCY = 0.92        # Nutzungsgrad Gas-Brennwertkessel (Waerme / Gas)
 COP_MIN = 0.5                   # wie im Optimierer (base_case.COP_MIN)
-FLOOR_HEATING_FLOW_TEMP_C = 35.0  # angenommene Vorlauftemperatur der Fussbodenheizung fuer den COP (HP_FH)
+FLOOR_HEATING_FLOW_TEMP_C = 35.0  # nur Rueckfall, falls die Optimierer-Spalte 'COP' fehlt (aeltere Laeufe)
 DHW_DEFAULT_TANK_TEMP_C = 50.0    # Speichertemperatur fuer den COP der Warmwasserbereitung, falls T_HW fehlt
 # Benzin-Aequivalent des E-Auto-Verbrauchs: Radenergie = Ladestrom x Lade-/Antriebswirkungsgrad; ein Benziner braucht dafuer
 # Radenergie / Tank-to-Wheel-Wirkungsgrad als Kraftstoffenergie, E10 hat ~8,7 kWh/l.
@@ -22,7 +22,7 @@ ICE_LITERS_PER_EV_KWH = EV_CHARGE_TO_WHEEL_EFFICIENCY / ICE_TANK_TO_WHEEL_EFFICI
 
 
 def hp_cop(flow_temp_c, outdoor_temp_c):
-    "COP der Waermepumpe wie im Optimierer: 5,5 - (Vorlauf - Aussen) / 20, mindestens COP_MIN."
+    "COP der Waermepumpe wie im Optimierer (run_SHEMS.jl): 5,5 - (Vorlauf - Aussen) / 20, mindestens COP_MIN."
     return max(COP_MIN, 5.5 - (flow_temp_c - outdoor_temp_c) / 20.0)
 
 

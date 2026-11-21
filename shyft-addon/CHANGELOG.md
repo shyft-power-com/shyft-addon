@@ -1,8 +1,12 @@
 # Changelog
 
+## 0.0.45.408
+
+* **Fossil-Kachel: COP jetzt direkt aus dem Optimierer.** Heizen nutzt die Spalte „COP“ des Optimierer-Ergebnisses je Stunde, Warmwasser denselben Ansatz wie das Julia-Modell (aus der mittleren Speichertemperatur und der Außentemperatur; Heizstab: COP 1) – statt einer festen Annahme.
+
 ## 0.0.45.407
 
-* **Neue Dashboard-Kachel „Ersparnis vs. fossiler Haushalt“ (unter dem Einsatzplan) und neue Spalte „Ersparnis fossil ggü. Ist“ im Analyse-Tab.** Verglichen wird über den ganzen Optimierungszeitraum ab heute 0 Uhr: Was hätten Gas (statt Wärmepumpe) und Benzin E10 (statt E-Auto) gekostet – gegenüber dem Strom, den Wärmepumpe und Auto verbrauchen? Die Verbräuche stammen aus dem Optimierer-Ergebnis (nicht aus Home Assistant); für die schon vergangenen Stunden von heute wird deren Anteil am Gesamtverbrauch als Quote auf den gemessenen Verbrauch angewendet. Gas rechnet mit 92 % Kesselwirkungsgrad aus der von der Wärmepumpe gelieferten Wärme (COP wie im Optimierer), der Benzinverbrauch wird aus dem in der Konfiguration eingetragenen Auto-Verbrauch (kWh/100 km) abgeleitet. Gas- (Destatis) und E10-Preis (Tankerkönig, Berlin-Mitte, CC BY 4.0) holt das Add-on höchstens einmal pro Woche aus shyft-power. Ohne shyft_access_key (Demomodus) zeigt die Kachel einen Beispielwert. Alles sind Näherungen – die Annahmen stehen als Fußnote in der Kachel.
+* **Neue Dashboard-Kachel „Ersparnis vs. fossiler Haushalt“ (unter dem Einsatzplan) und neue Spalte „Ersparnis fossil ggü. Ist“ im Analyse-Tab.** Verglichen wird über den ganzen Optimierungszeitraum ab heute 0 Uhr: Was hätten Gas (statt Wärmepumpe) und Benzin E10 (statt E-Auto) gekostet – gegenüber dem Strom, den Wärmepumpe und Auto verbrauchen? Die Verbräuche stammen aus dem Optimierer-Ergebnis (nicht aus Home Assistant); für die schon vergangenen Stunden von heute wird deren Anteil am Gesamtverbrauch als Quote auf den gemessenen Verbrauch angewendet. Gas rechnet mit 92 % Kesselwirkungsgrad aus der von der Wärmepumpe gelieferten Wärme (COP je Stunde aus dem Optimierer), der Benzinverbrauch wird aus dem in der Konfiguration eingetragenen Auto-Verbrauch (kWh/100 km) abgeleitet. Gas- (Destatis) und E10-Preis (Tankerkönig, Berlin-Mitte, CC BY 4.0) holt das Add-on höchstens einmal pro Woche aus shyft-power. Ohne shyft_access_key (Demomodus) zeigt die Kachel einen Beispielwert. Alles sind Näherungen – die Annahmen stehen als Fußnote in der Kachel.
 
 ## 0.0.45.406
 
