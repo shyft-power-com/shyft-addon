@@ -1,8 +1,17 @@
 # Changelog
 
-## 0.0.45.405
+## 0.0.45.407
 
 * **Neue Dashboard-Kachel „Ersparnis vs. fossiler Haushalt“ (unter dem Einsatzplan) und neue Spalte „Ersparnis fossil ggü. Ist“ im Analyse-Tab.** Verglichen wird über den ganzen Optimierungszeitraum ab heute 0 Uhr: Was hätten Gas (statt Wärmepumpe) und Benzin E10 (statt E-Auto) gekostet – gegenüber dem Strom, den Wärmepumpe und Auto verbrauchen? Die Verbräuche stammen aus dem Optimierer-Ergebnis (nicht aus Home Assistant); für die schon vergangenen Stunden von heute wird deren Anteil am Gesamtverbrauch als Quote auf den gemessenen Verbrauch angewendet. Gas rechnet mit 92 % Kesselwirkungsgrad aus der von der Wärmepumpe gelieferten Wärme (COP wie im Optimierer), der Benzinverbrauch wird aus dem in der Konfiguration eingetragenen Auto-Verbrauch (kWh/100 km) abgeleitet. Gas- (Destatis) und E10-Preis (Tankerkönig, Berlin-Mitte, CC BY 4.0) holt das Add-on höchstens einmal pro Woche aus shyft-power. Ohne shyft_access_key (Demomodus) zeigt die Kachel einen Beispielwert. Alles sind Näherungen – die Annahmen stehen als Fußnote in der Kachel.
+
+## 0.0.45.406
+
+* **Neu: Klare Meldung bei ungültigem shyft_access_key.** Lehnt shyft-power die Optimierungsanfrage mit „401 Invalid or expired token“ ab, stand im Dashboard nur „Noch keine Dashboard-Daten von shyft-power vorhanden – die nächste stündliche Aktualisierung steht noch aus.“, und es kam nie eine Optimierung. Jetzt erscheint „Probleme mit deinem shyft_access_key. Bitte wende dich an den shyft-Service: info@shyft-power.com.“ im Dashboard und in der Problemkarte. Der Log-Versand wird hier bewusst nicht angeboten, da er denselben abgelehnten Schlüssel nutzt und ebenfalls scheitern würde. Die Meldung verschwindet, sobald shyft-power die Anfrage wieder annimmt.
+* **Hilfe-Chat: „Log senden“ wird im Demomodus nicht mehr angeboten.** Ohne echtes shyft-power-Konto (kein shyft_access_key) kann der Log-Versand nicht funktionieren. Die Zeile „Du kannst uns bei einem Problem deine Log-Dateien senden“ und das Support-Angebot der KI erscheinen daher erst mit echtem Konto; im Demomodus bleibt der Hinweis auf die E-Mail an info@shyft-power.com.
+
+## 0.0.45.405
+
+* **Fix: Vor der ersten Optimierung erschien die Meldung „‚Sonstiger Verbraucher‘ weicht ab: Shyft erwartet ‚off‘, gemessen wird ‚on‘“ (und entsprechende für die Batterie).** Der Soll-Ist-Abgleich nahm im Ruhezustand ohne laufende Aktion automatisch „aus“ als Soll an – auch wenn shyft noch nie optimiert und das Gerät nie gesteuert hatte (z. B. weil es von Hand an ist). Jetzt gibt es diese Ruhezustands-Erwartung erst, wenn mindestens eine Optimierung von shyft-power empfangen wurde. Der Abgleich während laufender Aktionen ändert sich nicht.
 
 ## 0.0.45.404
 

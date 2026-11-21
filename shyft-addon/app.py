@@ -148,6 +148,10 @@ ADDON_VERSION_NUMBER = addon_version_number(VERSION)
 # update_site_addon antwortet mit 400, wenn addon_version unter der von shyft-power gesetzten Mindestversion liegt.
 ADDON_VERSION_PROBLEM_ID = "addon_version_unsupported"
 ADDON_VERSION_UNSUPPORTED_MESSAGE = "Optimierung fehlgeschlagen. Aktualisiere deine Shyft-App, deine Version wird nicht mehr unterstützt."
+# update_site_addon antwortet mit 401, wenn der shyft_access_key ungueltig/abgelaufen ist - ohne Hinweis bliebe das Dashboard einfach leer.
+ACCESS_KEY_PROBLEM_ID = "access_key_invalid"
+# Kein Log-Versand als Weg: er nutzt denselben (abgelehnten) Schluessel und wuerde ebenfalls scheitern - daher nur die E-Mail.
+ACCESS_KEY_PROBLEM_MESSAGE = "Probleme mit deinem shyft_access_key. Bitte wende dich an den shyft-Service: info@shyft-power.com."
 BUILD_BRANCH = load_build_branch()
 SHYFT_ACCESS_KEY = "not_set_yet"
 DETAILED_LOGGING = False
@@ -467,13 +471,16 @@ def addonUpdateStatusEndpoint():
 @app.route("/assistant/status", methods=["GET"])
 def assistantStatusEndpoint():
     """Hilfe-Assistent (KI-Chat): ist in Home Assistant eine KI (ai_task-Entitaet, z.B. Google Gemini)
-    eingerichtet? Das Frontend waehlt danach den Platzhaltertext."""
+    eingerichtet? Das Frontend waehlt danach den Platzhaltertext. supportAvailable: der Log-Versand an den shyft-Service
+    (Support-Formular) wird nur angeboten, wenn ein echter shyft-power-Account existiert (nicht im Demomodus)."""
+    support_available = not is_demo_mode()
     try:
         states = homeassistant_adapter.get_from_homeassistant("/api/states", timeout=15)
-        return jsonify({"enabled": True, "aiAvailable": assistant.find_ai_task_entity(states) is not None})
+        return jsonify({"enabled": True, "aiAvailable": assistant.find_ai_task_entity(states) is not None,
+                        "supportAvailable": support_available})
     except Exception as e:
         print("[Shyft] Hilfe-Assistent: Status konnte nicht ermittelt werden:", repr(e))
-        return jsonify({"enabled": True, "aiAvailable": False})
+        return jsonify({"enabled": True, "aiAvailable": False, "supportAvailable": support_available})
 
 
 def _assistant_log_excerpt():
@@ -592,7 +599,7 @@ def assistantSupportSend():
     summary, email, error = assistant.normalize_support_input(body.get("summary"), body.get("email"))
     if error:
         return jsonify({"status": "error", "message": error}), 400
-    if not extract_shyft_user_id(shyft_adapter.bubble_token):
+    if is_demo_mode() or not extract_shyft_user_id(shyft_adapter.bubble_token):
         return jsonify({"status": "error", "message": "Ohne shyft-power-Konto (Demomodus) kann keine Anfrage gesendet werden. Schreibe uns bitte an info@shyft-power.com."}), 400
     with _support_lock:
         now = time.time()
@@ -1771,8 +1778,15 @@ def sync_site_data(optimizer_period_override=None, _wait_attempt=1):
         print(f"[Shyft] update_site_addon abgelehnt (HTTP 400): Add-on-Version {ADDON_VERSION_NUMBER} wird nicht mehr unterstuetzt.")
         problem_registry.register(ADDON_VERSION_PROBLEM_ID, ADDON_VERSION_UNSUPPORTED_MESSAGE)
         return result
+    if external_status == 401:
+        # Zugangsschluessel ungueltig/abgelaufen: es laeuft keine Optimierung - nicht auf ein Ergebnis warten, sondern den Nutzer auf den
+        # shyft-Service (E-Mail) verweisen (Problem-Karte + Dashboard-Hinweis).
+        print("[Shyft] update_site_addon abgelehnt (HTTP 401): shyft_access_key ungueltig oder abgelaufen.")
+        problem_registry.register(ACCESS_KEY_PROBLEM_ID, ACCESS_KEY_PROBLEM_MESSAGE)
+        return result
     if external_status is not None and external_status < 300:
         problem_registry.clear(ADDON_VERSION_PROBLEM_ID)
+        problem_registry.clear(ACCESS_KEY_PROBLEM_ID)
     _last_site_data_submit["at"] = submitted_at
     _record_price_horizon_used(config)
     try:
@@ -2179,6 +2193,8 @@ def readDashboardChartData():
         with open(DASHBOARD_CACHE_PATH, "r") as f:
             cache = json.load(f)
     except Exception:
+        if problem_registry.is_active(ACCESS_KEY_PROBLEM_ID):
+            return jsonify({"status": "error", "message": ACCESS_KEY_PROBLEM_MESSAGE})
         return jsonify({"status": "error", "message": "Noch keine Dashboard-Daten von shyft-power vorhanden - die nächste stündliche Aktualisierung steht noch aus."})
 
     input_csv = cache.get("input_csv")
@@ -9992,8 +10008,15 @@ def check_device_status_deviation(config):
         start = action.get("Date Start")
         return start is not None and (now_ms - start) >= grace_ms
 
+    # Ruhezustand-Erwartung ("Shyft erwartet off/Eigenverbrauch/...") gibt es erst, wenn shyft-power das Geraet ueberhaupt schon
+    # gesteuert haben kann - ohne je empfangene Optimierung existieren keine Aktionen, und "keine Aktion aktiv" waere sonst
+    # faelschlich "soll aus", obwohl nie etwas befohlen wurde (z.B. der Verbraucher laeuft von Hand).
+    optimization_received = _has_received_optimization()
+
     def baseline_ok(action_names):
-        "True, wenn KEINE dieser Aktionsarten gerade aktiv ist UND keine von ihnen innerhalb der Karenzzeit geendet hat."
+        "True, wenn KEINE dieser Aktionsarten gerade aktiv ist UND keine von ihnen innerhalb der Karenzzeit geendet hat - und shyft schon mindestens eine Optimierung empfangen hat."
+        if not optimization_received:
+            return False
         if any(_active_computed_action(computed_actions, name) is not None for name in action_names):
             return False
         recent_end = _most_recent_action_end_ms(computed_actions, action_names)

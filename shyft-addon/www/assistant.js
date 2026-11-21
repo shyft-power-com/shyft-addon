@@ -183,6 +183,9 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
     document.body.appendChild(root);
 
     let aiAvailable = false;
+    // Log-Versand an den shyft-Service: erst nach Rueckmeldung des Servers (/assistant/status) und nie im Demomodus angeboten.
+    let supportAvailable = false;
+    supportLinkRow.hidden = true;
     let busy = false;
     let supportOffered = false;  // das Support-Angebot erscheint hoechstens einmal pro Chat
     let supportCard = null;
@@ -383,15 +386,18 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
         input.disabled = !aiAvailable;
         sendButton.disabled = !aiAvailable || busy;
         setupBox.hidden = aiAvailable;
+        supportLinkRow.hidden = !supportAvailable;
     }
 
     async function refreshStatus() {
         try {
             const status = await getJson(baseUri + '/assistant/status');
             aiAvailable = !!status.aiAvailable;
+            supportAvailable = status.supportAvailable === true;
         } catch (err) {
             console.log(err);
             aiAvailable = false;
+            supportAvailable = false;
         }
         applyAvailability();
     }
@@ -425,7 +431,7 @@ export function initAssistantWidget({getJson, baseUri, buildUiHelp}) {
                 const offer = splitSupportOffer(result.answer);
                 if (offer.text) addMessage(offer.text, 'answer');
                 history.push({question, answer: offer.text || result.answer});
-                if (offer.summary !== null && !supportOffered) {
+                if (offer.summary !== null && !supportOffered && supportAvailable) {
                     supportOffered = true;
                     addSupportForm(offer.summary);
                 }
