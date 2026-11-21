@@ -2289,6 +2289,36 @@
                 grid-template-columns: repeat(2, 1fr);
             }
         }
+        .einsatzplanGrid.withFossil {
+            grid-template-columns: repeat(6, 1fr);
+        }
+        @media (max-width: 700px) {
+            .einsatzplanGrid.withFossil {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        .einsatzplanHelpIcon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 13px;
+            height: 13px;
+            margin-left: 5px;
+            border-radius: 50%;
+            border: 1px solid currentColor;
+            font-size: 9px;
+            line-height: 1;
+            vertical-align: middle;
+        }
+        .hasValueTooltip.tooltipOpen .tooltip-text {
+            opacity: 1;
+            visibility: visible;
+        }
+        .fossilTooltipText {
+            max-width: min(340px, 90vw);
+            text-align: left;
+            font-size: 12px;
+        }
         .einsatzplanStat {
             background: var(--color-accent);
             border-radius: 10px;

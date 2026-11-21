@@ -2664,7 +2664,7 @@ def _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, s
     heute_plan_hours = 0
     last_heute_hour = None
     past_flows = list(heute)  # vergangene Stunden von heute (Ist, sonst Plan-Ersatz) - Basis der Fossil-Quote
-    plan_flows_all, plan_idx_all, plan_idx_today = [], [], []
+    plan_flows_all, plan_idx_all, plan_idx_today, plan_idx_tomorrow = [], [], [], []
     for i, row in enumerate(plan_rows):
         hour = plan_start + timedelta(hours=i)
         offset = _local_day_offset(hour)
@@ -2674,6 +2674,8 @@ def _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, s
         plan_idx_all.append(pv_index)
         if offset == 0:
             plan_idx_today.append(pv_index)
+        elif offset == 1:
+            plan_idx_tomorrow.append(pv_index)
         if offset == 0:
             heute.append(flows)
             heute_plan_hours += 1
@@ -2687,21 +2689,23 @@ def _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, s
     fossil = None
     try:
         config = _read_current_config()
-        past_usage = sum(h["usage"] for h in past_flows)
-        all_flows = past_flows + plan_flows_all
-        price_cent = _compute_einsatzplan_kpis(all_flows)["netzstrom_preis_cent"]
-        price = None if price_cent is None else price_cent / 100.0
         temps = temperature or []
-        fossil = _compute_fossil_summary(output_rows, temps, plan_idx_all, past_usage, price, config)
-        if fossil is not None and not fossil.get("demo"):
-            # Analyse-Tab: Tageswert = vergangene Stunden + restlicher Plan nur von HEUTE (die Kachel zeigt dagegen den ganzen Optimierungszeitraum)
-            today_flows = past_flows + [plan_flows_all[k] for k, idx in enumerate(plan_idx_all) if idx in plan_idx_today]
-            today_cent = _compute_einsatzplan_kpis(today_flows)["netzstrom_preis_cent"]
-            today = _compute_fossil_summary(output_rows, temps, plan_idx_today, past_usage, None if today_cent is None else today_cent / 100.0, config)
-            if today is not None:
-                energy_archive.record_fossil_savings_snapshot(_local_now().date().isoformat(), today["savings_eur"])
-        if fossil is not None:
-            fossil["hours"] = len(past_flows) + len(plan_idx_all)
+        past_usage = sum(h["usage"] for h in past_flows)
+        today_flows = past_flows + [f for f, idx in zip(plan_flows_all, plan_idx_all) if idx in plan_idx_today]
+        morgen_flows = [f for f, idx in zip(plan_flows_all, plan_idx_all) if idx in plan_idx_tomorrow]
+
+        def fossil_for(flows, idx_list, usage):
+            cent = _compute_einsatzplan_kpis(flows)["netzstrom_preis_cent"]
+            return _compute_fossil_summary(output_rows, temps, idx_list, usage, None if cent is None else cent / 100.0, config)
+        fossil_heute = fossil_for(today_flows, plan_idx_today, past_usage)
+        if fossil_heute is not None:
+            fossil_morgen = fossil_for(morgen_flows, plan_idx_tomorrow, 0.0) if len(morgen) >= _local_day_hours(1) else None
+            if fossil_heute.get("demo"):
+                fossil_morgen = dict(fossil_heute, savings_eur=4.87)
+            fossil = {"heute": fossil_heute, "morgen": fossil_morgen}
+            if not fossil_heute.get("demo"):
+                # Analyse-Tab: Tageswert (vergangene Stunden + restlicher Plan von HEUTE), siehe energy_archive.record_fossil_savings_snapshot
+                energy_archive.record_fossil_savings_snapshot(_local_now().date().isoformat(), fossil_heute["savings_eur"])
     except Exception as e:
         print("[Shyft] Fossil-Vergleich fehlgeschlagen:", repr(e))
     return {

@@ -8555,57 +8555,66 @@ const EINSATZPLAN_STATS = [
     ['stromertrag_eur', 'Stromertrag', '€', 2],
 ];
 
-// Kachel "Ersparnis vs. fossiler Haushalt" (siehe _compute_fossil_summary in app.py und fossil_comparison.py): Strom von Waermepumpe + Auto
-// ueber den ganzen Optimierungszeitraum ab heute 0 Uhr gegen Gas (Destatis) und E10 (Tankerkoenig). Nutzt das Kartenlayout des Einsatzplans;
-// die Annahmen stehen als Fussnote dabei, da es Naeherungswerte sind.
-function buildFossilSavingsCard(d) {
-    const card = document.createElement('div');
-    card.className = 'einsatzplanCard';
-    const title = document.createElement('div');
-    title.className = 'einsatzplanTitle';
-    title.textContent = 'Ersparnis vs. fossiler Haushalt';
-    card.appendChild(title);
-    const grid = document.createElement('div');
-    grid.className = 'einsatzplanGrid';
+// Kachel "Ersparnis ggü. fossil" im Einsatzplan (Heute | Morgen, siehe _compute_fossil_summary in app.py / fossil_comparison.py): was dieselbe
+// Energie von Waermepumpe und Auto mit Gas und E10 gekostet haette, minus dem Strom dafuer. Naeherung - die Herleitung steht im "?"-Popup.
+function fossilExplanationLines(label, d) {
     const fmt = (v, dec) => v.toLocaleString('de-DE', {minimumFractionDigits: dec, maximumFractionDigits: dec});
-    const stats = [
-        ['Ersparnis', fmt(d.savings_eur, 2), '€'],
-        ['Fossile Kosten', fmt(d.fossil_cost_eur, 2), '€'],
-        ['Stromkosten WP + Auto', fmt(d.electric_cost_eur, 2), '€'],
-        ['Gas | Benzin', `${fmt(d.fossil_gas_cost_eur, 2)} | ${fmt(d.fossil_fuel_cost_eur, 2)}`, '€'],
-    ];
-    for (const [label, value, unit] of stats) {
-        const stat = document.createElement('div');
-        stat.className = 'einsatzplanStat';
-        const labelEl = document.createElement('div');
-        labelEl.className = 'einsatzplanStatLabel';
-        labelEl.textContent = label;
-        const valueRow = document.createElement('div');
-        valueRow.className = 'einsatzplanStatValueRow';
-        const valueEl = document.createElement('span');
-        valueEl.className = 'einsatzplanStatValue';
-        valueEl.textContent = value;
-        const unitEl = document.createElement('span');
-        unitEl.className = 'einsatzplanStatUnit';
-        unitEl.textContent = unit;
-        valueRow.appendChild(valueEl);
-        valueRow.appendChild(unitEl);
-        stat.appendChild(labelEl);
-        stat.appendChild(valueRow);
-        grid.appendChild(stat);
-    }
-    card.appendChild(grid);
     const a = d.assumptions || {};
-    const note = document.createElement('div');
-    note.className = 'einsatzplanLegend';
-    if (d.demo) {
-        note.textContent = 'Beispielwerte - echte Werte erscheinen, sobald dein shyft-power-Zugang eingerichtet ist.';
-    } else {
-        note.textContent = `Näherung ab heute 0 Uhr (${d.hours} h): Gas ${fmt(d.gas_ct_per_kwh, 1)} ct/kWh (Destatis), E10 ${fmt(d.e10_eur_per_l, 3)} €/l (Tankerkönig, Berlin-Mitte), Strom ø ${fmt(d.avg_power_price_eur_kwh * 100, 1)} ct/kWh. `
-            + `Verbrauch: Wärmepumpe ${fmt(d.heatpump_el_kwh, 1)} kWh (${fmt(d.heat_kwh, 1)} kWh Wärme → ${fmt(d.gas_kwh, 1)} kWh Gas bei ${Math.round((a.boiler_efficiency || 0) * 100)} % Kessel), Auto ${fmt(d.ev_kwh, 1)} kWh (≈ ${fmt(d.fuel_liters, 1)} l E10 bei ${fmt(a.ice_l_per_100km, 1)} l/100 km, abgeleitet aus ${fmt(a.ev_kwh_per_100km, 1)} kWh/100 km).`;
+    return [
+        `${label}: ${fmt(d.savings_eur, 2)} € = ${fmt(d.fossil_cost_eur, 2)} € fossil − ${fmt(d.electric_cost_eur, 2)} € Strom`,
+        `• Wärmepumpe ${fmt(d.heatpump_el_kwh, 1)} kWh Strom liefern ${fmt(d.heat_kwh, 1)} kWh Wärme (COP aus der Optimierung). Ein Gaskessel (${Math.round((a.boiler_efficiency || 0) * 100)} % Wirkungsgrad) bräuchte dafür ${fmt(d.gas_kwh, 1)} kWh Gas × ${fmt(d.gas_ct_per_kwh, 1)} ct = ${fmt(d.fossil_gas_cost_eur, 2)} €`,
+        `• Auto ${fmt(d.ev_kwh, 1)} kWh Strom ≈ ${fmt(d.fuel_liters, 1)} l E10 (${fmt(a.ice_l_per_100km, 1)} l/100 km, abgeleitet aus deinen ${fmt(a.ev_kwh_per_100km, 1)} kWh/100 km) × ${fmt(d.e10_eur_per_l, 3)} €/l = ${fmt(d.fossil_fuel_cost_eur, 2)} €`,
+        `• Strom: ${fmt(d.heatpump_el_kwh + d.ev_kwh, 1)} kWh × ø ${fmt(d.avg_power_price_eur_kwh * 100, 1)} ct/kWh = ${fmt(d.electric_cost_eur, 2)} €`,
+    ];
+}
+
+function fossilExplanation(fossil) {
+    const lines = ['Ersparnis gegenüber einem fossilen Haushalt: Was dieselbe Energie von Wärmepumpe und E-Auto mit Gas und Benzin (E10, Berlin) gekostet hätte, minus deinen Stromkosten dafür.'];
+    if (fossil.heute.demo) {
+        lines.push('', 'Beispielwerte – echte Werte erscheinen, sobald dein shyft-power-Zugang eingerichtet ist.');
+        return lines.join('\n');
     }
-    card.appendChild(note);
-    return card;
+    lines.push('', ...fossilExplanationLines('Heute', fossil.heute));
+    if (fossil.morgen) lines.push('', ...fossilExplanationLines('Morgen', fossil.morgen));
+    lines.push('', 'Verbräuche aus dem Einsatzplan; für schon vergangene Stunden von heute wird deren Anteil am Gesamtverbrauch auf den gemessenen Verbrauch angewendet. Näherung.');
+    return lines.join('\n');
+}
+
+// Haengt "Ersparnis ggü. fossil" (Heute | Morgen) mit "?"-Popup an das Raster der Einsatzplan-Kacheln.
+function appendFossilStat(grid, fossil) {
+    const fmt = v => v.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    const stat = document.createElement('div');
+    stat.className = 'einsatzplanStat hasValueTooltip';
+    const labelEl = document.createElement('div');
+    labelEl.className = 'einsatzplanStatLabel';
+    labelEl.textContent = 'Ersparnis ggü. fossil';
+    const icon = document.createElement('span');
+    icon.className = 'einsatzplanHelpIcon';
+    icon.textContent = '?';
+    labelEl.appendChild(icon);
+    const valueRow = document.createElement('div');
+    valueRow.className = 'einsatzplanStatValueRow';
+    const valueEl = document.createElement('span');
+    valueEl.className = 'einsatzplanStatValue';
+    const heuteText = fmt(fossil.heute.savings_eur);
+    valueEl.textContent = fossil.morgen ? `${heuteText} | ${fmt(fossil.morgen.savings_eur)}` : heuteText;
+    const unitEl = document.createElement('span');
+    unitEl.className = 'einsatzplanStatUnit';
+    unitEl.textContent = '€';
+    valueRow.appendChild(valueEl);
+    valueRow.appendChild(unitEl);
+    stat.appendChild(labelEl);
+    stat.appendChild(valueRow);
+    const bubble = attachTooltip(stat, fossilExplanation(fossil));
+    bubble.classList.add('fossilTooltipText');
+    // Mobil: Tippen oeffnet/schliesst das Popup (Hover gibt es dort nicht verlaesslich), Tippen daneben schliesst es.
+    stat.addEventListener('click', e => {
+        e.stopPropagation();
+        stat.classList.toggle('tooltipOpen');
+    });
+    document.addEventListener('click', () => stat.classList.remove('tooltipOpen'));
+    grid.appendChild(stat);
+    grid.classList.add('withFossil');
 }
 
 function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
@@ -8644,6 +8653,9 @@ function buildEinsatzplanCard(einsatzplan, optimizerRunning) {
         stat.appendChild(labelEl);
         stat.appendChild(valueRow);
         grid.appendChild(stat);
+    }
+    if (einsatzplan.fossil && einsatzplan.fossil.heute) {
+        appendFossilStat(grid, einsatzplan.fossil);
     }
     card.appendChild(grid);
 
@@ -12548,10 +12560,6 @@ async function loadDashboardImpl() {
         }
         if (data.einsatzplan) {
             updateOrAppendDashboardWidget(container, 'einsatzplan', buildEinsatzplanCard(data.einsatzplan, data.optimizer_running));
-        }
-        // Kachel direkt aus dem Einsatzplan-Ergebnis (fossil fehlt ohne Preise bzw. ohne Waermepumpe-/Auto-Verbrauch im Plan)
-        if (data.einsatzplan && data.einsatzplan.fossil) {
-            updateOrAppendDashboardWidget(container, 'fossilSavings', buildFossilSavingsCard(data.einsatzplan.fossil));
         }
         // "Innenraum" (Zweitkurve): Ist aus der echten Sensorhistorie statt der bisher gezeigten,
         // vom Optimierer nur SIMULIERTEN Innentemperatur (Nutzer-Vorgabe) - best-effort wie bei den

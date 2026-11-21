@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.409
+
+* **Fossil-Vergleich sitzt jetzt als Kachel „Ersparnis ggü. fossil“ (Heute | Morgen) im Einsatzplan, direkt hinter „Stromertrag“** – statt als eigener Abschnitt. Ein „?“ öffnet per Mouseover (am Handy per Tippen) die Herleitung der Werte. Die Quellenangaben stehen nicht mehr in der App.
+
 ## 0.0.45.408
 
 * **Fossil-Kachel: COP jetzt direkt aus dem Optimierer.** Heizen nutzt die Spalte „COP“ des Optimierer-Ergebnisses je Stunde, Warmwasser denselben Ansatz wie das Julia-Modell (aus der mittleren Speichertemperatur und der Außentemperatur; Heizstab: COP 1) – statt einer festen Annahme.
