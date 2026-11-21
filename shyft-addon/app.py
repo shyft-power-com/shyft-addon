@@ -634,7 +634,9 @@ def readAnalysisSummary():
     try:
         rows = energy_archive.query_summary(granularity, request.args.get("from"), request.args.get("to"))
         pv_by_period = energy_archive.query_pv_summary(granularity, request.args.get("from"), request.args.get("to"))
+        fossil_by_period = energy_archive.query_fossil_savings_summary(granularity, request.args.get("from"), request.args.get("to"))
         for row in rows:
+            row["fossil_savings_eur"] = fossil_by_period.get(row["period"])
             pv = pv_by_period.get(row["period"])
             row.update(_pv_accuracy_entry(pv["forecast_kwh"], pv["actual_kwh"]) if pv else
                        {"pv_forecast_kwh": None, "pv_actual_kwh": None, "pv_error_kwh": None, "pv_error_pct": None})
@@ -644,66 +646,70 @@ def readAnalysisSummary():
         return jsonify({"status": "error", "message": str(e)})
 
 
-# Fossil-Vergleich: Preise (E10/Gas) kommen aus dem Shyft-Admin-Objekt (Bubble aktualisiert sie taeglich um 13 Uhr), das Addon holt sie hoechstens
-# alle FOSSIL_PRICES_CACHE_SECONDS; die Einzelverbraucher-kWh (Waermepumpe/Wallbox) aus der HA-Historie sind teuer und werden laenger gecacht.
-FOSSIL_PRICES_CACHE_SECONDS = 6 * 3600
-FOSSIL_USAGE_CACHE_SECONDS = 3600
-_fossil_prices_cache = {"at": 0.0, "data": None}
-_fossil_usage_cache = {}
+# Fossil-Vergleich: Preise (E10/Gas) kommen aus dem Shyft-Admin-Objekt (Bubble: E10 woechentlich, Gas monatlich, siehe fossil_prices_get), das
+# Addon holt sie hoechstens einmal pro Woche (beim Start sofort); schlaegt der Abruf fehl, wird nach FOSSIL_PRICES_RETRY_SECONDS erneut versucht.
+FOSSIL_PRICES_CACHE_SECONDS = 7 * 24 * 3600
+FOSSIL_PRICES_RETRY_SECONDS = 3600
+_fossil_prices_cache = {"at": 0.0, "ok": False, "data": None}
 _fossil_lock = threading.Lock()
 
 
 def _fossil_prices():
-    "Zuletzt bekannte Preise (bei Abruffehler bleibt der alte Stand erhalten), None ohne jeden Stand."
+    "Zuletzt bekannte Preise (bei Abruffehler bleibt der alte Stand erhalten), None ohne jeden Stand oder im Demomodus (kein Zugangsschluessel)."
+    if is_demo_mode():
+        return None
     with _fossil_lock:
-        if time.time() - _fossil_prices_cache["at"] >= FOSSIL_PRICES_CACHE_SECONDS:
-            _fossil_prices_cache["at"] = time.time()  # auch bei Fehler: nicht bei jedem Dashboard-Refresh neu versuchen
+        max_age = FOSSIL_PRICES_CACHE_SECONDS if _fossil_prices_cache["ok"] else FOSSIL_PRICES_RETRY_SECONDS
+        if time.time() - _fossil_prices_cache["at"] >= max_age:
+            _fossil_prices_cache["at"] = time.time()
             try:
                 parsed = fossil_comparison.parse_fossil_prices_response(shyft_adapter.get_fossil_prices())
                 if parsed:
                     _fossil_prices_cache["data"] = parsed
+                    _fossil_prices_cache["ok"] = True
             except Exception as e:
                 print("[Shyft] Fossil-Vergleich: Preise konnten nicht geladen werden:", repr(e))
         return _fossil_prices_cache["data"]
 
 
-@app.route("/analysis/fossil-savings", methods=["GET"])
-def readFossilSavings():
-    "Kachel 'Ersparnis vs. fossiler Haushalt': letzte N Tage (Query days, Default 30) Waermepumpe+Wallbox-kWh aus der HA-Historie, bewertet mit dem durchschnittlichen Netzbezugspreis (Energie-Archiv) gegen Gas-/E10-Preis aus Bubble, siehe fossil_comparison (Annahmen werden mitgeliefert)."
+def _device_energy_of_row(row, t_out):
+    "(elektr. Waermepumpe kWh, thermische Waerme kWh, Auto kWh) einer Optimierer-Stunde (kW ueber eine Stunde = kWh)."
+    hp_fh = max(0.0, _safe_float(row.get("HP_FH")))
+    hp_hw = max(0.0, _safe_float(row.get("HP_HW")))
+    t_hw = _safe_float(row.get("T_HW")) or fossil_comparison.DHW_DEFAULT_TANK_TEMP_C
+    heat = hp_fh * fossil_comparison.hp_cop(fossil_comparison.FLOOR_HEATING_FLOW_TEMP_C, t_out) + hp_hw * fossil_comparison.hp_cop(t_hw, t_out)
+    return hp_fh + hp_hw, heat, max(0.0, _safe_float(row.get("EV_sum")))
+
+
+def _compute_fossil_summary(output_rows, temperature, plan_idx, past_usage_kwh, avg_price_eur_kwh, config):
+    """Ersparnis vs. fossiler Haushalt fuer vergangene Stunden (nur Verbrauch bekannt: past_usage_kwh) plus die Plan-Stunden plan_idx
+    (Indizes in output_rows). Plan-Stunden: Waermepumpe/Auto direkt aus dem Optimierer-Ergebnis. Vergangene Stunden: der Optimierer-Anteil
+    von Waermepumpe/Auto am Gesamtverbrauch (X_sum, ueber den GANZEN Lauf) wird als Quote auf den gemessenen Ist-Verbrauch angewendet.
+    None ohne Preise/Verbrauch (Kachel bleibt dann ausgeblendet)."""
     if is_demo_mode():
-        return jsonify({"status": "unavailable", "reason": "demo"})
-    try:
-        days = max(1, min(int(request.args.get("days", fossil_comparison.DEFAULT_DAYS)), 365))
-    except ValueError:
-        days = fossil_comparison.DEFAULT_DAYS
-    try:
-        prices = _fossil_prices()
-        if not prices:
-            return jsonify({"status": "unavailable", "reason": "prices"})
-        end = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
-        start = end - timedelta(days=days)
-        cached = _fossil_usage_cache.get(days)
-        if cached and time.time() - cached[0] < FOSSIL_USAGE_CACHE_SECONDS:
-            heat_kwh, car_kwh, price = cached[1]
-        else:
-            config = _read_current_config()
-            heat_kwh = _sensor_history_kwh("heatpump_current_power_elect", start, end, config)[0]
-            car_kwh = _sensor_history_kwh("wallbox_current_charging_power", start, end, config)[0]
-            rows = energy_archive.query_summary("yearly", energy_archive.hour_key(start), energy_archive.hour_key(end))
-            imp = sum(r["actual_import_kwh"] or 0 for r in rows)
-            cost = sum(r["actual_cost_eur"] or 0 for r in rows)
-            price = (cost / imp) if imp > 0 and cost > 0 else None
-            _fossil_usage_cache[days] = (time.time(), (heat_kwh, car_kwh, price))
-        result = fossil_comparison.compute_fossil_savings(heat_kwh, car_kwh, price, prices["e10_eur_per_l"], prices["gas_ct_per_kwh"])
-        if result is None:
-            return jsonify({"status": "unavailable", "reason": "data"})
-        result.update({"status": "success", "days": days, "avg_power_price_eur_kwh": round(price, 4),
-                       "e10_eur_per_l": prices["e10_eur_per_l"], "gas_ct_per_kwh": prices["gas_ct_per_kwh"],
+        return fossil_comparison.demo_result()
+    prices = _fossil_prices()
+    if not prices or avg_price_eur_kwh is None:
+        return None
+    totals = [(_safe_float(r.get("X_sum")),) + _device_energy_of_row(r, temperature[i] if i < len(temperature) else 10.0)
+              for i, r in enumerate(output_rows)]
+    x_all = sum(t[0] for t in totals)
+    hp_all, heat_all, ev_all = sum(t[1] for t in totals), sum(t[2] for t in totals), sum(t[3] for t in totals)
+    hp_el = heat = ev = 0.0
+    if x_all > EINSATZPLAN_ZERO_THRESHOLD and past_usage_kwh:
+        hp_el = hp_all / x_all * past_usage_kwh
+        heat = (heat_all / x_all) * past_usage_kwh
+        ev = ev_all / x_all * past_usage_kwh
+    for i in plan_idx:
+        t = totals[i]
+        hp_el, heat, ev = hp_el + t[1], heat + t[2], ev + t[3]
+    kwh_per_100 = float(config.get("carConsumptionKwhPer100km") or EV_DEFAULT_KWH_PER_100KM)
+    result = fossil_comparison.compute_fossil_savings(hp_el, heat, ev, avg_price_eur_kwh, prices["e10_eur_per_l"], prices["gas_ct_per_kwh"], kwh_per_100)
+    if result is not None:
+        result.update({"e10_eur_per_l": prices["e10_eur_per_l"], "gas_ct_per_kwh": prices["gas_ct_per_kwh"],
+                       "avg_power_price_eur_kwh": round(avg_price_eur_kwh, 4),
                        "prices_updated": {"e10": prices["e10_updated"], "gas": prices["gas_updated"]}})
-        return jsonify(result)
-    except Exception as e:
-        print("[Shyft] Fossil-Vergleich fehlgeschlagen:", repr(e))
-        return jsonify({"status": "error", "message": str(e)})
+    return result
 
 
 @app.route("/analysis/day-actions", methods=["GET"])
@@ -2247,7 +2253,7 @@ def readDashboardChartData():
     cost_summary = {"opt": _series_day_split(opt_cost, start), "base": _series_day_split(base_cost, start)}
     usage_summary = {"opt": _series_day_split(opt_usage, start), "base": _series_day_split(base_usage, start)}
 
-    einsatzplan = _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, start)
+    einsatzplan = _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, start, temperature)
     if isinstance(einsatzplan, dict):
         # Wann der Plan zuletzt als "passt noch" bestaetigt wurde (Optimierung uebersprungen) - das Dashboard faerbt "Berechnet um ..." danach.
         einsatzplan["validated_at"] = _plan_validated_at_ms(creation_date_ms)
@@ -2596,7 +2602,7 @@ def _actual_hour_flows(hours_utc, midnight_utc, config):
     return result
 
 
-def _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, start):
+def _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, start, temperature=None):
     """Fasst Ist und Plan zur "Einsatzplan"-Karte im Dashboard-Tab zusammen: Kennzahlen (siehe _compute_einsatzplan_kpis) fuer "heute" und
     "morgen" (jeweils die vollen 24 Stunden der lokalen Zeitzone). "Heute" besteht aus den Ist-Werten der bereits abgeschlossenen Stunden
     (siehe _actual_hour_flows) und ab der laufenden Stunde aus dem Plan des letzten Optimierungslaufs (output_csv); "morgen" komplett aus dem
@@ -2629,11 +2635,17 @@ def _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, s
             heute.append(_plan_hour_energy(output_rows[idx], pv_generation[idx] if idx < len(pv_generation) else 0.0))
     heute_plan_hours = 0
     last_heute_hour = None
+    past_flows = list(heute)  # vergangene Stunden von heute (Ist, sonst Plan-Ersatz) - Basis der Fossil-Quote
+    plan_flows_all, plan_idx_all, plan_idx_today = [], [], []
     for i, row in enumerate(plan_rows):
         hour = plan_start + timedelta(hours=i)
         offset = _local_day_offset(hour)
         pv_index = elapsed + i
         flows = _plan_hour_energy(row, pv_generation[pv_index] if pv_index < len(pv_generation) else 0.0)
+        plan_flows_all.append(flows)
+        plan_idx_all.append(pv_index)
+        if offset == 0:
+            plan_idx_today.append(pv_index)
         if offset == 0:
             heute.append(flows)
             heute_plan_hours += 1
@@ -2644,12 +2656,33 @@ def _compute_einsatzplan_summary(output_rows, pv_generation, creation_date_ms, s
     heute_bis_hour = None
     if heute_plan_hours < _local_day_hours(0) - len(past_hours_utc) and last_heute_hour is not None:
         heute_bis_hour = (last_heute_hour + timedelta(hours=1)).astimezone(get_ha_timezone()).hour
+    fossil = None
+    try:
+        config = _read_current_config()
+        past_usage = sum(h["usage"] for h in past_flows)
+        all_flows = past_flows + plan_flows_all
+        price_cent = _compute_einsatzplan_kpis(all_flows)["netzstrom_preis_cent"]
+        price = None if price_cent is None else price_cent / 100.0
+        temps = temperature or []
+        fossil = _compute_fossil_summary(output_rows, temps, plan_idx_all, past_usage, price, config)
+        if fossil is not None and not fossil.get("demo"):
+            # Analyse-Tab: Tageswert = vergangene Stunden + restlicher Plan nur von HEUTE (die Kachel zeigt dagegen den ganzen Optimierungszeitraum)
+            today_flows = past_flows + [plan_flows_all[k] for k, idx in enumerate(plan_idx_all) if idx in plan_idx_today]
+            today_cent = _compute_einsatzplan_kpis(today_flows)["netzstrom_preis_cent"]
+            today = _compute_fossil_summary(output_rows, temps, plan_idx_today, past_usage, None if today_cent is None else today_cent / 100.0, config)
+            if today is not None:
+                energy_archive.record_fossil_savings_snapshot(_local_now().date().isoformat(), today["savings_eur"])
+        if fossil is not None:
+            fossil["hours"] = len(past_flows) + len(plan_idx_all)
+    except Exception as e:
+        print("[Shyft] Fossil-Vergleich fehlgeschlagen:", repr(e))
     return {
         "creation_date": creation_date_ms,
         "hours": hours,
         "heute": _compute_einsatzplan_kpis(heute),
         "heute_bis_hour": heute_bis_hour,
         "morgen": _compute_einsatzplan_kpis(morgen) if len(morgen) >= _local_day_hours(1) else None,
+        "fossil": fossil,
     }
 
 

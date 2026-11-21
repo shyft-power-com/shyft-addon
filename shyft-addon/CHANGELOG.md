@@ -2,7 +2,7 @@
 
 ## 0.0.45.405
 
-* **Neue Dashboard-Kachel „Ersparnis vs. fossiler Haushalt“.** Sie vergleicht die letzten 30 Tage: Was hätten Gas (statt Wärmepumpe) und Benzin E10 (statt E-Auto) gekostet – im Vergleich zum Strom, den Wärmepumpe und Wallbox tatsächlich verbraucht haben? Gas- und E10-Preis holt das Add-on aus shyft-power (Quellen: Destatis, Tankerkönig/MTS-K, Berlin-Mitte; Tankerkönig-Daten unter CC BY 4.0). Die Kachel ist eine Näherung (Jahresarbeitszahl 3,5, Kessel 92 %, E-Auto 18 kWh/100 km, Benziner 7,5 l/100 km, durchschnittlicher Netzbezugspreis) – die Annahmen stehen als Fußnote darunter. Ohne Preise oder ohne Wärmepumpen-/Wallbox-Sensor bleibt die Kachel ausgeblendet.
+* **Neue Dashboard-Kachel „Ersparnis vs. fossiler Haushalt“ (unter dem Einsatzplan) und neue Spalte „Ersparnis fossil ggü. Ist“ im Analyse-Tab.** Verglichen wird über den ganzen Optimierungszeitraum ab heute 0 Uhr: Was hätten Gas (statt Wärmepumpe) und Benzin E10 (statt E-Auto) gekostet – gegenüber dem Strom, den Wärmepumpe und Auto verbrauchen? Die Verbräuche stammen aus dem Optimierer-Ergebnis (nicht aus Home Assistant); für die schon vergangenen Stunden von heute wird deren Anteil am Gesamtverbrauch als Quote auf den gemessenen Verbrauch angewendet. Gas rechnet mit 92 % Kesselwirkungsgrad aus der von der Wärmepumpe gelieferten Wärme (COP wie im Optimierer), der Benzinverbrauch wird aus dem in der Konfiguration eingetragenen Auto-Verbrauch (kWh/100 km) abgeleitet. Gas- (Destatis) und E10-Preis (Tankerkönig, Berlin-Mitte, CC BY 4.0) holt das Add-on höchstens einmal pro Woche aus shyft-power. Ohne shyft_access_key (Demomodus) zeigt die Kachel einen Beispielwert. Alles sind Näherungen – die Annahmen stehen als Fußnote in der Kachel.
 
 ## 0.0.45.404
 

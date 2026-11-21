@@ -114,6 +114,13 @@ def _ensure_schema(conn):
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS fossil_savings_daily (
+            date TEXT PRIMARY KEY,
+            savings_eur REAL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS household_savings_daily (
             date TEXT PRIMARY KEY,
             costsbase_eur REAL,
@@ -424,6 +431,36 @@ def record_household_savings_snapshot(date_str, costsbase, costsopt, savings):
                 savings_eur=excluded.savings_eur, updated_at=excluded.updated_at
         """, (date_str, costsbase, costsopt, savings, datetime.now(timezone.utc).isoformat()))
         conn.commit()
+
+
+def record_fossil_savings_snapshot(date_str, savings_eur):
+    "Schreibt/aktualisiert den tagesaktuellen Wert 'Ersparnis fossiler Haushalt ggue. Ist' (siehe app._compute_einsatzplan_summary) unter dem lokalen Kalendertag - bei jeder Dashboard-Berechnung neu, der letzte Wert vor Mitternacht bleibt stehen (wie record_household_savings_snapshot)."
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        conn.execute("""
+            INSERT INTO fossil_savings_daily (date, savings_eur, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(date) DO UPDATE SET savings_eur=excluded.savings_eur, updated_at=excluded.updated_at
+        """, (date_str, savings_eur, datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+
+
+def query_fossil_savings_summary(granularity, start_iso=None, end_iso=None):
+    "{period: Summe savings_eur} aus fossil_savings_daily, gruppiert wie query_summary (Tageswerte; 'hourly' hat keine Werte). start_iso/end_iso wie hour_key - verglichen werden nur die ersten 10 Zeichen (Datum)."
+    if granularity == "hourly":
+        return {}
+    group_expr = _GROUP_EXPR_BY_GRANULARITY.get(granularity, _GROUP_EXPR_BY_GRANULARITY["daily"]).replace("hour_start_utc", "date")
+    where, params = [], []
+    if start_iso:
+        where.append("date >= ?")
+        params.append(start_iso[:10])
+    if end_iso:
+        where.append("date < ?")
+        params.append(end_iso[:10])
+    where_clause = ("WHERE " + " AND ".join(where)) if where else ""
+    with _lock, _connect() as conn:
+        _ensure_schema(conn)
+        rows = conn.execute(f"SELECT {group_expr} AS period, SUM(savings_eur) AS s FROM fossil_savings_daily {where_clause} GROUP BY period", params).fetchall()
+        return {r["period"]: r["s"] for r in rows}
 
 
 def query_household_savings_for_day(date_str):

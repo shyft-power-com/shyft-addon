@@ -8555,14 +8555,15 @@ const EINSATZPLAN_STATS = [
     ['stromertrag_eur', 'Stromertrag', '€', 2],
 ];
 
-// Kachel "Ersparnis vs. fossiler Haushalt" (siehe /analysis/fossil-savings und fossil_comparison.py): Strom von Waermepumpe + Wallbox gegen
-// Gas (Destatis) und E10 (Tankerkoenig). Nutzt das Kartenlayout des Einsatzplans; die Annahmen stehen als Fussnote dabei, da es Naeherungswerte sind.
+// Kachel "Ersparnis vs. fossiler Haushalt" (siehe _compute_fossil_summary in app.py und fossil_comparison.py): Strom von Waermepumpe + Auto
+// ueber den ganzen Optimierungszeitraum ab heute 0 Uhr gegen Gas (Destatis) und E10 (Tankerkoenig). Nutzt das Kartenlayout des Einsatzplans;
+// die Annahmen stehen als Fussnote dabei, da es Naeherungswerte sind.
 function buildFossilSavingsCard(d) {
     const card = document.createElement('div');
     card.className = 'einsatzplanCard';
     const title = document.createElement('div');
     title.className = 'einsatzplanTitle';
-    title.textContent = `Ersparnis vs. fossiler Haushalt (${d.days} Tage)`;
+    title.textContent = 'Ersparnis vs. fossiler Haushalt';
     card.appendChild(title);
     const grid = document.createElement('div');
     grid.className = 'einsatzplanGrid';
@@ -8571,7 +8572,7 @@ function buildFossilSavingsCard(d) {
         ['Ersparnis', fmt(d.savings_eur, 2), '€'],
         ['Fossile Kosten', fmt(d.fossil_cost_eur, 2), '€'],
         ['Stromkosten WP + Auto', fmt(d.electric_cost_eur, 2), '€'],
-        ['Gas / Benzin', `${fmt(d.fossil_gas_cost_eur, 0)} | ${fmt(d.fossil_fuel_cost_eur, 0)}`, '€'],
+        ['Gas | Benzin', `${fmt(d.fossil_gas_cost_eur, 2)} | ${fmt(d.fossil_fuel_cost_eur, 2)}`, '€'],
     ];
     for (const [label, value, unit] of stats) {
         const stat = document.createElement('div');
@@ -8597,8 +8598,12 @@ function buildFossilSavingsCard(d) {
     const a = d.assumptions || {};
     const note = document.createElement('div');
     note.className = 'einsatzplanLegend';
-    note.textContent = `Näherung: Gas ${fmt(d.gas_ct_per_kwh, 1)} ct/kWh (Destatis), E10 ${fmt(d.e10_eur_per_l, 3)} €/l (Tankerkönig, Berlin-Mitte), Strom ø ${fmt(d.avg_power_price_eur_kwh * 100, 1)} ct/kWh. `
-        + `Annahmen: JAZ ${a.heatpump_cop}, Kessel ${Math.round((a.boiler_efficiency || 0) * 100)} %, E-Auto ${a.ev_kwh_per_100km} kWh/100 km, Benziner ${a.ice_l_per_100km} l/100 km (${d.km} km).`;
+    if (d.demo) {
+        note.textContent = 'Beispielwerte - echte Werte erscheinen, sobald dein shyft-power-Zugang eingerichtet ist.';
+    } else {
+        note.textContent = `Näherung ab heute 0 Uhr (${d.hours} h): Gas ${fmt(d.gas_ct_per_kwh, 1)} ct/kWh (Destatis), E10 ${fmt(d.e10_eur_per_l, 3)} €/l (Tankerkönig, Berlin-Mitte), Strom ø ${fmt(d.avg_power_price_eur_kwh * 100, 1)} ct/kWh. `
+            + `Verbrauch: Wärmepumpe ${fmt(d.heatpump_el_kwh, 1)} kWh (${fmt(d.heat_kwh, 1)} kWh Wärme → ${fmt(d.gas_kwh, 1)} kWh Gas bei ${Math.round((a.boiler_efficiency || 0) * 100)} % Kessel), Auto ${fmt(d.ev_kwh, 1)} kWh (≈ ${fmt(d.fuel_liters, 1)} l E10 bei ${fmt(a.ice_l_per_100km, 1)} l/100 km, abgeleitet aus ${fmt(a.ev_kwh_per_100km, 1)} kWh/100 km).`;
+    }
     card.appendChild(note);
     return card;
 }
@@ -12544,14 +12549,9 @@ async function loadDashboardImpl() {
         if (data.einsatzplan) {
             updateOrAppendDashboardWidget(container, 'einsatzplan', buildEinsatzplanCard(data.einsatzplan, data.optimizer_running));
         }
-        // best-effort: ohne Preise/Waermepumpe-/Wallbox-Daten (status 'unavailable') oder bei Fehler keine Kachel
-        try {
-            const fossil = await getJson(insideHomeAssistant + '/analysis/fossil-savings');
-            if (fossil.status === 'success') {
-                updateOrAppendDashboardWidget(container, 'fossilSavings', buildFossilSavingsCard(fossil));
-            }
-        } catch (err) {
-            console.log(err);
+        // Kachel direkt aus dem Einsatzplan-Ergebnis (fossil fehlt ohne Preise bzw. ohne Waermepumpe-/Auto-Verbrauch im Plan)
+        if (data.einsatzplan && data.einsatzplan.fossil) {
+            updateOrAppendDashboardWidget(container, 'fossilSavings', buildFossilSavingsCard(data.einsatzplan.fossil));
         }
         // "Innenraum" (Zweitkurve): Ist aus der echten Sensorhistorie statt der bisher gezeigten,
         // vom Optimierer nur SIMULIERTEN Innentemperatur (Nutzer-Vorgabe) - best-effort wie bei den
@@ -12947,6 +12947,7 @@ async function loadAnalyse() {
             <td>${formatEuro(r.actual_cost_eur)}</td>
             <td class="${analyseSavingsClass(r.savings_vs_base_eur)}">${formatEuro(r.savings_vs_base_eur)}</td>
             <td class="${analyseSavingsClass(r.planned_minus_actual_eur)}">${formatEuro(r.planned_minus_actual_eur)}</td>
+            <td class="${analyseSavingsClass(r.fossil_savings_eur)}">${r.fossil_savings_eur == null ? '–' : formatEuro(r.fossil_savings_eur)}</td>
             <td>${formatPvKwh(r.pv_forecast_kwh)}</td>
             <td>${formatPvKwh(r.pv_actual_kwh)}</td>
             <td class="${pvDeviationClass(r.pv_error_kwh)}">${formatSignedKwh(r.pv_error_kwh)}</td>
@@ -12959,7 +12960,7 @@ async function loadAnalyse() {
                 <th>Zeitraum</th>
                 <th>Verbrauch geplant</th><th>Verbrauch Basisfall</th><th>Verbrauch Ist</th>
                 <th>Kosten geplant</th><th>Kosten Basisfall</th><th>Kosten Ist</th>
-                <th>Ersparnis ggü. Basisfall (Basisfall − geplant)</th><th>Kosten geplant − Ist</th>
+                <th>Ersparnis ggü. Basisfall (Basisfall − geplant)</th><th>Kosten geplant − Ist</th><th>Ersparnis fossil ggü. Ist</th>
                 <th>PV Prognose</th><th>PV Ist</th><th colspan="2">PV Abweichung</th>
             </tr></thead>
             <tbody>${rowsHtml}</tbody>
