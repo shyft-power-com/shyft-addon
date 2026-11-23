@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.413
+
+* **TEST: Add-on-Name und Seitenleisten-Titel wieder „shyft-power (TEST)“.** Beim Release 0.0.45.404 (Name/panel_title für `main` zurückgesetzt) ging die Test-Kennzeichnung auch auf `test` verloren. Beim nächsten Release nach `main` muss der Name wieder auf „shyft-power“ (ohne `panel_title`) zurückgesetzt werden.
+
 ## 0.0.45.412
 
 * **Fix: Das „?“-Popup bei „Ersparnis ggü. fossil“ schließt sich nicht mehr von selbst.** Der 30-Sekunden-Refresh baut die Kachel neu auf und hat das Popup dabei geschlossen; der geöffnete Zustand bleibt jetzt erhalten, bis man daneben tippt oder erneut auf die Kachel.
