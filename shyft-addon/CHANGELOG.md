@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.414
+
+* **Außentemperatur-Chart zeigt negative Werte:** Die y-Achse reicht jetzt ins Negative, sobald die Reihe Werte unter 0 enthält (vorher wurde bei 0 abgeschnitten). Eine gestrichelte Null-Linie markiert dann den Nullpunkt. Gilt für alle Prognose-/Ist-Charts.
+
 ## 0.0.45.413
 
 * **TEST: Add-on-Name und Seitenleisten-Titel wieder „shyft-power (TEST)“.** Beim Release 0.0.45.404 (Name/panel_title für `main` zurückgesetzt) ging die Test-Kennzeichnung auch auf `test` verloren. Beim nächsten Release nach `main` muss der Name wieder auf „shyft-power“ (ohne `panel_title`) zurückgesetzt werden.

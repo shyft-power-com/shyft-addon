@@ -10263,7 +10263,8 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
         // Standardfall (PV-Leistung): nie negativ - der generische "10% Padding nach unten" wuerde
         // sonst z.B. -0.5 kW auf der Achse zeigen, obwohl kein Wert der Reihe negativ ist. Ein Chart
         // mit von vornherein bekannter fester Spanne (z.B. Ladestand 0-100%) uebergibt stattdessen yBounds.
-        yMin = Math.max(0, rawMin - valueRange * 0.1);
+        // Ausnahme: hat die Reihe tatsaechlich negative Werte (z.B. Aussentemperatur unter 0 °C), reicht die Achse ins Negative.
+        yMin = rawMin < 0 ? rawMin - valueRange * 0.1 : Math.max(0, rawMin - valueRange * 0.1);
         yMax = rawMax + valueRange * 0.1;
     }
     // Zoom/Verschieben: Skala des ganzen Zeitraums statt des sichtbaren Fensters (siehe applyFullRangeScale)
@@ -10328,6 +10329,10 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
         const y = yFor(v).toFixed(1);
         return `<text x="${paddingLeft - 8}" y="${(parseFloat(y) + 3).toFixed(1)}" fill="var(--color-text-secondary)" text-anchor="end">${v.toFixed(decimals)}</text>`;
     }).join('');
+    // Reicht die Achse ins Negative, markiert eine gestrichelte Linie die Null.
+    const zeroLineMarkup = (yMin < 0 && yMax > 0)
+        ? `<line x1="${paddingLeft}" y1="${yFor(0).toFixed(1)}" x2="${width - paddingRight}" y2="${yFor(0).toFixed(1)}" stroke="var(--color-text-secondary)" stroke-width="1" stroke-dasharray="2,3" opacity="0.7" />`
+        : '';
 
     // "Jetzt"-Markierung: nur noch ein Punkt mit Ring auf der Kurve (siehe nowDotSvg), kein senkrechter Strich mehr - der wurde mit den
     // Tageswechsel-Linien verwechselt. "jetzt" = der letzte Index, an dem ein Ist-Wert vorliegt. nowMarkup bleibt (leer) fuer den SVG-Aufbau unten.
@@ -10397,6 +10402,7 @@ function buildForecastActualChartImpl(title, unit, labels, forecast, actual, {de
             ${actualPath}
             ${nowDotMarkup}
             ${dayBoundaryMarkup}
+            ${zeroLineMarkup}
             ${yLabels}
             ${chartAxisUnitMarkup(unit, paddingLeft - 6, 'end', paddingTop)}
             ${xLabels}
