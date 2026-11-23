@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.415
+
+* **Fossil-Kachel: Info-Text gekürzt** (Einleitung, „simuliert“ statt COP-Hinweis, kürzere Schlusszeile).
+
 ## 0.0.45.414
 
 * **Außentemperatur-Chart zeigt negative Werte:** Die y-Achse reicht jetzt ins Negative, sobald die Reihe Werte unter 0 enthält (vorher wurde bei 0 abgeschnitten). Eine gestrichelte Null-Linie markiert dann den Nullpunkt. Gilt für alle Prognose-/Ist-Charts.
