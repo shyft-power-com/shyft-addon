@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.417
+
+* Änderung aus 0.0.45.416 (Ausreißerfilter für die simulierte Innentemperatur im Raumtemperatur-Chart) zurückgenommen, damit die Ursache des T_i-Ausreißers sichtbar bleibt und gefunden werden kann.
+
 ## 0.0.45.415
 
 * **Fossil-Kachel: Info-Text gekürzt** (Einleitung, „simuliert“ statt COP-Hinweis, kürzere Schlusszeile).
