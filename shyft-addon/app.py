@@ -3001,8 +3001,6 @@ _state_fine_cache = {}
 # darunter bzw. 5 K darueber liegen kann.
 INDOOR_TEMP_SIM_CORRECTION_FACTOR = 10
 INDOOR_TEMP_MIN_DEFAULT_C = 21.0
-INDOOR_TEMP_SIM_PLAUSIBLE_MIN_C = -30.0
-INDOOR_TEMP_SIM_PLAUSIBLE_MAX_C = 60.0
 
 
 def _bin_mean_points(parsed, start, end, bin_minutes):
@@ -3119,19 +3117,9 @@ def readRaumtemperaturForecastVsActual():
         comfort_min = float(config.get("hpHeatingTargetTempMin") or INDOOR_TEMP_MIN_DEFAULT_C)
     except (TypeError, ValueError):
         comfort_min = INDOOR_TEMP_MIN_DEFAULT_C
-    implausible_hours = []
     for hour, simulated in list(forecast_by_hour.items()):
-        if simulated is None:
-            continue
-        # Artefakt-/Ausreisserwerte des Optimierers (beobachtet: Werte im fuenfstelligen Bereich) wuerden durch den Faktor 10 noch
-        # verstaerkt und die Achse des Charts sprengen - solche Stunden bleiben leer statt eine Kurve zu verzerren.
-        if not (INDOOR_TEMP_SIM_PLAUSIBLE_MIN_C <= simulated <= INDOOR_TEMP_SIM_PLAUSIBLE_MAX_C):
-            implausible_hours.append((hour.isoformat(), simulated))
-            forecast_by_hour[hour] = None
-            continue
-        forecast_by_hour[hour] = comfort_min + INDOOR_TEMP_SIM_CORRECTION_FACTOR * (simulated - comfort_min)
-    if implausible_hours:
-        print(f"[Shyft] Raumtemperatur-Chart: unplausible simulierte Innentemperatur (T_i) aus der Optimierung ignoriert: {implausible_hours[:5]}")
+        if simulated is not None:
+            forecast_by_hour[hour] = comfort_min + INDOOR_TEMP_SIM_CORRECTION_FACTOR * (simulated - comfort_min)
     payload = _forecast_vs_actual_payload(forecast_by_hour, actual_by_hour, midnight_local, current_hour_local, action_names=HEIZUNG_ACTION_NAMES)
     hours = [midnight_local + timedelta(hours=i) for i in range(len(payload["labels"]))]
     payload["targetActual"] = [target_actual_by_hour.get(h) for h in hours]
