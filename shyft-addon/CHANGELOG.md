@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.416
+
+* **Raumtemperatur-Chart: unplausible simulierte Innentemperatur wird ignoriert.** Lieferte die Optimierung für eine Stunde einen Ausreißer in T_i (Werte im fünfstelligen Bereich), sprengte der Faktor 10 der Umrechnung die rechte Achse (Beschriftung 74987 …) und die Kurve schoss nach oben. Werte außerhalb −30 … 60 °C bleiben jetzt leer und werden im Add-on-Log vermerkt (`unplausible simulierte Innentemperatur (T_i)`).
+
 ## 0.0.45.415
 
 * **Fossil-Kachel: Info-Text gekürzt** (Einleitung, „simuliert“ statt COP-Hinweis, kürzere Schlusszeile).
