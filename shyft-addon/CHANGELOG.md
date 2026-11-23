@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.411
+
+* **Heizstab: Kachel klappt auf, wenn man „Heizstab steuern“ einschaltet und der Heizstab noch nicht vollständig eingerichtet ist** (kein Gerät gewählt oder Pflichtfelder fehlen).
+
 ## 0.0.45.410
 
 * **Lade-Kreis beim Zurückholen der App aus dem Hintergrund zuverlässiger.** Die Rückkehr wird jetzt zusätzlich über Fokus-, Resume- und Timer-Verzögerungs-Erkennung bemerkt (manche Handy-WebViews melden keine Sichtbarkeitsänderung), und der Kreis bleibt mindestens kurz sichtbar, auch wenn die Daten sehr schnell da sind.

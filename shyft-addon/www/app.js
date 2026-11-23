@@ -3426,6 +3426,7 @@ function buildElectricityPricePreview(getSurcharge) {
     return {element: box, refresh, scheduleRefresh};
 }
 
+let expandHeatingRodSectionOnce = false;
 function renderIntegrationSections() {
     const container = document.getElementById('deviceSections');
     container.innerHTML = '';
@@ -3444,6 +3445,11 @@ function renderIntegrationSections() {
         const sectionDisabledNote = sectionDisabledNoteFor(section.key, currentIds);
         const sectionDisabled = sectionDisabledNote !== '';
         let expanded = !sectionDisabled && !isSectionComplete(section, currentIds);
+        // Heizstab-Schalter gerade eingeschaltet, aber noch nicht (vollstaendig) eingerichtet: Kachel aufklappen (siehe buildHeatingRodModeToggle).
+        if (section.key === 'heizstab' && expandHeatingRodSectionOnce) {
+            expandHeatingRodSectionOnce = false;
+            if (!sectionDisabled && (currentIds.length === 0 || !isSectionComplete(section, currentIds))) expanded = true;
+        }
 
         const heading = document.createElement('div');
         heading.className = 'integrationHeading' + (sectionDisabled ? ' integrationHeadingDisabled' : '');
@@ -4243,6 +4249,7 @@ function buildHeatingRodModeToggle() {
     input.addEventListener('change', async () => {
         input.disabled = true;
         configData['heatingRodControl'] = input.checked;
+        expandHeatingRodSectionOnce = input.checked;
         try {
             await autoSave();
         } finally {
