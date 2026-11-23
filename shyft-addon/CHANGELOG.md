@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.410
+
+* **Lade-Kreis beim Zurückholen der App aus dem Hintergrund zuverlässiger.** Die Rückkehr wird jetzt zusätzlich über Fokus-, Resume- und Timer-Verzögerungs-Erkennung bemerkt (manche Handy-WebViews melden keine Sichtbarkeitsänderung), und der Kreis bleibt mindestens kurz sichtbar, auch wenn die Daten sehr schnell da sind.
+
 ## 0.0.45.409
 
 * **Fossil-Vergleich sitzt jetzt als Kachel „Ersparnis ggü. fossil“ (Heute | Morgen) im Einsatzplan, direkt hinter „Stromertrag“** – statt als eigener Abschnitt. Ein „?“ öffnet per Mouseover (am Handy per Tippen) die Herleitung der Werte. Die Quellenangaben stehen nicht mehr in der App.

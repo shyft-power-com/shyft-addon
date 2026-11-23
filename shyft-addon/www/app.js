@@ -13011,24 +13011,31 @@ function setupTabs() {
     // Laptop aus dem Standby) - visibilityState war waehrenddessen 'hidden', der periodische Refresh
     // lief also die ganze Zeit nicht mit (siehe refreshDashboard/refreshShyftActions/
     // refreshLiveSensorValues), ohne dies koennten seit der letzten Sichtbarkeit Stunden vergangen sein.
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-            refreshActiveTabNow(true);
-            refreshLiveSensorValues();
-            renderSystemHealth();
-            renderDashboardProblemBanner();
-        }
-    });
-    // Wiederherstellung aus dem Back-Forward-Cache / eingefrorener Seite (mobile App, iframe): visibilitychange
-    // feuert dort nicht zuverlaessig, die Timer standen aber still - also ebenfalls sofort auffrischen.
-    window.addEventListener('pageshow', event => {
-        if (event.persisted && document.visibilityState === 'visible') {
-            refreshActiveTabNow(true);
-            refreshLiveSensorValues();
-            renderSystemHealth();
-            renderDashboardProblemBanner();
-        }
-    });
+    // Rueckkehr in die App erkennen - je nach WebView (HA-Companion-App Android/iOS, iframe) feuert nur ein Teil dieser
+    // Ereignisse; daher alle nutzen und doppelte Ausloesung innerhalb von 3s zusammenfassen.
+    let lastResumeRefresh = 0;
+    const onAppResumed = () => {
+        if (document.visibilityState !== 'visible') return;
+        const now = Date.now();
+        if (now - lastResumeRefresh < 3000) return;
+        lastResumeRefresh = now;
+        refreshActiveTabNow(true);
+        refreshLiveSensorValues();
+        renderSystemHealth();
+        renderDashboardProblemBanner();
+    };
+    document.addEventListener('visibilitychange', onAppResumed);
+    window.addEventListener('pageshow', onAppResumed);
+    window.addEventListener('focus', onAppResumed);
+    document.addEventListener('resume', onAppResumed);
+    // Eingefrorene WebViews melden manchmal gar nichts: ein Timer, der ploetzlich stark verspaetet feuert, zeigt die Rueckkehr.
+    let lastTick = Date.now();
+    setInterval(() => {
+        const now = Date.now();
+        const gap = now - lastTick;
+        lastTick = now;
+        if (gap > 8000) onAppResumed();
+    }, 2000);
 }
 
 // Setzt --topbar-height (siehe .topBar-Kommentar in index.html) auf die tatsaechliche Hoehe der
@@ -13240,8 +13247,10 @@ function setupPullToRefresh() {
             indicator.classList.remove('is-spinning');
             reset();
         };
+        // Mindestens kurz sichtbar, sonst blitzt der Kreis bei schnellen Antworten unsichtbar kurz auf.
         Promise.race([Promise.resolve(promise), new Promise(resolve => setTimeout(resolve, PULL_REFRESH_TIMEOUT_MS))])
             .catch(err => console.log('[Shyft] Laden im Hintergrund fehlgeschlagen:', err))
+            .then(() => new Promise(resolve => setTimeout(resolve, 700)))
             .then(done);
         return promise;
     };
