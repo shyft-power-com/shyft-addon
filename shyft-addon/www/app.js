@@ -8588,6 +8588,8 @@ function fossilExplanation(fossil) {
 }
 
 // Haengt "Ersparnis ggü. fossil" (Heute | Morgen) mit "?"-Popup an das Raster der Einsatzplan-Kacheln.
+let fossilTooltipOpen = false;
+let fossilTooltipOutsideClickBound = false;
 function appendFossilStat(grid, fossil) {
     const fmt = v => v.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     const stat = document.createElement('div');
@@ -8615,11 +8617,21 @@ function appendFossilStat(grid, fossil) {
     const bubble = attachTooltip(stat, fossilExplanation(fossil));
     bubble.classList.add('fossilTooltipText');
     // Mobil: Tippen oeffnet/schliesst das Popup (Hover gibt es dort nicht verlaesslich), Tippen daneben schliesst es.
+    // Der Auf-/Zu-Zustand liegt ausserhalb des Elements: das Dashboard baut die Kachel bei jedem 30-s-Refresh neu auf, sonst
+    // schloesse sich das Popup dabei von selbst. Ein einziger Dokument-Listener (kein neuer je Neuaufbau).
+    stat.classList.toggle('tooltipOpen', fossilTooltipOpen);
     stat.addEventListener('click', e => {
         e.stopPropagation();
-        stat.classList.toggle('tooltipOpen');
+        fossilTooltipOpen = !fossilTooltipOpen;
+        stat.classList.toggle('tooltipOpen', fossilTooltipOpen);
     });
-    document.addEventListener('click', () => stat.classList.remove('tooltipOpen'));
+    if (!fossilTooltipOutsideClickBound) {
+        fossilTooltipOutsideClickBound = true;
+        document.addEventListener('click', () => {
+            fossilTooltipOpen = false;
+            document.querySelectorAll('.hasValueTooltip.tooltipOpen').forEach(el => el.classList.remove('tooltipOpen'));
+        });
+    }
     grid.appendChild(stat);
     grid.classList.add('withFossil');
 }

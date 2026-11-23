@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45.412
+
+* **Fix: Das „?“-Popup bei „Ersparnis ggü. fossil“ schließt sich nicht mehr von selbst.** Der 30-Sekunden-Refresh baut die Kachel neu auf und hat das Popup dabei geschlossen; der geöffnete Zustand bleibt jetzt erhalten, bis man daneben tippt oder erneut auf die Kachel.
+
 ## 0.0.45.411
 
 * **Heizstab: Kachel klappt auf, wenn man „Heizstab steuern“ einschaltet und der Heizstab noch nicht vollständig eingerichtet ist** (kein Gerät gewählt oder Pflichtfelder fehlen).
