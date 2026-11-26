@@ -8571,7 +8571,7 @@ function fossilExplanationLines(label, d) {
         `${label}: ${fmt(d.savings_eur, 2)} € = ${fmt(d.fossil_cost_eur, 2)} € fossil − ${fmt(d.electric_cost_eur, 2)} € Strom`,
         `• Wärmepumpe ${fmt(d.heatpump_el_kwh, 1)} kWh Strom liefern ${fmt(d.heat_kwh, 1)} kWh Wärme (simuliert). Ein Gaskessel (Wirkungsgrad ${Math.round((a.boiler_efficiency || 0) * 100)} %) bräuchte dafür ${fmt(d.gas_kwh, 1)} kWh Gas × ${fmt(d.gas_ct_per_kwh, 1)} ct = ${fmt(d.fossil_gas_cost_eur, 2)} €`,
         `• Auto ${fmt(d.ev_kwh, 1)} kWh Strom ≈ ${fmt(d.fuel_liters, 1)} l E10 (${fmt(a.ice_l_per_100km, 1)} l/100 km, abgeleitet aus deinen ${fmt(a.ev_kwh_per_100km, 1)} kWh/100 km) × ${fmt(d.e10_eur_per_l, 3)} €/l = ${fmt(d.fossil_fuel_cost_eur, 2)} €`,
-        `• Strom: ${fmt(d.heatpump_el_kwh + d.ev_kwh, 1)} kWh × ø ${fmt(d.avg_power_price_eur_kwh * 100, 1)} ct/kWh = ${fmt(d.electric_cost_eur, 2)} €`,
+        `• Zusammen: ${fmt(d.heatpump_el_kwh + d.ev_kwh, 1)} kWh × ø ${fmt(d.avg_power_price_eur_kwh * 100, 1)} ct/kWh = ${fmt(d.electric_cost_eur, 2)} €`,
     ];
 }
 
